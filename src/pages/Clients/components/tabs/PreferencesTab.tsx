@@ -4,6 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useRecordDraft } from '@/hooks/useRecordDraft';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import DynamicCell from '@/pages/Records/components/DynamicCell';
+import PreferenceProfileBar from '@/components/PreferenceProfileBar';
 import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { PREFERENCE_EDIT_SLUGS, isDerivedReadOnly, allFields } from '../../lib/clientView';
@@ -31,7 +32,7 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
   const addToast = useAppStore((s) => s.addToast);
   const records = useAppStore((s) => s.records);
 
-  const { draft, patchDraft } = useRecordDraft(client);
+  const { draft, patchDraft, setDraft } = useRecordDraft(client);
   const [saving, setSaving] = useState(false);
 
   // Version snapshot for optimistic concurrency (mirrors RecordFormPage / PreferenceSummary).
@@ -69,6 +70,13 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
     addToast(res.message, res.tone);
   };
 
+  // A profile switch/add/delete persists the client record itself; re-sync the
+  // edit draft to the newly-active profile's flat values and adopt its version.
+  const onProfileApplied = (flat: Record<string, unknown> | undefined, nextVersion: number | null) => {
+    if (flat) setDraft((d) => ({ ...d, ...flat }));
+    versionRef.current = { id: client.id, version: nextVersion };
+  };
+
   if (fields.length === 0) {
     return <p className="card p-6 text-sm text-charcoal/50">{isAr ? 'لا توجد حقول تفضيلات في النموذج.' : 'No preference fields on this model.'}</p>;
   }
@@ -83,6 +91,16 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
           </span>
         )}
       </div>
+
+      <PreferenceProfileBar
+        client={client}
+        draft={draft}
+        clientsModel={clientsModel}
+        expectedVersion={versionRef.current?.version ?? null}
+        isAr={isAr}
+        disabled={!canEdit}
+        onApplied={onProfileApplied}
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {fields.map((field) => (

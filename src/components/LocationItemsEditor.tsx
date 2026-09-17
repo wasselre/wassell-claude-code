@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MapPin, Plus, X, Search, Loader2, BadgeCheck, TriangleAlert, Check, Ban, Map as MapIcon } from 'lucide-react';
+import { v4 as uuid } from 'uuid';
+import { MapPin, Plus, X, Search, Loader2, BadgeCheck, TriangleAlert, Check, Ban, Map as MapIcon, Bookmark, BookmarkPlus, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DistrictMapPicker from '@/components/DistrictMapPicker';
 import type { AppModel, ModelField } from '@/types';
@@ -15,6 +16,7 @@ import {
   newElementRuleItem,
 } from '@/lib/geo/locationItems';
 import { searchGeoElements, type GeoElementHit } from '@/lib/geo/client';
+import { listGeoPresets, saveGeoPreset, deleteGeoPreset, type GeoPreset } from '@/lib/geo/presets';
 
 type GeomKind = 'point' | 'linestring' | 'polygon';
 
@@ -89,6 +91,7 @@ const EXCLUDE_COLOR = '#B91C1C'; // red
 export default function LocationItemsEditor({ items, onChange, locationField, locationValue, isAr, disabled, embedded }: Props) {
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
+  const addToast = useAppStore((s) => s.addToast);
 
   // Resolve the district model + its city-lookup field + the selected city id
   // from the location field's level config (same source the cascade uses).
@@ -170,6 +173,79 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
   // The condition rule chosen for the picked element (set from its geometry kind).
   const [ruleSel, setRuleSel] = useState<ConditionRule>('within_radius');
 
+  // ── saved-preset state (the 4th add-option + "save as preset") ─────────────
+  // A preset is a shared, named bundle of location_items a rep reuses across
+  // clients (e.g. «أحياء شرق الرياض»). See src/lib/geo/presets.ts.
+  const [showPresets, setShowPresets] = useState(false);
+  const [presets, setPresets] = useState<GeoPreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+  const [presetsError, setPresetsError] = useState<string | null>(null);
+  // Save-current-items-as-preset inline form.
+  const [saveNameOpen, setSaveNameOpen] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const [savingPreset, setSavingPreset] = useState(false);
+
+  // Load the shared preset library when the picker opens.
+  useEffect(() => {
+    if (!showPresets) return;
+    let cancelled = false;
+    setPresetsLoading(true);
+    setPresetsError(null);
+    listGeoPresets()
+      .then((rows) => { if (!cancelled) setPresets(rows); })
+      .catch((e) => { if (!cancelled) setPresetsError(e instanceof Error ? e.message : 'load failed'); })
+      .finally(() => { if (!cancelled) setPresetsLoading(false); });
+    return () => { cancelled = true; };
+  }, [showPresets]);
+
+  // Presets relevant to THIS client: same city, plus city-agnostic
+  // (element-only) presets which apply anywhere. When no city is picked yet we
+  // show everything (a deliberate browse, same posture as the element search).
+  const relevantPresets = useMemo(() => {
+    if (!cityId) return presets;
+    return presets.filter((p) => !p.city_id || p.city_id === cityId);
+  }, [presets, cityId]);
+
+  // Apply a preset's items to the current profile's geography (ADD to existing).
+  // Ids are regenerated so re-applying the same preset never collides.
+  const applyPreset = (p: GeoPreset) => {
+    const applied = p.items.map((it) => ({ ...it, id: uuid() }));
+    onChange([...items, ...applied]);
+    setShowPresets(false);
+    if (cityId) setShowMap(true);
+  };
+
+  const saveAsPreset = async () => {
+    const name = presetName.trim();
+    if (!name || items.length === 0) return;
+    setSavingPreset(true);
+    try {
+      await saveGeoPreset({ name, cityId: cityId ?? null, countryCode, items });
+      addToast(isAr ? 'تم حفظ التفضيل المحفوظ' : 'Preset saved', 'success');
+      setSaveNameOpen(false);
+      setPresetName('');
+    } catch (e) {
+      addToast(
+        (isAr ? 'تعذّر حفظ التفضيل: ' : 'Could not save preset: ') + (e instanceof Error ? e.message : ''),
+        'error',
+      );
+    } finally {
+      setSavingPreset(false);
+    }
+  };
+
+  const removePreset = async (p: GeoPreset) => {
+    try {
+      await deleteGeoPreset(p.id);
+      setPresets((cur) => cur.filter((x) => x.id !== p.id));
+    } catch (e) {
+      addToast(
+        (isAr ? 'تعذّر الحذف: ' : 'Could not delete: ') + (e instanceof Error ? e.message : ''),
+        'error',
+      );
+    }
+  };
+
   // Pick an element and default its rule to the geometry-appropriate one.
   const pickElement = (hit: GeoElementHit) => {
     setPicked(hit);
@@ -207,6 +283,9 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
     setPicked(null);
     setDistKm(5);
     setRuleSel('within_radius');
+    setShowPresets(false);
+    setSaveNameOpen(false);
+    setPresetName('');
   };
 
   const addDistrict = (opt: { id: string; label: string }) => {
@@ -328,7 +407,93 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
         <p className="mb-3 text-xs text-charcoal/40">{isAr ? 'لا توجد تفضيلات موقع بعد.' : 'No location preferences yet.'}</p>
       )}
 
-      {disabled ? null : mode === null ? (
+      {disabled ? null : showPresets ? (
+        <div className="rounded-lg border border-sand/50 bg-white p-3">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-chocolate">
+              <Bookmark size={13} className="text-copper" /> {isAr ? 'اختيار تفضيل محفوظ' : 'Select a saved preference'}
+            </span>
+            <button type="button" onClick={resetAdd} className="text-charcoal/40 hover:text-charcoal" aria-label="close">
+              <X size={15} />
+            </button>
+          </div>
+          <div className="max-h-56 overflow-y-auto">
+            {presetsLoading ? (
+              <p className="flex items-center gap-1 px-1 py-2 text-xs text-charcoal/40">
+                <Loader2 size={13} className="animate-spin" /> {isAr ? 'جارٍ التحميل…' : 'Loading…'}
+              </p>
+            ) : presetsError ? (
+              <p className="px-1 py-2 text-xs text-red-600">{presetsError}</p>
+            ) : relevantPresets.length === 0 ? (
+              <p className="px-1 py-2 text-xs text-charcoal/40">
+                {isAr ? 'لا توجد تفضيلات محفوظة لهذه المدينة.' : 'No saved preferences for this city.'}
+              </p>
+            ) : (
+              relevantPresets.map((p) => (
+                <div key={p.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5 transition hover:bg-cream">
+                  <button
+                    type="button"
+                    onClick={() => applyPreset(p)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-start"
+                  >
+                    <Bookmark size={12} className="shrink-0 text-copper" />
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs font-semibold text-charcoal/80">{p.name}</span>
+                      <span className="block truncate text-[10px] text-charcoal/40">
+                        {p.items.length} {isAr ? 'عنصر' : 'items'}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removePreset(p)}
+                    className="shrink-0 text-charcoal/30 transition hover:text-red-600"
+                    aria-label={isAr ? 'حذف' : 'delete'}
+                    title={isAr ? 'حذف التفضيل (لمن أنشأه فقط)' : 'Delete preset (creator only)'}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+          <p className="mt-2 text-[11px] leading-4 text-charcoal/50">
+            {isAr
+              ? 'يُضاف التفضيل المحفوظ إلى أحياء العميل الحالية.'
+              : "The preset is added to the client's current districts."}
+          </p>
+        </div>
+      ) : saveNameOpen ? (
+        <div className="rounded-lg border border-sand/50 bg-white p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-chocolate">
+              <BookmarkPlus size={13} className="text-copper" /> {isAr ? 'حفظ كتفضيل محفوظ' : 'Save as a preset'}
+            </span>
+            <button type="button" onClick={resetAdd} className="text-charcoal/40 hover:text-charcoal" aria-label="close">
+              <X size={15} />
+            </button>
+          </div>
+          <input
+            type="text"
+            value={presetName}
+            onChange={(e) => setPresetName(e.target.value)}
+            placeholder={isAr ? 'اسم التفضيل (مثال: أحياء شرق الرياض)' : 'Preset name (e.g. East Riyadh districts)'}
+            className="form-input mb-2"
+            autoFocus
+          />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => void saveAsPreset()}
+              disabled={savingPreset || !presetName.trim()}
+              className="inline-flex items-center gap-1 rounded-lg bg-copper px-3 py-2 text-xs font-bold text-white transition hover:bg-terracotta disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {savingPreset ? <Loader2 size={13} className="animate-spin" /> : <BookmarkPlus size={13} />}
+              {isAr ? 'حفظ' : 'Save'}
+            </button>
+          </div>
+        </div>
+      ) : mode === null ? (
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -353,6 +518,22 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
           >
             <MapIcon size={13} /> {isAr ? 'اختيار من الخريطة' : 'Pick on map'}
           </button>
+          <button
+            type="button"
+            onClick={() => { resetAdd(); setShowPresets(true); }}
+            className="inline-flex items-center gap-1 rounded-lg border border-copper/40 bg-copper/10 px-3 py-1.5 text-xs font-bold text-copper transition hover:bg-copper/20"
+          >
+            <Bookmark size={13} /> {isAr ? 'اختيار تفضيل محفوظ' : 'Select a saved preference'}
+          </button>
+          {items.length > 0 && (
+            <button
+              type="button"
+              onClick={() => { resetAdd(); setSaveNameOpen(true); }}
+              className="inline-flex items-center gap-1 rounded-lg border border-sand/50 bg-white px-3 py-1.5 text-xs font-bold text-charcoal/70 transition hover:bg-cream"
+            >
+              <BookmarkPlus size={13} /> {isAr ? 'حفظ كتفضيل' : 'Save as preset'}
+            </button>
+          )}
         </div>
       ) : (
         <div className="rounded-lg border border-sand/50 bg-white p-3">

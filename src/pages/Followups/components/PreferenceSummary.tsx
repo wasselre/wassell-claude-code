@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { SlidersHorizontal, Save, Loader2, Sparkles, Lock } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
+import PreferenceProfileBar from '@/components/PreferenceProfileBar';
 import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
 import type { FieldMeta } from '@/lib/salesProcess/qualificationDraft';
 import type { ModelField } from '@/types';
@@ -121,6 +122,19 @@ export default function PreferenceSummary({ clientId, onEditFull, draft: draftPr
           <SlidersHorizontal size={13} /> {isAr ? 'تعديل التفضيلات الكاملة' : 'Edit Full Preferences'}
         </button>
       </div>
+      <PreferenceProfileBar
+        client={clientRec}
+        draft={draft}
+        clientsModel={clientsModel}
+        expectedVersion={clientRec.version ?? null}
+        isAr={isAr}
+        onApplied={(flat) => {
+          if (!flat) return;
+          if (controlled) Object.entries(flat).forEach(([k, v]) => onFieldChange!(k, v));
+          else setInternalDraft((d) => ({ ...d, ...flat }));
+        }}
+      />
+
       {/* Two fields per row (each smaller) so the list stays short. Wide fields —
           the location cascade and free-text notes — span the full width. */}
       <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
