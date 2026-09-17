@@ -356,6 +356,73 @@ function CaptionSourceNote({ source, isAr }: { source: 'ai' | 'fallback' | null;
   );
 }
 
+/* ── autosave: nothing typed is lost to a refresh ─────────────────────────
+   Operator rule (2026-09-17): whatever is typed is kept at once, without a
+   save button. Two layers:
+     1. a copy on THIS device, written on every change — survives a refresh
+        or a crash before the server answers;
+     2. the server, ~600 ms after typing pauses.
+   The device copy remembers which server state it was typed on top of
+   (`base`). It is restored only while the server still holds exactly that
+   state — so an old copy can never overwrite newer work saved elsewhere. */
+/**
+ * JSON with object keys sorted, recursively. Postgres `jsonb` hands keys back in
+ * its own order, so a plain JSON.stringify of the reloaded record never equals
+ * the string the browser saved — and a device copy would never be recognised as
+ * sitting on the current server state.
+ */
+export function stableJson(value: unknown): string {
+  const norm = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(norm);
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(
+        Object.keys(v as Record<string, unknown>).sort()
+          .map((k) => [k, norm((v as Record<string, unknown>)[k])]),
+      );
+    }
+    return v;
+  };
+  return JSON.stringify(norm(value));
+}
+
+const DRAFT_KEY = (contentId: string): string => `wassel.mos.writing-draft.v1:${contentId}`;
+const AUTOSAVE_DELAY_MS = 600;
+
+interface DeviceDraft { base: string; draft: Record<string, unknown>; at: string }
+
+function readDeviceDraft(contentId: string): DeviceDraft | null {
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(DRAFT_KEY(contentId));
+  } catch (e) {
+    // Storage blocked (private mode / policy): the server save still runs.
+    console.error('[marketing] device draft read failed', contentId, e);
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<DeviceDraft>;
+    if (typeof parsed.base !== 'string' || !parsed.draft || typeof parsed.draft !== 'object') return null;
+    return { base: parsed.base, draft: parsed.draft as Record<string, unknown>, at: String(parsed.at ?? '') };
+  } catch (e) {
+    console.error('[marketing] device draft unreadable — discarded', contentId, e);
+    return null;
+  }
+}
+
+function writeDeviceDraft(contentId: string, value: DeviceDraft | null): boolean {
+  try {
+    if (value) window.localStorage.setItem(DRAFT_KEY(contentId), JSON.stringify(value));
+    else window.localStorage.removeItem(DRAFT_KEY(contentId));
+    return true;
+  } catch (e) {
+    console.error('[marketing] device draft write failed', contentId, e);
+    return false;
+  }
+}
+
+type AutosaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'failed';
+
 export default function WritingFields({
   contentId, schema, data, canEdit, isAr, onSaved,
   embedded = false, onDraftChange, prefillCaption,
@@ -382,10 +449,32 @@ export default function WritingFields({
   prefillCaption?: boolean;
 }) {
   const addToast = useAppStore((s) => s.addToast);
-  const [draft, setDraft] = useState<Record<string, unknown>>({});
-  const [busy, setBusy] = useState(false);
+  // Starts AS the server copy, so the first render never looks like an edit.
+  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...data }));
 
-  useEffect(() => { setDraft({ ...data }); }, [data]);
+  /** The server's copy as JSON — what the last successful save (or load) holds. */
+  const savedJson = useRef<string>(stableJson(data));
+  const [autosave, setAutosave] = useState<AutosaveState>('idle');
+
+  const loadedFor = useRef<string | null>(null);
+  useEffect(() => {
+    const serverJson = stableJson(data);
+    // A parent echoing back what the autosave just stored is not new server
+    // state — resetting the draft then would eat whatever was typed since.
+    if (loadedFor.current === contentId && serverJson === savedJson.current) return;
+    loadedFor.current = contentId;
+    savedJson.current = serverJson;
+    const device = canEdit ? readDeviceDraft(contentId) : null;
+    if (device && device.base === serverJson && stableJson({ ...data, ...device.draft }) !== serverJson) {
+      // Typed before a refresh and never reached the server: bring it back
+      // (the autosave below then saves it).
+      setDraft({ ...data, ...device.draft });
+    } else {
+      if (device) writeDeviceDraft(contentId, null);
+      setDraft({ ...data });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, contentId]);
 
   const has = (k: string): boolean => schema.includes(k);
   const str = (k: string): string => asString(draft[k]);
@@ -405,6 +494,47 @@ export default function WritingFields({
     () => JSON.stringify(draft) !== JSON.stringify(data),
     [draft, data],
   );
+
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saving = useRef<Promise<void> | null>(null);
+  useEffect(() => {
+    if (!canEdit) return undefined;
+    const json = stableJson({ ...data, ...draft });
+    if (json === savedJson.current) {
+      // Typed and then undone back to the saved text: nothing left to keep.
+      if (autosave === 'pending') { writeDeviceDraft(contentId, null); setAutosave('saved'); }
+      return undefined;
+    }
+    // 1 — on this device, now.
+    writeDeviceDraft(contentId, { base: savedJson.current, draft, at: new Date().toISOString() });
+    setAutosave('pending');
+    // 2 — on the server, once typing pauses. One save at a time, always the latest draft.
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const run = async (): Promise<void> => {
+        if (saving.current) await saving.current;
+        const snapshotJson = stableJson({ ...data, ...draft });
+        if (snapshotJson === savedJson.current) return;
+        setAutosave('saving');
+        try {
+          await updateContent(contentId, { data: { ...data, ...draft } });
+          savedJson.current = snapshotJson;
+          onSaved({ ...data, ...draft });
+          // The device copy is kept only while it holds more than the server.
+          const device = readDeviceDraft(contentId);
+          if (!device || stableJson({ ...data, ...device.draft }) === snapshotJson) writeDeviceDraft(contentId, null);
+          else writeDeviceDraft(contentId, { ...device, base: snapshotJson });
+          setAutosave('saved');
+        } catch (e) {
+          console.error('[marketing] writing autosave failed', contentId, e);
+          setAutosave('failed');
+        }
+      };
+      saving.current = run().finally(() => { saving.current = null; });
+    }, AUTOSAVE_DELAY_MS);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, canEdit, contentId]);
 
   /* The row writer holds the drafts; report every change up so ONE submit can
      save all three members. Guarded on the serialized draft so an unchanged
@@ -442,19 +572,6 @@ export default function WritingFields({
     }));
   };
 
-  const save = async (): Promise<void> => {
-    setBusy(true);
-    try {
-      const payload = { ...data, ...draft };
-      await updateContent(contentId, { data: payload });
-      onSaved(payload);
-      addToast(isAr ? 'حُفظ' : 'Saved', 'success');
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   /* ── the voice-over read-speed chip: ~2.2 words/sec of read Arabic ── */
   const voWords = str('voiceover').trim() ? str('voiceover').trim().split(/\s+/).length : 0;
@@ -601,20 +718,23 @@ export default function WritingFields({
     );
   }
 
-  const saveBar = embedded ? null : canEdit ? (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      {dirty && (
-        <>
-          <button type="button" className="btn btn-p" onClick={() => void save()} disabled={busy}>
-            {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ' : 'Save'}
-          </button>
-          <span style={{ fontSize: 12, color: 'var(--wait)', fontWeight: 700 }}>
-            {isAr ? 'تغييرات غير محفوظة' : 'Unsaved changes'}
-          </span>
-        </>
-      )}
-    </div>
-  ) : (
+  const autosaveLabel = autosave === 'failed'
+    ? (isAr ? 'تعذّر الحفظ على الخادم — ما كتبته محفوظ على هذا الجهاز ويُعاد حفظه مع أي تعديل.' : 'Could not save to the server — what you typed is kept on this device and retried on your next change.')
+    : autosave === 'pending' || autosave === 'saving'
+      ? (isAr ? 'جارٍ الحفظ…' : 'Saving…')
+      : autosave === 'saved'
+        ? (isAr ? 'حُفظ' : 'Saved')
+        : null;
+  const saveBar = canEdit ? (
+    autosaveLabel ? (
+      <div
+        role={autosave === 'failed' ? 'alert' : 'status'}
+        style={{ fontSize: 12, fontWeight: 700, color: autosave === 'failed' ? 'var(--late)' : 'var(--mute)' }}
+      >
+        {autosaveLabel}
+      </div>
+    ) : null
+  ) : embedded ? null : (
     <div style={{ fontSize: 12, color: 'var(--mute)' }}>
       {isAr
         ? 'للقراءة فقط — هذه المرحلة ليست لدى دورك.'

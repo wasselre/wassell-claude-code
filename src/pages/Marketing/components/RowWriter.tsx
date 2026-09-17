@@ -79,6 +79,8 @@ interface RowCheck {
   detail_en: string;
 }
 
+const NOOP_SAVED = (): void => undefined;
+
 export default function RowWriter({
   detail, isAr, canAct, onChanged, brief,
 }: {
@@ -278,21 +280,6 @@ export default function RowWriter({
     ));
   };
 
-  const saveOnly = async (): Promise<void> => {
-    setBusy(true);
-    try {
-      await saveDrafts();
-      addToast(
-        isAr ? 'حُفظت مسودات الدفعة' : 'The batch’s drafts were saved',
-        'success',
-      );
-      await onChanged?.();
-    } catch (e) {
-      addToast(e instanceof Error ? e.message : String(e), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const submit = async (): Promise<void> => {
     if (!canSend) return;
@@ -428,7 +415,9 @@ export default function RowWriter({
                 isAr={isAr}
                 embedded
                 onDraftChange={onDraftChange}
-                onSaved={() => { void onChanged?.(); }}
+                // Autosave runs on every pause in typing; reloading the pane each
+                // time would steal focus mid-sentence. The submit reloads.
+                onSaved={NOOP_SAVED}
               />
             </PostShell>
           );
@@ -445,14 +434,6 @@ export default function RowWriter({
             onClick={() => { void submit(); }}
           >
             {busy ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : isAr ? 'إرسال الدفعة' : 'Send the batch'}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={!canEdit || busy}
-            onClick={() => { void saveOnly(); }}
-          >
-            {isAr ? 'حفظ مسودة' : 'Save draft'}
           </button>
           <span style={{ fontSize: 11.5, color: failing.length > 0 ? 'var(--late)' : 'var(--mute)' }}>
             {failing.length > 0
