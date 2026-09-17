@@ -131,6 +131,11 @@ const PublicShareFilePage = lazy(() => import('@/pages/PublicShare/PublicShareFi
 const RateVisitPage = lazy(() => import('@/pages/PublicRate/RateVisitPage'));
 const SalesConsultantApplicationPage = lazy(() => import('@/pages/Careers/SalesConsultantApplicationPage'));
 const JobApplicationsPage = lazy(() => import('@/pages/Careers/JobApplicationsPage'));
+// Private, per-candidate pre-interview experience (public link, no auth, RTL).
+// First content page = HireExperiencePage; the next (video) stage is a stub.
+const HireExperiencePage = lazy(() => import('@/pages/Hire/HireExperiencePage'));
+const HireVideoPage = lazy(() => import('@/pages/Hire/HireVideoPage'));
+const HireStagePlaceholder = lazy(() => import('@/pages/Hire/HireExperiencePage').then((m) => ({ default: m.HireStagePlaceholder })));
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import RequirePageAccess from '@/components/guards/RequirePageAccess';
 import RequireWorkflowView from '@/components/guards/RequireWorkflowView';
@@ -388,6 +393,13 @@ export default function App() {
         {/* Public job-application landing (ad traffic). No auth, no layout,
             fully Arabic/RTL. Private applicant files are handled server-side. */}
         <Route path="/careers/sales-consultant" element={<SalesConsultantApplicationPage />} />
+        {/* Private pre-interview experience for a shortlisted candidate. Token
+            identifies the invitation; no token = testable preview. No auth,
+            no layout, fully Arabic/RTL. */}
+        <Route path="/careers/experience" element={<HireExperiencePage />} />
+        <Route path="/careers/experience/:token" element={<HireExperiencePage />} />
+        <Route path="/careers/experience/:token/video" element={<HireVideoPage />} />
+        <Route path="/careers/experience/:token/task" element={<HireStagePlaceholder />} />
 
         {/* ── Protected app routes (auth required, inside layout) ────── */}
         <Route
