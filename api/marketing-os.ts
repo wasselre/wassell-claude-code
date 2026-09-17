@@ -1033,7 +1033,7 @@ async function notifyTaskAssigned(
   const whenAr = t.repeating
     ? ' — مهمة متكررة'
     : t.dueAt
-      ? ` — الاستحقاق ${new Date(t.dueAt).toLocaleDateString('ar-SA-u-ca-gregory', { timeZone: 'Asia/Riyadh', day: 'numeric', month: 'long' })}`
+      ? ` — آخر موعد للتسليم ${new Date(t.dueAt).toLocaleDateString('ar-SA-u-ca-gregory', { timeZone: 'Asia/Riyadh', day: 'numeric', month: 'long' })}`
       : '';
   const whenEn = t.repeating
     ? ' — a repeating task'

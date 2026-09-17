@@ -655,7 +655,7 @@ export default function NewContentModal({
               </b>
               {isAr ? ' ← ' : ' → '}
               {firstStepPerson ?? (isAr ? ROLE_LABELS[firstStep.role]?.ar : ROLE_LABELS[firstStep.role]?.en)}
-              {dueAt && <>{isAr ? '، الاستحقاق ' : ', due '}{shortDate(dueAt, isAr)}</>}
+              {dueAt && <>{isAr ? '، آخر موعد للتسليم ' : ', due '}{shortDate(dueAt, isAr)}</>}
               {mode === 'bulk' && filledRows.length > 1 && (
                 <>
                   {' '}

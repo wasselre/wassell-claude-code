@@ -259,13 +259,13 @@ function RowCardRows({
           ) : overdue ? (
             <Pill tone="late">
               {isAr
-                ? `استحقاق ${dateTimeShort(task.due_at, true)} · متأخر ${daysAgo(task.due_at, true)}`
+                ? `آخر موعد للتسليم ${dateTimeShort(task.due_at, true)} · متأخر ${daysAgo(task.due_at, true)}`
                 : `due ${dateTimeShort(task.due_at, false)} · ${daysAgo(task.due_at, false)} late`}
             </Pill>
           ) : (
             <Pill tone={tone === 'idle' ? 'wait' : 'now'}>
               {task.due_at
-                ? isAr ? `الاستحقاق ${dateTimeShort(task.due_at, true)}` : `due ${dateTimeShort(task.due_at, false)}`
+                ? isAr ? `آخر موعد للتسليم ${dateTimeShort(task.due_at, true)}` : `due ${dateTimeShort(task.due_at, false)}`
                 : isAr ? 'بلا موعد' : 'no due date'}
             </Pill>
           )}
@@ -410,14 +410,14 @@ function QueueGroup({
                         {isOverdue(r) ? (
                           <Pill tone="late">
                             {isAr
-                              ? `استحقاق ${dateTimeShort(r.current_task_due_at ?? r.due_at, true)} · متأخر ${daysAgo(r.current_task_due_at ?? r.due_at, true)}`
+                              ? `آخر موعد للتسليم ${dateTimeShort(r.current_task_due_at ?? r.due_at, true)} · متأخر ${daysAgo(r.current_task_due_at ?? r.due_at, true)}`
                               : `due ${dateTimeShort(r.current_task_due_at ?? r.due_at, false)} · ${daysAgo(r.current_task_due_at ?? r.due_at, false)} late`}
                           </Pill>
                         ) : (
                           <Pill tone={tone === 'idle' ? 'wait' : 'now'}>
                             {r.current_task_due_at
                               ? isAr
-                                ? `الاستحقاق ${dateTimeShort(r.current_task_due_at, true)}`
+                                ? `آخر موعد للتسليم ${dateTimeShort(r.current_task_due_at, true)}`
                                 : `due ${dateTimeShort(r.current_task_due_at, false)}`
                               : isAr ? 'بلا موعد' : 'no due date'}
                           </Pill>
@@ -781,13 +781,13 @@ export default function WorkPage() {
     manualOverdue(t) ? (
       <Pill tone="late">
         {isAr
-          ? `استحقاق ${shortDate(t.due_at, true)} · متأخر ${daysAgo(t.due_at, true)}`
+          ? `آخر موعد للتسليم ${shortDate(t.due_at, true)} · متأخر ${daysAgo(t.due_at, true)}`
           : `due ${shortDate(t.due_at, false)} · ${daysAgo(t.due_at, false)} late`}
       </Pill>
     ) : (
       <Pill tone="now">
         {t.due_at
-          ? isAr ? `الاستحقاق ${shortDate(t.due_at, true)}` : `due ${shortDate(t.due_at, false)}`
+          ? isAr ? `آخر موعد للتسليم ${shortDate(t.due_at, true)}` : `due ${shortDate(t.due_at, false)}`
           : isAr ? 'بلا موعد' : 'no due date'}
       </Pill>
     )
@@ -1060,7 +1060,7 @@ export default function WorkPage() {
                   {it.task.waiting_since
                     ? waitingLabel(it.task, isAr)
                     : it.task.due_at
-                      ? (isAr ? `الاستحقاق ${dateTimeShort(it.task.due_at, true)}` : `due ${dateTimeShort(it.task.due_at, false)}`)
+                      ? (isAr ? `آخر موعد للتسليم ${dateTimeShort(it.task.due_at, true)}` : `due ${dateTimeShort(it.task.due_at, false)}`)
                       : (isAr ? 'بلا موعد' : 'no due date')}
                 </div>
                 <button
@@ -1147,7 +1147,7 @@ export default function WorkPage() {
                 <div className="m1-m">
                   {manualMeta(t)}
                   {t.due_at && !manualOverdue(t) && (
-                    <>{manualMeta(t) ? ' · ' : ''}{isAr ? 'الاستحقاق ' : 'due '}{shortDate(t.due_at, isAr)}</>
+                    <>{manualMeta(t) ? ' · ' : ''}{isAr ? 'آخر موعد للتسليم ' : 'due '}{shortDate(t.due_at, isAr)}</>
                   )}
                 </div>
                 {projectId && (

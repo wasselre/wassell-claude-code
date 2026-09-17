@@ -275,7 +275,7 @@ function StepRow({
                 <div className="v2">{roleLabel(step.role_key, isAr)}</div>
               </div>
               <div className="cell">
-                <div className="k2">{isAr ? 'الاستحقاق' : 'Due'}</div>
+                <div className="k2">{isAr ? 'آخر موعد للتسليم' : 'Due'}</div>
                 <div className="v2">{dueLabel(step.due_days, isAr)}</div>
               </div>
               <div className="cell">
@@ -355,7 +355,7 @@ function StepRow({
                 </select>
               </div>
               <div>
-                <div className="lbl" style={{ marginBottom: 5 }}>{isAr ? 'الاستحقاق بالأيام' : 'Days allowed'}</div>
+                <div className="lbl" style={{ marginBottom: 5 }}>{isAr ? 'مهلة التسليم بالأيام' : 'Days allowed'}</div>
                 <input
                   className="inp"
                   inputMode="numeric"

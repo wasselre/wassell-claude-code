@@ -142,7 +142,7 @@ export default function NewTaskModal({
     if (repeat === 'none') {
       if (!dueLocal) return isAr ? 'مهمة واحدة بلا موعد.' : 'A single task with no due date.';
       return isAr
-        ? `مهمة واحدة، الاستحقاق ${shortDate(new Date(dueLocal).toISOString(), true)}.`
+        ? `مهمة واحدة، آخر موعد للتسليم ${shortDate(new Date(dueLocal).toISOString(), true)}.`
         : `A single task, due ${shortDate(new Date(dueLocal).toISOString(), false)}.`;
     }
     const every = intervalN === 1
@@ -293,7 +293,7 @@ export default function NewTaskModal({
         </Field>
 
         {repeat === 'none' ? (
-          <Field label={isAr ? 'الاستحقاق' : 'Due'} hint={isAr ? 'اختياري' : 'optional'}>
+          <Field label={isAr ? 'آخر موعد للتسليم' : 'Due'} hint={isAr ? 'اختياري' : 'optional'}>
             <input
               type="datetime-local"
               className="inp"
@@ -302,7 +302,7 @@ export default function NewTaskModal({
             />
           </Field>
         ) : (
-          <Field label={isAr ? 'وقت الاستحقاق' : 'Due time'} hint={isAr ? 'بتوقيت الرياض' : 'Riyadh time'}>
+          <Field label={isAr ? 'وقت التسليم' : 'Due time'} hint={isAr ? 'بتوقيت الرياض' : 'Riyadh time'}>
             <input
               type="time"
               className="inp"

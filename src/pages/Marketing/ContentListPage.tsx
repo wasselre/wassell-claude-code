@@ -600,7 +600,7 @@ export default function ContentListPage() {
                     <th style={{ width: 132 }}>{isAr ? 'الخطوة الحالية' : 'Current step'}</th>
                     <th style={{ width: 76 }}>{isAr ? 'معاينة' : 'Preview'}</th>
                     <th style={{ width: 104 }}>{isAr ? 'لدى' : 'With'}</th>
-                    <th style={{ width: 88 }}>{isAr ? 'الاستحقاق' : 'Due'}</th>
+                    <th style={{ width: 88 }}>{isAr ? 'آخر موعد للتسليم' : 'Due'}</th>
                     <th style={{ width: 88 }}>{isAr ? 'النشر' : 'Publish'}</th>
                   </tr>
                 </thead>

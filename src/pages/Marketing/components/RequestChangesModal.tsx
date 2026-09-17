@@ -274,7 +274,7 @@ export default function RequestChangesModal({
           console.error('[marketing] revision due-date update failed', e);
           addToast(
             isAr
-              ? 'أُرسل طلب التعديلات، لكن تعذّر ضبط استحقاق التعديل — عدّله من شاشة الفريق.'
+              ? 'أُرسل طلب التعديلات، لكن تعذّر ضبط آخر موعد لتسليم التعديل.'
               : 'The change request went through, but the revision due date did not — adjust it from the team screen.',
             'error',
           );
@@ -432,7 +432,7 @@ export default function RequestChangesModal({
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 13 }}>
         <div>
           <div className="lbl" style={{ marginBottom: 6 }}>
-            {isAr ? 'استحقاق التعديل' : 'Revision due date'}
+            {isAr ? 'آخر موعد لتسليم التعديل' : 'Revision due date'}
           </div>
           <input
             type="date"
