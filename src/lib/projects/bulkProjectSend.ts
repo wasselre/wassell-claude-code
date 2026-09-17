@@ -107,7 +107,16 @@ export async function enqueueBulkProjectSend(
   let cursor = Date.now() + START_DELAY_MS;
 
   for (const item of plan) {
-    const base = cursor;
+    // Never schedule into the (near-)past. The cursor is advanced by a fixed
+    // per-item SPACING, but the enqueue loop below makes real, sequential
+    // network round-trips (create chat, send text, upload each photo). On a
+    // large or slow batch, wall-clock time can outrun the cursor and push
+    // later projects' deliver_at toward — or past — "now", which the backend
+    // then rejects ("deliverAt cannot be in the past"). Clamping each base to
+    // at least `now + START_DELAY_MS` keeps every message comfortably in the
+    // future no matter how slow the loop is; when the loop keeps up, the
+    // cursor stays ahead and the intended ~4s cadence is preserved untouched.
+    const base = Math.max(cursor, Date.now() + START_DELAY_MS);
     const baseIso = new Date(base).toISOString();
 
     // ── 1) TEXT — enqueue (never awaited for delivery). ──────────────────

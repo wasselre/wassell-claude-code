@@ -119,12 +119,12 @@ export default async function handler(req: Request): Promise<Response> {
     const caption = (body.caption ?? '').trim() || 'مرفق المستند الخاص بكم من وصل العقارية.';
 
     // Scheduled sends: validate the same way the messages proxy does — a
-    // valid ISO timestamp at least ~1 minute out.
+    // valid ISO timestamp that isn't in the past (30s grace for clock skew).
     const deliverAt = typeof body.deliverAt === 'string' && body.deliverAt ? body.deliverAt : undefined;
     if (deliverAt) {
       const t = new Date(deliverAt).getTime();
       if (Number.isNaN(t)) return jsonError(400, 'deliverAt must be a valid ISO 8601 datetime');
-      if (t <= Date.now() + 30_000) return jsonError(400, 'deliverAt must be at least 1 minute in the future');
+      if (t <= Date.now() - 30_000) return jsonError(400, 'deliverAt cannot be in the past');
     }
 
     try {

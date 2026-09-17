@@ -54,16 +54,27 @@ export default async function handler(req: Request): Promise<Response> {
     const reference    = typeof input.reference    === 'string' ? input.reference    : crypto.randomUUID();
     const deliverAt    = typeof input.deliverAt    === 'string' ? input.deliverAt    : undefined;
 
-    // Scheduled sends must be a valid future timestamp — a past deliverAt
-    // would either fire immediately or be rejected upstream; catch it here
-    // with a clear message instead.
+    // Scheduled sends must be a valid, not-in-the-past timestamp. We only
+    // reject a deliverAt that is genuinely in the PAST (with a 30s grace to
+    // absorb client/server clock skew) — NOT one merely a few seconds out.
+    // Rationale: the live provider (WAHA) delivers from our own
+    // `scheduled_whatsapp_jobs` queue on a ~3s poll, so a near-immediate
+    // deliverAt is legitimate and correct — the media path
+    // (`send-media-batch`) already enqueues into that same queue with no
+    // future-minimum. The old "at least 30s/1min out" rule was fine for the
+    // manual composer (its SchedulePopover UI enforces ≥1min itself) but it
+    // silently broke bulk PROJECT send, which uses a tight ~4s cadence: every
+    // text enqueue was refused with "deliverAt must be at least 1 minute in
+    // the future". Callers that legitimately want the future (bulk send)
+    // guarantee it client-side; this guard only catches an obviously-stale
+    // timestamp.
     if (deliverAt) {
       const t = new Date(deliverAt).getTime();
       if (Number.isNaN(t)) {
         return jsonError(400, 'deliverAt must be a valid ISO 8601 datetime');
       }
-      if (t <= Date.now() + 30_000) {
-        return jsonError(400, 'deliverAt must be at least 1 minute in the future');
+      if (t <= Date.now() - 30_000) {
+        return jsonError(400, 'deliverAt cannot be in the past');
       }
     }
 
