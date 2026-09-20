@@ -664,6 +664,26 @@ export default function MonthPage() {
           </div>
         )}
 
+        {data.confirm_incomplete && (
+          /*
+           * A CONFIRM THAT BEGAN AND DID NOT FINISH.
+           *
+           * `ensureCampaign` runs before `mos_campaign_plan_commit_month`, so
+           * a commit that fails leaves its campaigns behind with nothing in
+           * them. Until 2026-09-20 the page read those empty campaigns as a
+           * confirmed month: it reported the month approved, disabled the
+           * confirm button, and left the operator looking at a month with no
+           * tasks and no way to retry. Said out loud now, with the button
+           * live — the campaign refs are UNIQUE, so confirming again reuses
+           * them rather than making a second set.
+           */
+          <div className="notice bad" role="alert" style={{ marginBlockEnd: 14 }}>
+            {isAr
+              ? 'بدأ اعتماد سابق ولم يكتمل: الحملات أُنشئت ولم يُكتب أي محتوى. لم يُفقد شيء — اضغط «اعتماد الشهر» مرة أخرى ليكتمل على نفس الحملات.'
+              : 'A previous confirm started and did not finish: the campaigns were created but no content was written. Nothing is lost — press «confirm the month» again and it completes onto the same campaigns.'}
+          </div>
+        )}
+
         {!template.enabled && (
           <div className="notice" style={{ marginBlockEnd: 14 }}>
             {isAr

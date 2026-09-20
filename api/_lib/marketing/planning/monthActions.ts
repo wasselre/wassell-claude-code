@@ -461,6 +461,18 @@ export async function monthGet(ctx: PlanCtx): Promise<Response> {
     // not render because a reporting query failed is worse than a page with
     // one missing line, so a failure is logged and the line is simply absent.
     svc.rpc('mos_capacity_backlog'),
+    /*
+     * Does the month actually HAVE the work it claims?
+     *
+     * `ensureCampaign` runs BEFORE `mos_campaign_plan_commit_month`, so a
+     * commit that fails leaves the campaigns behind. On 2026-09-20 the commit
+     * hit the 8-second statement timeout and rolled back cleanly — and the
+     * page then read four empty campaigns as a confirmed month, disabled the
+     * confirm button, and left the operator looking at an approved month with
+     * no tasks in it and no way to retry.
+     *
+     * Campaigns are the month's ANCHOR, not its proof. Content is the proof.
+     */
   ]);
   if (backlogRes.error) {
     console.error('[month_get] mos_capacity_backlog failed',
@@ -478,7 +490,38 @@ export async function monthGet(ctx: PlanCtx): Promise<Response> {
   // `mos_campaigns.ref` is UNIQUE — so the month's own rows are the record of
   // what was chosen. Nothing needs a second "month selection" table.
   const organic = camps.campaigns.find((c) => c.ref === organicRef(month)) ?? null;
-  const confirmed = camps.campaigns.length > 0;
+
+  /*
+   * A MONTH IS CONFIRMED WHEN IT HAS CONTENT, NOT WHEN IT HAS CAMPAIGNS.
+   *
+   * `ensureCampaign` runs BEFORE `mos_campaign_plan_commit_month`, so a commit
+   * that fails leaves its campaigns behind. On 2026-09-20 the commit hit the
+   * 8-second statement timeout and rolled back cleanly — and this line then
+   * read four empty campaigns as a confirmed month. The page reported the
+   * month approved, disabled «اعتماد الشهر», and left the operator staring at
+   * a month with no tasks and no way to try again.
+   *
+   * Campaigns are the month's anchor (their refs carry the chosen projects and
+   * the ref is UNIQUE, which is what makes a retry reuse them rather than
+   * duplicate them). They are not evidence that anything was written.
+   */
+  let contentCount = 0;
+  if (camps.campaigns.length > 0) {
+    const c = await svc.from('mos_content_rows')
+      .select('id', { count: 'exact', head: true })
+      .in('campaign_id', camps.campaigns.map((x) => x.id));
+    if (c.error) {
+      // Fail toward RETRYABLE: reporting a month as draft costs a re-confirm,
+      // which is idempotent. Reporting it as confirmed when it is empty locks
+      // the operator out, which is the bug being fixed.
+      console.error('[month_get] content count failed', c.error.code, c.error.message);
+    } else {
+      contentCount = c.count ?? 0;
+    }
+  }
+  const confirmed = camps.campaigns.length > 0 && contentCount > 0;
+  /** Campaigns without content: a confirm that started and did not finish. */
+  const confirmIncomplete = camps.campaigns.length > 0 && contentCount === 0;
 
   const chosenIds = confirmed
     ? slotOrder(camps.campaigns, month)
@@ -493,6 +536,13 @@ export async function monthGet(ctx: PlanCtx): Promise<Response> {
     template,
     geometry,
     state: confirmed ? 'confirmed' : 'draft',
+    /*
+     * TRUE when campaigns exist but nothing was materialised — a confirm that
+     * began and did not finish. The month is still fully re-confirmable (the
+     * campaign refs are UNIQUE and `ensureCampaign` finds rather than
+     * duplicates), so the page says what happened and leaves the button live.
+     */
+    confirm_incomplete: confirmIncomplete,
     // A month a STRETCHED month already runs through is not planned again: the
     // owner's plan books those weeks, and a second plan over them would
     // double-book every designer day without either one seeing the other.

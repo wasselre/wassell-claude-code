@@ -3793,6 +3793,11 @@ export interface MosMonthGet {
   state: 'draft' | 'confirmed';
   /** `YYYY-MM` of the stretched month that already plans these weeks, or `null`. */
   covered_by: string | null;
+  /**
+   * Campaigns exist but NO content was materialised — a confirm that began and
+   * did not finish. The month is still fully re-confirmable.
+   */
+  confirm_incomplete: boolean;
   campaigns: MosMonthCampaign[];
   organic_campaign_id: string | null;
   selection: Array<{
