@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Wallet, Percent, Users, TrendingUp, Clock, MapPin, CalendarDays,
   Laptop, CalendarCheck, XCircle, Lock, Building2,
+  Lightbulb, Megaphone, Settings2, UserCheck, ChevronDown,
 } from 'lucide-react';
 import { ProgressRail } from './hireUi';
 
@@ -70,6 +71,9 @@ export default function HireOfferPage() {
           <ExampleRow label="حصتك بنسبة 15%" value="1,800 ريال" strong />
           <p className="mt-2 text-xs text-charcoal/55">رقم 12,000 ريال متوسط تقريبي للتوضيح، ويختلف من صفقة لأخرى.</p>
         </div>
+
+        {/* 1b · why the base salary is modest — the philosophy */}
+        <WhyBaseSalary />
 
         {/* 2 · interactive income graph */}
         <h2 className="mt-9 text-center text-xl font-bold sm:text-2xl" style={{ color: '#4A2C2A' }}>
@@ -155,6 +159,65 @@ function CompCard({ icon, value, label, small }: { icon: ReactNode; value: strin
       <span className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-copper/10 text-copper">{icon}</span>
       <div className={`font-extrabold text-chocolate ${small ? 'text-lg' : 'text-2xl'}`}>{value}</div>
       <div className="mt-1 text-sm text-charcoal/60">{label}</div>
+    </div>
+  );
+}
+
+// ── why the base salary is modest — the philosophy panel ───────────────────────
+function WhyBaseSalary() {
+  return (
+    <section className="mt-6 rounded-3xl border border-sand/45 p-5 shadow-sm" style={{ background: 'linear-gradient(180deg,#FFFDFA 0%,#FBF3E6 100%)' }}>
+      <div className="mb-3.5 flex items-center gap-2.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-copper/10 text-copper"><Lightbulb size={20} /></span>
+        <h3 className="text-lg font-bold leading-snug text-chocolate sm:text-xl">لماذا الراتب الثابت أقل مما قد تتوقّع؟</h3>
+      </div>
+
+      <p className="mb-3 text-sm leading-loose text-charcoal sm:text-base">
+        تذكّر العملاء الذين تواصلوا معك سابقًا، ولم يناسبهم المشروع الذي كنت تبيعه. تخيّل لو كانت أمامك خيارات أوسع تناسب اختلاف ميزانياتهم ومواقعهم واحتياجاتهم.{' '}
+        <span className="font-bold text-terracotta">كم عميلًا كان بإمكانك الاستمرار معه؟ وكم فرصة بيع كان يمكن أن تستفيد منها؟</span>
+      </p>
+
+      <p className="mb-3 text-sm leading-loose text-charcoal sm:text-base">
+        وتخيّل لو أن الوقت الذي قضيته في البحث عن الملفات، وتقليب محادثات واتساب، وطلب مخطط وحدة أو معلومة من مديرك، كان وقتًا تقضيه في التواصل مع العملاء وإتمام البيع.
+      </p>
+
+      <p className="mb-1 text-sm leading-loose text-charcoal sm:text-base">
+        لو استطعت بهذه الإمكانات تحقيق <span className="font-bold text-terracotta">أربعة أو خمسة أضعاف مبيعاتك السابقة</span>، كيف سينعكس ذلك على دخلك؟
+      </p>
+
+      <div className="my-4 rounded-2xl border border-sand/40 bg-cream/60 p-3.5">
+        <p className="mb-3 text-center text-sm font-bold leading-relaxed text-chocolate">
+          ضمن فريق وصل، ستتابع 300 مهتم على الأقل شهريًا، وتعمل على مبيعات أكثر من 100 مشروع
+        </p>
+        <div className="flex flex-col gap-2">
+          <ActorRow icon={<Megaphone size={16} />} lead="فريق التسويق" rest="يجذب العملاء" />
+          <div className="text-center leading-none text-gold/70"><ChevronDown size={15} className="mx-auto" /></div>
+          <ActorRow icon={<Settings2 size={16} />} lead="النظام" rest="يجهّز المعلومات والترشيحات وينظّم المتابعات" />
+          <div className="text-center leading-none text-gold/70"><ChevronDown size={15} className="mx-auto" /></div>
+          <ActorRow icon={<UserCheck size={16} />} lead="أنت" rest="تبني العلاقة مع العميل وتقود عملية البيع" highlight />
+        </div>
+      </div>
+
+      <p className="mb-3.5 text-center text-sm leading-loose text-charcoal sm:text-base">
+        هذا يتيح لك تركيز وقتك وخبرتك على مهمتك الأساسية: فهم العميل، وبناء ثقته، وإتمام البيع.
+      </p>
+
+      <div className="border-r-[3px] border-copper bg-copper/5 py-3.5 pe-3.5 ps-3" style={{ borderRadius: '0 14px 14px 0' }}>
+        <p className="text-sm leading-loose text-charcoal">
+          وعلى هذا الأساس صُمّم عرضنا: <b className="text-chocolate">عمولات المبيعات هي المصدر الأساسي المستهدف لدخلك، والراتب الثابت جزء مساند.</b> تتكامل جهودنا كفريق لتسهيل عملك في البيع، وتنعكس المبيعات التي تحققها على دخلك من العمولات.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function ActorRow({ icon, lead, rest, highlight }: { icon: ReactNode; lead: string; rest: string; highlight?: boolean }) {
+  return (
+    <div className={`flex items-center gap-2.5 rounded-xl bg-white p-2.5 ${highlight ? 'border-[1.5px] border-copper/50' : 'border border-sand/40'}`}>
+      <span className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] ${highlight ? 'bg-copper text-white' : 'bg-copper/10 text-copper'}`}>{icon}</span>
+      <span className="text-[13.5px] leading-relaxed text-charcoal/85">
+        <b className={highlight ? 'text-terracotta' : 'text-chocolate'}>{lead}</b> {rest}
+      </span>
     </div>
   );
 }

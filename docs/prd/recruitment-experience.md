@@ -32,7 +32,8 @@ Real-estate salespeople normally can only carry one or two projects because of h
 - **Reuses the real design system** (copper/sand/charcoal tokens, Amiri, `.card`/`.form-input`/`.badge`, pure `Button`/`Badge`); store-bound screens are transcribed as static markup.
 - **The seven steps:** (1) active call + preference form; (2) recommendation cards; (3) project detail (hero + KPIs + tabs); (4) WhatsApp project message send; (5) units table + floor plan + send; (6) auto-created follow-up task; (7) client 360 + AI-style summary.
 - **Dominant video hand-off.** The page ends with a large video-thumbnail block (oversized play button) plus a big «شاهد طريقة العمل» button → the (stubbed) video stage.
-- **Off-plan always surfaced** («على الخارطة» pill); **no salary/commission anywhere** (that comes later in the flow).
+- **Off-plan always surfaced** («على الخارطة» pill); **no salary/commission on the intro page** (that comes later, in the offer stage).
+- **Offer stage frames pay honestly:** the fixed salary is presented as a range and immediately followed by the «لماذا الراتب الثابت أقل مما قد تتوقّع؟» panel, which positions commission as the primary targeted income and the salary as supporting — grounded in the marketing/system/salesperson division of labour, not a benefits pitch. Unresolved business terms (commission payout timing, remote-work eligibility, health insurance) are still deliberately absent.
 
 ## User flows
 1. **Main happy path:** candidate opens their invitation link → reads the opening copy → scrolls the seven product steps → reads the closing statement → taps **شاهد طريقة العمل** → routed to the video stage.
@@ -46,7 +47,7 @@ Real-estate salespeople normally can only carry one or two projects because of h
 | File | What it does |
 |---|---|
 | `src/pages/Hire/HireExperiencePage.tsx` | Stage 1 page shell: the entry `ConfirmGate` (resolve token → confirm name/phone), sticky `ProgressRail`, the `OpeningSummary`, the seven steps as one connected journey, closing statement, dominant video CTA |
-| `src/pages/Hire/HireOfferPage.tsx` | Stage 4 — the offer: compensation cards, the interactive income chart (`IncomeChart`, self-contained SVG, touch + keyboard), the year-one target, working arrangements, closing + interested/decline actions |
+| `src/pages/Hire/HireOfferPage.tsx` | Stage 4 — the offer: compensation cards (fixed salary shown as a **3,000 – 5,000 ريال** range; income model still computes at the 3,000 base), a "why the base salary is modest" philosophy panel (`WhyBaseSalary` — commission-is-the-target story with a three-actor flow strip: التسويق يجذب → النظام يجهّز → أنت تبني وتُتمّ), the interactive income chart (`IncomeChart`, self-contained SVG, touch + keyboard), the year-one target, working arrangements, closing + interested/decline actions |
 | `src/pages/Hire/HireDecisionPage.tsx` | Stage 5 — `/book` (records interested → offer_accepted) and `/decline` (reason → offer_rejected) |
 | `src/lib/careers/experience.ts` | Browser client for the link: `resolveInvite` (confirm gate) + `postExperience` (confirm/interested/declined); fails soft to demo |
 | `api/careers/experience.ts` | Public, token-authed, rate-limited: GET resolve name/phone; POST confirm / interested / declined → updates `job_applications` |
