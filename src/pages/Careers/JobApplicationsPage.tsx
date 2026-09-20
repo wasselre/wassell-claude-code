@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Loader2, Search, FileText, Download, Play, X, RefreshCw, Phone, Clock,
   Megaphone, AlertTriangle, Briefcase, StickyNote, HandCoins, Save, Calculator, FileDown,
-  Send, Copy, CheckCircle2, XCircle, MessageCircle, Link2, Settings, Eye,
+  Send, Copy, MessageCircle, Link2, Settings, Eye, Check,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
@@ -103,6 +103,67 @@ const declineCategoryLabel = (c: string, isAr: boolean) =>
   c === 'salary' ? (isAr ? 'الراتب' : 'Salary')
   : c === 'commission' ? (isAr ? 'العمولة' : 'Commission')
   : (isAr ? 'سبب آخر' : 'Other');
+
+/** This applicant's journey through the experience link: sent → opened → decision. */
+function ExperienceTimeline({ app, isAr }: { app: JobApplication; isAr: boolean }) {
+  const sent = !!app.offer_sent_at || !!app.invite_token;
+  if (!sent) return null;
+  const opened = !!app.experience_confirmed_at;
+  const decided = !!app.experience_decision;
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '');
+
+  let head: string; let headColor: string;
+  if (decided) {
+    if (app.experience_decision === 'interested') { head = isAr ? 'أبدى اهتمامه ويريد المقابلة' : 'Interested — wants an interview'; headColor = '#059669'; }
+    else { head = isAr ? 'اعتذر عن العرض' : 'Declined the offer'; headColor = '#B45309'; }
+  } else if (opened) { head = isAr ? 'فتح الرابط ولم يُكمل بعد' : 'Opened, not finished yet'; headColor = '#D97706'; }
+  else { head = isAr ? 'أُرسل الرابط · بانتظار فتحه' : 'Link sent · awaiting open'; headColor = '#0EA5E9'; }
+
+  const decisionLabel = decided
+    ? (app.experience_decision === 'interested' ? (isAr ? 'مهتم — يريد المقابلة' : 'Interested') : (isAr ? 'اعتذر عن العرض' : 'Declined'))
+    : (isAr ? 'القرار' : 'Decision');
+
+  const steps: { label: string; done: boolean; at: string | null; pending: string }[] = [
+    { label: isAr ? 'أُرسل الرابط' : 'Link sent', done: sent, at: app.offer_sent_at, pending: '' },
+    { label: isAr ? 'فتح الرابط وأكّد بياناته' : 'Opened & confirmed', done: opened, at: app.experience_confirmed_at, pending: isAr ? 'لم يُفتح بعد' : 'Not opened yet' },
+    { label: decisionLabel, done: decided, at: app.experience_decided_at, pending: isAr ? 'لم يتّخذ قرارًا بعد' : 'No decision yet' },
+  ];
+
+  return (
+    <div className="mt-3 rounded-lg bg-cream/40 border border-sand/30 p-3">
+      <div className="mb-2.5 text-sm font-bold" style={{ color: headColor }}>{isAr ? 'الحالة: ' : 'Status: '}{head}</div>
+      <ol className="space-y-2.5">
+        {steps.map((s, i) => (
+          <li key={i} className="flex items-start gap-2.5">
+            <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${s.done ? 'bg-emerald-500 text-white' : 'border-2 border-sand bg-white'}`}>
+              {s.done && <Check size={12} />}
+            </span>
+            <div className="min-w-0">
+              <div className={`text-sm font-semibold ${s.done ? 'text-charcoal' : 'text-charcoal/45'}`}>{s.label}</div>
+              {s.done ? (s.at && <div className="text-[11px] text-charcoal/45" dir={isAr ? 'rtl' : 'ltr'}>{when(s.at)}</div>)
+                      : <div className="text-[11px] text-charcoal/40">{s.pending}</div>}
+            </div>
+          </li>
+        ))}
+      </ol>
+      {app.experience_decision === 'declined' && (app.experience_decline_category || app.experience_decline_reason) && (
+        <div className="mt-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-[13px] text-rose-800">
+          {app.experience_decline_category && (
+            <div><span className="font-bold">{isAr ? 'السبب: ' : 'Reason: '}</span>{declineCategoryLabel(app.experience_decline_category, isAr)}</div>
+          )}
+          {app.experience_decline_reason && (
+            <div className="mt-0.5">
+              {app.experience_decline_category === 'salary' ? (isAr ? 'الراتب المناسب له: ' : 'Desired salary: ')
+                : app.experience_decline_category === 'commission' ? (isAr ? 'العمولة المناسبة له: ' : 'Desired commission: ')
+                : ''}
+              <span className="font-semibold">{app.experience_decline_reason}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** One tile in the offer-experience funnel. */
 function FunnelStat({ n, label, color }: { n: number; label: string; color: string }) {
@@ -781,34 +842,7 @@ function DetailDrawer({
               </div>
             )}
 
-            {app.experience_confirmed_at && (
-              <p className="mt-2 text-[11px] text-charcoal/50 flex items-center gap-1.5"><CheckCircle2 size={12} className="text-emerald-600" /> {isAr ? 'أكّد بياناته' : 'Confirmed details'} · {fmtDate(app.experience_confirmed_at)}</p>
-            )}
-
-            {app.experience_decision === 'interested' && (
-              <div className="mt-3 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800 flex items-center gap-2">
-                <CheckCircle2 size={15} /> {isAr ? 'مهتم — يريد المقابلة' : 'Interested — wants an interview'}
-              </div>
-            )}
-            {app.experience_decision === 'declined' && (
-              <div className="mt-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-800">
-                <div className="flex items-center gap-2 font-bold"><XCircle size={15} /> {isAr ? 'العرض غير مناسب له' : 'Not interested'}</div>
-                {app.experience_decline_category && (
-                  <p className="mt-1 text-[13px]">
-                    <span className="font-semibold">{isAr ? 'السبب:' : 'Reason:'}</span>{' '}
-                    {declineCategoryLabel(app.experience_decline_category, isAr)}
-                    {app.experience_decline_reason && (
-                      <> — {app.experience_decline_category === 'salary' ? (isAr ? 'الراتب المناسب له:' : 'Desired salary:')
-                        : app.experience_decline_category === 'commission' ? (isAr ? 'العمولة المناسبة له:' : 'Desired commission:')
-                        : ''} {app.experience_decline_reason}</>
-                    )}
-                  </p>
-                )}
-                {!app.experience_decline_category && app.experience_decline_reason && (
-                  <p className="mt-1 text-[13px] leading-relaxed whitespace-pre-wrap">{app.experience_decline_reason}</p>
-                )}
-              </div>
-            )}
+            <ExperienceTimeline app={app} isAr={isAr} />
           </div>
 
           {/* Files */}
