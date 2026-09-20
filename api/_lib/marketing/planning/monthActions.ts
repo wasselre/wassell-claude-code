@@ -523,7 +523,23 @@ export async function monthGet(ctx: PlanCtx): Promise<Response> {
   /** Campaigns without content: a confirm that started and did not finish. */
   const confirmIncomplete = camps.campaigns.length > 0 && contentCount === 0;
 
-  const chosenIds = confirmed
+  /*
+   * WHAT THE OPERATOR CHOSE COMES FROM THE CAMPAIGNS WHENEVER THERE ARE ANY.
+   *
+   * This used to key off `confirmed`, and on 2026-09-20 that destroyed a real
+   * selection. The sequence: a confirm timed out leaving campaigns and no
+   * content; `confirmed` was then correctly reported false; this line fell
+   * through to the RANKING's top three — a suggestion — and the page showed
+   * that suggestion in the slots as though the operator had picked it. They
+   * pressed confirm and the month committed three projects they had never
+   * chosen, built three Meta campaigns for them, and opened 23 tasks.
+   *
+   * The campaigns are the RECORD of the choice: each paid ref carries its
+   * project id and the ref is UNIQUE. A month that has them has been chosen,
+   * whether or not the commit that followed finished. The ranking is only
+   * ever a suggestion for a month nobody has touched.
+   */
+  const chosenIds = camps.campaigns.length > 0
     ? slotOrder(camps.campaigns, month)
     : ranking.slice(0, template.projectsPerMonth).map((r) => String(r.project_id ?? '')).filter(Boolean);
 

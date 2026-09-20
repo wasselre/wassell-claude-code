@@ -140,6 +140,18 @@ export function unscheduledFact(count: number, days: string[], isAr: boolean): M
   };
 }
 
+/**
+ * «شهرين», not «٢ أشهر».
+ *
+ * Arabic has a dual form, and this string is only ever rendered when the
+ * stretch is more than one month — so 2 is the COMMON value, not an edge case.
+ */
+function monthsLabel(n: number, isAr: boolean): string {
+  if (!isAr) return n === 1 ? 'one month' : `${num(n, false)} months`;
+  if (n === 2) return 'شهرين';
+  return n >= 3 && n <= 10 ? `${num(n, true)} أشهر` : `${num(n, true)} شهرًا`;
+}
+
 /** Money, with the two answers that are ever right for a stretched month. */
 export function budgetFact(
   opts: {
@@ -161,19 +173,38 @@ export function budgetFact(
     tone: stretched ? 'warn' : 'ok',
     detail: stretched
       ? (isAr
-        ? `${money(perProject, true)} لكل مشروع — رقم شهري واحد على مدة ${num(monthsCovered, true)} أشهر`
-        : `${money(perProject, false)} a project — one month's figure across ${num(monthsCovered, false)} months`)
+        ? `${money(perProject, true)} لكل مشروع × ${num(running, true)} — رقم شهري واحد على مدة ${monthsLabel(monthsCovered, true)}`
+        : `${money(perProject, false)} a project × ${num(running, false)} — one month's figure across ${monthsLabel(monthsCovered, false)}`)
       : (isAr
         ? `${money(perProject, true)} لكل مشروع × ${num(running, true)}`
         : `${money(perProject, false)} a project × ${num(running, false)}`),
+    /*
+     * THE BUTTONS SPEAK THE SAME CURRENCY AS THE FIGURE ABOVE THEM.
+     *
+     * They used to be labelled with the PER-PROJECT number («المدة كلها ·
+     * ٤٬٠٠٠») while the card's headline was the TOTAL across the running
+     * projects (٦٬٠٠٠) — two scales side by side, so the second button read as
+     * "the whole stretch costs 4,000" when the whole stretch at that setting
+     * is 12,000. Reported by the operator on 2026-09-20: "the entire period is
+     * not 4000". Each button now shows the TOTAL it produces; the per-project
+     * figure it actually sets is on the detail line above.
+     */
     action: canEdit && stretched ? (
       <PickOne
         value={perProject}
         busy={busy}
         onPick={onSet}
         options={[
-          { v: perProject, label: isAr ? 'شهر واحد' : 'One month' },
-          { v: full, label: isAr ? `المدة كلها · ${money(full, true)}` : `Whole stretch · ${money(full, false)}` },
+          {
+            v: perProject,
+            label: isAr ? `شهر واحد · ${money(budgetTotal, true)}` : `One month · ${money(budgetTotal, false)}`,
+          },
+          {
+            v: full,
+            label: isAr
+              ? `${monthsLabel(monthsCovered, true)} · ${money(budgetTotal * monthsCovered, true)}`
+              : `${monthsLabel(monthsCovered, false)} · ${money(budgetTotal * monthsCovered, false)}`,
+          },
         ].filter((o, i, a) => i === 0 || o.v !== a[0]!.v)}
       />
     ) : undefined,
