@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 import {
   compileMonth, monthGeometry, buildMonthRows, parseMonthTemplate,
   organicPlanInput, paidPlanInput, monthProjectSlots, monthSelectionConflicts,
-  monthStartFrom, monthLeadFloors,
+  monthStartFrom, monthLeadFloors, monthCoveredBy,
   MONTH_TEMPLATE_DEFAULTS, WEEKS_PER_MONTH, type MonthProject, type MonthTemplate,
 } from '../../../../../api/_lib/marketing/planning/monthCompiler';
 import {
@@ -21,7 +21,7 @@ import {
 } from '../../../../../api/_lib/marketing/planning/actions';
 import { monthGrid } from '../../../../../api/_lib/marketing/planning/monthActions';
 import { rowPublishingFromTemplateRow } from '../../../../../api/_lib/marketing/planning/snapshot';
-import { toInstant, weekdayOf } from '../calendar';
+import { addDays, toInstant, weekdayOf } from '../calendar';
 import { planCampaign, DEFAULT_RULES, type RuleSet } from '../plan';
 import { DEFAULT_PUBLISHING, DEFAULT_ROW_PUBLISHING } from '../releases';
 import { conflictBlocksPlan, conflictBlocksConfirm, type PlanConflict, type PlanInput, type WorkloadSnapshot } from '../types';
@@ -70,6 +70,109 @@ describe('the month template, read from its row', () => {
 
   it('falls back to the standing month when the row is missing', () => {
     expect(parseMonthTemplate(null)).toEqual(MONTH_TEMPLATE_DEFAULTS);
+  });
+});
+
+/*
+ * September 2026 runs THROUGH October as one plan, and its first ad batch is
+ * the Tuesday — the operator's two exceptions for the first real month.
+ * Both are `month_starts` DATA, so these tests are about the mechanism, not
+ * about September: any month can be stretched or re-anchored the same way.
+ */
+describe('a stretched month — September 2026 through October', () => {
+  const STRETCH: MonthTemplate = {
+    ...T,
+    monthStarts: {
+      '2026-09': {
+        organicFrom: '2026-09-22',
+        paidFrom: '2026-09-22',
+        adsLiveWhenReady: true,
+        through: '2026-10',
+      },
+    },
+  };
+
+  it('parses `through` off the row, and drops one that is not a later month', () => {
+    const ok = parseMonthTemplate({
+      month_starts: { '2026-09': { through: '2026-10', paid_from: '2026-09-22' } },
+    });
+    expect(ok.monthStarts['2026-09']?.through).toBe('2026-10');
+    expect(ok.monthStarts['2026-09']?.paidFrom).toBe('2026-09-22');
+    for (const bad of ['2026-09', '2026-08', 'soon', '2026-10-01']) {
+      const t = parseMonthTemplate({ month_starts: { '2026-09': { through: bad } } });
+      expect(t.monthStarts['2026-09']?.through).toBeUndefined();
+    }
+  });
+
+  it('runs EIGHT contiguous weeks, Sun 6 Sep → Sat 31 Oct, with no gap', () => {
+    const geo = monthGeometry('2026-09', STRETCH, CAL, null);
+    expect(geo.weeks).toHaveLength(8);
+    expect(geo.weeks[0]!.start).toBe('2026-09-06');
+    expect(geo.weeks[7]!.end).toBe('2026-10-31');
+    // Contiguous: every week starts the day after the previous one ended. This
+    // is the property that makes "one plan over two months" true rather than
+    // two plans with a seam.
+    for (let i = 1; i < geo.weeks.length; i += 1) {
+      expect(geo.weeks[i]!.start).toBe(addDays(geo.weeks[i - 1]!.end, 1));
+    }
+    expect(geo.monthsCovered).toBe(2);
+    expect(geo.through).toBe('2026-10');
+    // October's own cycle end — the stretch reaches exactly that far.
+    expect(monthGeometry('2026-10', T, CAL, null).lastPostingDay).toBe('2026-10-31');
+  });
+
+  it('anchors the weekly ad rhythm on the operator Tuesday, not the Sunday', () => {
+    const geo = monthGeometry('2026-09', STRETCH, CAL, '2026-09-20');
+    expect(geo.paidBatchDays[0]).toBe('2026-09-22');
+    expect(geo.paidBatchDays).toEqual([
+      '2026-09-22', '2026-09-29', '2026-10-06', '2026-10-13', '2026-10-20', '2026-10-27',
+    ]);
+    // Every batch is a Tuesday: the rhythm follows the anchor.
+    expect(new Set(geo.paidBatchDays.map(weekdayOf))).toEqual(new Set([2]));
+    // The engine counts sevens from `paidBatchDays[0]` (`cycleDays: 7`), so the
+    // grid and the plan MUST agree on the anchor.
+    expect(paidPlanInput(geo, STRETCH, PROJECT_A).rangeStart).toBe('2026-09-22');
+    expect(paidPlanInput(geo, STRETCH, PROJECT_A).rangeEnd).toBe('2026-10-31');
+  });
+
+  it('runs the ad campaign over the whole window, not `campaign_length_days`', () => {
+    const geo = monthGeometry('2026-09', STRETCH, CAL, '2026-09-20');
+    expect(geo.campaignEndsOn).toBe('2026-10-31');
+    // Unstretched, the length column still rules.
+    expect(monthGeometry('2026-10', T, CAL, null).campaignEndsOn)
+      .toBe(addDays('2026-10-04', T.campaignLengthDays - 1));
+  });
+
+  it('publishes organically from the operator Tuesday through 31 October', () => {
+    const geo = monthGeometry('2026-09', STRETCH, CAL, '2026-09-20');
+    expect(geo.firstPostingDay).toBe('2026-09-22');
+    expect(geo.lastPostingDay).toBe('2026-10-31');
+    expect(geo.postingDays).toHaveLength(23);
+    expect(geo.postingDays).not.toContain('2026-09-20');
+    // Sunday 20 is dropped for LEAD, not for the operator start: it is the day
+    // the month is compiled from, so it has no working day of lead at all. The
+    // operator's Tuesday and the arithmetic agree here, and the reason reported
+    // is the one that actually bit.
+    expect(geo.skippedPostingDays.find((d) => d.day === '2026-09-20')?.reason).toBe('lead');
+  });
+
+  it('hands October to September rather than letting it be planned twice', () => {
+    const starts = STRETCH.monthStarts;
+    expect(monthCoveredBy('2026-10', starts)).toBe('2026-09');
+    expect(monthCoveredBy('2026-09', starts)).toBeNull();
+    expect(monthCoveredBy('2026-11', starts)).toBeNull();
+    expect(monthCoveredBy('2026-08', starts)).toBeNull();
+  });
+
+  it('changes no money: the budget stays the monthly figure, and says so', () => {
+    const geo = monthGeometry('2026-09', STRETCH, CAL, '2026-09-20');
+    const out = compileMonth({
+      month: '2026-09', template: STRETCH, projects: [PROJECT_A, PROJECT_B, PROJECT_C],
+      snapshot: snapshot('2026-09-20'), rules: RULES, startFrom: '2026-09-20',
+    });
+    expect(out.summary.monthsCovered).toBe(2);
+    expect(out.summary.budgetTotal).toBe(STRETCH.budgetPerProject * 3);
+    expect(geo.monthsCovered).toBe(2);
   });
 });
 

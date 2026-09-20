@@ -120,6 +120,21 @@ export interface MonthStart {
   paidFrom?: string;
   /** The Meta campaign + ad sets go ACTIVE when built: each ad runs the moment it is approved. */
   adsLiveWhenReady?: boolean;
+  /**
+   * `YYYY-MM` — run this month's cycle THROUGH the end of that later month, as
+   * one continuous plan.
+   *
+   * The cycle is normally four whole weeks. `through` extends it to every whole
+   * week from this month's first Sunday up to and including the end of the
+   * named month's own cycle, so September 2026 `through` October 2026 is eight
+   * weeks, 6 Sep → 31 Oct, with no gap and no second plan. The later month is
+   * then NOT planned separately — `monthCoveredBy` says which month owns it.
+   *
+   * It does NOT touch money. `budget_per_project` stays a monthly figure over a
+   * longer window; `summary.monthsCovered` reports the stretch so the operator
+   * can raise it. Prorating it here would be the app spending on their behalf.
+   */
+  through?: string;
 }
 
 export const MONTH_TEMPLATE_DEFAULTS: MonthTemplate = {
@@ -148,6 +163,54 @@ export const WEEKS_PER_MONTH = 4;
 
 /** Weeks start on Sunday, matching the weekday numbering (0 = Sunday). */
 const WEEK_START: number = 0;
+
+/** The first Sunday on or after the 1st — where a month's own cycle begins. */
+function firstSundayOf(month: string): string {
+  let s = `${month}-01`;
+  for (let i = 0; i < 7 && weekdayOf(s) !== WEEK_START; i += 1) s = addDays(s, 1);
+  return s;
+}
+
+/**
+ * Whole weeks from `firstSunday` through the END of `throughMonth`'s own cycle.
+ *
+ * Cycles are contiguous by construction — a month's four weeks end on the
+ * Saturday before the next month's first Sunday — so the count is exact and
+ * there is never a gap week between the two halves of a stretched month.
+ * Floored at `WEEKS_PER_MONTH`, so a bad `through` can only ever give the
+ * ordinary month back.
+ */
+function weeksThrough(firstSunday: string, throughMonth: string): number {
+  const end = addDays(firstSundayOf(throughMonth), WEEKS_PER_MONTH * 7 - 1);
+  return Math.max(WEEKS_PER_MONTH, Math.ceil((daysBetween(firstSunday, end) + 1) / 7));
+}
+
+/** Whole months from `month` through `through`, inclusive. `null` → 1. */
+function monthsCoveredBy(month: string, through: string | null): number {
+  if (!through) return 1;
+  const ordinal = (m: string): number => {
+    const [y, mo] = m.split('-');
+    return Number(y) * 12 + Number(mo);
+  };
+  return Math.max(1, ordinal(through) - ordinal(month) + 1);
+}
+
+/**
+ * The month whose plan COVERS `month`, or `null` when it plans itself.
+ *
+ * A stretched month owns the later months it runs through, so those must not be
+ * planned a second time — two plans over the same weeks would double-book every
+ * designer day and neither would see the other.
+ */
+export function monthCoveredBy(
+  month: string, monthStarts: Record<string, MonthStart>,
+): string | null {
+  const m = month.trim().slice(0, 7);
+  for (const [owner, start] of Object.entries(monthStarts)) {
+    if (start.through && owner < m && m <= start.through) return owner;
+  }
+  return null;
+}
 
 const asNum = (v: unknown, fallback: number): number => {
   const n = typeof v === 'number' ? v : Number(v);
@@ -208,10 +271,16 @@ export function parseMonthStarts(v: unknown): Record<string, MonthStart> {
     const o = raw as Record<string, unknown>;
     const day = (x: unknown): string | undefined =>
       (typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : undefined);
+    // A `through` that is not a later month is dropped, never clamped: a
+    // silently-ignored extension would plan one month while the operator reads
+    // two off the same row.
+    const thru = typeof o.through === 'string' && /^\d{4}-\d{2}$/.test(o.through) && o.through > month
+      ? o.through : undefined;
     out[month] = {
       organicFrom: day(o.organic_from),
       paidFrom: day(o.paid_from),
       adsLiveWhenReady: o.ads_live_when_ready === true,
+      through: thru,
     };
   }
   return out;
@@ -357,7 +426,10 @@ export interface MonthSkippedDay {
 export interface MonthGeometry {
   /** `YYYY-MM`. */
   month: string;
-  /** Exactly `WEEKS_PER_MONTH` whole weeks, Sunday → Saturday. */
+  /**
+   * Whole weeks, Sunday → Saturday: `WEEKS_PER_MONTH` normally, and every week
+   * through the end of `through`'s own cycle when the month is stretched.
+   */
   weeks: MonthWeek[];
   /** Every REMAINING organic posting day, ascending. */
   postingDays: string[];
@@ -369,8 +441,12 @@ export interface MonthGeometry {
   productionStart: string;
   /** `safety_margin_days` CALENDAR days before that: «حدّد مشاريع الشهر القادم». */
   nextMonthReminderOn: string;
-  /** The Meta campaign's last day, from `campaign_length_days`. */
+  /** The Meta campaign's last day, from `campaign_length_days` — or, for a stretched month, the window's end. */
   campaignEndsOn: string;
+  /** `YYYY-MM` this month's cycle runs THROUGH, or `null` for the ordinary four weeks. */
+  through: string | null;
+  /** Calendar months this plan covers: 1 normally, 2 for September 2026 through October. */
+  monthsCovered: number;
   /** The day the month was ASKED to start from, or `null` for the whole cycle. */
   startedFrom: string | null;
   /**
@@ -470,11 +546,19 @@ export function monthGeometry(
     throw new Error(`monthCompiler: bad startFrom "${startFrom}" (expected YYYY-MM-DD)`);
   }
   const first = `${month.trim()}-01`;
-  let sunday = first;
-  for (let i = 0; i < 7 && weekdayOf(sunday) !== WEEK_START; i += 1) sunday = addDays(sunday, 1);
+  const sunday = firstSundayOf(month.trim());
+
+  // The operator's one-off starts for THIS month, read before the geometry is
+  // drawn: `through` changes how many weeks there are, and `paid_from` changes
+  // where the weekly paid rhythm is anchored.
+  const override = template.monthStarts?.[month.trim()];
+  const organicFrom = override?.organicFrom ?? null;
+  const paidFrom = override?.paidFrom ?? null;
+  const through = override?.through ?? null;
+  const weekCount = through ? weeksThrough(sunday, through) : WEEKS_PER_MONTH;
 
   const weeks: MonthWeek[] = [];
-  for (let i = 0; i < WEEKS_PER_MONTH; i += 1) {
+  for (let i = 0; i < weekCount; i += 1) {
     const start = addDays(sunday, i * 7);
     weeks.push({ index: i, start, end: addDays(start, 6) });
   }
@@ -485,7 +569,24 @@ export function monthGeometry(
     for (const wd of weekdays) everyPostingDay.push(addDays(w.start, (wd - WEEK_START + 7) % 7));
   }
   everyPostingDay.sort();
-  const everyBatchDay = weeks.map((w) => w.start);
+  const firstWeekStart = weeks[0]?.start ?? first;
+  const lastWeekEnd = weeks[weeks.length - 1]?.end ?? first;
+  /*
+   * The paid rhythm is WEEKLY, anchored on the first batch day.
+   *
+   * With no operator start the anchor is the first week's Sunday, so the series
+   * is exactly the week starts — what it has always been. An operator
+   * `paid_from` that is NOT a Sunday moves the anchor, and every later batch
+   * follows seven days after it.
+   *
+   * That has to be the rule, because `paidPlanInput` hands the scheduler
+   * `rangeStart = paidBatchDays[0]` with `cycleDays: 7`: the engine already
+   * counts sevens from the first batch day. Filtering Sundays instead would
+   * draw a grid on days the engine never plans.
+   */
+  const anchor = paidFrom && paidFrom > firstWeekStart ? paidFrom : firstWeekStart;
+  const everyBatchDay: string[] = [];
+  for (let d = anchor; d <= lastWeekEnd; d = addDays(d, 7)) everyBatchDay.push(d);
 
   // The FLOOR — the first day production can physically begin on. It is what
   // the minimum-lead test measures from, deliberately NOT `productionStart`:
@@ -508,9 +609,6 @@ export function monthGeometry(
     ? (everyPostingDay[0] ?? null)
     : (ahead.find((d) => leadFromFloor(d) >= leads.organic) ?? null);
 
-  const override = template.monthStarts?.[month.trim()];
-  const organicFrom = override?.organicFrom ?? null;
-  const paidFrom = override?.paidFrom ?? null;
   const postingDaysByClock = from === null
     ? everyPostingDay
     : (startsOn === null ? [] : ahead.filter((d) => d >= startsOn));
@@ -554,7 +652,7 @@ export function monthGeometry(
 
   const firstPostingDay = postingDays[0] ?? from ?? weeks[0]?.start ?? first;
   const lastPostingDay = postingDays[postingDays.length - 1]
-    ?? from ?? weeks[WEEKS_PER_MONTH - 1]?.end ?? first;
+    ?? from ?? lastWeekEnd;
 
   const target = Math.max(1, template.leadTimeWorkingDays);
   // Aim for the template's buffer — but never later than the chain can survive.
@@ -593,7 +691,13 @@ export function monthGeometry(
     // calendar, and `safety_margin_days` is the only field here that does not
     // say "working".
     nextMonthReminderOn: addDays(productionStart, -Math.max(0, template.safetyMarginDays)),
-    campaignEndsOn: addDays(paidBatchDays[0] ?? firstPostingDay, Math.max(1, template.campaignLengthDays) - 1),
+    // A stretched month's campaign runs the WHOLE window. Reading
+    // `campaign_length_days` there would end the ads in the middle of it.
+    campaignEndsOn: through
+      ? lastWeekEnd
+      : addDays(paidBatchDays[0] ?? firstPostingDay, Math.max(1, template.campaignLengthDays) - 1),
+    through,
+    monthsCovered: monthsCoveredBy(month.trim(), through),
     startedFrom: from,
     startsOn,
     startMoved: skippedPostingDays.some((d) => d.reason === 'lead'),
@@ -877,6 +981,14 @@ export interface MonthSummary {
    * spending decision on the operator's behalf.
    */
   paidBatchesRemaining: number;
+  /**
+   * Calendar months this ONE plan covers (`month_starts.through`). It is
+   * reported for the same reason as `paidBatchesRemaining` and does exactly as
+   * much to the money: nothing. `budget_per_project` stays a monthly figure,
+   * so a two-month plan spends one month's budget over twice the days unless
+   * the operator raises it. The app must not make that call.
+   */
+  monthsCovered: number;
   /** Everything a person has to make: posts + paid creatives. */
   items: number;
   firstPostingDay: string;
@@ -1297,6 +1409,7 @@ export function summariseMonth(args: {
     storyReleases: rel.story,
     paidCreatives,
     paidBatchesRemaining: geometry.paidBatchDays.length,
+    monthsCovered: geometry.monthsCovered,
     items: posts + paidCreatives,
     firstPostingDay: geometry.firstPostingDay,
     lastPostingDay: geometry.lastPostingDay,

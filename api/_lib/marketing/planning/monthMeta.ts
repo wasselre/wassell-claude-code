@@ -67,12 +67,14 @@ export async function ensureMonthMetaCampaigns(
   if (!tpl || tpl.enabled !== true) return { results: [] };
 
   const refLike = opts.month ? `${opts.month}:paid:%` : '%:paid:%';
-  const campRes = await svc.from('mos_campaigns').select('id, ref, name').like('ref', refLike);
+  const campRes = await svc.from('mos_campaigns').select('id, ref, name, starts_on, ends_on').like('ref', refLike);
   if (campRes.error) {
     console.error('[month-meta] campaigns read failed', campRes.error.code, campRes.error.message);
     return { results: [], error: campRes.error.message };
   }
-  const campaigns = (campRes.data ?? []) as Array<{ id: string; ref: string; name: string | null }>;
+  const campaigns = (campRes.data ?? []) as Array<{
+    id: string; ref: string; name: string | null; starts_on: string | null; ends_on: string | null;
+  }>;
   if (campaigns.length === 0) return { results: [] };
   const campaignById = new Map(campaigns.map((c) => [c.id, c]));
 
@@ -93,8 +95,24 @@ export async function ensureMonthMetaCampaigns(
   const execs = (execRes.data ?? []) as Exec[];
 
   const budget = Number(tpl.budget_per_project ?? 0);
-  const days = Number(tpl.campaign_length_days ?? 0);
-  const dailyBudget = budget > 0 && days > 0 ? Math.round((budget / days) * 100) / 100 : null;
+  const templateDays = Number(tpl.campaign_length_days ?? 0);
+  /*
+   * The daily budget spreads `budget_per_project` over the campaign's OWN
+   * window, and only falls back to `campaign_length_days` when the campaign
+   * has no dates.
+   *
+   * A stretched month (`month_starts.through`) runs its ads to the end of the
+   * window — 22 Sep → 31 Oct is 40 days — while the length column still says
+   * 30. Dividing by 30 and then running for 40 days would spend a third more
+   * per project than the operator set, silently.
+   */
+  const windowDays = (c: { starts_on: string | null; ends_on: string | null }): number => {
+    if (!c.starts_on || !c.ends_on) return templateDays;
+    const span = Math.round(
+      (Date.parse(`${c.ends_on}T00:00:00Z`) - Date.parse(`${c.starts_on}T00:00:00Z`)) / 86_400_000,
+    ) + 1;
+    return Number.isFinite(span) && span > 0 ? span : templateDays;
+  };
 
   const results: MonthMetaResult[] = [];
   for (const e of execs) {
@@ -103,6 +121,8 @@ export async function ensureMonthMetaCampaigns(
     if (e.platform_campaign_id) { results.push({ execution_id: e.id, campaign: label, outcome: 'already_linked' }); continue; }
     if (e.ends_on && e.ends_on < today) continue; // a finished month is not built after the fact
 
+    const days = camp ? windowDays(camp) : templateDays;
+    const dailyBudget = budget > 0 && days > 0 ? Math.round((budget / days) * 100) / 100 : null;
     const ps = e.platform_settings ?? {};
     const lastFail = typeof ps.meta_build_error_at === 'string' ? Date.parse(ps.meta_build_error_at) : NaN;
     if (!opts.force && Number.isFinite(lastFail) && Date.now() - lastFail < RETRY_AFTER_MS) {

@@ -48,7 +48,8 @@ import {
 import { terminalLostStages } from '../../../../src/lib/salesProcess/qualifiedStages.js';
 import { ourLeadsByProject, type ProjectLeadTotals } from '../ourLeads.js';
 import {
-  compileMonth, parseMonthTemplate, monthGeometry, monthStartFrom, MONTH_TEMPLATE_DEFAULTS,
+  compileMonth, parseMonthTemplate, monthGeometry, monthStartFrom, monthCoveredBy,
+  MONTH_TEMPLATE_DEFAULTS,
   type CompiledMonth, type MonthProject, type MonthTemplate,
 } from './monthCompiler.js';
 import {
@@ -394,6 +395,22 @@ async function compile(
 /* month_get                                                           */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The one refusal for a month another month already plans.
+ *
+ * It names the owner rather than saying "not allowed", because the operator's
+ * next move is to open THAT month — and because a bare refusal on a month that
+ * looks perfectly ordinary is the kind of message people work around.
+ */
+function monthCoveredRefusal(month: string, owner: string): Response {
+  return jsonError(409, JSON.stringify({
+    error: 'month_covered',
+    error_ar: `${month} مُخطَّط ضمن خطة ${owner} الممتدة — افتح ${owner} لتعديلها. لا تُخطَّط هذه الأسابيع مرتين.`,
+    error_en: `${month} is planned inside ${owner}'s stretched plan — open ${owner} to change it. These weeks are not planned twice.`,
+    covered_by: owner,
+  }));
+}
+
 export async function monthGet(ctx: PlanCtx): Promise<Response> {
   const month = monthOf(ctx.body);
   if (!month) return jsonError(400, 'month must be YYYY-MM');
@@ -447,6 +464,10 @@ export async function monthGet(ctx: PlanCtx): Promise<Response> {
     template,
     geometry,
     state: confirmed ? 'confirmed' : 'draft',
+    // A month a STRETCHED month already runs through is not planned again: the
+    // owner's plan books those weeks, and a second plan over them would
+    // double-book every designer day without either one seeing the other.
+    covered_by: monthCoveredBy(month, template.monthStarts),
     campaigns: camps.campaigns,
     organic_campaign_id: organic?.id ?? null,
     selection: chosenIds.map((id) => ({
@@ -479,6 +500,8 @@ export async function monthCompile(ctx: PlanCtx): Promise<Response> {
 
   const tpl = await loadTemplate(svc);
   if (tpl.error) return fail('mos_month_template', { message: tpl.error });
+  const coveredBy = monthCoveredBy(month, tpl.row.monthStarts);
+  if (coveredBy) return monthCoveredRefusal(month, coveredBy);
 
   const names = await projectNames(ctx.sb, ids);
   const projects: MonthProject[] = ids.map((id) => ({ projectId: id, projectName: names.get(id) }));
@@ -574,6 +597,8 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
   const tpl = await loadTemplate(svc);
   if (tpl.error) return fail('mos_month_template', { message: tpl.error });
   const template = tpl.row;
+  const coveredBy = monthCoveredBy(month, template.monthStarts);
+  if (coveredBy) return monthCoveredRefusal(month, coveredBy);
   // The kill switch, and it is DATA. The template ships disabled; a month cannot
   // be confirmed into production until an operator turns the model on.
   if (!template.enabled) {

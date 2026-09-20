@@ -3647,6 +3647,10 @@ export interface MosMonthGeometry {
   productionStart: string;
   nextMonthReminderOn: string;
   campaignEndsOn: string;
+  /** `YYYY-MM` this month's cycle runs THROUGH, as ONE plan, or `null`. */
+  through: string | null;
+  /** Calendar months this one plan covers — 1 normally. */
+  monthsCovered: number;
   /** The day the month was ASKED to start from, or `null` for the whole cycle. */
   startedFrom: string | null;
   /** The day it ACTUALLY starts — the first posting day production can reach. */
@@ -3736,6 +3740,8 @@ export interface MosMonthGet {
   template: MosMonthTemplate;
   geometry: MosMonthGeometry;
   state: 'draft' | 'confirmed';
+  /** `YYYY-MM` of the stretched month that already plans these weeks, or `null`. */
+  covered_by: string | null;
   campaigns: MosMonthCampaign[];
   organic_campaign_id: string | null;
   selection: Array<{
@@ -3807,6 +3813,8 @@ export interface MosMonthSummary {
   paidCreatives: number;
   /** Paid batches this compile buys — fewer in a partial month. Reported, never prorated. */
   paidBatchesRemaining: number;
+  /** Calendar months this ONE plan covers. Reported; the budget is not prorated. */
+  monthsCovered: number;
   items: number;
   firstPostingDay: string;
   lastPostingDay: string;

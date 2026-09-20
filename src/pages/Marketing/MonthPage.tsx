@@ -392,6 +392,37 @@ export default function MonthPage() {
     return <div className="body">{head}<Skeleton rows={8} /></div>;
   }
 
+  /*
+   * A month another month already plans has NO planner of its own.
+   *
+   * September 2026 runs through October as one plan, so October's own page
+   * would otherwise offer a second selection over the same weeks — and
+   * confirming it would book every designer day twice, with neither plan
+   * seeing the other. The API refuses it; the page must not offer it, and it
+   * names the owner so the next click is obvious rather than blocked.
+   */
+  if (tense === 'plan' && data.covered_by) {
+    const owner = data.covered_by;
+    return (
+      <div className="body">
+        {head}
+        {monthNav}
+        <div className="notice" style={{ marginBlockEnd: 14 }}>
+          <div>
+            {isAr
+              ? `${monthLabel(month, true)} مُخطَّط ضمن خطة ${monthLabel(owner, true)} الممتدة — خطة واحدة تغطي الشهرين. لا يوجد اختيار مشاريع هنا، ولا تُخطَّط هذه الأسابيع مرتين.`
+              : `${monthLabel(month, false)} is planned inside ${monthLabel(owner, false)}'s stretched plan — one plan covering both months. There is no project selection here, and these weeks are not planned twice.`}
+          </div>
+          <div style={{ marginBlockStart: 8 }}>
+            <button type="button" className="btn btn-sm" onClick={() => go({ month: owner })}>
+              {isAr ? `افتح ${monthLabel(owner, true)}` : `Open ${monthLabel(owner, false)}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   /* ================= PLAN ================= */
   if (tense === 'plan') {
     return (
@@ -553,6 +584,22 @@ export default function MonthPage() {
                 {isAr
                   ? `هذا الشهر محسوب من ${monthDate(summary.startedFrom, true)}، وما قبله مضى — أيام نشر فائتة: ${num(pastDays.length, true)}. المتبقي — دفعات السوشيال ميديا: ${num(summary.rows, true)} · المنشورات: ${num(summary.posts, true)} · الدفعات الإعلانية: ${num(summary.paidBatchesRemaining, true)} · أيام العمل: ${num(summary.productionWorkingDays, true)}.`
                   : `This month is compiled from ${monthDate(summary.startedFrom, false)}; everything before it has passed — posting days missed: ${num(pastDays.length, false)}. What is left — social media batches: ${num(summary.rows, false)} · posts: ${num(summary.posts, false)} · ad batches: ${num(summary.paidBatchesRemaining, false)} · working days: ${num(summary.productionWorkingDays, false)}.`}
+              </div>
+            )}
+            {summary.monthsCovered > 1 && (
+              /*
+               * ONE plan over more than one month (`month_starts.through`).
+               *
+               * Said before any other note, because every number under it —
+               * batches, posts, the budget — is a figure for the whole stretch
+               * and reads wrong if you think you are looking at one month. The
+               * budget line is the part that costs money: `budget_per_project`
+               * is a MONTHLY figure and nothing here prorates it.
+               */
+              <div>
+                {isAr
+                  ? `هذه خطة واحدة تغطي ${num(summary.monthsCovered, true)} أشهر — حتى ${monthLabel(compiled?.geometry.through ?? month, true)}. كل الأرقام أدناه للمدة كاملة. الميزانية ${money(template.budgetPerProject, true)} لكل مشروع رقم شهري واحد ولم يُعدَّل — ارفعه إن أردت تغطية المدة كلها.`
+                  : `This is ONE plan covering ${num(summary.monthsCovered, false)} months — through ${monthLabel(compiled?.geometry.through ?? month, false)}. Every number below is for the whole stretch. The budget of ${money(template.budgetPerProject, false)} a project is a MONTHLY figure and has not been changed — raise it if you want it to cover the whole stretch.`}
               </div>
             )}
             {summary.isPartial && (
