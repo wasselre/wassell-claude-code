@@ -138,6 +138,56 @@ document_jobs     — queue for the templated-PDF generation worker (see "Docume
 listing_mirror_settings — kill switch + optional photo cap for the listing-photo mirror (see "Listing photo mirror")
 ```
 
+## `CREATE OR REPLACE VIEW` silently drops `security_invoker` (added 2026-09-20 — TWICE in five days)
+
+**`reloptions` are NOT preserved by `CREATE OR REPLACE VIEW`. They are REPLACED.**
+So a plain `CREATE OR REPLACE VIEW public.foo AS SELECT …` on a view that was
+`security_invoker=true` turns it into a **DEFINER** view: it stops running with
+the caller's rights, and every RLS policy on the tables underneath stops
+applying to that caller. Nothing errors. Nothing logs. The view keeps returning
+rows — just more of them, to people who should not see them.
+
+This is not the same trap as the frozen-model view-chain unwind below (that one
+is about DROP + CREATE losing grants and options). This one fires on the
+innocuous-looking one-liner people reach for to add a column to a view.
+
+**It has already happened twice:**
+- `2026-09-15_11_row_ledger_and_content_view.sql` on `mos_content_v` — caught
+  minutes after the first apply; the migration carries the fix and a warning.
+- `2026-09-20_11_content_v_queued_facts.sql` on the SAME view — the warning was
+  in the file next door and was not read. Ran against production as a definer
+  view for ~50 minutes before it was caught by an adversarial review and
+  reverted by hand.
+
+**Hard rules — never violate:**
+
+1. **Before `CREATE OR REPLACE VIEW`, check the view's current options:**
+   `SELECT c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relname='<view>';`
+2. **If it was `security_invoker=true`, the migration MUST end with the ALTER
+   and an assertion** — put it in the SAME transaction, not a follow-up:
+   ```sql
+   ALTER VIEW public.<view> SET (security_invoker = true);
+   DO $assert$
+   DECLARE v_opts text[];
+   BEGIN
+     SELECT c.reloptions INTO v_opts FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relname = '<view>';
+     IF v_opts IS NULL OR NOT ('security_invoker=true' = ANY(v_opts)) THEN
+       RAISE EXCEPTION 'VIEW_SECURITY_INVOKER_LOST <view> — options are %', v_opts;
+     END IF;
+   END $assert$;
+   ```
+3. **Assert, don't just ALTER.** The ALTER alone is silent if someone later
+   reorders the statements; the assertion is what makes a mistake loud.
+4. **A data assertion in a migration must be guarded** (`IF EXISTS (…) THEN`),
+   or the migration cannot replay on a fresh/branch database that has no rows
+   yet. A migration that only works against production is not a migration.
+5. **Known outstanding:** `mos_publication_v` lost `security_invoker` on
+   2026-08-19 (`2026-08-19_mos_bundle_social.sql`) and is still a definer view.
+   That is pre-existing, NOT a regression from the 2026-09-20 work — flipping it
+   back changes who can read publications and needs its own check first.
+
 ## Database migrations — apply them yourself (added 2026-08-05)
 
 **Standing rule from the user: NEVER ask whether to apply a migration — always apply it yourself.** When you write a migration under `supabase/migrations/`, apply it to the live database in the same session via the Supabase MCP (`apply_migration` against the `wassell-prod` project), then confirm it landed. Do not stop at "the migration must be applied" or "want me to apply it?" — that ask is exactly what the user has told us not to do.
