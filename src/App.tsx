@@ -136,7 +136,8 @@ const JobApplicationsPage = lazy(() => import('@/pages/Careers/JobApplicationsPa
 const HireExperiencePage = lazy(() => import('@/pages/Hire/HireExperiencePage'));
 const HireVideoPage = lazy(() => import('@/pages/Hire/HireVideoPage'));
 const HireTaskPage = lazy(() => import('@/pages/Hire/HireTaskPage'));
-const HireStagePlaceholder = lazy(() => import('@/pages/Hire/HireExperiencePage').then((m) => ({ default: m.HireStagePlaceholder })));
+const HireOfferPage = lazy(() => import('@/pages/Hire/HireOfferPage'));
+const HireDecisionPage = lazy(() => import('@/pages/Hire/HireDecisionPage'));
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import RequirePageAccess from '@/components/guards/RequirePageAccess';
 import RequireWorkflowView from '@/components/guards/RequireWorkflowView';
@@ -401,7 +402,9 @@ export default function App() {
         <Route path="/careers/experience/:token" element={<HireExperiencePage />} />
         <Route path="/careers/experience/:token/video" element={<HireVideoPage />} />
         <Route path="/careers/experience/:token/task" element={<HireTaskPage />} />
-        <Route path="/careers/experience/:token/offer" element={<HireStagePlaceholder />} />
+        <Route path="/careers/experience/:token/offer" element={<HireOfferPage />} />
+        <Route path="/careers/experience/:token/book" element={<HireDecisionPage />} />
+        <Route path="/careers/experience/:token/decline" element={<HireDecisionPage />} />
 
         {/* ── Protected app routes (auth required, inside layout) ────── */}
         <Route

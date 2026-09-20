@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PlayCircle, ChevronLeft, ChevronRight, Lock, ClipboardList } from 'lucide-react';
+import { PlayCircle, ChevronLeft, Lock, CheckCircle2, User, Phone, Loader2 } from 'lucide-react';
 import { ProgressRail, JourneyStep, FlowConnector, Reveal } from './hireUi';
 import OpeningSummary from './OpeningSummary';
+import { resolveInvite, postExperience, type InviteInfo } from '@/lib/careers/experience';
 import StepPreferences from './steps/StepPreferences';
 import StepRecommendations from './steps/StepRecommendations';
 import StepProjectDetail from './steps/StepProjectDetail';
@@ -26,6 +27,8 @@ const STEPS: { title: string; blurb: string; Body: () => JSX.Element; after?: st
 export default function HireExperiencePage() {
   const navigate = useNavigate();
   const { token } = useParams();
+  const [phase, setPhase] = useState<'loading' | 'confirm' | 'ready'>('loading');
+  const [invite, setInvite] = useState<InviteInfo | null>(null);
 
   useEffect(() => {
     const html = document.documentElement;
@@ -37,7 +40,29 @@ export default function HireExperiencePage() {
     return () => { html.dir = prevDir; html.lang = prevLang; };
   }, []);
 
+  // Resolve the per-candidate token → name/phone for the confirm gate. Unknown /
+  // preview tokens resolve to null → a labelled demo confirm (never a dead page).
+  useEffect(() => {
+    let alive = true;
+    void resolveInvite(token ?? '').then((info) => {
+      if (!alive) return;
+      setInvite(info);
+      setPhase('confirm');
+    });
+    return () => { alive = false; };
+  }, [token]);
+
   const goToVideo = () => navigate(`/careers/experience/${token ?? 'preview'}/video`);
+
+  if (phase !== 'ready') {
+    return (
+      <ConfirmGate
+        invite={invite}
+        loading={phase === 'loading'}
+        onConfirm={() => { void postExperience(token ?? '', 'confirm'); setPhase('ready'); }}
+      />
+    );
+  }
 
   return (
     <div
@@ -146,34 +171,79 @@ export default function HireExperiencePage() {
   );
 }
 
-// ── Stub for the (not-yet-built) offer stage of the experience ────────────────
-export function HireStagePlaceholder() {
-  const navigate = useNavigate();
-  const { token } = useParams();
-  const base = `/careers/experience/${token ?? 'preview'}`;
-  useEffect(() => {
-    const html = document.documentElement;
-    html.dir = 'rtl'; html.lang = 'ar';
-    window.scrollTo({ top: 0 });
-  }, []);
+// ── Confirm gate — the candidate verifies their name/phone before starting ────
+function ConfirmGate({ invite, loading, onConfirm }: { invite: InviteInfo | null; loading: boolean; onConfirm: () => void }) {
+  const [badData, setBadData] = useState(false);
+  const demo = !invite;
   return (
-    <div className="min-h-screen font-amiri" style={{ background: 'radial-gradient(ellipse at top, #FAF7F2 0%, #F1E6D4 55%, #E4D2B4 100%)' }}>
-      <ProgressRail active={3} />
-      <div className="flex min-h-[70vh] items-center justify-center px-4">
-        <div className="max-w-md rounded-3xl border bg-white/85 p-9 text-center shadow-xl backdrop-blur" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
-          <ClipboardList size={44} className="mx-auto text-copper" />
-          <h1 className="mt-4 text-2xl font-bold" style={{ color: '#4A2C2A' }}>العرض</h1>
-          <p className="mt-3 text-base leading-loose" style={{ color: '#4A4E54' }}>
-            بعد التجربة، ستطّلع هنا على تفاصيل الوظيفة والراتب والعمولة، ثم تقرّر. سيتم تجهيزها قريبًا.
-          </p>
-          <button
-            type="button"
-            onClick={() => navigate(`${base}/task`)}
-            className="mt-6 inline-flex items-center gap-2 rounded-2xl px-6 py-3 font-bold text-white shadow-lg"
-            style={{ background: '#B8734F' }}
-          >
-            <ChevronRight size={18} /> العودة إلى التجربة
-          </button>
+    <div className="min-h-screen font-amiri" style={{ background: 'radial-gradient(ellipse at top, #FAF7F2 0%, #F1E6D4 60%, #E4D2B4 100%)', color: '#4A4E54' }}>
+      <ProgressRail active={0} />
+      <div className="mx-auto flex min-h-[80vh] w-full max-w-md items-center px-4 py-8">
+        <div className="w-full">
+          <div className="mb-6 flex flex-col items-center text-center">
+            <img src="/assets/wassel-logo.png" alt="وصل العقارية" className="h-14 sm:h-16" />
+            <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 bg-white/70 px-3 py-1 text-xs font-bold text-copper">
+              <Lock size={12} /> تجربة خاصة بالمرشّحين
+            </span>
+          </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 rounded-3xl border bg-white/85 p-10 text-charcoal/60 shadow-xl backdrop-blur" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
+              <Loader2 size={20} className="animate-spin text-copper" /> جارٍ فتح تجربتك…
+            </div>
+          ) : (
+            <div className="rounded-3xl border bg-white/85 p-7 text-center shadow-xl backdrop-blur" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
+              <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-copper/10 text-copper"><User size={26} /></span>
+              <h1 className="mt-4 text-2xl font-bold" style={{ color: '#4A2C2A' }}>أهلًا {invite?.name || 'وسهلًا'} 👋</h1>
+
+              {demo ? (
+                <>
+                  <p className="mx-auto mt-3 max-w-sm text-base leading-loose" style={{ color: '#4A4E54' }}>
+                    هذه معاينة داخلية للتجربة. في الرابط الحقيقي سيظهر اسم المرشّح ورقم جواله للتأكيد.
+                  </p>
+                  <span className="mt-3 inline-block rounded-full bg-sand/40 px-3 py-1 text-xs font-bold text-charcoal/60">وضع المعاينة</span>
+                </>
+              ) : (
+                <>
+                  <p className="mx-auto mt-3 max-w-sm text-base leading-relaxed" style={{ color: '#4A4E54' }}>
+                    قبل أن نبدأ، أكّد لنا بياناتك:
+                  </p>
+                  <div className="mt-4 space-y-2 rounded-2xl bg-cream/50 p-4 text-start">
+                    <div className="flex items-center justify-between gap-3 border-b border-sand/30 py-1.5">
+                      <span className="inline-flex items-center gap-1.5 text-sm text-charcoal/55"><User size={14} className="text-copper" /> الاسم</span>
+                      <span className="font-bold text-charcoal">{invite?.name}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 py-1.5">
+                      <span className="inline-flex items-center gap-1.5 text-sm text-charcoal/55"><Phone size={14} className="text-copper" /> رقم الجوال</span>
+                      <span className="font-bold text-charcoal" dir="ltr">{invite?.phone}</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <button
+                type="button"
+                onClick={onConfirm}
+                className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-copper px-6 text-lg font-bold text-white shadow-lg transition-transform hover:scale-[1.01]"
+                style={{ minHeight: 54 }}
+              >
+                <CheckCircle2 size={20} /> {demo ? 'ابدأ المعاينة' : 'نعم، هذه بياناتي — ابدأ'}
+              </button>
+
+              {!demo && (
+                <>
+                  <button type="button" onClick={() => setBadData(true)} className="mt-3 text-sm font-semibold text-charcoal/55 underline-offset-2 hover:underline">
+                    بياناتي غير صحيحة
+                  </button>
+                  {badData && (
+                    <p className="mt-2 text-sm leading-relaxed text-terracotta">
+                      لا مشكلة — تواصل معنا على نفس الرقم الذي وصلك منه الرابط وسنصحّح بياناتك.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

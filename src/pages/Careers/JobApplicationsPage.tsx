@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Loader2, Search, FileText, Download, Play, X, RefreshCw, Phone, Clock,
   Megaphone, AlertTriangle, Briefcase, StickyNote, HandCoins, Save, Calculator, FileDown,
+  Send, Copy, CheckCircle2, XCircle, MessageCircle, Link2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
@@ -49,6 +50,12 @@ interface JobApplication {
   offer_sales_per_month: number | null;
   offer_avg_sale_price: number | null;
   offer_company_commission_pct: number | null;
+  // Recruitment-experience link (2026-09-17) — set by the send + the candidate's actions.
+  invite_token: string | null;
+  experience_confirmed_at: string | null;
+  experience_decided_at: string | null;
+  experience_decision: string | null;         // 'interested' | 'declined'
+  experience_decline_reason: string | null;
 }
 
 /** Admin-editable columns (the rest of the row is applicant-authored + immutable). */
@@ -108,6 +115,19 @@ async function fileUrl(id: string, kind: 'cv' | 'audio', download = false): Prom
   const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
   if (!res.ok || !body.url) throw new Error(body.error ?? `HTTP ${res.status}`);
   return body.url;
+}
+
+interface SendExperienceResult { link: string; invite_token: string; offer_sent_at: string; status: string }
+/** Auto-send the candidate's personal experience link over WhatsApp (admin-gated). */
+async function sendExperienceLink(id: string): Promise<SendExperienceResult> {
+  const res = await fetch('/api/careers/send-experience', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ id, origin: window.location.origin }),
+  });
+  const body = (await res.json().catch(() => ({}))) as Partial<SendExperienceResult> & { error?: string };
+  if (!res.ok || !body.link) throw new Error(body.error ?? `HTTP ${res.status}`);
+  return body as SendExperienceResult;
 }
 
 export default function JobApplicationsPage() {
@@ -175,6 +195,12 @@ export default function JobApplicationsPage() {
       return false;
     }
     return true;
+  };
+
+  /** Local-only patch (no DB write) — used after a server action already persisted. */
+  const applyLocal = (id: string, patch: Partial<JobApplication>) => {
+    setApps((list) => list.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+    setSelected((s) => (s && s.id === id ? { ...s, ...patch } : s));
   };
 
   const updateStatus = (app: JobApplication, status: string) => {
@@ -263,6 +289,7 @@ export default function JobApplicationsPage() {
           onClose={() => setSelected(null)}
           onStatus={(status) => void updateStatus(selected, status)}
           onPatch={(patch) => patchApp(selected.id, patch)}
+          onLocalPatch={(patch) => applyLocal(selected.id, patch)}
           onToast={(m, t) => addToast(m, t)}
           fmtDate={fmtDate}
         />
@@ -272,16 +299,38 @@ export default function JobApplicationsPage() {
 }
 
 function DetailDrawer({
-  app, isAr, onClose, onStatus, onPatch, onToast, fmtDate,
+  app, isAr, onClose, onStatus, onPatch, onLocalPatch, onToast, fmtDate,
 }: {
   app: JobApplication; isAr: boolean; onClose: () => void;
   onStatus: (status: string) => void;
   onPatch: (patch: AppPatch) => Promise<boolean>;
+  onLocalPatch: (patch: Partial<JobApplication>) => void;
   onToast: (m: string, t: 'error' | 'success') => void;
   fmtDate: (iso: string) => string;
 }) {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmSend, setConfirmSend] = useState(false);
+
+  const experienceLink = app.invite_token ? `${window.location.origin}/careers/experience/${app.invite_token}` : null;
+
+  const doSendExperience = async () => {
+    setBusy('send');
+    try {
+      const r = await sendExperienceLink(app.id);
+      onLocalPatch({ invite_token: r.invite_token, status: 'offer_sent', offer_sent_at: r.offer_sent_at });
+      onToast(isAr ? 'تم إرسال رابط التجربة عبر واتساب' : 'Experience link sent via WhatsApp', 'success');
+      setConfirmSend(false);
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : 'error', 'error');
+    } finally { setBusy(null); }
+  };
+
+  const copyLink = async () => {
+    if (!experienceLink) return;
+    try { await navigator.clipboard.writeText(experienceLink); onToast(isAr ? 'تم نسخ الرابط' : 'Link copied', 'success'); }
+    catch { onToast(isAr ? 'تعذّر النسخ' : 'Copy failed', 'error'); }
+  };
 
   // Offer + notes drafts. Re-seeded whenever a different application opens.
   const str = (n: number | null) => (n != null ? String(n) : '');
@@ -576,6 +625,51 @@ function DetailDrawer({
             </div>
           </div>
 
+          {/* Recruitment experience link + the candidate's own decision */}
+          <div className="rounded-xl bg-white border p-4 mb-4" style={{ borderColor: app.experience_decision ? '#05966955' : undefined }}>
+            <p className="text-xs text-charcoal/40 mb-2 flex items-center gap-1.5">
+              <MessageCircle size={13} /> {isAr ? 'تجربة المرشّح (رابط العرض)' : 'Candidate experience (offer link)'}
+            </p>
+            <p className="text-[11px] text-charcoal/50 mb-3 leading-relaxed">
+              {isAr
+                ? 'يُرسَل للمرشّح رابط خاص عبر واتساب: يؤكّد بياناته، يطّلع على طريقة العمل والدخل، ثم يختار المقابلة أو الاعتذار — والاختيار يحدّث الحالة تلقائيًا.'
+                : 'Sends a personal WhatsApp link: confirm details, see the role + income, then choose an interview or decline — their choice updates the status automatically.'}
+            </p>
+
+            <button
+              onClick={() => setConfirmSend(true)}
+              disabled={!!busy}
+              className="w-full flex items-center justify-center gap-2 rounded-lg bg-[#25D366] text-white text-sm font-bold py-2.5 disabled:opacity-50"
+            >
+              {busy === 'send' ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+              {app.invite_token ? (isAr ? 'إعادة إرسال الرابط' : 'Resend link') : (isAr ? 'إرسال رابط التجربة عبر واتساب' : 'Send experience link via WhatsApp')}
+            </button>
+
+            {experienceLink && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg bg-cream/60 border border-sand/30 px-2.5 py-2">
+                <Link2 size={13} className="text-charcoal/40 shrink-0" />
+                <span className="flex-1 text-[11px] text-charcoal/60 truncate" dir="ltr">{experienceLink}</span>
+                <button onClick={() => void copyLink()} className="shrink-0 p-1 rounded hover:bg-sand/30" title={isAr ? 'نسخ' : 'Copy'}><Copy size={14} className="text-charcoal/50" /></button>
+              </div>
+            )}
+
+            {app.experience_confirmed_at && (
+              <p className="mt-2 text-[11px] text-charcoal/50 flex items-center gap-1.5"><CheckCircle2 size={12} className="text-emerald-600" /> {isAr ? 'أكّد بياناته' : 'Confirmed details'} · {fmtDate(app.experience_confirmed_at)}</p>
+            )}
+
+            {app.experience_decision === 'interested' && (
+              <div className="mt-3 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800 flex items-center gap-2">
+                <CheckCircle2 size={15} /> {isAr ? 'مهتم — يريد المقابلة' : 'Interested — wants an interview'}
+              </div>
+            )}
+            {app.experience_decision === 'declined' && (
+              <div className="mt-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-800">
+                <div className="flex items-center gap-2 font-bold"><XCircle size={15} /> {isAr ? 'العرض غير مناسب له' : 'Not interested'}</div>
+                {app.experience_decline_reason && <p className="mt-1 text-[13px] leading-relaxed whitespace-pre-wrap">{app.experience_decline_reason}</p>}
+              </div>
+            )}
+          </div>
+
           {/* Files */}
           <div className="grid grid-cols-1 gap-3 mb-4">
             <div className="rounded-xl bg-white border border-sand/30 p-4">
@@ -634,6 +728,29 @@ function DetailDrawer({
           )}
         </div>
       </div>
+
+      {confirmSend && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => { if (!busy) setConfirmSend(false); }}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#25D366]/15 text-[#128C7E]"><MessageCircle size={18} /></span>
+              <h3 className="font-bold text-charcoal">{isAr ? 'إرسال رابط التجربة' : 'Send experience link'}</h3>
+            </div>
+            <p className="text-sm text-charcoal/70 leading-relaxed">{isAr ? 'سيُرسَل رابط خاص عبر واتساب إلى:' : 'A personal link will be sent via WhatsApp to:'}</p>
+            <div className="my-3 rounded-lg bg-cream/60 px-3 py-2">
+              <div className="font-bold text-charcoal">{app.full_name}</div>
+              <div className="text-sm text-charcoal/60" dir="ltr">{app.phone}</div>
+            </div>
+            <p className="text-xs text-charcoal/50">{isAr ? 'وستتحوّل حالته إلى «تم إرسال العرض».' : 'Their status will change to “Offer sent”.'}</p>
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => setConfirmSend(false)} disabled={!!busy} className="flex-1 rounded-lg border border-sand/40 bg-white py-2 text-sm font-bold text-charcoal disabled:opacity-50">{isAr ? 'إلغاء' : 'Cancel'}</button>
+              <button onClick={() => void doSendExperience()} disabled={!!busy} className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-[#25D366] py-2 text-sm font-bold text-white disabled:opacity-50">
+                {busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} {isAr ? 'إرسال الآن' : 'Send now'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
