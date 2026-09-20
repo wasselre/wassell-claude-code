@@ -534,7 +534,13 @@ export function monthGeometry(
     : (startsOn === null
       ? []
       : everyBatchDay.filter((d) => d >= startsOn && leadFromFloor(d) >= leads.paid));
-  const paidBatchDays = paidFrom ? paidBatchDaysByClock.filter((d) => d >= paidFrom) : paidBatchDaysByClock;
+  // An operator-set paid start IS the decision: the batch is kept even when no
+  // working day is left before it, because under `ads_live_when_ready` an ad
+  // that is not finished by the batch day simply goes live when it is (the
+  // month's first day being today is the normal case for a month chosen today).
+  const paidBatchDays = paidFrom
+    ? everyBatchDay.filter((d) => d >= paidFrom)
+    : paidBatchDaysByClock;
   const keptBatch = new Set(paidBatchDays);
   const skippedPaidBatchDays: MonthSkippedDay[] = everyBatchDay
     .filter((d) => !keptBatch.has(d))
