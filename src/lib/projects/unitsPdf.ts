@@ -35,9 +35,18 @@ const BRAND = {
   charcoal: '#4A4E54',
 };
 
+/**
+ * What a customer document prints where a fact is missing: an em-dash, in both
+ * languages. Deliberately NOT «غير متوفر» / "N/A" — on a sheet where half a
+ * dozen optional fields are empty, that phrase repeated down the column reads
+ * as a list of things we failed to provide. A dash says "nothing here" quietly
+ * and matches the units table, which has always used one.
+ */
+const NA = '—';
+
 /** Integer with thousands separators, or an em-dash for empty/non-finite. */
 const fmt = (n: number | null | undefined) =>
-  n == null || !Number.isFinite(n) ? '—' : Math.round(n).toLocaleString('en-US');
+  n == null || !Number.isFinite(n) ? NA : Math.round(n).toLocaleString('en-US');
 
 /** Escape user/record text before it goes into an HTML string. */
 function esc(s: string | null | undefined): string {
@@ -312,7 +321,7 @@ export async function buildUnitsTablePdf({
 function factRow(label: string, value: string | null, isAr: boolean): string {
   return `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid ${BRAND.sand}44">
     <span style="color:${BRAND.charcoal}88">${esc(label)}</span>
-    <span style="font-weight:600;color:${BRAND.charcoal};text-align:${isAr ? 'left' : 'right'}">${esc(value) || (isAr ? 'غير متوفر' : 'N/A')}</span>
+    <span style="font-weight:600;color:${BRAND.charcoal};text-align:${isAr ? 'left' : 'right'}">${esc(value) || NA}</span>
   </div>`;
 }
 
@@ -399,8 +408,8 @@ export async function buildUnitPdf({
           ${unit.developerCode ? `<div style="font-size:12px;color:${BRAND.charcoal}99;margin-top:2px">${isAr ? 'رمز المطور' : 'Dev. code'}: ${esc(unit.developerCode)}</div>` : ''}
         </div>
         <div style="text-align:${isAr ? 'left' : 'right'}">
-          <div style="font-size:20px;font-weight:700;color:${BRAND.copper}">${esc(sar(unit.totalPrice)) || (isAr ? 'السعر غير متوفر' : 'Price N/A')}</div>
-          <div style="font-size:11px;color:${BRAND.charcoal}99">${isAr ? 'سعر المتر' : 'Price/m²'}: ${esc(sar(unit.pricePerM2)) || '—'}</div>
+          <div style="font-size:20px;font-weight:700;color:${BRAND.copper}">${esc(sar(unit.totalPrice)) || NA}</div>
+          <div style="font-size:11px;color:${BRAND.charcoal}99">${isAr ? 'سعر المتر' : 'Price/m²'}: ${esc(sar(unit.pricePerM2)) || NA}</div>
         </div>
       </div>
 
