@@ -16,6 +16,7 @@ function makeStore(): ProjectStoreSlices {
           fields: [
             { id: 'f_name', name: 'project_name', label_ar: '', label_en: 'Name', type: 'text', required: false, order: 0, section_id: 's0' },
             { id: 'f_dev', name: 'developer', label_ar: '', label_en: 'Developer', type: 'lookup', required: false, order: 1, section_id: 's0', lookup_model_id: 'dev-model', lookup_display_field: 'name' },
+            { id: 'f_mkt', name: 'marketer', label_ar: '', label_en: 'Marketer', type: 'lookup', required: false, order: 5, section_id: 's0', lookup_model_id: 'mkt-model', lookup_display_field: 'name' },
             { id: 'f_status', name: 'project_status', label_ar: '', label_en: 'Status', type: 'dropdown', required: false, order: 2, section_id: 's0',
               options: [{ id: 'o1', value: 'active', label_ar: 'نشط', label_en: 'Active', color: '#10B981' }] },
             { id: 'f_avail', name: 'available_units', label_ar: '', label_en: 'Available', type: 'number', required: false, order: 3, section_id: 's0', is_rollup: true, rollup_kind: 'units_available_count', read_only: true },
@@ -31,12 +32,14 @@ function makeStore(): ProjectStoreSlices {
   } as AppModel;
 
   const devModel: AppModel = { ...allProjects, id: 'dev-model', name: 'developers', schema: { sections: [] } } as AppModel;
+  const mktModel: AppModel = { ...allProjects, id: 'mkt-model', name: 'marketers', schema: { sections: [] } } as AppModel;
   const cities: AppModel = { ...allProjects, id: 'cities-model', name: 'cities', schema: { sections: [] } } as AppModel;
 
   return {
-    models: [allProjects, devModel, cities],
+    models: [allProjects, devModel, mktModel, cities],
     records: {
       'dev-model': [{ id: 'dev-1', model_id: 'dev-model', data: { name: 'Almajdiah' }, created_at: '', updated_at: '' } as AppRecord],
+      'mkt-model': [{ id: 'mkt-1', model_id: 'mkt-model', data: { name: 'Riva' }, created_at: '', updated_at: '' } as AppRecord],
       'cities-model': [{ id: 'city-1', model_id: 'cities-model', data: { display_name: 'Riyadh' }, created_at: '', updated_at: '' } as AppRecord],
     },
   };
@@ -69,6 +72,34 @@ describe('resolveProjectView', () => {
     expect(v.isTargeted).toBe(true);
   });
 
+  it('resolves the marketer lookup, and delivery (off-plan + handover) from raw status fields', () => {
+    const store = makeStore();
+    const rec: AppRecord = {
+      id: 'p4', model_id: 'ap-model', created_at: '', updated_at: '',
+      data: {
+        project_name: 'Wassel Tower',
+        marketer: 'mkt-1',
+        construction_status: 'structure', // pre-completion → off-plan
+        handover_date: '2028-08-31',
+      },
+    } as AppRecord;
+    const v = resolveProjectView(store, rec);
+    expect(v.marketer).toBe('Riva');
+    expect(v.delivery.kind).toBe('off_plan');
+    expect(v.delivery.handoverLabel).toEqual({ ar: 'أغسطس 2028', en: 'August 2028' });
+  });
+
+  it('reads a ready project as Ready and leaves marketer null when absent', () => {
+    const store = makeStore();
+    const rec: AppRecord = {
+      id: 'p5', model_id: 'ap-model', created_at: '', updated_at: '',
+      data: { project_name: 'Done Tower', construction_status: 'ready' },
+    } as AppRecord;
+    const v = resolveProjectView(store, rec);
+    expect(v.marketer).toBeNull();
+    expect(v.delivery.kind).toBe('ready');
+  });
+
   it('returns null (never a guess) for genuinely missing facts', () => {
     const store = makeStore();
     const rec: AppRecord = {
@@ -78,6 +109,8 @@ describe('resolveProjectView', () => {
     const v = resolveProjectView(store, rec);
     expect(v.name).toBeNull();
     expect(v.developer).toBeNull();
+    expect(v.marketer).toBeNull();
+    expect(v.delivery.kind).toBe('unknown');
     expect(v.city).toBeNull();
     expect(v.district).toBeNull();
     expect(v.status).toBeNull();

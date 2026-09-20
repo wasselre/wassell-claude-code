@@ -15,6 +15,7 @@
 //     the live models were Builder-rebuilt with drifted slugs.
 
 import { resolveLocalizedName, resolveArabicName, pickLocalized, type LocalizedName } from '@/lib/geo/localizedName';
+import { resolveProjectDelivery, type ProjectDelivery } from '@/lib/projectMessage/delivery';
 import type { AppModel, AppRecord, ModelField, FieldOption } from '@/types';
 
 export interface ProjectStoreSlices {
@@ -52,6 +53,8 @@ export interface ProjectView {
   raw: AppRecord;
   name: string | null;
   developer: string | null;
+  /** Marketer (المسوّق) lookup → Marketers.name. null when the project has none. */
+  marketer: string | null;
   projectId: string | null; // auto_id (human code)
   city: string | null;
   district: string | null;
@@ -69,6 +72,10 @@ export interface ProjectView {
   reservedUnits: number | null;
   priceRange: NumericRange | null;
   areaRange: NumericRange | null;
+  // Delivery readiness — Ready vs off-plan («على الخارطة») + expected handover.
+  // Derived from construction_status / project_status / handover_date via the
+  // ONE shared resolver (see src/lib/projectMessage/delivery.ts). Never guessed.
+  delivery: ProjectDelivery;
   // Media / links. imageRef is the raw value of `main_image` — a files.id UUID
   // (resolved to a signed URL at render) or a legacy http URL.
   imageRef: string | null;
@@ -260,6 +267,7 @@ export function resolveProjectView(
   const typeField = fieldByCandidates(ap, ['project_type']);
   const unitTypesField = fieldByCandidates(ap, ['unit_types', 'unit_type']);
   const developerField = fieldByCandidates(ap, ['developer']);
+  const marketerField = fieldByCandidates(ap, ['marketer']);
   const projectIdField = fieldByCandidates(ap, ['project_id']);
   const confidenceField = fieldByCandidates(ap, ['data_confidence_score']);
 
@@ -270,6 +278,7 @@ export function resolveProjectView(
     // geo renders localized (Arabic fallback when name_en is absent).
     name: (opts.translate?.(record.id, 'project_name', lang) ?? null) || asString(data.project_name),
     developer: lookupNameLocalized(store, developerField, developerField ? data[developerField.name] : null, opts),
+    marketer: lookupNameLocalized(store, marketerField, marketerField ? data[marketerField.name] : null, opts),
     projectId: projectIdField ? asString(data[projectIdField.name]) : null,
     city: geoDisplay(store, 'cities', firstId(loc.city), isAr),
     district: geoDisplay(store, 'districts', firstId(loc.district), isAr),
@@ -285,6 +294,7 @@ export function resolveProjectView(
     reservedUnits: asFiniteNumber(rollupByKind(ap, data, 'units_reserved_count')),
     priceRange: asRange(rollupByKind(ap, data, 'price_range')),
     areaRange: asRange(rollupByKind(ap, data, 'area_range')),
+    delivery: resolveProjectDelivery(data),
     imageRef: asString(data.main_image) ?? asString(data.image_url),
     brochureDeveloper: asString(data.broucher_developer),
     brochureOurs: asString(data.brochure_link),

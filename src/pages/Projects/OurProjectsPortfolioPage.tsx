@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search, Pencil } from 'lucide-react';
+import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search, Pencil, Megaphone, CalendarClock, PackageCheck } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -256,9 +256,53 @@ function PortfolioCard({ item, isAr, onOpenDetail, onEdit, onEditMaster }: { ite
           {item.priority && <span className="text-[11px] px-1.5 py-0.5 rounded bg-cream text-charcoal/70 border border-sand/50">{isAr ? 'أولوية: ' : 'Priority: '}{isAr ? item.priority.label_ar : item.priority.label_en}</span>}
           {item.exclusive && <span className="text-[11px] px-1.5 py-0.5 rounded bg-cream text-charcoal/70 border border-sand/50">{isAr ? item.exclusive.label_ar : item.exclusive.label_en}</span>}
         </div>
-        <div className="mt-2 text-sm">
-          <span className="text-charcoal/40">{isAr ? 'السعر: ' : 'Price: '}</span>
-          <span className="font-semibold text-charcoal">{formatPriceRange(linked?.priceRange ?? null, isAr) ?? dash}</span>
+        <div className="mt-2 space-y-1 text-sm">
+          {/* Developer */}
+          <div className="flex items-center gap-1.5 text-charcoal/70">
+            <Building2 size={13} className="text-charcoal/40 shrink-0" />
+            <span className="text-charcoal/40">{isAr ? 'المطور: ' : 'Developer: '}</span>
+            <span className="font-medium truncate">{linked?.developer ?? dash}</span>
+          </div>
+          {/* Marketer — only when the project has one */}
+          {linked?.marketer && (
+            <div className="flex items-center gap-1.5 text-charcoal/70">
+              <Megaphone size={13} className="text-charcoal/40 shrink-0" />
+              <span className="text-charcoal/40">{isAr ? 'المسوّق: ' : 'Marketer: '}</span>
+              <span className="font-medium truncate">{linked.marketer}</span>
+            </div>
+          )}
+          {/* Price range */}
+          <div>
+            <span className="text-charcoal/40">{isAr ? 'السعر: ' : 'Price: '}</span>
+            <span className="font-semibold text-charcoal">{formatPriceRange(linked?.priceRange ?? null, isAr) ?? dash}</span>
+          </div>
+          {/* Available units (out of total when known) */}
+          <div>
+            <span className="text-charcoal/40">{isAr ? 'الوحدات المتاحة: ' : 'Available units: '}</span>
+            <span className="font-semibold text-charcoal">
+              {linked?.availableUnits != null
+                ? `${linked.availableUnits.toLocaleString(isAr ? 'ar-SA' : 'en-US')}${linked?.unitCount != null ? ` / ${linked.unitCount.toLocaleString(isAr ? 'ar-SA' : 'en-US')}` : ''}`
+                : dash}
+            </span>
+          </div>
+          {/* Delivery readiness — Ready vs off-plan + expected handover month.
+              Hidden entirely when genuinely unknown (never guessed). */}
+          {linked?.delivery && linked.delivery.kind !== 'unknown' && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {linked.delivery.kind === 'ready'
+                ? <PackageCheck size={13} className="text-green-600 shrink-0" />
+                : <CalendarClock size={13} className="text-copper shrink-0" />}
+              <span className="text-charcoal/40">{isAr ? 'التسليم: ' : 'Delivery: '}</span>
+              <span className="font-medium text-charcoal">
+                {linked.delivery.kind === 'ready' ? (isAr ? 'جاهز' : 'Ready') : (isAr ? 'على الخارطة' : 'Off-plan')}
+              </span>
+              {linked.delivery.kind === 'off_plan' && linked.delivery.handoverLabel && (
+                <span className="text-charcoal/50">
+                  — {isAr ? 'متوقع ' : 'expected '}{isAr ? linked.delivery.handoverLabel.ar : linked.delivery.handoverLabel.en}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="mt-3 pt-2 border-t border-sand/40 flex items-center gap-2">
