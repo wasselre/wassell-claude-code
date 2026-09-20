@@ -259,6 +259,15 @@ export interface MosContentRow {
   owner_role: MosRole | null;
   current_assignee_user_id: string | null;
   current_task_due_at: string | null;
+  /**
+   * Why the open task has not been handed out yet — `capacity`, `day_off`,
+   * `no_holder`. A queued task deliberately carries NO `current_task_due_at`:
+   * its 24-hour allowance starts when it reaches a person, so nothing is late
+   * because of a queue. Read this BEFORE concluding a row has no date.
+   */
+  current_task_waiting_reason: string | null;
+  /** The day the plan produces this — set even while the task waits. */
+  current_task_scheduled_start: string | null;
   current_round: number | null;
   due_at: string | null;
   target_publish_at: string | null;
@@ -1775,8 +1784,17 @@ export interface MosOverview {
   /** The segmented control's value — week_start/week_end are ITS bounds. */
   period: 'week' | 'month' | 'quarter';
   counts: {
+    /** Open work that EXISTS — unscoped, all periods. */
     in_production: number;
+    /**
+     * Ad creatives the committed plan promises but has not created yet — a
+     * refresh cycle materialises its creatives when ITS production starts, not
+     * all at once. Unscoped, to match `in_production`. Without this the stat
+     * reads as though the month were smaller than it is.
+     */
+    not_yet_created: number;
     waiting_on_me: number;
+    /** Exact: every placement in the period plus everything still without one. */
     publishing_this_week: number;
     late: number;
   };
@@ -1797,15 +1815,46 @@ export interface MosOverview {
     content_id: string;
     platform: string;
     status: string;
+    /** When the publisher TOOK it — null until then. */
     scheduled_at: string | null;
+    /** When the plan says it goes out — written at month commit. */
+    planned_at: string | null;
+    /** COALESCE(scheduled_at, planned_at) — what to show and sort by. */
+    due_at: string | null;
     published_at: string | null;
     ref: string | null;
     title: string | null;
   }>;
-  /** Aimed at the period (target_publish_at) but nothing scheduled yet. */
+  /** Every placement in the period; `week` itself shows at most 60 of them. */
+  week_total: number;
+  /** True when even the placement scan hit its cap — never a silent short count. */
+  week_truncated: boolean;
+  /**
+   * Aimed at the period (target_publish_at) with no placement yet — at most 20.
+   * PAID creatives are never here: an ad has no publication row, it becomes a
+   * Meta ad when its slot activates, so it could never satisfy the check and
+   * would be flagged for its whole life.
+   */
   unscheduled: Array<{ id: string; ref: string | null; title: string; target_publish_at: string | null }>;
+  /** The whole set, not the 20 shown. */
+  unscheduled_total: number;
+  unscheduled_truncated: boolean;
+  /** Only campaigns whose window OVERLAPS the period. */
   campaigns: Array<Pick<MosCampaign,
     'id' | 'ref' | 'name' | 'status' | 'budget_total' | 'total_spend' | 'total_leads' | 'total_qualified'>>;
+  /**
+   * Active campaigns carrying no start date. They cannot be placed in a period,
+   * so they contribute nothing to the figures — counted here so that exclusion
+   * is visible instead of silent.
+   */
+  campaigns_undated: number;
+  /**
+   * Whether ANY active/planning campaign exists, ignoring the period. The
+   * day-one setup checklist keys off this rather than off the period-scoped
+   * `campaigns`, which would otherwise show the first-run screen to an
+   * established workspace viewing a quiet period.
+   */
+  campaigns_any: boolean;
   /**
    * PERIOD-scoped paid figures — always the period's, including when that is
    * zero. `scoped` says whether the period had dated daily rows.

@@ -29,6 +29,7 @@ import { makeServiceClient } from './_lib/serviceClient.js';
 import { runMetaSync } from './_lib/marketing/metaSync.js';
 import { loadMetaConfig, MetaMarketingClient, MetaApiError } from './_lib/marketing/metaMarketingApi.js';
 import { ensureMetaSkeleton } from './_lib/marketing/metaSkeleton.js';
+import { campaignInPeriod, undatedCampaigns } from './_lib/marketing/periodScope.js';
 import { resolveAutoAdTarget, enqueueMetaAdJob, approveMetaAdCaption, autoAdSkipText } from './_lib/marketing/metaAutoAd.js';
 import {
   loadBundleConfig, getPost, getTeam, extractPermalink, mapBundleStatus,
@@ -444,6 +445,10 @@ const CONTENT_LIST_COLUMNS = [
   'status_key', 'current_step_label_ar', 'current_step_label_en',
   'owner_role', 'current_assignee_user_id', 'current_task_due_at', 'current_round',
   'due_at', 'target_publish_at', 'updated_at',
+  // A QUEUED task has no `due_at` on purpose — its 24 hours start when it
+  // reaches a person. Without these two the screen can only say «بلا موعد»,
+  // which reads as "unplanned" for work whose production day is known.
+  'current_task_waiting_reason', 'current_task_scheduled_start',
 ].join(', ');
 
 /**
@@ -4917,7 +4922,17 @@ export default async function handler(req: Request): Promise<Response> {
           .is('archived_at', null).not('status_key', 'in', '("draft","done")')
           .lt('current_task_due_at', nowIso);
 
-        const [liveRes, mineRes, lateRes, stalled, week, spend, byType, mineOldest, lateRows] = await Promise.all([
+        // Hard caps on the two widened scans. They exist so a pathological
+        // period cannot pull the whole table; when one is hit the response says
+        // so (`week_truncated` / `unscheduled_truncated`) instead of quietly
+        // returning a short number.
+        const PLACEMENT_ID_CAP = 3000;
+        const UNSCHEDULED_SCAN_CAP = 400;
+
+        const [
+          liveRes, mineRes, lateRes, stalled, week, spend, byType, mineOldest, lateRows,
+          placedRes, comingRes,
+        ] = await Promise.all([
           live,
           mine,
           late,
@@ -4963,9 +4978,7 @@ export default async function handler(req: Request): Promise<Response> {
           sb.from('mos_campaign_v')
             .select('id, ref, name, status, budget_total, total_spend, total_leads, total_qualified, starts_on, ends_on')
             .in('status', ['active', 'planning'])
-            .lte('starts_on', weekEnd.slice(0, 10))
-            .or(`ends_on.is.null,ends_on.gte.${weekStart.slice(0, 10)}`)
-            .limit(20),
+            .limit(100),
           sb.from('mos_content_v').select('content_type_key, status_key')
             .is('archived_at', null).not('status_key', 'in', '("draft","done")').limit(1000),
           // «أقدمها منتظر منذ …» — the oldest item sitting with my role.
@@ -4976,12 +4989,51 @@ export default async function handler(req: Request): Promise<Response> {
           sb.from('mos_content_v').select('current_step_label_ar, current_step_label_en')
             .is('archived_at', null).not('status_key', 'in', '("draft","done")')
             .lt('current_task_due_at', nowIso).limit(200),
+          /*
+            * EVERY content item with a placement in this period, and the exact
+            * number of placements.
+            *
+            * `weekContentIds` below cannot answer either question: it is built
+            * from the 60-row page the card DISPLAYS, so past 60 placements it
+            * starts reporting perfectly scheduled posts as needing a slot.
+            * Measured against the committed month on 2026-09-20: the October
+            * view holds 108 placements over 54 posts, the capped page sees 30
+            * of them, and the other 24 correctly scheduled posts would be
+            * listed under «بحاجة لموعد نشر» — the very symptom the `due_at` fix
+            * removed. September has 30 placements, under the cap, which is the
+            * only reason it looks right today.
+            */
+          sb.from('mos_publication_v').select('content_id', { count: 'exact' })
+            .not('due_at', 'is', null)
+            .gte('due_at', weekStart).lt('due_at', weekEnd)
+            .limit(PLACEMENT_ID_CAP),
+          /*
+            * Ad creatives the plan has promised but not yet created.
+            *
+            * A refresh cycle materialises its creatives when ITS production
+            * starts, not at commit — so on 2026-09-20 «تحت الإنتاج الآن» read
+            * 90 for a month containing 150 items, the other 60 belonging to
+            * October cycles that had not begun. The label already says «الآن»;
+            * this is the number that makes «الآن» mean something.
+            *
+            * Unscoped on purpose, to match `in_production` directly above it,
+            * which is also unscoped. A period-scoped companion under a global
+            * number is its own small lie.
+            */
+          sb.from('mos_creative_slots').select('id', { count: 'exact', head: true })
+            .is('content_id', null).is('retired_at', null),
         ]);
 
         const f = dbFail(liveRes.error) ?? dbFail(mineRes.error) ?? dbFail(lateRes.error)
           ?? dbFail(stalled.error) ?? dbFail(week.error) ?? dbFail(spend.error) ?? dbFail(byType.error)
-          ?? dbFail(mineOldest.error) ?? dbFail(lateRows.error);
+          ?? dbFail(mineOldest.error) ?? dbFail(lateRows.error)
+          ?? dbFail(placedRes.error) ?? dbFail(comingRes.error);
         if (f) return f;
+
+        const placedIds = new Set(
+          (placedRes.data ?? []).map((r) => (r as unknown as Row).content_id as string),
+        );
+        const placementsTruncated = (placedRes.count ?? 0) > PLACEMENT_ID_CAP;
 
         // Titles for the week card rows — one extra query beats N.
         const weekContentIds = Array.from(new Set(
@@ -5010,15 +5062,19 @@ export default async function handler(req: Request): Promise<Response> {
         // check and would be listed as "needs a slot" for its whole life. Six
         // of September's ad creatives were, on 2026-09-20.
         const unscheduledRes = await sb.from('mos_content_v')
-          .select('id, ref, title, target_publish_at, purpose')
+          .select('id, ref, title, target_publish_at, purpose', { count: 'exact' })
           .is('archived_at', null).not('status_key', 'in', '("draft","done")')
           .neq('purpose', 'paid')
           .gte('target_publish_at', weekStart).lt('target_publish_at', weekEnd)
-          .order('target_publish_at', { ascending: true }).limit(20);
+          .order('target_publish_at', { ascending: true }).limit(UNSCHEDULED_SCAN_CAP);
         const uf = dbFail(unscheduledRes.error);
         if (uf) return uf;
-        const unscheduled = (unscheduledRes.data ?? []).filter((r) =>
-          !weekContentIds.includes((r as unknown as Row).id as string));
+        const unscheduledAll = (unscheduledRes.data ?? []).filter((r) =>
+          !placedIds.has((r as unknown as Row).id as string));
+        // The card shows a handful; the COUNT is the whole set.
+        const unscheduled = unscheduledAll.slice(0, 20);
+        const unscheduledTotal = unscheduledAll.length;
+        const unscheduledTruncated = (unscheduledRes.count ?? 0) > UNSCHEDULED_SCAN_CAP;
 
         // Aggregate the late rows by stage label for the stat's detail line.
         const mixMap = new Map<string, { label_ar: string; label_en: string; n: number }>();
@@ -5036,10 +5092,32 @@ export default async function handler(req: Request): Promise<Response> {
         }
         const lateMix = Array.from(mixMap.values()).sort((a, b) => b.n - a.n).slice(0, 3);
 
-        // Period-scoped paid figures. mos_execution_daily is the dated source;
-        // when a period has no daily rows we fall back to lifetime execution
-        // totals so the card never regresses to zero (paid data is currently
-        // undated). `scoped` tells the UI which case it is.
+        // ── Which campaigns belong to THIS period ────────────────────────
+        //
+        // A campaign is in the period when its window OVERLAPS it
+        // (`campaignInPeriod`, unit-tested; the period is half-open, so a
+        // campaign starting on the first EXCLUDED day is out). One with no
+        // window cannot be placed in time at all, so it must not contribute a
+        // budget or a spend figure to a dated card — but it is REPORTED, not
+        // dropped in silence, because "we are ignoring 3 campaigns" is a thing
+        // the operator needs to know.
+        type CampaignRow = {
+          id: string; ref: string | null; name: string; status: string;
+          starts_on: string | null; ends_on: string | null;
+          budget_total: number | null; total_spend: number | null;
+          total_leads: number | null; total_qualified: number | null;
+        };
+        const allCampaigns = (spend.data ?? []) as unknown as CampaignRow[];
+        const inPeriod = allCampaigns.filter(
+          (c) => campaignInPeriod(c, weekStart.slice(0, 10), weekEnd.slice(0, 10)),
+        );
+        const undated = undatedCampaigns(allCampaigns);
+
+        // Period-scoped paid figures. mos_execution_daily is the dated source.
+        // There is NO lifetime fallback any more: a period with no dated rows
+        // has genuinely spent nothing, and substituting last month's total was
+        // read as this month's spend. Lifetime rides alongside as its own
+        // labelled number. `scoped` says whether the period had dated rows.
         type PaidDaily = { day: string; spend: number; leads: number; qualified: number };
         type PaidCampaign = {
           id: string; name: string; spend: number; impressions: number; clicks: number; leads: number; qualified: number;
@@ -5094,14 +5172,33 @@ export default async function handler(req: Request): Promise<Response> {
           period,
           counts: {
             in_production: liveRes.count ?? 0,
+            /** Promised by the plan, not created yet — see the `comingRes` query. */
+            not_yet_created: comingRes.count ?? 0,
             waiting_on_me: mineRes.count ?? 0,
-            publishing_this_week: weekRows.length + unscheduled.length,
+            publishing_this_week: (placedRes.count ?? 0) + unscheduledTotal,
             late: lateRes.count ?? 0,
           },
           stalled: stalled.data ?? [],
           week: weekRows,
+          /** The whole period's placements, not the 60 rows `week` displays. */
+          week_total: placedRes.count ?? 0,
+          week_truncated: placementsTruncated,
           unscheduled,
-          campaigns: spend.data ?? [],
+          unscheduled_total: unscheduledTotal,
+          unscheduled_truncated: unscheduledTruncated,
+          campaigns: inPeriod,
+          /** Active but undated — excluded from the figures above, reported so
+           *  the exclusion is visible rather than silent. */
+          campaigns_undated: undated.length,
+          /**
+           * Active/planning campaigns in TOTAL, ignoring the period.
+           *
+           * `campaigns` is period-scoped now, and the day-one setup checklist
+           * keys off "no campaigns at all". Without this, an established
+           * workspace with no open work, viewing a period that happens to
+           * contain no campaign, would be shown the first-run checklist.
+           */
+          campaigns_any: allCampaigns.length > 0,
           paid,
           mix: byType.data ?? [],
           waiting_oldest_at: (mineOldest.data?.[0] as { updated_at?: string } | undefined)?.updated_at ?? null,

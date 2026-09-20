@@ -100,6 +100,34 @@ function waitingLabel(
 }
 
 /**
+ * What a CONTENT ROW should say where a deadline would go.
+ *
+ * The task table renders `waitingLabel` from the task itself; a content row
+ * only ever had `current_task_due_at`, which a queued task deliberately leaves
+ * NULL — so every queued item read «بلا موعد», "no date", for work whose
+ * production day was perfectly well planned. On 2026-09-20 that was fourteen
+ * of September's fifteen ad creatives: each is produced 27–28 Sep and goes live
+ * on the 29th, and the screen said nobody had set a date.
+ *
+ * Returns null when there is genuinely nothing to say.
+ *
+ * Exported for its test — it is the one piece of this page with a rule worth
+ * pinning down.
+ */
+export function rowWaitText(
+  r: { status_key: string; current_task_waiting_reason?: string | null; current_task_scheduled_start?: string | null },
+  isAr: boolean,
+): string | null {
+  if (!r.current_task_waiting_reason) return null;
+  const why = waitingLabel({ step_id: r.status_key, waiting_reason: r.current_task_waiting_reason }, isAr);
+  const day = r.current_task_scheduled_start;
+  if (!day) return why;
+  return isAr
+    ? `${why} · الإنتاج ${shortDate(day, true)}`
+    : `${why} · produced ${shortDate(day, false)}`;
+}
+
+/**
  * The shell's phone breakpoint (mobile-shell.css). No shared matchMedia hook
  * exists in the codebase, so each mobile-aware page carries this small one.
  */
@@ -419,6 +447,8 @@ function QueueGroup({
                               ? `آخر موعد للتسليم ${dateTimeShort(r.current_task_due_at ?? r.due_at, true)} · متأخر ${daysAgo(r.current_task_due_at ?? r.due_at, true)}`
                               : `due ${dateTimeShort(r.current_task_due_at ?? r.due_at, false)} · ${daysAgo(r.current_task_due_at ?? r.due_at, false)} late`}
                           </Pill>
+                        ) : rowWaitText(r, isAr) ? (
+                          <Pill tone="wait">{rowWaitText(r, isAr)}</Pill>
                         ) : (
                           <Pill tone={tone === 'idle' ? 'wait' : 'now'}>
                             {r.current_task_due_at
@@ -936,10 +966,14 @@ export default function WorkPage() {
     return isAr ? 'شخص آخر' : 'someone else';
   };
 
+  /** `rowWaitText` bound to the current language — used wherever a row would
+   *  otherwise claim it has no date. */
+  const waitText = (r: MosContentRow): string | null => rowWaitText(r, isAr);
+
   // «P-022 · خطة سداد الثلاث غرف · اليوم» — the mine-card meta tail.
   const dueText = (r: MosContentRow): string => {
     const due = r.current_task_due_at ?? r.due_at;
-    if (!due) return isAr ? 'بلا موعد' : 'no due date';
+    if (!due) return waitText(r) ?? (isAr ? 'بلا موعد' : 'no due date');
     return daysFromNow(due) === 0 ? (isAr ? 'اليوم' : 'today') : shortDate(due, isAr);
   };
 

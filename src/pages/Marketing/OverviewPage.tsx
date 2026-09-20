@@ -116,9 +116,33 @@ function ManagerOverview() {
   const videoCount = (data?.mix ?? []).filter((m) => m.content_type_key === 'video').length;
   const postCount = (data?.mix ?? []).length - videoCount;
   const inProduction = data?.counts.in_production ?? 0;
+  /**
+   * «تحت الإنتاج الآن» counts work that EXISTS, and the label says «الآن» for
+   * exactly that reason. This is the number that makes «الآن» mean something: a
+   * committed month also promises ad creatives that no refresh cycle has begun
+   * producing — 60 of them on 2026-09-20, for a month of 150 items whose stat
+   * read 90.
+   */
+  const productionDetail = (): string => {
+    const base = isAr
+      ? `${num(postCount, true)} منشور · ${num(videoCount, true)} فيديو`
+      : `${postCount} posts · ${videoCount} video`;
+    const coming = data?.counts.not_yet_created ?? 0;
+    if (coming <= 0) return base;
+    return isAr
+      ? `${base} · ${num(coming, true)} لم تُنشأ بعد`
+      : `${base} · ${coming} not created yet`;
+  };
 
-  const scheduledCount = data?.week.length ?? 0;
-  const unscheduledCount = data?.unscheduled.length ?? 0;
+  // The TOTALS, not the lengths of the two capped display lists — `week`
+  // shows at most 60 placements and `unscheduled` at most 20, so counting the
+  // arrays reported a page size as the period's size.
+  //
+  // The array length is the FALLBACK, not zero: a bundle that outlives the
+  // handler that feeds it should degrade to the old (short) number rather than
+  // confidently claim nothing is publishing.
+  const scheduledCount = data?.week_total ?? data?.week.length ?? 0;
+  const unscheduledCount = data?.unscheduled_total ?? data?.unscheduled.length ?? 0;
   const publishingTotal = scheduledCount + unscheduledCount;
 
   // «٣ أشخاص في الإنتاج» — people holding a production role.
@@ -160,8 +184,13 @@ function ManagerOverview() {
 
   // Day one (screen 45): zero content AND zero campaigns = the honest empty
   // state with the real-state setup checklist — never a wall of empty zeros.
-  if (data && inProduction === 0 && (data.mix ?? []).length === 0
-      && (data.campaigns ?? []).length === 0) {
+  //
+  // `campaigns_any` is deliberately NOT `campaigns.length`: that list is
+  // period-scoped now, so an established workspace with no open work, viewing a
+  // period that happens to hold no campaign, would be shown the first-run
+  // checklist. Falls back to the list only for a payload without the field.
+  const anyCampaign = data?.campaigns_any ?? ((data?.campaigns ?? []).length > 0);
+  if (data && inProduction === 0 && (data.mix ?? []).length === 0 && !anyCampaign) {
     return <EmptyDayOne />;
   }
 
@@ -194,11 +223,7 @@ function ManagerOverview() {
               <div className="m1-stat">
                 <div className="lbl">{isAr ? 'تحت الإنتاج الآن' : 'In production now'}</div>
                 <div className="v">{num(inProduction, isAr)}</div>
-                <div className="d">
-                  {isAr
-                    ? `${num(postCount, true)} منشور · ${num(videoCount, true)} فيديو`
-                    : `${postCount} posts · ${videoCount} video`}
-                </div>
+                <div className="d">{productionDetail()}</div>
               </div>
               <div className="m1-stat">
                 <div className="lbl">{isAr ? 'بانتظارك' : 'Waiting on you'}</div>
@@ -303,9 +328,7 @@ function ManagerOverview() {
                 isAr={isAr}
                 label={isAr ? 'تحت الإنتاج الآن' : 'In production now'}
                 value={inProduction}
-                detail={isAr
-                  ? `${num(postCount, true)} منشور · ${num(videoCount, true)} فيديو`
-                  : `${postCount} posts · ${videoCount} video`}
+                detail={productionDetail()}
                 meter={[
                   { pct: inProduction > 0 ? (postCount / inProduction) * 100 : 0, color: 'var(--copper)' },
                   { pct: inProduction > 0 ? (videoCount / inProduction) * 100 : 0, color: 'var(--gold)' },
@@ -469,7 +492,10 @@ function ManagerOverview() {
 /** The «يُنشر هذا الأسبوع» rows — scheduled .ev chips + the needs-a-slot row. */
 function WeekList({ data, isAr }: { data: MosOverview; isAr: boolean }) {
   const navigate = useNavigate();
-  const publishingTotal = data.week.length + data.unscheduled.length;
+  // The same totals the stat above uses — two numbers on one screen that
+  // disagree are worse than one number that is merely capped.
+  const publishingTotal = (data.week_total ?? data.week.length)
+    + (data.unscheduled_total ?? data.unscheduled.length);
   if (publishingTotal === 0) {
     return (
       <div style={{ fontSize: 12.5, color: 'var(--mute)' }}>
@@ -491,7 +517,7 @@ function WeekList({ data, isAr }: { data: MosOverview; isAr: boolean }) {
           onClick={() => navigate(contentHref({ id: p.content_id }, null, { section: 'schedule' }))}
         >
           <span>
-            {dayLabel(p.scheduled_at, isAr)} ·{' '}
+            {dayLabel(p.due_at ?? p.scheduled_at, isAr)} ·{' '}
             {(isAr ? PLATFORM_LABELS[p.platform]?.ar : PLATFORM_LABELS[p.platform]?.en) ?? p.platform}
             {' · '}
           </span>
@@ -509,6 +535,22 @@ function WeekList({ data, isAr }: { data: MosOverview; isAr: boolean }) {
           <b style={{ fontWeight: 700 }}>
             {data.unscheduled.map((u) => u.ref ?? u.title).join(isAr ? '، ' : ', ')}
           </b>
+          {/* Both lists are capped for display. A short list must never read as
+              a complete one — CLAUDE.md's "never cap results silently". */}
+          {(data.unscheduled_total ?? 0) > data.unscheduled.length && (
+            <span style={{ color: 'var(--mute)' }}>
+              {isAr
+                ? ` + ${num((data.unscheduled_total ?? 0) - data.unscheduled.length, true)} أخرى`
+                : ` + ${(data.unscheduled_total ?? 0) - data.unscheduled.length} more`}
+            </span>
+          )}
+        </div>
+      )}
+      {((data.week_total ?? 0) > data.week.length || data.week_truncated) && (
+        <div style={{ fontSize: 11, color: 'var(--mute)', marginTop: 6 }}>
+          {isAr
+            ? `تُعرض ${num(data.week.length, true)} من ${num(data.week_total ?? 0, true)} عملية نشر`
+            : `showing ${data.week.length} of ${data.week_total ?? 0} placements`}
         </div>
       )}
     </>
@@ -518,10 +560,10 @@ function WeekList({ data, isAr }: { data: MosOverview; isAr: boolean }) {
 /** The «الإعلانات المدفوعة» paid-ads card — same DOM on both layouts. Numbers
  *  may be Meta-synced or hand-entered, so it no longer claims a single source. */
 function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
-  // Spend/leads/qualified are now PERIOD-SCOPED (data.paid) — summed from the
-  // dated daily data for the selected period. `scoped` is false when the period
-  // has no dated data yet, in which case these are lifetime totals shown "to
-  // date" rather than a misleading zero. Budget stays the active-campaign total.
+  // Spend/leads/qualified are PERIOD-SCOPED (data.paid), summed from the dated
+  // daily data for the selected period — including when that is zero, which is
+  // the honest answer for a month that has not spent yet. `scoped` says whether
+  // the period had dated rows; lifetime is shown separately, never instead.
   const paid = data.paid ?? {
     spend: 0, leads: 0, qualified: 0, scoped: false, lifetime_spend: 0, lifetime_leads: 0,
   };
@@ -530,6 +572,9 @@ function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
   // that had spent nothing reported 6,891 of 16,001.
   const budget = (data.campaigns ?? []).reduce((a, c) => a + (c.budget_total ?? 0), 0);
   const lifetime = paid.lifetime_spend ?? 0;
+  // `data.campaigns` is period-scoped, so campaigns with no start date are not
+  // in it. They are counted rather than dropped in silence.
+  const undated = data.campaigns_undated ?? 0;
   const spent = paid.spend;
   const leads = paid.leads;
   const qualified = paid.qualified;
@@ -586,6 +631,16 @@ function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
             <div style={{ fontFamily: 'var(--serif)', fontSize: 20 }}>{num(qualified, isAr)}</div>
           </div>
         </div>
+        {/* Excluded, not hidden: a campaign with no start date cannot be placed
+            in a period, so it contributes nothing above — and saying so is the
+            difference between a scoped figure and a wrong one. */}
+        {undated > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--mute)' }}>
+            {isAr
+              ? `${num(undated, true)} حملة نشطة بلا تاريخ بدء — غير محسوبة هنا`
+              : `${undated} active campaign${undated === 1 ? '' : 's'} with no start date — not counted here`}
+          </div>
+        )}
       </div>
     </div>
   );
