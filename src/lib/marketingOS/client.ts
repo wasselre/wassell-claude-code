@@ -3624,6 +3624,8 @@ export interface MosMonthStart {
   adsLiveWhenReady?: boolean;
   through?: string;
   creativeOverrides?: MosCreativeOverride[];
+  /** This month's own per-project budget, overriding the template's. */
+  budgetPerProject?: number;
 }
 
 /** One batch-sizing rule. `null` on a field means "any". */
@@ -4069,9 +4071,9 @@ export const compileMonthPlan = (
  * a control.
  */
 export const setMonthBudget = (
-  budgetPerProject: number,
-): Promise<{ budget_per_project: number; previous: number }> =>
-  call('month_budget_set', { budget_per_project: budgetPerProject });
+  month: string, budgetPerProject: number,
+): Promise<{ month: string; budget_per_project: number; previous: number; cleared: boolean }> =>
+  call('month_budget_set', { month, budget_per_project: budgetPerProject });
 
 export const setMonthBatchSize = (
   month: string, batchDay: string, creatives: number, projectId?: string | null,

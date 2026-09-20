@@ -29,7 +29,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ensureMetaSkeleton, metaErr } from '../metaSkeleton.js';
 import { loadMetaConfig, MetaMarketingClient } from '../metaMarketingApi.js';
-import { parseMonthStarts } from './monthCompiler.js';
+import { parseMonthStarts, parseMonthTemplate, budgetPerProjectFor } from './monthCompiler.js';
 
 /** The plan C-042 ran on (2026-08-28): Click-to-WhatsApp conversations. */
 const META_PLAN_DEFAULTS = Object.freeze({
@@ -94,7 +94,9 @@ export async function ensureMonthMetaCampaigns(
   };
   const execs = (execRes.data ?? []) as Exec[];
 
-  const budget = Number(tpl.budget_per_project ?? 0);
+  // The MONTH's budget, not the template's — a stretched month runs longer and
+  // carries its own figure so the pace stays normal (see `budgetPerProjectFor`).
+  const parsedTemplate = parseMonthTemplate(tpl as unknown as Record<string, unknown>);
   const templateDays = Number(tpl.campaign_length_days ?? 0);
   /*
    * The daily budget spreads `budget_per_project` over the campaign's OWN
@@ -122,6 +124,7 @@ export async function ensureMonthMetaCampaigns(
     if (e.ends_on && e.ends_on < today) continue; // a finished month is not built after the fact
 
     const days = camp ? windowDays(camp) : templateDays;
+    const budget = budgetPerProjectFor(parsedTemplate, (camp?.ref ?? '').slice(0, 7));
     const dailyBudget = budget > 0 && days > 0 ? Math.round((budget / days) * 100) / 100 : null;
     const ps = e.platform_settings ?? {};
     const lastFail = typeof ps.meta_build_error_at === 'string' ? Date.parse(ps.meta_build_error_at) : NaN;

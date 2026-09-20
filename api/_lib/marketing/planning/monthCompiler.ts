@@ -148,6 +148,16 @@ export interface MonthStart {
    * browser would not.
    */
   creativeOverrides?: CreativeOverride[];
+  /**
+   * This month's own per-project budget, overriding the template's.
+   *
+   * `budget_per_project` is sized for `campaign_length_days` — 2,000 over 30
+   * days is 66.67 a day. A STRETCHED month runs longer (22 Sep → 31 Oct is 40
+   * days), so the same 2,000 quietly becomes 50 a day. Raising the TEMPLATE to
+   * fix that would make every ordinary 30-day month spend 89 a day instead.
+   * The pace belongs to the month, so the number does too.
+   */
+  budgetPerProject?: number;
 }
 
 /** One sizing rule. `null` on a field means "any". */
@@ -314,7 +324,9 @@ export function parseMonthStarts(v: unknown): Record<string, MonthStart> {
         })
         .filter((x): x is CreativeOverride => x !== null)
       : [];
+    const budget = Number(o.budget_per_project);
     out[month] = {
+      budgetPerProject: Number.isFinite(budget) && budget >= 0 ? budget : undefined,
       organicFrom: day(o.organic_from),
       paidFrom: day(o.paid_from),
       adsLiveWhenReady: o.ads_live_when_ready === true,
@@ -522,6 +534,21 @@ export interface MonthGeometry {
 
 const MONTH_RE = /^(\d{4})-(\d{2})$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The per-project budget THIS month runs on.
+ *
+ * The month's own figure when it has one, the template's otherwise. Every
+ * consumer must go through here — the commit, the Meta build and the page —
+ * or they disagree about what is being spent, which is the whole failure this
+ * screen has spent a day being rebuilt around.
+ */
+export function budgetPerProjectFor(template: MonthTemplate, month: string): number {
+  const own = template.monthStarts?.[month]?.budgetPerProject;
+  return typeof own === 'number' && Number.isFinite(own) && own >= 0
+    ? own
+    : template.budgetPerProject;
+}
 
 /**
  * Creatives for ONE project on ONE batch day, after the month's sizing rules.
@@ -1676,7 +1703,7 @@ export function summariseMonth(args: {
     // What will actually be SPENT: one standing budget per project that runs.
     // Multiplying by the number chosen promised 8,000 riyals for four projects
     // while three ran.
-    budgetTotal: template.budgetPerProject * withRows.size,
+    budgetTotal: budgetPerProjectFor(template, geometry.month) * withRows.size,
     projectSlots: monthProjectSlots(template),
     projectsWithoutRows,
     selectionOk: projectsWithoutRows.length === 0,

@@ -49,7 +49,7 @@ import { terminalLostStages } from '../../../../src/lib/salesProcess/qualifiedSt
 import { ourLeadsByProject, type ProjectLeadTotals } from '../ourLeads.js';
 import {
   compileMonth, parseMonthTemplate, monthGeometry, monthStartFrom, monthCoveredBy,
-  MONTH_TEMPLATE_DEFAULTS,
+  budgetPerProjectFor, MONTH_TEMPLATE_DEFAULTS,
   type CompiledMonth, type MonthProject, type MonthTemplate,
 } from './monthCompiler.js';
 import {
@@ -813,7 +813,7 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
       startsOn: isPaid ? (compiled.geometry.paidBatchDays[0] ?? compiled.geometry.firstPostingDay)
         : compiled.geometry.firstPostingDay,
       endsOn: isPaid ? compiled.geometry.campaignEndsOn : lastWeekEnd,
-      budget: isPaid ? template.budgetPerProject : null,
+      budget: isPaid ? budgetPerProjectFor(template, month) : null,
       actor,
     });
     if (camp.error) {
@@ -1142,7 +1142,7 @@ export async function monthReport(ctx: PlanCtx): Promise<Response> {
       releases_published: num(m.releases_published),
       posts_planned: plannedPosts.get(id) ?? 0,
       creatives_planned: plannedCreatives.get(id) ?? 0,
-      budget: template.budgetPerProject,
+      budget: budgetPerProjectFor(template, month),
     };
   }).sort((a, b) => {
     // SLOT order first — the report's cards must stand where the plan's did.
@@ -1181,7 +1181,7 @@ export async function monthReport(ctx: PlanCtx): Promise<Response> {
       posts_planned: plannedRows.filter((r) => r.purpose !== 'paid').length,
       creatives_planned: plannedRows.filter((r) => r.purpose === 'paid').length,
       general_planned: generalPlanned,
-      budget_total: template.budgetPerProject * Math.max(projectIds.length, 0),
+      budget_total: budgetPerProjectFor(template, month) * Math.max(projectIds.length, 0),
     },
     // Two fail-loud guards, both scoped and both labelled on the page:
     // spend whose campaign names no project, and leads whose ad's campaign does.
@@ -1231,15 +1231,21 @@ function boundedInt(v: unknown, min: number, max: number): number | 'bad' | null
 }
 
 /**
- * `month_budget_set` — the per-project monthly budget.
+ * `month_budget_set` — the per-project budget for ONE month.
  *
- * Before this existed the page said «ارفعه إن أردت» / «خفّضه بنفسك إن أردت»
- * and gave the operator nowhere to do either: two contradictory sentences
- * about money with no control between them. The figure is a TEMPLATE value,
- * not a per-month one, so changing it here changes it for every month — which
- * is stated on the card rather than discovered later.
+ * It writes `month_starts.<YYYY-MM>.budget_per_project`, NOT the template.
+ * The template's figure is sized for `campaign_length_days`: 2,000 over 30
+ * days is 66.67 a day. A stretched month runs longer — September 2026 runs
+ * 22 Sep → 31 Oct, forty days — so the same 2,000 spends 50 a day, and raising
+ * the TEMPLATE to correct that would make every ordinary month spend 89.
+ * The pace belongs to the month, so the number does.
+ *
+ * Passing the template's own figure REMOVES the override rather than storing a
+ * redundant copy, so the stored shape stays the minimum that explains the month.
  */
 export async function monthBudgetSet(ctx: PlanCtx): Promise<Response> {
+  const month = monthOf(ctx.body);
+  if (!month) return jsonError(400, 'month must be YYYY-MM');
   const svc = ctx.svc;
   if (!svc) return jsonError(500, 'service client unavailable');
 
@@ -1261,15 +1267,26 @@ export async function monthBudgetSet(ctx: PlanCtx): Promise<Response> {
       error_en: 'There is no month template row to change.',
     }));
   }
+  const previous = budgetPerProjectFor(tpl.row, month);
+
+  const cur = await svc.from('mos_month_template').select('month_starts').eq('id', tpl.row.id).maybeSingle();
+  if (cur.error) return fail('mos_month_template', cur.error);
+  const starts = ((cur.data as { month_starts?: Record<string, unknown> } | null)?.month_starts ?? {}) as Record<string, Record<string, unknown>>;
+  const forMonth = { ...(starts[month] ?? {}) };
+  if (budget === tpl.row.budgetPerProject) delete forMonth.budget_per_project;
+  else forMonth.budget_per_project = budget;
 
   const up = await svc.from('mos_month_template')
-    .update({ budget_per_project: budget, updated_at: new Date().toISOString() })
-    .eq('id', tpl.row.id).select('budget_per_project').maybeSingle();
+    .update({ month_starts: { ...starts, [month]: forMonth }, updated_at: new Date().toISOString() })
+    .eq('id', tpl.row.id).select('month_starts').maybeSingle();
   if (up.error) return fail('mos_month_template', up.error);
 
   return jsonOk({
-    budget_per_project: (up.data as { budget_per_project: number } | null)?.budget_per_project ?? budget,
-    previous: tpl.row.budgetPerProject,
+    month,
+    budget_per_project: budget,
+    previous,
+    /** True when the month now simply follows the template again. */
+    cleared: budget === tpl.row.budgetPerProject,
   });
 }
 

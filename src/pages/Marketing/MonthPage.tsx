@@ -356,7 +356,7 @@ export default function MonthPage() {
   const applyBudget = useCallback(async (perProject: number) => {
     setFactBusy('budget');
     try {
-      await setMonthBudget(perProject);
+      await setMonthBudget(month, perProject);
       await load();
       addToast(
         isAr ? `الميزانية الآن ${money(perProject, true)} لكل مشروع.` : `Budget is now ${money(perProject, false)} a project.`,
@@ -367,7 +367,7 @@ export default function MonthPage() {
     } finally {
       setFactBusy(null);
     }
-  }, [load, addToast, isAr]);
+  }, [month, load, addToast, isAr]);
 
   const applyBatchSize = useCallback(async (batchDay: string, creatives: number) => {
     setFactBusy('batch-size');
@@ -431,6 +431,14 @@ export default function MonthPage() {
    * the template's own figure, so that is the fallback and only that.
    */
   const slotCount = summary?.projectSlots ?? template?.projectsPerMonth ?? 0;
+  /*
+   * The per-project budget THIS month runs on — its own figure when it has
+   * one, the template's otherwise. Every number on this page reads it, so the
+   * page, the commit and Meta cannot disagree about what is being spent.
+   */
+  const monthBudget = template
+    ? (template.monthStarts[month]?.budgetPerProject ?? template.budgetPerProject)
+    : 0;
   /** Projects that will actually run — never the raw selection. */
   const runningCount = Math.min(selection.length, slotCount || selection.length);
 
@@ -470,7 +478,9 @@ export default function MonthPage() {
     }
 
     out.push(budgetFact({
-      perProject: template.budgetPerProject,
+      // The MONTH's figure: a stretched month carries its own so the daily
+      // pace stays normal over a longer window. Falls back to the template.
+      perProject: monthBudget,
       budgetTotal: summary.budgetTotal,
       running: runningProjects,
       monthsCovered: summary.monthsCovered,
@@ -533,7 +543,7 @@ export default function MonthPage() {
     }
 
     return out;
-  }, [summary, template, isAr, selection.length, canPlan, data?.state, factBusy, pastDays.length,
+  }, [summary, template, monthBudget, isAr, selection.length, canPlan, data?.state, factBusy, pastDays.length,
       applyBudget, applyBatchSize, firstAdBatch, month, lateDays, staffedOutBatches]);
 
   const gridProjects = useMemo(
@@ -917,7 +927,7 @@ export default function MonthPage() {
                     <dd>{compiled.geometry.paidBatchDays.map((d) => dayLabel(d, isAr)).join(' · ')}</dd>
                     <dt>{isAr ? 'الميزانية' : 'Budget'}</dt>
                     <dd>
-                      {money(template.budgetPerProject, isAr)} × {num(selection.length, isAr)} ={' '}
+                      {money(monthBudget, isAr)} × {num(runningCount, isAr)} ={' '}
                       <b>{money(summary.budgetTotal, isAr)}</b>
                     </dd>
                     <dt>{isAr ? 'آخر يوم نشر' : 'Last posting day'}</dt>
@@ -1098,8 +1108,8 @@ export default function MonthPage() {
                     : 'There is nothing to confirm: no posting day is left that production can reach.')
                   : summary
                   ? (isAr
-                    ? `الاعتماد يُنشئ — مهام الكتابة: ${num(summary.rows, true)} · مهام التصميم: ${num(summary.rows, true)} · حملات ميتا: ${num(runningCount, true)} بميزانية ${money(template.budgetPerProject, true)} لكل واحدة · الدفعات الإعلانية: ${num(compiled?.geometry.paidBatchDays.length ?? 0, true)}. بعد الاعتماد لا يوجد تخطيط — استثناءات فقط.`
-                    : `Confirming creates ${num(summary.rows, false)} writing tasks and ${num(summary.rows, false)} design tasks with their dates, ${num(runningCount, false)} Meta campaigns at ${money(template.budgetPerProject, false)} each, and ${num(compiled?.geometry.paidBatchDays.length ?? 0, false)} ad batches. After confirming there is no planning — only exceptions.`)
+                    ? `الاعتماد يُنشئ — مهام الكتابة: ${num(summary.rows, true)} · مهام التصميم: ${num(summary.rows, true)} · حملات ميتا: ${num(runningCount, true)} بميزانية ${money(monthBudget, true)} لكل واحدة · الدفعات الإعلانية: ${num(compiled?.geometry.paidBatchDays.length ?? 0, true)}. بعد الاعتماد لا يوجد تخطيط — استثناءات فقط.`
+                    : `Confirming creates ${num(summary.rows, false)} writing tasks and ${num(summary.rows, false)} design tasks with their dates, ${num(runningCount, false)} Meta campaigns at ${money(monthBudget, false)} each, and ${num(compiled?.geometry.paidBatchDays.length ?? 0, false)} ad batches. After confirming there is no planning — only exceptions.`)
                   : (isAr
                     ? 'احسب الشهر أولًا لترى ما سيُنشئه الاعتماد.'
                     : 'Compile the month first to see what confirming would create.')}
