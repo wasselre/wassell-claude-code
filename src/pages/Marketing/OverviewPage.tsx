@@ -192,7 +192,7 @@ function ManagerOverview() {
           <>
             <div className="m1-stats">
               <div className="m1-stat">
-                <div className="lbl">{isAr ? 'تحت الإنتاج' : 'In production'}</div>
+                <div className="lbl">{isAr ? 'تحت الإنتاج الآن' : 'In production now'}</div>
                 <div className="v">{num(inProduction, isAr)}</div>
                 <div className="d">
                   {isAr
@@ -301,7 +301,7 @@ function ManagerOverview() {
             <div className="grid g4" style={{ marginBottom: 18 }}>
               <Stat
                 isAr={isAr}
-                label={isAr ? 'تحت الإنتاج' : 'In production'}
+                label={isAr ? 'تحت الإنتاج الآن' : 'In production now'}
                 value={inProduction}
                 detail={isAr
                   ? `${num(postCount, true)} منشور · ${num(videoCount, true)} فيديو`
@@ -522,8 +522,14 @@ function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
   // dated daily data for the selected period. `scoped` is false when the period
   // has no dated data yet, in which case these are lifetime totals shown "to
   // date" rather than a misleading zero. Budget stays the active-campaign total.
-  const paid = data.paid ?? { spend: 0, leads: 0, qualified: 0, scoped: false };
+  const paid = data.paid ?? {
+    spend: 0, leads: 0, qualified: 0, scoped: false, lifetime_spend: 0, lifetime_leads: 0,
+  };
+  // The campaigns list is now scoped to the period, so this budget is the
+  // period's too. It used to sum every open campaign, which is how a month
+  // that had spent nothing reported 6,891 of 16,001.
   const budget = (data.campaigns ?? []).reduce((a, c) => a + (c.budget_total ?? 0), 0);
+  const lifetime = paid.lifetime_spend ?? 0;
   const spent = paid.spend;
   const leads = paid.leads;
   const qualified = paid.qualified;
@@ -532,10 +538,10 @@ function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
     <div className="card">
       <div className="card-h">
         <h4>{isAr ? 'الإعلانات المدفوعة' : 'Paid ads'}</h4>
+        {/* Always the period. The header no longer flips to "to date" and
+            quietly change what the big number means. */}
         <span className="r" style={{ marginInlineStart: 'auto', color: 'var(--mute)', fontSize: 11 }}>
-          {paid.scoped
-            ? (isAr ? 'ضمن الفترة' : 'in period')
-            : (isAr ? 'إجمالي حتى الآن' : 'to date')}
+          {isAr ? 'ضمن الفترة' : 'in period'}
         </span>
       </div>
       <div className="card-b" style={{ display: 'grid', gap: 11 }}>
@@ -552,6 +558,14 @@ function PaidAdsCard({ data, isAr }: { data: MosOverview; isAr: boolean }) {
           <div className="meter" style={{ marginTop: 8 }}>
             <i style={{ width: `${budget > 0 ? Math.min(100, (spent / budget) * 100) : 0}%`, background: 'var(--copper)' }} />
           </div>
+          {lifetime > spent && (
+            /* Lifetime BESIDE the period, never instead of it. */
+            <div className="lbl" style={{ marginTop: 6, color: 'var(--mute)' }}>
+              {isAr
+                ? `إجمالي الإنفاق حتى الآن على كل الحملات: ${num(Math.round(lifetime), true)} ر.س`
+                : `All campaigns, to date: ${num(Math.round(lifetime), false)} SAR`}
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
           <div>

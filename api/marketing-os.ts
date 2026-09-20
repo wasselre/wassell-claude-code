@@ -4931,13 +4931,41 @@ export default async function handler(req: Request): Promise<Response> {
             .is('archived_at', null).not('status_key', 'in', '("draft","done")')
             .lt('updated_at', new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString())
             .order('updated_at', { ascending: true }).limit(8),
+          /*
+            * `due_at` = COALESCE(scheduled_at, planned_at) — the same column
+            * the release engine fires on (`mos_release_v.due_at`).
+            *
+            * This filtered on `scheduled_at` alone, which is NULL until the
+            * publisher actually takes a post. So work that was planned and
+            * queued perfectly well showed as nothing scheduled this week, and
+            * then turned up under «بحاجة لموعد نشر». On 2026-09-20 that was
+            * all nine of September's first posts, while 138 releases sat
+            * correctly queued for Tue 22 Sep onwards.
+            */
           sb.from('mos_publication_v')
-            .select('id, content_id, platform, status, scheduled_at, published_at')
-            .gte('scheduled_at', weekStart).lt('scheduled_at', weekEnd)
-            .order('scheduled_at', { ascending: true }).limit(60),
+            .select('id, content_id, platform, status, scheduled_at, planned_at, due_at, published_at')
+            .gte('due_at', weekStart).lt('due_at', weekEnd)
+            .order('due_at', { ascending: true }).limit(60),
+          /*
+            * Campaigns that OVERLAP the period, not every campaign that is
+            * still open.
+            *
+            * This had no date filter at all, so August's مينا 52 and early
+            * September's تل الربوة sat in a card headed by this month's
+            * numbers — and, worse, their budgets and spend were summed into
+            * the paid card. On 2026-09-20 it reported 6,891 spent of 16,001
+            * for a month that had spent nothing.
+            *
+            * An undated campaign cannot be scoped to any period honestly, so
+            * it is left out rather than shown against a window it makes no
+            * claim about.
+            */
           sb.from('mos_campaign_v')
-            .select('id, ref, name, status, budget_total, total_spend, total_leads, total_qualified')
-            .in('status', ['active', 'planning']).limit(20),
+            .select('id, ref, name, status, budget_total, total_spend, total_leads, total_qualified, starts_on, ends_on')
+            .in('status', ['active', 'planning'])
+            .lte('starts_on', weekEnd.slice(0, 10))
+            .or(`ends_on.is.null,ends_on.gte.${weekStart.slice(0, 10)}`)
+            .limit(20),
           sb.from('mos_content_v').select('content_type_key, status_key')
             .is('archived_at', null).not('status_key', 'in', '("draft","done")').limit(1000),
           // «أقدمها منتظر منذ …» — the oldest item sitting with my role.
@@ -4976,9 +5004,15 @@ export default async function handler(req: Request): Promise<Response> {
         });
 
         // «بحاجة لموعد نشر» — aimed at this period but nothing scheduled yet.
+        //
+        // PAID IS EXCLUDED. A paid creative never gets a publication row — it
+        // becomes a Meta ad on final approval — so it can never satisfy this
+        // check and would be listed as "needs a slot" for its whole life. Six
+        // of September's ad creatives were, on 2026-09-20.
         const unscheduledRes = await sb.from('mos_content_v')
-          .select('id, ref, title, target_publish_at')
+          .select('id, ref, title, target_publish_at, purpose')
           .is('archived_at', null).not('status_key', 'in', '("draft","done")')
+          .neq('purpose', 'paid')
           .gte('target_publish_at', weekStart).lt('target_publish_at', weekEnd)
           .order('target_publish_at', { ascending: true }).limit(20);
         const uf = dbFail(unscheduledRes.error);
@@ -5012,8 +5046,12 @@ export default async function handler(req: Request): Promise<Response> {
         };
         let paid: {
           spend: number; leads: number; qualified: number; scoped: boolean;
+          lifetime_spend: number; lifetime_leads: number;
           daily: PaidDaily[]; by_campaign: PaidCampaign[];
-        } = { spend: 0, leads: 0, qualified: 0, scoped: false, daily: [], by_campaign: [] };
+        } = {
+          spend: 0, leads: 0, qualified: 0, scoped: false,
+          lifetime_spend: 0, lifetime_leads: 0, daily: [], by_campaign: [],
+        };
         const paidSvc = makeServiceClient('api:marketing-os');
         if (paidSvc) {
           const pr = await paidSvc.rpc('mos_paid_analytics', {
@@ -5024,10 +5062,31 @@ export default async function handler(req: Request): Promise<Response> {
           } | null;
           const t = d?.totals ?? {};
           const dailyDays = Number(t.daily_days ?? 0);
-          const base = dailyDays > 0
-            ? { spend: Number(t.spend ?? 0), leads: Number(t.leads ?? 0), qualified: Number(t.qualified ?? 0), scoped: true }
-            : { spend: Number(t.exec_spend ?? 0), leads: Number(t.exec_leads ?? 0), qualified: Number(t.qualified ?? 0), scoped: false };
-          paid = { ...base, daily: d?.daily ?? [], by_campaign: d?.by_campaign ?? [] };
+          /*
+            * The period's figure is the period's figure, including when it is
+            * zero.
+            *
+            * The fallback used to substitute LIFETIME spend whenever a period
+            * had no dated rows, to avoid "a misleading zero". But a new month
+            * genuinely has spent nothing, and showing last month's 6,891
+            * against it is a far worse lie than the zero it was avoiding — the
+            * operator read it as this month's spend, which is exactly what it
+            * looked like. Lifetime now rides alongside as its own number,
+            * clearly labelled, instead of impersonating the period.
+            */
+          const base = {
+            spend: Number(t.spend ?? 0),
+            leads: Number(t.leads ?? 0),
+            qualified: Number(t.qualified ?? 0),
+            scoped: dailyDays > 0,
+          };
+          paid = {
+            ...base,
+            lifetime_spend: Number(t.exec_spend ?? 0),
+            lifetime_leads: Number(t.exec_leads ?? 0),
+            daily: d?.daily ?? [],
+            by_campaign: d?.by_campaign ?? [],
+          };
         }
 
         return jsonOk({

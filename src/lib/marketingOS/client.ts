@@ -1807,13 +1807,17 @@ export interface MosOverview {
   campaigns: Array<Pick<MosCampaign,
     'id' | 'ref' | 'name' | 'status' | 'budget_total' | 'total_spend' | 'total_leads' | 'total_qualified'>>;
   /**
-   * Period-scoped paid figures. `scoped` is true when the period had dated
-   * daily data (mos_execution_daily); false means these are lifetime execution
-   * totals shown because the period has no dated data yet. `daily` /
+   * PERIOD-scoped paid figures — always the period's, including when that is
+   * zero. `scoped` says whether the period had dated daily rows.
+   *
+   * `lifetime_*` rides alongside rather than substituting itself when a period
+   * is empty: a new month has genuinely spent nothing, and showing the
+   * previous month's total against it reads as this month's spend. `daily` /
    * `by_campaign` power the Overview's spend chart + campaigns table.
    */
   paid: {
     spend: number; leads: number; qualified: number; scoped: boolean;
+    lifetime_spend: number; lifetime_leads: number;
     daily: Array<{ day: string; spend: number; leads: number; qualified: number }>;
     by_campaign: Array<{
       id: string; name: string; spend: number; impressions: number; clicks: number; leads: number; qualified: number;
