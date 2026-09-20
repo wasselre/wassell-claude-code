@@ -419,6 +419,20 @@ export default function MonthPage() {
   const staffedOutBatches = compiled?.geometry.skippedPaidBatchDays.filter((d) => d.reason === 'capacity') ?? [];
   const firstAdBatch = compiled?.geometry.paidBatchDays[0] ?? null;
   const template = data?.template ?? compiled?.template ?? report?.template ?? null;
+  /*
+   * The slots the ENGINE will actually run.
+   *
+   * `monthProjectSlots` clamps `projects_per_month` by the number of distinct
+   * posting weekdays and `compileMonth` slices the selection to it, publishing
+   * the result as `summary.projectSlots`. Drawing the raw template number
+   * offers a fourth slot that gets no rows, no paid plan and no campaign —
+   * while the budget, the creative count and the confirm blurb are all stated
+   * as though it ran. Before the compile lands there is nothing better than
+   * the template's own figure, so that is the fallback and only that.
+   */
+  const slotCount = summary?.projectSlots ?? template?.projectsPerMonth ?? 0;
+  /** Projects that will actually run — never the raw selection. */
+  const runningCount = Math.min(selection.length, slotCount || selection.length);
 
   /*
    * THE FACTS, in the order an operator reads them: can the team do it, is
@@ -675,14 +689,14 @@ export default function MonthPage() {
                 project_name: data.selection.find((s) => s.project_id === id)?.project_name ?? projectName(id),
                 ranking: data.ranking.find((r) => r.project_id === id) ?? null,
               }))}
-              slotCount={template.projectsPerMonth}
+              slotCount={slotCount}
               ranking={data.ranking}
               isAr={isAr}
               canEdit={canPlan && data.state !== 'confirmed'}
               onChange={(index, projectId) => {
                 setSelection((prev) => {
                   const next = [...prev];
-                  while (next.length < template.projectsPerMonth) next.push('');
+                  while (next.length < slotCount) next.push('');
                   next[index] = projectId;
                   const picked = next.filter(Boolean);
                   // Persisted the moment it changes, like the writing fields:
@@ -696,7 +710,7 @@ export default function MonthPage() {
               {isAr
                 ? 'الاقتراح يُحسب من ثلاثة أرقام فقط: الوحدات المتاحة، والأيام منذ آخر إبراز، وتكلفة العميل المؤهَّل في آخر شهر عُرض فيه. المشاريع التي نفدت وحداتها مستبعَدة آليًا.'
                 : 'The suggestion is computed from three numbers only: available units, days since last featured, and last month’s cost per qualified lead. Projects with no available units are excluded automatically.'}
-              {data.ranking.length > template.projectsPerMonth && (
+              {data.ranking.length > slotCount && (
                 <>
                   {' '}
                   {isAr ? 'التالي في الترتيب:' : 'Next in the ranking:'}{' '}
@@ -736,7 +750,7 @@ export default function MonthPage() {
           <div className="notice" style={{ marginBlockEnd: 14 }}>
             <div>
               {isAr
-                ? `لم يعد بالإمكان بدء ${monthLabel(month, true)}: كل أيام النشر المتبقية أقرب مما يستطيع الإنتاج بلوغه. الدفعة تحتاج ${num(summary.minLeadWorkingDays, true)} أيام عمل قبل موعد نشرها.`
+                ? `لم يعد بالإمكان بدء ${monthLabel(month, true)}: كل أيام النشر المتبقية أقرب مما يستطيع الإنتاج بلوغه. الدفعة تحتاج قبل نشرها أيام عمل: ${num(summary.minLeadWorkingDays, true)}.`
                 : `${monthLabel(month, false)} can no longer be started: every remaining posting day is closer than production can reach. A batch needs ${num(summary.minLeadWorkingDays, false)} working days before it publishes.`}
             </div>
             <div>
@@ -764,11 +778,11 @@ export default function MonthPage() {
             {data.backlog.map((b) => (
               <div key={`${b.capacity_key}:${b.role_key}`}>
                 {isAr
-                  ? `${b.capacity_key === 'design' ? 'التصميم' : 'الكتابة'} — ${num(b.waiting_units, true)} وحدة بانتظار السعة`
+                  ? `${b.capacity_key === 'design' ? 'التصميم' : 'الكتابة'} — وحدات بانتظار السعة: ${num(b.waiting_units, true)}`
                     + (b.days_to_clear === null
                       ? ' · لا أحد يتولّى هذا الدور'
-                      : ` · تُنجَز خلال ${num(b.days_to_clear, true)} يوم عمل`)
-                    + (b.oldest_waiting_hours === null ? '' : ` · أقدمها منتظر ${num(Math.round(b.oldest_waiting_hours), true)} ساعة`)
+                      : ` · تُنجَز خلال أيام عمل: ${num(b.days_to_clear, true)}`)
+                    + (b.oldest_waiting_hours === null ? '' : ` · أقدمها منتظر ساعات: ${num(Math.round(b.oldest_waiting_hours), true)}`)
                     + (b.next_publish_at === null ? '' : ` · أقرب نشر ${dayLabel(b.next_publish_at.slice(0, 10), true)}`)
                   : `${b.capacity_key === 'design' ? 'Design' : 'Writing'} — ${num(b.waiting_units, false)} unit(s) waiting on capacity`
                     + (b.days_to_clear === null
@@ -804,7 +818,21 @@ export default function MonthPage() {
             <div className="card" style={{ marginBlockEnd: 14 }}>
               <div className="card-h">
                 <h4>{isAr ? 'ماذا سيُنتَج' : 'What gets produced'}</h4>
-                <span className="r">{isAr ? 'يُحسب من الاختيار — لا يُكتب باليد' : 'computed from the selection'}</span>
+                {/*
+                  * `paidCreatives` sums `plan.items`, and `collectUnscheduled`
+                  * walks the SAME array pushing every item with no stages — so
+                  * items nobody can make are INSIDE these figures. Without
+                  * this the card reported 60 creatives as "what gets produced"
+                  * directly under a card saying those 60 have no production
+                  * plan: two cards, opposite claims, the same items.
+                  */}
+                <span className="r">
+                  {summary.unscheduled.length > 0
+                    ? (isAr
+                      ? `مطلوب — منها بلا خطة إنتاج ${num(summary.unscheduled.length, true)}`
+                      : `requested — ${num(summary.unscheduled.length, false)} of them with no production plan`)
+                    : (isAr ? 'يُحسب من الاختيار — لا يُكتب باليد' : 'computed from the selection')}
+                </span>
               </div>
               <div className="card-b">
                 <div className="grid g4">
@@ -813,7 +841,7 @@ export default function MonthPage() {
                     <div className="v">{num(summary.posts, isAr)}</div>
                     <div className="d">
                       {isAr
-                        ? `${num(summary.rows, true)} دفعة سوشيال ميديا × ${num(template.postsPerRow, true)} — منها ${num(summary.generalRows, true)} عامة`
+                        ? `دفعات سوشيال ميديا ${num(summary.rows, true)} × ${num(template.postsPerRow, true)} — منها عامة ${num(summary.generalRows, true)}`
                         : `${num(summary.rows, false)} social media batches × ${num(template.postsPerRow, false)} — ${num(summary.generalRows, false)} of them general`}
                     </div>
                   </div>
@@ -835,8 +863,8 @@ export default function MonthPage() {
                           line under the number has to say the same thing the
                           number does. */}
                       {isAr
-                        ? `${num(selection.length, true)} مشاريع × ${num(template.creativesPerProjectWeek, true)} أسبوعيًا × ${num(summary.paidBatchesRemaining, true)} دفعات`
-                        : `${num(selection.length, false)} projects × ${num(template.creativesPerProjectWeek, false)} weekly × ${num(summary.paidBatchesRemaining, false)} batches`}
+                        ? `المشاريع ${num(runningCount, true)} × أسبوعيًا ${num(template.creativesPerProjectWeek, true)} × الدفعات ${num(summary.paidBatchesRemaining, true)}`
+                        : `${num(runningCount, false)} projects × ${num(template.creativesPerProjectWeek, false)} weekly × ${num(summary.paidBatchesRemaining, false)} batches`}
                     </div>
                   </div>
                   <div className="stat">
@@ -904,14 +932,21 @@ export default function MonthPage() {
                     </p>
                   )}
                   {summary.load.map((l) => {
-                    const ratio = l.capacityPerDay > 0
-                      ? (l.averagePerWorkingDay / l.capacityPerDay) * 100 : 0;
-                    const cls = l.over ? 'bad' : ratio >= 95 ? 'warn' : '';
+                    const measurable = l.capacityPerDay > 0;
+                    const ratio = measurable
+                      ? (l.averagePerWorkingDay / l.capacityPerDay) * 100 : null;
+                    const cls = l.over ? 'bad' : ratio !== null && ratio >= 95 ? 'warn' : '';
                     return (
                       <div className="mth-meter" key={`${l.userId}:${l.bucket}`}>
                         <span className="lb">{bucketLabel(l.bucket)} · {personName(l.userId)}</span>
                         <span className="tr">
-                          <span className={`fl ${cls}`} style={{ width: `${Math.min(100, Math.max(2, ratio))}%` }} />
+                          {/* No configured capacity means no ratio to draw. A full
+                              bar in the `bad` colour says "over" without claiming a
+                              percentage the data cannot support. */}
+                          <span
+                            className={`fl ${cls}`}
+                            style={{ width: `${ratio === null ? 100 : Math.min(100, Math.max(2, ratio))}%` }}
+                          />
                         </span>
                         {/*
                           * The percentage is its own ISOLATED run, separated by
@@ -924,8 +959,12 @@ export default function MonthPage() {
                           */}
                         <span className="vl">
                           {isAr
-                            ? <>{`${num(l.averagePerWorkingDay, true)} من ${num(l.capacityPerDay, true)} يوميًا — `}<bdi>{pct(ratio, true)}</bdi></>
-                            : `${num(l.averagePerWorkingDay, false)} of ${num(l.capacityPerDay, false)} a day · ${pct(ratio, false)}`}
+                            ? (measurable
+                              ? <>{`${num(l.averagePerWorkingDay, true)} من ${num(l.capacityPerDay, true)} يوميًا — `}<bdi>{pct(ratio ?? 0, true)}</bdi></>
+                              : `${num(l.averagePerWorkingDay, true)} يوميًا — لا طاقة محدَّدة لهذا الدور`)
+                            : (measurable
+                              ? `${num(l.averagePerWorkingDay, false)} of ${num(l.capacityPerDay, false)} a day · ${pct(ratio ?? 0, false)}`
+                              : `${num(l.averagePerWorkingDay, false)} a day · no capacity configured for this bucket`)}
                         </span>
                       </div>
                     );
@@ -1039,8 +1078,8 @@ export default function MonthPage() {
                     : 'There is nothing to confirm: no posting day is left that production can reach.')
                   : summary
                   ? (isAr
-                    ? `الاعتماد يُنشئ ${num(summary.rows, true)} مهمة كتابة و${num(summary.rows, true)} مهمة تصميم بمواعيدها، و${num(selection.length, true)} حملات على ميتا بميزانية ${money(template.budgetPerProject, true)} لكل واحدة، و${num(compiled?.geometry.paidBatchDays.length ?? 0, true)} دفعات إعلانية. بعد الاعتماد لا يوجد تخطيط — استثناءات فقط.`
-                    : `Confirming creates ${num(summary.rows, false)} writing tasks and ${num(summary.rows, false)} design tasks with their dates, ${num(selection.length, false)} Meta campaigns at ${money(template.budgetPerProject, false)} each, and ${num(compiled?.geometry.paidBatchDays.length ?? 0, false)} ad batches. After confirming there is no planning — only exceptions.`)
+                    ? `الاعتماد يُنشئ — مهام الكتابة: ${num(summary.rows, true)} · مهام التصميم: ${num(summary.rows, true)} · حملات ميتا: ${num(runningCount, true)} بميزانية ${money(template.budgetPerProject, true)} لكل واحدة · الدفعات الإعلانية: ${num(compiled?.geometry.paidBatchDays.length ?? 0, true)}. بعد الاعتماد لا يوجد تخطيط — استثناءات فقط.`
+                    : `Confirming creates ${num(summary.rows, false)} writing tasks and ${num(summary.rows, false)} design tasks with their dates, ${num(runningCount, false)} Meta campaigns at ${money(template.budgetPerProject, false)} each, and ${num(compiled?.geometry.paidBatchDays.length ?? 0, false)} ad batches. After confirming there is no planning — only exceptions.`)
                   : (isAr
                     ? 'احسب الشهر أولًا لترى ما سيُنشئه الاعتماد.'
                     : 'Compile the month first to see what confirming would create.')}

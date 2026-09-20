@@ -122,7 +122,7 @@ export function demandFact(d: MosMonthDemandLine, isAr: boolean): MonthFact {
     fill: d.capacity > 0 ? d.required / d.capacity : null,
     tone: over ? 'bad' : d.utilisationPct !== null && d.utilisationPct >= 90 ? 'warn' : 'ok',
     detail: isAr
-      ? `${num(d.required, true)} من ${num(d.capacity, true)} وحدة · ${num(d.unitsPerDay, true)} يوميًا على ${num(d.workingDays, true)} يوم عمل`
+      ? `الوحدات ${num(d.required, true)} من ${num(d.capacity, true)} · يوميًا ${num(d.unitsPerDay, true)} · أيام العمل ${num(d.workingDays, true)}`
       : `${num(d.required, false)} of ${num(d.capacity, false)} units · ${num(d.unitsPerDay, false)}/day over ${num(d.workingDays, false)} working days`,
   };
 }
@@ -202,10 +202,11 @@ export function batchSizeFact(
   return {
     id: 'batch-size',
     label: isAr ? 'أول دفعة إعلانية' : 'First ad batch',
-    value: isAr ? `${num(current * projects, true)} تصميم` : `${num(current * projects, false)} designs`,
+    // «٦ تصميم» is wrong; «تصاميم: ٦» is right at 1, 2, 3-10 and 11-99 alike.
+    value: isAr ? `تصاميم ${num(current * projects, true)}` : `${num(current * projects, false)} designs`,
     tone: sized ? 'warn' : 'ok',
     detail: isAr
-      ? `${dayText} · ${num(current, true)} لكل مشروع${sized ? ` — بدل ${num(templateValue, true)}` : ''}`
+      ? `${dayText} · لكل مشروع ${num(current, true)}${sized ? ` — بدل ${num(templateValue, true)}` : ''}`
       : `${dayText} · ${num(current, false)} per project${sized ? ` — instead of ${num(templateValue, false)}` : ''}`,
     action: canEdit ? (
       <PickOne
