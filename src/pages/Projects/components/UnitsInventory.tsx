@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Check, Download, FileText, GitCompare, ListPlus, Loader2, X } from 'lucide-react';
+import { Check, Download, FileText, GitCompare, ListPlus, Loader2, Search, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import DualRangeSlider from '@/components/ui/DualRangeSlider';
-import { modelByName, fieldByCandidates, resolveProjectView, type ProjectView } from '@/lib/projects/projectView';
+import { normalizeForSearch } from '@/lib/recordSearch';
+import { modelByName, fieldByCandidates, resolveProjectView, type OptionView, type ProjectView } from '@/lib/projects/projectView';
 import { resolveUnitView, unitsForProject, sortUnits, type UnitView, type UnitSortKey } from '@/lib/projects/unitView';
 import { saveUnitToClient } from '@/lib/matching/saveUnitOption';
 import type { ClientOptionStatus } from '@/lib/matching/clientOptions';
@@ -39,6 +40,9 @@ interface UnitsInventoryProps {
   clientId?: string | null;
 }
 
+/** Drop the punctuation reps omit when typing a code by hand (B-18 -> b18). */
+const stripSeparators = (s: string) => s.replace(/[\s\-_/.]/g, '');
+
 const SAR = (n: number | null, isAr: boolean) => (n === null ? (isAr ? 'غير متوفر' : 'N/A') : `${n.toLocaleString(isAr ? 'ar-SA' : 'en-US')} ${isAr ? 'ر.س' : 'SAR'}`);
 
 export default function UnitsInventory({ projectId, projectName, isAr, project, chatPdf, clientId }: UnitsInventoryProps) {
@@ -59,6 +63,7 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
     [models, records, projectId, isAr, translationVersion],
   );
 
+  const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [type, setType] = useState('');
   const [floor, setFloor] = useState('');
@@ -123,6 +128,42 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
     }
   };
 
+  // Free-text search over a unit's IDENTITY text — our unit code, the
+  // developer's own code, the unit number, its model name, and the type /
+  // floor / status labels. `normalizeForSearch` folds Arabic orthography and
+  // unifies Arabic-Indic digits with ASCII (the same folding the SQL search
+  // index uses), so ٤٩٥٥٤ finds U-49554 and "شقه" finds "شقة". Every typed
+  // token must match, so "دور 2" narrows instead of widening.
+  //
+  // Each token is also tried against a SEPARATOR-STRIPPED copy of the text, so
+  // a code read aloud off a sheet and typed without its punctuation ("b18",
+  // "U49554") still finds B-18 / U-49554. Reps type codes both ways.
+  const searchTokens = useMemo(
+    () => normalizeForSearch(search).split(/\s+/).filter(Boolean),
+    [search],
+  );
+  const searchHaystack = useCallback(
+    (u: UnitView) => {
+      const hay = normalizeForSearch(
+        [
+          u.code,
+          u.developerCode,
+          u.unitNumber,
+          u.model,
+          u.building,
+          u.block,
+          u.type ? (isAr ? u.type.label_ar : u.type.label_en) : null,
+          u.floor ? (isAr ? u.floor.label_ar : u.floor.label_en) : null,
+          u.status ? (isAr ? u.status.label_ar : u.status.label_en) : null,
+        ]
+          .filter(Boolean)
+          .join(' '),
+      );
+      return { hay, compact: stripSeparators(hay) };
+    },
+    [isAr],
+  );
+
   const filtered = useMemo(() => {
     const pMin = priceMin ? Number(priceMin) : null;
     const pMax = priceMax ? Number(priceMax) : null;
@@ -131,6 +172,10 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
     const bMin = bedMin ? Number(bedMin) : null;
     const bMax = bedMax ? Number(bedMax) : null;
     const out = allUnits.filter((u) => {
+      if (searchTokens.length > 0) {
+        const { hay, compact } = searchHaystack(u);
+        if (!searchTokens.every((t) => hay.includes(t) || compact.includes(stripSeparators(t)))) return false;
+      }
       if (status && u.status?.value !== status) return false;
       if (type && u.type?.value !== type) return false;
       if (floor && u.floor?.value !== floor) return false;
@@ -143,7 +188,37 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
       return true;
     });
     return sortUnits(out, sortKey);
-  }, [allUnits, status, type, floor, bedMin, bedMax, priceMin, priceMax, areaMin, areaMax, sortKey]);
+  }, [allUnits, searchTokens, searchHaystack, status, type, floor, bedMin, bedMax, priceMin, priceMax, areaMin, areaMax, sortKey]);
+
+  // How many of THIS project's units sit under each status / type / floor
+  // option. Drives both the count shown beside each choice and the decision to
+  // omit options no unit here uses — a floor list of twenty on a project with
+  // three is noise, and picking an absent option could only ever return zero.
+  // Nothing is hidden from the table by this; it only trims the menus.
+  const optionCounts = useMemo(() => {
+    const tally = (pick: (u: UnitView) => OptionView | null) => {
+      const m = new Map<string, number>();
+      for (const u of allUnits) {
+        const v = pick(u)?.value;
+        if (v) m.set(v, (m.get(v) ?? 0) + 1);
+      }
+      return m;
+    };
+    return {
+      status: tally((u) => u.status),
+      type: tally((u) => u.type),
+      floor: tally((u) => u.floor),
+    };
+  }, [allUnits]);
+
+  const activeFilterCount =
+    (search.trim() ? 1 : 0) + (status ? 1 : 0) + (type ? 1 : 0) + (floor ? 1 : 0) +
+    (bedMin || bedMax ? 1 : 0) + (priceMin || priceMax ? 1 : 0) + (areaMin || areaMax ? 1 : 0);
+
+  const clearFilters = () => {
+    setSearch(''); setStatus(''); setType(''); setFloor('');
+    setBedMin(''); setBedMax(''); setPriceMin(''); setPriceMax(''); setAreaMin(''); setAreaMax('');
+  };
 
   // Bounds for the bedrooms / price / area range sliders — the project's own min↔max.
   const bedBounds = useMemo(() => {
@@ -232,43 +307,86 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
 
   if (!unitsModel) return <p className="text-sm text-charcoal/50">{isAr ? 'نموذج الوحدات غير موجود.' : 'Units model not found.'}</p>;
 
-  const selectCls = 'form-input text-sm py-1.5';
+  // `.form-input` is `width:100%` (correct inside a form grid), so in this
+  // wrapping toolbar every select used to claim a whole line — four stacked
+  // full-width bars for four one-word choices. `!w-auto` shrinks each to its
+  // own content so they sit side by side as compact pills. An engaged filter
+  // wears the copper border, so "what is narrowing this list" is visible
+  // without opening each menu.
+  const selectCls = (on: boolean) =>
+    `form-input !w-auto !py-1 !px-2 text-xs ${on ? '!border-copper bg-copper/5 font-bold text-copper' : ''}`;
 
   return (
     <div className="space-y-3">
-      {/* Toolbar */}
+      {/* Toolbar — search + the filter pills on one wrapping row. */}
       <div className="flex flex-wrap items-center gap-2">
-        <select className={selectCls} value={status} onChange={(e) => setStatus(e.target.value)}>
+        <div className="relative min-w-[190px] flex-1">
+          <Search size={14} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-charcoal/40" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={isAr ? 'بحث بكود الوحدة أو رمز المطور أو النوع…' : 'Search unit code, developer code, or type…'}
+            className="form-input w-full !py-1 ps-8 pe-7 text-xs"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute end-2 top-1/2 -translate-y-1/2 text-charcoal/40 hover:text-charcoal"
+              aria-label={isAr ? 'مسح البحث' : 'Clear search'}
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
+
+        <select className={selectCls(!!status)} value={status} onChange={(e) => setStatus(e.target.value)} title={isAr ? 'الحالة' : 'Status'}>
           <option value="">{isAr ? 'كل الحالات' : 'All statuses'}</option>
-          {(statusField?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
+          {(statusField?.options ?? [])
+            .filter((o) => optionCounts.status.has(o.value) || o.value === status)
+            .map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en} ({optionCounts.status.get(o.value) ?? 0})</option>)}
         </select>
-        <select className={selectCls} value={type} onChange={(e) => setType(e.target.value)}>
+        <select className={selectCls(!!type)} value={type} onChange={(e) => setType(e.target.value)} title={isAr ? 'النوع' : 'Type'}>
           <option value="">{isAr ? 'كل الأنواع' : 'All types'}</option>
-          {(typeField?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
+          {(typeField?.options ?? [])
+            .filter((o) => optionCounts.type.has(o.value) || o.value === type)
+            .map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en} ({optionCounts.type.get(o.value) ?? 0})</option>)}
         </select>
-        <select className={selectCls} value={floor} onChange={(e) => setFloor(e.target.value)}>
+        <select className={selectCls(!!floor)} value={floor} onChange={(e) => setFloor(e.target.value)} title={isAr ? 'الطابق' : 'Floor'}>
           <option value="">{isAr ? 'كل الطوابق' : 'All floors'}</option>
-          {(floorField?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
+          {(floorField?.options ?? [])
+            .filter((o) => optionCounts.floor.has(o.value) || o.value === floor)
+            .map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en} ({optionCounts.floor.get(o.value) ?? 0})</option>)}
         </select>
-        <select className={selectCls} value={sortKey} onChange={(e) => setSortKey(e.target.value as UnitSortKey)}>
+        <select className={selectCls(false)} value={sortKey} onChange={(e) => setSortKey(e.target.value as UnitSortKey)} title={isAr ? 'الترتيب' : 'Sort'}>
           <option value="cheapest">{isAr ? 'الأرخص' : 'Cheapest'}</option>
           <option value="largest">{isAr ? 'الأكبر مساحة' : 'Largest'}</option>
           <option value="best_per_m2">{isAr ? 'أفضل سعر متر' : 'Best price/m²'}</option>
           <option value="newest">{isAr ? 'الأحدث' : 'Newest'}</option>
         </select>
 
+        {activeFilterCount > 0 && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-terracotta hover:bg-terracotta/10"
+          >
+            <X size={13} /> {isAr ? `مسح (${activeFilterCount})` : `Clear (${activeFilterCount})`}
+          </button>
+        )}
+
         {/* Units table PDF — send to the client (in a chat) or download. The PDF
             reflects the CURRENT filter (`filtered`). */}
         {projectView && filtered.length > 0 && (
           <div className="ms-auto">
             {chatPdf ? (
-              <Button variant="secondary" className="text-sm !py-1.5" onClick={() => setPdfOpen(true)}>
-                <FileText size={14} className="inline -mt-0.5 me-1" />
+              <Button variant="secondary" className="text-xs !py-1" onClick={() => setPdfOpen(true)}>
+                <FileText size={13} className="inline -mt-0.5 me-1" />
                 {isAr ? `PDF الوحدات (${filtered.length})` : `Units PDF (${filtered.length})`}
               </Button>
             ) : (
-              <Button variant="secondary" className="text-sm !py-1.5" disabled={downloading} onClick={() => void downloadTable()}>
-                {downloading ? <Loader2 size={14} className="inline -mt-0.5 me-1 animate-spin" /> : <Download size={14} className="inline -mt-0.5 me-1" />}
+              <Button variant="secondary" className="text-xs !py-1" disabled={downloading} onClick={() => void downloadTable()}>
+                {downloading ? <Loader2 size={13} className="inline -mt-0.5 me-1 animate-spin" /> : <Download size={13} className="inline -mt-0.5 me-1" />}
                 {isAr ? `تنزيل PDF (${filtered.length})` : `Download PDF (${filtered.length})`}
               </Button>
             )}
@@ -344,7 +462,14 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
 
       {/* Table */}
       {filtered.length === 0 ? (
-        <div className="card p-10 text-center text-charcoal/40">{isAr ? 'لا توجد وحدات مطابقة.' : 'No matching units.'}</div>
+        <div className="card p-10 text-center text-charcoal/40">
+          <p>{isAr ? 'لا توجد وحدات مطابقة.' : 'No matching units.'}</p>
+          {activeFilterCount > 0 && allUnits.length > 0 && (
+            <button type="button" onClick={clearFilters} className="mt-2 text-xs font-bold text-copper hover:underline">
+              {isAr ? `مسح الفلاتر وعرض ${allUnits.length} وحدة` : `Clear filters — show all ${allUnits.length} units`}
+            </button>
+          )}
+        </div>
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
