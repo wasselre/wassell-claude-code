@@ -56,7 +56,7 @@ export default function HireOfferPage() {
         </p>
 
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <CompCard icon={<Wallet size={20} />} value="3,000 ريال" label="راتب شهري ثابت" />
+          <CompCard icon={<Wallet size={20} />} value="5,000 ريال" label="راتب شهري ثابت" />
           <CompCard icon={<Percent size={20} />} value="15%" label="حصتك من عمولة وصل على كل صفقة" />
           <CompCard icon={<Users size={20} />} value="300 عميل محتمل على الأقل" label="شهريًا" small />
         </div>
