@@ -5,7 +5,7 @@
 # Workflow: Follow-ups - Booking Call / المتابعات - إتصال حجز موعد
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-03
+**Last updated (from DB):** 2026-09-20
 **Workflow id:** `d997425a-0c8d-48c4-afef-b5792792cfae`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated
@@ -14,32 +14,6 @@
 ## Logic (branched)
 
 ### Branch 1: IF — Escalation Call No-Answer -> WhatsApp (copy)
-
-**Conditions:**
-_Match: ALL must pass (AND)_
-- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`), "WhatsApp Follow-Up" (`whatsapp_follow_up`)
-- Outcome (`call_result`) equals "Unanswered Request" (`unanswered_request`) · _only when it newly becomes true_
-- Actual Follow-up (`actual_datetime`) is not empty
-
-**Actions (run in order):**
-
-**Action 1 — Create Record**
-Create a **Follow-ups / المتابعات** record with:
-- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
-- Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
-- Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d`
-- Status (`followup_status`) ← static value open
-- WhatsApp Attempt # (`whatsapp_attempt_number`) ← static value 1
-- Escalation Reason (`escalation_reason`) ← static value call_no_answer_recontact
-- Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
-- Previous Follow-up (`previous_followup_id`) ← the trigger record's id
-
-**Action 2 — Update Record**
-Update **Clients / العملاء** records where `client_id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
-- Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
-- Client Status (`client_status`) ← static value unanswered_request
-
-### Branch 2: ELSE IF — Escalation Call No-Answer -> WhatsApp (copy)
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -61,7 +35,7 @@ Create a **Follow-ups / المتابعات** record with:
 - Sales Rep (`sales_rep`) ← the current user
 - Previous Follow-up (`previous_followup_id`) ← the trigger record's id
 
-### Branch 3: ELSE IF — لم يتم الرد
+### Branch 2: ELSE IF — لم يتم الرد
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -85,7 +59,7 @@ Update **Clients / العملاء** records where `client_id` (unknown field) = 
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value لا يوجد رد
 
-### Branch 4: ELSE IF — مهتم
+### Branch 3: ELSE IF — مهتم
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -108,7 +82,7 @@ Update **Clients / العملاء** records where `client_id` (unknown field) = 
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value مهتم
 
-### Branch 5: ELSE IF — غير مهتم
+### Branch 4: ELSE IF — غير مهتم
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -122,7 +96,7 @@ Update **Clients / العملاء** records where `client_id` (unknown field) = 
 - Client Stage (`client_stage`) ← static value غير مؤهل
 - Client Status (`client_status`) ← static value غير مهتم
 
-### Branch 6: ELSE IF — Recontact Later
+### Branch 5: ELSE IF — Recontact Later
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -145,7 +119,7 @@ Update **Clients / العملاء** records where `client_id` (unknown field) = 
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value إعادة تواصل لاحقًا
 
-### Branch 7: ELSE IF — Wants Rent
+### Branch 6: ELSE IF — Wants Rent
 
 **Conditions:**
 _Match: ALL must pass (AND)_

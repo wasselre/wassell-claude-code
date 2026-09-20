@@ -5,7 +5,7 @@
 # Workflow: Create Unresponded Requests / إنشاء الطلبات الغير مجابة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-22
+**Last updated (from DB):** 2026-09-20
 **Workflow id:** `28dae81e-4aa2-4d2c-b71e-e1c1052d1c2d`   ·   **Active:** yes
 **Group:** مجلد جديد
 **Trigger:** When a record is updated
@@ -13,11 +13,11 @@
 
 ## Logic (branched)
 
-### Branch 1: IF
+### Branch 1: IF — Open Unanswered Request
 
 **Conditions:**
 _Match: ALL must pass (AND)_
-- Outcome (`call_result`) equals "Unanswered Request" (`unanswered_request`)
+- Outcome (`call_result`) equals "Unanswered Request" (`unanswered_request`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
 
 **Actions (run in order):**
@@ -25,4 +25,6 @@ _Match: ALL must pass (AND)_
 **Action 1 — Create Record**
 Create a **Unanswered Requests / طلبات غير مجابة** record with:
 - Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
-- Request Status (`request_status`) ← static value (empty)
+- Request Status (`request_status`) ← static value received
+- Request Notes (`request_notes`) ← the trigger record's Outcome Notes (`outcome_notes`)
+- Sourcing Owner (`assigned_to`) ← the trigger record's Sales Rep (`sales_rep`)
