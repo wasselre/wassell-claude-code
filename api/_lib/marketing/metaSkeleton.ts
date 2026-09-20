@@ -139,23 +139,89 @@ export async function ensureMetaSkeleton(
   const linkedSets: LinkedAdSet[] = adSets.map((s) => ({ id: s.id, name: s.name, platform_adset_id: s.platform_adset_id }));
   try {
     if (!metaCampaignId) {
-      // platform_campaign_id is written only once the WHOLE skeleton succeeded.
+      /*
+       * ADOPT BEFORE CREATING.
+       *
+       * `platform_campaign_id` is written only once the WHOLE skeleton
+       * succeeds — deliberately, so a half-built skeleton is never mistaken
+       * for a finished one. But that leaves a window: the campaign exists in
+       * Meta the instant `createCampaign` returns, and if this process dies
+       * before the id reaches the database, the account holds a campaign
+       * nothing points at. The next run then builds a SECOND one.
+       *
+       * That is not hypothetical. On 2026-09-20 the month confirm was killed
+       * by Vercel's 25-second function limit at 13:54:25, four seconds after
+       * creating «WSL · 2026-09 — مدفوع — يمام 17». The planning sweep built
+       * it again at 13:55:14, and the operator opened Ads Manager to four
+       * campaigns for a three-project month.
+       *
+       * The name is deterministic — prefix, month and project — so a retry can
+       * recognise its own orphan and take it over. Deleted and archived ones
+       * are ignored: those are decisions someone made, not leftovers.
+       */
       const campaignPayload = buildCampaignPayload(campaign, execRow);
-      const campaignResult = await client.createCampaign(campaignPayload, validateOnly);
-      metaCampaignId = campaignResult.id ?? null;
-      campaignName = String(campaignPayload.name);
+      const wantedName = String(campaignPayload.name);
+      let adopted: string | null = null;
+      if (!validateOnly) {
+        try {
+          const existing = await client.listCampaigns();
+          const match = existing.find((c) => c.name === wantedName
+            && c.status !== 'DELETED' && c.status !== 'ARCHIVED'
+            && c.effective_status !== 'DELETED' && c.effective_status !== 'ARCHIVED');
+          if (match?.id) adopted = match.id;
+        } catch (e) {
+          // A lookup that fails must not block the build — creating is still
+          // the right move, and a duplicate is recoverable where a refusal
+          // leaves the month with no campaign at all.
+          console.error('[meta-skeleton] campaign lookup failed, creating instead', metaErr(e));
+        }
+      }
+      if (adopted) {
+        metaCampaignId = adopted;
+        campaignName = wantedName;
+        console.warn('[meta-skeleton] adopted an existing Meta campaign', adopted, wantedName);
+      } else {
+        const campaignResult = await client.createCampaign(campaignPayload, validateOnly);
+        metaCampaignId = campaignResult.id ?? null;
+        campaignName = wantedName;
+      }
     }
 
     type PlanRow = { id: string | null; name: string | null; platform_adset_id: string | null; sort_order: number | null; pair_id: string | null };
     const plan: PlanRow[] = adSets.length
       ? adSets.map((x) => ({ id: x.id, name: x.name, platform_adset_id: x.platform_adset_id, sort_order: x.sort_order, pair_id: x.pair_id }))
       : [{ id: null, name: execRow.label ?? 'Ad set', platform_adset_id: null, sort_order: 0, pair_id: null }];
+    /*
+     * The same orphan problem one level down. Adopting a campaign without
+     * adopting its ad sets would rebuild the feed/story pair inside it, so the
+     * duplication would simply move from the campaign to the ad sets.
+     */
+    let existingSets: Array<{ id: string; name: string; campaign_id?: string; status?: string; effective_status?: string }> = [];
+    if (!validateOnly && metaCampaignId) {
+      try {
+        existingSets = (await client.listAdSets()).filter((a) => a.campaign_id === metaCampaignId
+          && a.status !== 'DELETED' && a.status !== 'ARCHIVED'
+          && a.effective_status !== 'DELETED' && a.effective_status !== 'ARCHIVED');
+      } catch (e) {
+        console.error('[meta-skeleton] ad set lookup failed, creating instead', metaErr(e));
+      }
+    }
+
     for (const s of plan) {
       if (s.platform_adset_id) continue; // already linked — don't duplicate
       const pairId = s.pair_id ?? crypto.randomUUID();
       for (const variant of ['feed', 'story'] as const) {
         try {
           const p = buildAdSetPayload(campaign, execRow, { id: s.id, name: s.name }, metaCampaignId ?? '', cfg.pageId, savedAudienceTargeting, variant);
+          const already = existingSets.find((x) => x.name === String(p.name));
+          if (already) {
+            createdSets.push({
+              wassell_ad_set_id: s.id, platform_adset_id: already.id, name: String(p.name),
+              variant, pair_id: pairId, sort_order: s.sort_order ?? 0,
+            });
+            console.warn('[meta-skeleton] adopted an existing Meta ad set', already.id, String(p.name));
+            continue;
+          }
           const asResult = await client.createAdSet(p, validateOnly);
           createdSets.push({ wassell_ad_set_id: s.id, platform_adset_id: asResult.id ?? '(validated)', name: String(p.name), variant, pair_id: pairId, sort_order: s.sort_order ?? 0 });
         } catch (e) {
