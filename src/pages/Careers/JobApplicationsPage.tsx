@@ -53,6 +53,9 @@ interface JobApplication {
   // Recruitment-experience link (2026-09-17) — set by the send + the candidate's actions.
   invite_token: string | null;
   experience_confirmed_at: string | null;
+  experience_video_at: string | null;         // reached the video stage
+  experience_task_at: string | null;          // reached the practical task
+  experience_offer_at: string | null;         // reached the offer
   experience_decided_at: string | null;
   experience_decision: string | null;         // 'interested' | 'declined'
   experience_decline_category: string | null;  // 'salary' | 'commission' | 'other'
@@ -110,6 +113,13 @@ function ExperienceTimeline({ app, isAr }: { app: JobApplication; isAr: boolean 
   if (!sent) return null;
   const opened = !!app.experience_confirmed_at;
   const decided = !!app.experience_decision;
+  // Stages are linear (video → task → offer → decision). A later milestone
+  // implies the earlier stages were reached — so candidates who finished BEFORE
+  // stage tracking shipped still read as "reached" (with an unknown time), and a
+  // reversed/missing intermediate stamp never shows a false gap.
+  const reachedOffer = !!app.experience_offer_at || decided;
+  const reachedTask = !!app.experience_task_at || reachedOffer;
+  const reachedVideo = !!app.experience_video_at || reachedTask;
   const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
   let head: string; let headColor: string;
@@ -126,6 +136,9 @@ function ExperienceTimeline({ app, isAr }: { app: JobApplication; isAr: boolean 
   const steps: { label: string; done: boolean; at: string | null; pending: string }[] = [
     { label: isAr ? 'أُرسل الرابط' : 'Link sent', done: sent, at: app.offer_sent_at, pending: '' },
     { label: isAr ? 'فتح الرابط وأكّد بياناته' : 'Opened & confirmed', done: opened, at: app.experience_confirmed_at, pending: isAr ? 'لم يُفتح بعد' : 'Not opened yet' },
+    { label: isAr ? 'شاهد الفيديو' : 'Reached the video', done: reachedVideo, at: app.experience_video_at, pending: isAr ? 'لم يصل للفيديو' : 'Not reached' },
+    { label: isAr ? 'جرّب المهمة العملية' : 'Reached the task', done: reachedTask, at: app.experience_task_at, pending: isAr ? 'لم يصل للمهمة' : 'Not reached' },
+    { label: isAr ? 'اطّلع على العرض' : 'Reached the offer', done: reachedOffer, at: app.experience_offer_at, pending: isAr ? 'لم يصل للعرض' : 'Not reached' },
     { label: decisionLabel, done: decided, at: app.experience_decided_at, pending: isAr ? 'لم يتّخذ قرارًا بعد' : 'No decision yet' },
   ];
 
@@ -274,16 +287,26 @@ export default function JobApplicationsPage() {
   // Offer-experience funnel: who got a link, opened it, stalled, or finished.
   const expStats = useMemo(() => {
     let sent = 0, opened = 0, notOpened = 0, noDecision = 0, interested = 0, declined = 0;
+    let video = 0, task = 0, offer = 0;
     for (const a of apps) {
       if (!a.offer_sent_at && !a.invite_token) continue; // link never sent
       sent++;
       const isOpened = !!a.experience_confirmed_at;
       if (isOpened) opened++; else notOpened++;
+      // Linear implication — a later milestone means the earlier stages were
+      // reached (so pre-tracking finishers still count).
+      const decided = !!a.experience_decision;
+      const reachedOffer = !!a.experience_offer_at || decided;
+      const reachedTask = !!a.experience_task_at || reachedOffer;
+      const reachedVideo = !!a.experience_video_at || reachedTask;
+      if (reachedVideo) video++;
+      if (reachedTask) task++;
+      if (reachedOffer) offer++;
       if (a.experience_decision === 'interested') interested++;
       else if (a.experience_decision === 'declined') declined++;
       else if (isOpened) noDecision++;
     }
-    return { sent, opened, notOpened, noDecision, interested, declined };
+    return { sent, opened, notOpened, noDecision, interested, declined, video, task, offer };
   }, [apps]);
 
   /**
@@ -370,10 +393,13 @@ export default function JobApplicationsPage() {
       {expStats.sent > 0 && (
         <div className="mb-5 rounded-2xl bg-white border border-sand/30 p-4">
           <p className="text-xs text-charcoal/40 mb-3 flex items-center gap-1.5"><MessageCircle size={13} /> {isAr ? 'تحليل تجربة العرض' : 'Offer-experience funnel'}</p>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-9">
             <FunnelStat n={expStats.sent} label={isAr ? 'أُرسل الرابط' : 'Link sent'} color="#0EA5E9" />
             <FunnelStat n={expStats.notOpened} label={isAr ? 'لم يُفتح' : 'Not opened'} color="#9CA3AF" />
             <FunnelStat n={expStats.opened} label={isAr ? 'فُتح الرابط' : 'Opened'} color="#8B5CF6" />
+            <FunnelStat n={expStats.video} label={isAr ? 'وصل للفيديو' : 'Reached video'} color="#7C3AED" />
+            <FunnelStat n={expStats.task} label={isAr ? 'وصل للمهمة' : 'Reached task'} color="#6D28D9" />
+            <FunnelStat n={expStats.offer} label={isAr ? 'وصل للعرض' : 'Reached offer'} color="#4F46E5" />
             <FunnelStat n={expStats.noDecision} label={isAr ? 'فتح ولم يُكمل' : 'Opened, no decision'} color="#D97706" />
             <FunnelStat n={expStats.interested} label={isAr ? 'مهتم' : 'Interested'} color="#059669" />
             <FunnelStat n={expStats.declined} label={isAr ? 'اعتذر' : 'Declined'} color="#B45309" />

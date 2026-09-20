@@ -3,8 +3,9 @@
  *
  *   GET  ?token=<invite_token>
  *        → { name, phone, decision, status }  (for the confirm screen)
- *   POST { token, action:'confirm'|'interested'|'declined', reason? }
+ *   POST { token, action:'confirm'|'interested'|'declined'|'stage', reason?, stage? }
  *        → records the candidate's action against their job_applications row.
+ *        `stage` (video|task|offer) is first-reach page telemetry.
  *
  * The link's `invite_token` is the ONLY credential (same posture as /share/:token
  * and /rate/:token). No JWT — the browser never touches the table directly; every
@@ -80,12 +81,12 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   if (req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as { token?: string; action?: string; reason?: string; category?: string };
+    const body = (await req.json().catch(() => ({}))) as { token?: string; action?: string; reason?: string; category?: string; stage?: string };
     const token = (body.token ?? '').trim();
     const action = body.action ?? '';
     if (!token) return jsonError(400, 'token is required');
-    if (!['confirm', 'interested', 'declined'].includes(action)) return jsonError(400, 'invalid action');
-    if (!(await underLimit(svc, req, 30, 60))) return jsonError(429, 'too many requests');
+    if (!['confirm', 'interested', 'declined', 'stage'].includes(action)) return jsonError(400, 'invalid action');
+    if (!(await underLimit(svc, req, 60, 60))) return jsonError(429, 'too many requests');
 
     const { data: app, error } = await svc
       .from('job_applications')
@@ -95,10 +96,23 @@ export default async function handler(req: Request): Promise<Response> {
     if (error) return jsonError(500, error.message);
     if (!app) return jsonError(404, 'not found');
 
+    const now = new Date().toISOString();
+
+    // Stage reach: which page the candidate got to (video / task / offer). Pure
+    // telemetry — first-reach wins (stamp only a NULL column), and it records
+    // even near the cutoff, so it runs BEFORE the expiry gate below.
+    if (action === 'stage') {
+      const col = body.stage === 'video' ? 'experience_video_at'
+        : body.stage === 'task' ? 'experience_task_at'
+        : body.stage === 'offer' ? 'experience_offer_at'
+        : null;
+      if (!col) return jsonError(400, 'invalid stage');
+      await svc.from('job_applications').update({ [col]: now }).eq('id', app.id).is(col, null);
+      return jsonOk({ ok: true });
+    }
+
     // The link is dead past the global cutoff — accept no confirm/decision.
     if (await isExpired(svc)) return jsonError(403, 'expired');
-
-    const now = new Date().toISOString();
 
     if (action === 'confirm') {
       if (!app.experience_confirmed_at) {

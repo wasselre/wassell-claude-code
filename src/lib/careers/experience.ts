@@ -26,6 +26,20 @@ export async function resolveInvite(token: string): Promise<InviteInfo | null> {
   }
 }
 
+/** Stamp which page the candidate reached (video/task/offer). Fire-and-forget. */
+export async function markStage(token: string, stage: 'video' | 'task' | 'offer'): Promise<void> {
+  if (!token || token === 'preview') return;
+  try {
+    await fetch('/api/careers/experience', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, action: 'stage', stage }),
+    });
+  } catch {
+    /* best-effort telemetry — a candidate must never notice this */
+  }
+}
+
 /** Record confirm / interested / declined against the application. Best-effort. */
 export async function postExperience(
   token: string,

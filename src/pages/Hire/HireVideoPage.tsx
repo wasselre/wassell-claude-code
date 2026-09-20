@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 import { ProgressRail } from './hireUi';
+import { markStage } from '@/lib/careers/experience';
 
 /**
  * Stage 2 of the recruitment experience — the walkthrough video.
@@ -25,6 +26,8 @@ export default function HireVideoPage() {
     window.scrollTo({ top: 0 });
     return () => { html.dir = prevDir; html.lang = prevLang; };
   }, []);
+
+  useEffect(() => { void markStage(token ?? '', 'video'); }, [token]);
 
   return (
     <div

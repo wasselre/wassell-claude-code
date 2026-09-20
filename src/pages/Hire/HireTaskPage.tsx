@@ -6,6 +6,7 @@ import {
   AlertTriangle, Check, PlayCircle,
 } from 'lucide-react';
 import { ProgressRail } from './hireUi';
+import { markStage } from '@/lib/careers/experience';
 import {
   TASK_CLIENT, TASK_ENQUIRED, TASK_PREF_CHIPS, TASK_RECS, TASK_FOLLOWUP,
   TASK_SUMMARY, type TaskRec,
@@ -40,6 +41,7 @@ export default function HireTaskPage() {
     return () => { html.dir = prevDir; html.lang = prevLang; };
   }, []);
   useEffect(() => { window.scrollTo({ top: 0 }); }, [phase]);
+  useEffect(() => { void markStage(token ?? '', 'task'); }, [token]);
 
   // Entering "recommend" runs a brief preset match (not a live finder call).
   useEffect(() => {

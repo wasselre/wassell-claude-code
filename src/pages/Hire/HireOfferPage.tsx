@@ -6,6 +6,7 @@ import {
   Lightbulb, Megaphone, Settings2, UserCheck, ChevronDown,
 } from 'lucide-react';
 import { ProgressRail } from './hireUi';
+import { markStage } from '@/lib/careers/experience';
 
 // ── Income model (exact spec formula) ─────────────────────────────────────────
 const SALARY = 3000;
@@ -38,6 +39,8 @@ export default function HireOfferPage() {
     window.scrollTo({ top: 0 });
     return () => { html.dir = prevDir; html.lang = prevLang; };
   }, []);
+
+  useEffect(() => { void markStage(token ?? '', 'offer'); }, [token]);
 
   return (
     <div className="min-h-screen font-amiri" style={{ background: 'radial-gradient(ellipse at top, #FAF7F2 0%, #F1E6D4 60%, #E4D2B4 100%)', color: '#4A4E54' }}>
