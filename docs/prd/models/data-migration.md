@@ -5,7 +5,7 @@
 # Model: Data Migration / ترحيل البيانات  `data_migration`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-20
 **Model id:** `d1aa4823-e020-494d-9ec1-ae9dc6caf426`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -20,8 +20,8 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: `c5341877-b961-487e-af33-65b3c3e4f785` (unknown field)
-- Badge: `1753e59d-83bc-4537-be66-8d98b7c1db2e` (unknown field)
+- Title: Title (`title`)
+- Badge: Status (`status`)
 
 ## Sections & fields
 

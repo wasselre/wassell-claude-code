@@ -5,7 +5,7 @@
 # Model: Sales Assistant / مساعد المبيعات  `matching_chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-20
 **Model id:** `7c0ffee2-5cab-4b0a-9d3e-12ab34cd56ef`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -20,9 +20,9 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: `f3d990c7-3149-4a94-a410-50b4e89bd1c3` (unknown field)
-- Subtitle: `8217068b-61fc-4c98-b40d-fac8e07f4c45` (unknown field)
-- Badge: `82e90ea7-b36f-4793-ad92-3caa715327b1` (unknown field)
+- Title: Title (`title`)
+- Subtitle: Last Message (`last_message_at`)
+- Badge: Status (`status`)
 
 ## Sections & fields
 

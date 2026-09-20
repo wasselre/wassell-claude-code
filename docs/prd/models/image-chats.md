@@ -5,7 +5,7 @@
 # Model: Image Chats / محادثات التصميم  `image_chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-20
 **Model id:** `9dfb157f-b464-4899-b729-ad81360bfd0d`
 **Storage:** unified records (JSONB)
 **Group:** Designs
@@ -20,8 +20,8 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: `bf971353-8019-4297-aeee-3964dcc0dccf` (unknown field)
-- Badge: `30c7ea15-967b-4746-8301-d2cd0a02c26b` (unknown field)
+- Title: Title (`title`)
+- Badge: Status (`status`)
 
 ## Sections & fields
 

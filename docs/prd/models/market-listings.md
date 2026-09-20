@@ -5,7 +5,7 @@
 # Model: Market Listings / إعلانات السوق  `market_listings`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-30
+**Last updated (from DB):** 2026-09-20
 **Model id:** `8f06bc39-4bee-42e9-9fab-77023fb89ede`
 **Storage:** frozen table `market_listings`
 **Group:** (ungrouped)
@@ -23,7 +23,7 @@
 - Title: Price (`price`)
 - Subtitle: Property Type (`property_type`)
 - Badge: Source (`source`)
-- Shown: Price (`price`), Property Type (`property_type`), `571f7e53-5196-4e6d-bb4c-38eefc355b4f` (unknown field), Area (m²) (`area`), `0f8847f7-b1b4-40a5-8272-b5dc31513c4b` (unknown field), Bedrooms (`bedrooms`), Bathrooms (`bathrooms`)
+- Shown: Price (`price`), Property Type (`property_type`), Area (m²) (`area`), Bedrooms (`bedrooms`), Bathrooms (`bathrooms`)
 
 ## Maps view
 - Location URL field: Map Link (`location_url`)

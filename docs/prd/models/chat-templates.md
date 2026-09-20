@@ -5,7 +5,7 @@
 # Model: Chat Templates / قوالب الرسائل  `chat_templates`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-20
 **Model id:** `4a70d8f1-2a6a-4ea7-b7ef-45c6e6af732b`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -20,8 +20,8 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: `513afce3-762f-4a75-ad67-f8e04571c972` (unknown field)
-- Subtitle: `11758e40-cf71-47a0-a186-f31686fe98e5` (unknown field)
+- Title: Name (`name`)
+- Subtitle: Language (`language`)
 
 ## Sections & fields
 

@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-03
+**Last updated (from DB):** 2026-09-20
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -20,10 +20,10 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: `db72d355-0dfc-43f4-a1d4-7f0df74a7645` (unknown field)
-- Subtitle: `224049d8-7f33-4bed-87bb-11ed17aed3f4` (unknown field)
-- Badge: `965d318b-3f1f-4095-a984-565b957277a8` (unknown field)
-- Shown: `8ea1877b-4d3b-4423-8b67-607158bc0b3f` (unknown field)
+- Title: Client Name (`client_name`)
+- Subtitle: Mobile Number (`phone_number`)
+- Badge: Preferred Unit Type (`preferred_unit_type`)
+- Shown: Client Code (`client_code`)
 
 ## Sections & fields
 
@@ -34,8 +34,8 @@
 | `client_code` | Client Code / رمز العميل | Auto ID | no | half | yes | CLT-#### |
 | `client_name` | Client Name / اسم العميل | Text | yes | half | yes |  |
 | `phone_number` | Mobile Number / رقم الجوال | Phone | yes | half | yes |  |
-| `client_status` | Client Status / حالة العميل | Dropdown | no | half | yes | 24 options |
-| `client_stage` | Client Stage / مرحلة العميل | Dropdown | no | half | yes | 11 options |
+| `client_status` | Client Status / حالة العميل | Dropdown | no | half | yes | 37 options |
+| `client_stage` | Client Stage / مرحلة العميل | Dropdown | no | half | yes | 14 options |
 | `client_sources` | Client Sources / مصادر العميل | Multi-select | no | half | yes | 9 options · multi |
 | `notes` | Notes / الملاحظات | Notes | no | full | no |  |
 | `purchase_objective` | Purchase Objective / هدف الشراء | Multi-select | no | half | yes | 2 options · multi |
@@ -75,6 +75,19 @@
   - API value `تم إصدار نموذج الإفراغ` → "Title Form Issued" / "تم إصدار نموذج الإفراغ"
   - API value `تم الإفراغ` → "Title Transferred" / "تم الإفراغ"
   - API value `يريد إيجار` → "Wants Rent" / "يريد إيجار"
+  - API value `يتم البحث` → "Searching" / "يتم البحث" · color `#8B5CF6`
+  - API value `رقم خاطئ` → "Invalid Number" / "رقم خاطئ"
+  - API value `مكرر` → "Duplicate" / "مكرر"
+  - API value `تم رفض العرض` → "Offer Rejected" / "تم رفض العرض"
+  - API value `يحتاج معلومات تمويل` → "Needs Financing Info" / "يحتاج معلومات تمويل"
+  - API value `نقاش عائلي` → "Family Discussion" / "نقاش عائلي"
+  - API value `بانتظار القرار` → "Waiting Decision" / "بانتظار القرار"
+  - API value `تم إرسال واتساب` → "WhatsApp Sent" / "تم إرسال واتساب"
+  - API value `إعادة تواصل لاحقًا` → "Recontact Later" / "إعادة تواصل لاحقًا"
+  - API value `بارد` → "Cold" / "بارد"
+  - API value `بانتظار دفعة الحجز` → "Waiting Reservation Payment" / "بانتظار دفعة الحجز"
+  - API value `زار مشروعًا آخر — للمراجعة` → "Visited Another Project — Review" / "زار مشروعًا آخر — للمراجعة"
+  - API value `تعذّر التواصل بعد الزيارة` → "Unreachable After Visit" / "تعذّر التواصل بعد الزيارة"
 - **Client Stage / مرحلة العميل** (`client_stage`, type `dropdown`) — options:
   - API value `جديد` → "New" / "جديد"
   - API value `غير مؤهل` → "Not Qualified" / "غير مؤهل"
@@ -87,6 +100,9 @@
   - API value `تمويل` → "Financing" / "تمويل"
   - API value `الإفراغ` → "Title Transfer" / "الإفراغ"
   - API value `يريد إيجار` → "Wants Rent" / "يريد إيجار"
+  - API value `طلب غير مجاب` → "Unanswered Request" / "طلب غير مجاب" · color `#8B5CF6`
+  - API value `خاسر` → "Lost" / "خاسر"
+  - API value `مغلق ناجح` → "Closed Won" / "مغلق ناجح"
 - **Client Sources / مصادر العميل** (`client_sources`, type `multiselect`) — multi-value. Options:
   - API value `ترويج` → "Promotion" / "ترويج"
   - API value `زيارة مشروع` → "Project Visit" / "زيارة مشروع"

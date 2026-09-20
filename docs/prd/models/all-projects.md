@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-07
+**Last updated (from DB):** 2026-09-20
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -21,7 +21,7 @@
 
 ## Card view
 - Title: Project Name (`project_name`)
-- Badge: `95d2ba80-86f4-4b49-ab67-ed1a028fb2eb` (unknown field)
+- Badge: Project Status (`project_status`)
 
 ## Maps view
 - Location URL field: Project Location (`project_location`)

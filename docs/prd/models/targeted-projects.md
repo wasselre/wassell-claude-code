@@ -5,7 +5,7 @@
 # Model: Targeted Projects / المشاريع المستهدفة  `targeted_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-20
 **Model id:** `8550651a-8d65-4e4d-a842-c800be336f78`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -20,8 +20,8 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: `98b841c9-93d9-474d-b101-9b38268e8fa6` (unknown field)
-- Badge: `a88ebe04-76b7-4316-9560-93a82199f640` (unknown field)
+- Title: Project Name (`project_name`)
+- Badge: Priority (`priority`)
 
 ## Sections & fields
 

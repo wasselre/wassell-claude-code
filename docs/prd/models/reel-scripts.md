@@ -5,7 +5,7 @@
 # Model: Reels / الريلز  `reel_scripts`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-20
 **Model id:** `7c0ffee1-5cab-4b0a-9d3e-12ab34cd56ef`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -20,8 +20,8 @@
 - Custom buttons: 0
 
 ## Card view
-- Title: `9c44b405-fb8a-4e42-889f-04cb7921ac27` (unknown field)
-- Badge: `dea4030b-8058-4e54-a747-8127f5b019ea` (unknown field)
+- Title: Title (`title`)
+- Badge: Status (`status`)
 
 ## Sections & fields
 

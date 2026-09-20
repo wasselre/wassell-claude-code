@@ -5,7 +5,7 @@
 # Model: Unanswered Requests / طلبات غير مجابة  `unanswered_requests`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-31
+**Last updated (from DB):** 2026-09-20
 **Model id:** `da920a2c-43c2-4b82-9c39-ac36c4602e51`
 **Storage:** unified records (JSONB)
 **Group:** Unresponded Requests
@@ -13,8 +13,8 @@
 **Icon:** `database`   ·   **Color:** `#B8734F`
 
 ## Overview
-- Sections: **2** (1 base, 1 non-base)
-- Fields: **7**
+- Sections: **3** (2 base, 1 non-base)
+- Fields: **13**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -45,7 +45,7 @@
 | `request_notes` | Request Notes / ملاحظات الطلب | Text area | no | half | yes |  |
 | `request_updates` | Request Updates / تحديثات الطلب | Notes | no | half | yes |  |
 | `client_preferences` | Client Preferences / تفضيلات العميل | Section mirror | no | half | no | embedded section |
-| `request_status` | Request Status / حالة الطلب | Dropdown | no | half | yes | 5 options |
+| `request_status` | Request Status / حالة الطلب | Dropdown | no | half | yes | 7 options |
 
 **Field details:**
 
@@ -59,3 +59,29 @@
   - API value `offices_contacted` → "Offices Contacted" / "يتم التواصل مع المكاتب" · color `#F59E0B`
   - API value `offers_identified` → "Offers Identified" / "تم حصر العروض" · color `#EF4444`
   - API value `contact_in_progress` → "Contact In Progress" / "يتم التواصل مع العميل" · color `#8B5CF6`
+  - API value `fulfilled` → "Option Found" / "تم إيجاد خيار" · color `#10B981`
+  - API value `client_dropped` → "Client Dropped" / "انسحب العميل" · color `#8E4E3A`
+
+### 3. Search Management / إدارة البحث  _(base, color #8B5CF6)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `assigned_to` | Sourcing Owner / مسؤول البحث | Assignee | no | half | yes | any user |
+| `target_date` | Target Date / تاريخ مستهدف | Date & time | no | half | yes |  |
+| `offices_contacted` | Offices Contacted / المكاتب التي تم التواصل معها | Lookup | no | full | no | → Real Estate Offices · multi |
+| `found_option` | Option Found / الخيار الذي وُجد | Lookup | no | half | no | → Client Property Options |
+| `closed_at` | Closed At / تاريخ الإغلاق | Date & time | no | half | no |  |
+| `closed_reason` | Closing Note / سبب الإغلاق | Text area | no | full | no |  |
+
+**Field details:**
+
+- **Sourcing Owner / مسؤول البحث** (`assigned_to`, type `assignee`):
+  - eligible users: any active user
+- **Offices Contacted / المكاتب التي تم التواصل معها** (`offices_contacted`, type `lookup`):
+  - target model: Real Estate Offices
+  - shows field: `office_name`
+  - multiple: yes · max in dropdown: 20
+- **Option Found / الخيار الذي وُجد** (`found_option`, type `lookup`):
+  - target model: Client Property Options
+  - shows field: `source_name`
+  - multiple: no · max in dropdown: 20

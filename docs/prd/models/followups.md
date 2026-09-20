@@ -5,7 +5,7 @@
 # Model: Follow-ups / المتابعات  `followups`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-03
+**Last updated (from DB):** 2026-09-20
 **Model id:** `764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -20,7 +20,7 @@
 - Custom buttons: 3
 
 ## Card view
-- Title: `6fc45f7b-41fa-453b-afdb-fa574cea74cf` (unknown field)
+- Title: Client ID (`client_id`)
 - Badge: Follow-up Type (`followup_type`)
 
 ## Sections & fields
