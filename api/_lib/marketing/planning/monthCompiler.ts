@@ -135,6 +135,26 @@ export interface MonthStart {
    * can raise it. Prorating it here would be the app spending on their behalf.
    */
   through?: string;
+  /**
+   * Batches this month sizes by hand — «٢ لكل مشروع يوم ٢٢ سبتمبر بدل ٥».
+   *
+   * The honest answer to a batch with too few working days in front of it is
+   * usually that the batch is SMALLER, not that it is late or that the month
+   * is impossible. Most specific rule wins: project + day, then day, then
+   * project. Everything unmatched keeps `creatives_per_project_week`.
+   *
+   * It lives here, in `mos_month_template.month_starts`, so an operator
+   * decision survives a reload and reaches the confirm — a draft in the
+   * browser would not.
+   */
+  creativeOverrides?: CreativeOverride[];
+}
+
+/** One sizing rule. `null` on a field means "any". */
+export interface CreativeOverride {
+  batchDay: string | null;
+  projectId: string | null;
+  creatives: number;
 }
 
 export const MONTH_TEMPLATE_DEFAULTS: MonthTemplate = {
@@ -276,11 +296,30 @@ export function parseMonthStarts(v: unknown): Record<string, MonthStart> {
     // two off the same row.
     const thru = typeof o.through === 'string' && /^\d{4}-\d{2}$/.test(o.through) && o.through > month
       ? o.through : undefined;
+    const overrides: CreativeOverride[] = Array.isArray(o.creative_overrides)
+      ? (o.creative_overrides as unknown[])
+        .map((raw): CreativeOverride | null => {
+          if (!raw || typeof raw !== 'object') return null;
+          const r = raw as Record<string, unknown>;
+          const n = Number(r.creatives);
+          // A zero or a negative is NOT a way to delete a batch: the batch day
+          // itself is the place to do that. Anything unreadable is dropped
+          // rather than guessed, so a bad row cannot quietly resize a month.
+          if (!Number.isFinite(n) || n < 1) return null;
+          return {
+            batchDay: day(r.batch_day) ?? null,
+            projectId: typeof r.project_id === 'string' && r.project_id ? r.project_id : null,
+            creatives: Math.floor(n),
+          };
+        })
+        .filter((x): x is CreativeOverride => x !== null)
+      : [];
     out[month] = {
       organicFrom: day(o.organic_from),
       paidFrom: day(o.paid_from),
       adsLiveWhenReady: o.ads_live_when_ready === true,
       through: thru,
+      creativeOverrides: overrides,
     };
   }
   return out;
@@ -483,6 +522,43 @@ export interface MonthGeometry {
 
 const MONTH_RE = /^(\d{4})-(\d{2})$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Creatives for ONE project on ONE batch day, after the month's sizing rules.
+ *
+ * Most specific wins — project+day, then day, then project — so «the 22nd is
+ * 2 for everyone» and «project ج is 3 all month» can both be expressed, and
+ * stating both is not ambiguous.
+ */
+export function creativesFor(
+  template: MonthTemplate, month: string, projectId: string | null, batchDay: string,
+): number {
+  const rules = template.monthStarts?.[month]?.creativeOverrides ?? [];
+  const score = (r: CreativeOverride): number => (
+    (r.batchDay === batchDay ? 2 : 0) + (r.projectId !== null && r.projectId === projectId ? 1 : 0)
+  );
+  let best: CreativeOverride | null = null;
+  let bestScore = 0;
+  for (const r of rules) {
+    if (r.batchDay !== null && r.batchDay !== batchDay) continue;
+    if (r.projectId !== null && r.projectId !== projectId) continue;
+    const sc = score(r);
+    if (sc > bestScore) { best = r; bestScore = sc; }
+  }
+  return best ? best.creatives : template.creativesPerProjectWeek;
+}
+
+/** Every batch day whose size this month overrides, for one project. */
+export function slateOverridesFor(
+  template: MonthTemplate, month: string, projectId: string | null, batchDays: string[],
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const day of batchDays) {
+    const n = creativesFor(template, month, projectId, day);
+    if (n !== template.creativesPerProjectWeek) out[day] = n;
+  }
+  return out;
+}
 
 /** Later of two civil dates. `YYYY-MM-DD` sorts lexicographically. */
 const laterDay = (a: string, b: string): string => (a > b ? a : b);
@@ -920,6 +996,7 @@ export function paidPlanInput(
       platform: template.paidPlatform,
       policy: {
         slateSize: template.creativesPerProjectWeek,
+        slateOn: slateOverridesFor(template, geometry.month, project.projectId, geometry.paidBatchDays),
         keepMin: DEFAULTS.paid.keepMin,
         cycleDays: 7,
         minRemainingDays: DEFAULTS.paid.minRemainingDays,
@@ -936,6 +1013,38 @@ export function paidPlanInput(
 /* ------------------------------------------------------------------ */
 /* compile                                                             */
 /* ------------------------------------------------------------------ */
+
+/** One requested item the plan could not place, and why. */
+export interface MonthUnscheduled {
+  itemKey: string;
+  projectId: string | null;
+  kind: 'row' | 'creative';
+  /** `YYYY-MM-DD` it was needed by. */
+  requiredBy: string;
+  /** `no_capacity` — nobody free. `unreachable` — no window in time. */
+  reason: 'no_capacity' | 'unreachable';
+}
+
+/**
+ * What one capacity key needs against what it has, over this month's window.
+ *
+ * `required` counts EVERY requested unit, placed or not — that is the whole
+ * point, and it is what `MonthCapacityLine` structurally cannot report,
+ * because that one is summed from bookings.
+ */
+export interface MonthDemandLine {
+  capacityKey: 'design' | 'writing';
+  roleKey: 'montage' | 'writer';
+  required: number;
+  scheduled: number;
+  unscheduled: number;
+  /** Units every holder of the role can take in one day, added up. */
+  unitsPerDay: number;
+  workingDays: number;
+  capacity: number;
+  utilisationPct: number | null;
+  over: boolean;
+}
 
 export interface MonthCapacityLine {
   userId: string;
@@ -981,6 +1090,13 @@ export interface MonthSummary {
    * spending decision on the operator's behalf.
    */
   paidBatchesRemaining: number;
+  /**
+   * Items the month REQUESTED and could not place. Empty is the only healthy
+   * value; a month with entries here does not confirm.
+   */
+  unscheduled: MonthUnscheduled[];
+  /** Demand against capacity per capacity key, in the dispatcher's units. */
+  demand: MonthDemandLine[];
   /**
    * Calendar months this ONE plan covers (`month_starts.through`). It is
    * reported for the same reason as `paidBatchesRemaining` and does exactly as
@@ -1237,17 +1353,52 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
   // said "not all by the batch day" are dropped, because under this rule they
   // are not a refusal. Only no_capacity / time_bound are forgiven — a platform
   // or publishing-time conflict still blocks.
+  /*
+   * A DATED relaxation, never a deletion.
+   *
+   * «الإعلان ينطلق حين يجهز» is a statement about WHEN AN APPROVED AD STARTS
+   * DELIVERING. It is not a statement about whether anyone exists to make it,
+   * and it is not permission to move a required date and say nothing.
+   *
+   * Until 2026-09-20 this block filtered out BOTH `time_bound` ("this finishes
+   * after its batch day" — the operator's rule, fair to relax) AND
+   * `no_capacity` ("nobody has hands free for this" — an ad that will never be
+   * made), then rewrote `feasible: false` to `true`. Measured on the live team
+   * that day: two of three paid campaigns had NO production plan at all, 60
+   * creatives carried no stages, and the page reported `feasible`,
+   * `capacityOk`, zero conflicts.
+   *
+   * So now: `time_bound` may be forgiven, and only for an item that HAS a
+   * placement — the relaxation is recorded on the item and reported, so the
+   * operator sees which ads run late and when. `no_capacity` is never
+   * forgiven, and an item with no placement never becomes feasible.
+   */
   if (liveWhenReady) {
     paid = paid.map((p) => {
       if (p.plan.feasible) return p;
       if (p.plan.conflicts.some(conflictBlocksPlan)) return p;
-      const items = p.plan.items.map((it) => (it.productionStart
-        ? it
-        : { ...it, productionStart: geo.productionStart, requiredReadyAt: it.requiredReadyAt || it.needAt.slice(0, 10) }));
-      const conflicts = p.plan.conflicts.filter((c) => c.kind !== 'no_capacity' && c.kind !== 'time_bound');
-      return { ...p, plan: { ...p.plan, items, conflicts, feasible: true } };
+      // A shortage of hands is not lateness. Keep it, keep the refusal.
+      if (p.plan.conflicts.some((c) => c.kind === 'no_capacity')) return p;
+      const unplaced = p.plan.items.filter((it) => !it.stages || it.stages.length === 0);
+      if (unplaced.length > 0) return p;
+      const conflicts = p.plan.conflicts.filter((c) => c.kind !== 'time_bound');
+      return { ...p, plan: { ...p.plan, conflicts, feasible: true } };
     });
   }
+
+  /*
+   * THE INVARIANT: every requested item is placed, or it is NAMED.
+   *
+   * The 2026-09-20 failure was not that work did not fit — it was that work
+   * which did not fit stopped existing. An unplaced item was simply not booked,
+   * so it charged nothing to the load table, raised no conflict and appeared in
+   * no total: the more of the month that failed to fit, the healthier the
+   * month looked. `unscheduled` makes that state impossible to reach silently.
+   * Anything unplaced is listed here with its required date and its reason,
+   * and `summary.demand` counts it whether it was placed or not.
+   */
+  const unscheduled = collectUnscheduled(organicPlan, paid);
+  const demand = computeDemand(geo, template, running, rows, paid, unscheduled, snapshot);
 
   const inputs = [organicInput, ...paid.map((p) => p.input)];
   const plans = [organicPlan, ...paid.map((p) => p.plan)];
@@ -1260,8 +1411,109 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
     paid,
     inputs,
     plans,
-    summary: summariseMonth({ geometry: geo, template, projects, rows, organicPlan, paidPlans: paid.map((p) => p.plan), snapshot }),
+    summary: {
+      ...summariseMonth({ geometry: geo, template, projects, rows, organicPlan, paidPlans: paid.map((p) => p.plan), snapshot }),
+      unscheduled,
+      demand,
+      // A month is feasible only when nothing is unaccounted for. The plans
+      // may each say `feasible` and still leave an item nobody can make.
+      feasible: unscheduled.length === 0
+        && [organicPlan, ...paid.map((p) => p.plan)].every((pl) => pl.feasible),
+    },
   };
+}
+
+/**
+ * Items the plan REQUESTED but did not place, each with why.
+ *
+ * `reason` is read off the plan's own conflicts rather than guessed: a day
+ * named by a `no_capacity` conflict is a shortage of hands; anything else on an
+ * unplaced item is a window that could not be reached.
+ */
+function collectUnscheduled(
+  organicPlan: PlanResult, paid: CompiledMonth['paid'],
+): MonthUnscheduled[] {
+  const out: MonthUnscheduled[] = [];
+  const push = (
+    plan: PlanResult, projectId: string | null, key: string, needAt: string, kind: MonthUnscheduled['kind'],
+  ): void => {
+    const day = needAt.slice(0, 10);
+    const hasShortage = plan.conflicts.some((c) => c.kind === 'no_capacity');
+    out.push({
+      itemKey: key,
+      projectId,
+      kind,
+      requiredBy: day,
+      reason: hasShortage ? 'no_capacity' : 'unreachable',
+    });
+  };
+  for (const r of organicPlan.rows) {
+    if (r.stages && r.stages.length > 0) continue;
+    push(organicPlan, r.projectId, r.batchKey ?? r.batchDay, r.batchDay, 'row');
+  }
+  for (const p of paid) {
+    for (const it of p.plan.items) {
+      if (it.stages && it.stages.length > 0) continue;
+      push(p.plan, p.projectId, it.key || `${p.projectId}:${it.needAt}`, it.needAt, 'creative');
+    }
+  }
+  return out.sort((a, b) => (a.requiredBy < b.requiredBy ? -1 : a.requiredBy > b.requiredBy ? 1 : 0));
+}
+
+/**
+ * Demand against capacity per CAPACITY KEY, in the dispatcher's own units.
+ *
+ * Two numbers, deliberately, because either one alone misleads. The TOTAL says
+ * whether the hours exist at all — it is what `capacityOk` could never see,
+ * because that is computed from bookings and an unplaced item books nothing.
+ * The PER-BATCH reachability says whether they exist *in time* — measured
+ * 2026-09-20, the 22 Sep batch stayed unreachable at 5, 6 and 8 designs a day
+ * and only opened at 9, because its window is two days wide, not because the
+ * month is short of hours. A page showing only the total would have called
+ * that a throughput problem and been wrong.
+ *
+ * Units follow `mos_task_units`: a row costs one per post, a creative costs
+ * one. The conformance test holds the two definitions together.
+ */
+function computeDemand(
+  geometry: MonthGeometry, template: MonthTemplate, projects: MonthProject[],
+  rows: MonthRowPlan[], paid: CompiledMonth['paid'], unscheduled: MonthUnscheduled[],
+  snapshot: WorkloadSnapshot,
+): MonthDemandLine[] {
+  const unscheduledKeys = new Set(unscheduled.map((u) => u.itemKey));
+  const workingDays = workingDaysIn(geometry.productionStart, geometry.lastPostingDay, snapshot.calendar).length;
+
+  const holderUnits = (roleKey: string): number => snapshot.people
+    .filter((p) => p.roles.includes(roleKey as never))
+    .reduce((a, p) => a + (p.caps.post ?? 0), 0);
+
+  const rowUnits = rows.length * template.postsPerRow;
+  const creativeUnits = paid.reduce((a, p) => a + p.plan.items.length, 0);
+  const unscheduledRowUnits = unscheduled.filter((u) => u.kind === 'row').length * template.postsPerRow;
+  const unscheduledCreativeUnits = unscheduled.filter((u) => u.kind === 'creative').length;
+
+  const lines: MonthDemandLine[] = [];
+  for (const [capacityKey, roleKey] of [['design', 'montage'], ['writing', 'writer']] as const) {
+    const required = rowUnits + creativeUnits;
+    const unscheduledUnits = unscheduledRowUnits + unscheduledCreativeUnits;
+    const perDay = holderUnits(roleKey);
+    const capacity = perDay * workingDays;
+    lines.push({
+      capacityKey,
+      roleKey,
+      required,
+      scheduled: required - unscheduledUnits,
+      unscheduled: unscheduledUnits,
+      unitsPerDay: perDay,
+      workingDays,
+      capacity,
+      utilisationPct: capacity > 0 ? Math.round((required / capacity) * 1000) / 10 : null,
+      over: capacity > 0 && required > capacity,
+    });
+  }
+  void unscheduledKeys;
+  void projects;
+  return lines;
 }
 
 /**
@@ -1410,6 +1662,10 @@ export function summariseMonth(args: {
     paidCreatives,
     paidBatchesRemaining: geometry.paidBatchDays.length,
     monthsCovered: geometry.monthsCovered,
+    // `compileMonth` is the only caller that can know these: they are computed
+    // ACROSS the four plans, after the paid ones settle. It overwrites both.
+    unscheduled: [],
+    demand: [],
     items: posts + paidCreatives,
     firstPostingDay: geometry.firstPostingDay,
     lastPostingDay: geometry.lastPostingDay,

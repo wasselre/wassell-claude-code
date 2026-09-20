@@ -1149,7 +1149,12 @@ describe('monthGeometry — the operator’s start for one month (month_starts)'
 
   it('parses the jsonb shape and drops a malformed day instead of guessing', () => {
     const t = parseMonthTemplate({ month_starts: { '2026-09': { organic_from: '2026-09-22', paid_from: 'soon', ads_live_when_ready: true }, bad: {} } });
-    expect(t.monthStarts).toEqual({ '2026-09': { organicFrom: '2026-09-22', paidFrom: undefined, adsLiveWhenReady: true } });
+    expect(t.monthStarts).toEqual({
+      '2026-09': {
+        organicFrom: '2026-09-22', paidFrom: undefined, adsLiveWhenReady: true,
+        through: undefined, creativeOverrides: [],
+      },
+    });
   });
 
   it('another month is untouched', () => {

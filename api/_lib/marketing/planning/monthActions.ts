@@ -653,12 +653,35 @@ export async function monthConfirm(ctx: PlanCtx): Promise<Response> {
     }));
   }
 
+  /*
+   * WORK WITH NO PLAN BLOCKS THE CONFIRM, and it is named.
+   *
+   * Checked before `feasible` so the operator is told WHICH items have no
+   * production — on 2026-09-20 sixty ad creatives had none while the page
+   * said the month was fine. `unscheduled` is the invariant `compileMonth`
+   * maintains; a refusal that only said "infeasible" would be the same silence
+   * wearing a different word.
+   */
+  if (compiled.summary.unscheduled.length > 0) {
+    const byDay = new Map<string, number>();
+    for (const u of compiled.summary.unscheduled) byDay.set(u.requiredBy, (byDay.get(u.requiredBy) ?? 0) + 1);
+    const days = [...byDay.entries()].sort().map(([d, n]) => `${d} (${n})`).join(' · ');
+    return jsonError(409, JSON.stringify({
+      error: 'month_unscheduled_work',
+      error_ar: `${compiled.summary.unscheduled.length} عنصرًا بلا خطة إنتاج — لا يمكن اعتماد شهر فيه عمل بلا موعد. المطلوب: ${days}. صغّر الدفعة أو عدّل الطاقة.`,
+      error_en: `${compiled.summary.unscheduled.length} item(s) have no production plan — a month with unplaceable work cannot be confirmed. Required by: ${days}. Size the batch down or change capacity.`,
+      unscheduled: compiled.summary.unscheduled,
+      demand: compiled.summary.demand,
+    }));
+  }
+
   if (!compiled.summary.feasible) {
     return jsonError(409, JSON.stringify({
       error: 'month_infeasible',
       error_ar: 'الشهر لا يُجدول بالكامل بالطاقة الحالية. عالج التعارضات قبل الاعتماد.',
       error_en: 'The month does not schedule in full against current capacity. Resolve the conflicts before confirming.',
       conflicts: compiled.summary.conflicts,
+      demand: compiled.summary.demand,
     }));
   }
 

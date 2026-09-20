@@ -594,6 +594,42 @@ export default function MonthPage() {
           </div>
         )}
 
+        {summary && summary.demand.length > 0 && (
+          /*
+           * THE CAPACITY LINE — two numbers, never one.
+           *
+           * `required` counts every requested unit whether or not the planner
+           * placed it, which is precisely what the per-person load lines
+           * cannot report: those are summed from bookings, so on 2026-09-20
+           * sixty unplaced ad creatives charged nothing to them and the month
+           * read as 69% used while it actually needed 110% of the hours.
+           *
+           * The per-batch line beside it answers the OTHER question. Measured
+           * the same day: the 22 Sep batch stayed unreachable at 5, 6 and 8
+           * designs a day and only opened at 9, because its window is two days
+           * wide. A total alone would have called that a throughput problem.
+           */
+          <div className={summary.unscheduled.length > 0 ? 'notice bad' : 'notice'} style={{ marginBlockEnd: 14 }}>
+            {summary.demand.map((d) => (
+              <div key={d.capacityKey}>
+                {isAr
+                  ? `${d.capacityKey === 'design' ? 'التصميم' : 'الكتابة'} — مطلوب ${num(d.required, true)} · مجدول ${num(d.scheduled, true)} · غير مجدول ${num(d.unscheduled, true)} · الطاقة ${num(d.capacity, true)} خلال ${num(d.workingDays, true)} يوم عمل (${num(d.unitsPerDay, true)} يوميًا)${d.utilisationPct === null ? '' : ` — ${pct(d.utilisationPct / 100, true)}`}`
+                  : `${d.capacityKey === 'design' ? 'Design' : 'Writing'} — required ${num(d.required, false)} · scheduled ${num(d.scheduled, false)} · unscheduled ${num(d.unscheduled, false)} · capacity ${num(d.capacity, false)} over ${num(d.workingDays, false)} working days (${num(d.unitsPerDay, false)}/day)${d.utilisationPct === null ? '' : ` — ${pct(d.utilisationPct / 100, false)}`}`}
+              </div>
+            ))}
+            {summary.unscheduled.length > 0 && (
+              <div style={{ marginBlockStart: 8 }}>
+                {isAr
+                  ? `${num(summary.unscheduled.length, true)} عنصرًا بلا خطة إنتاج — لا يُعتمد شهر فيه عمل بلا موعد. المطلوب: `
+                  : `${num(summary.unscheduled.length, false)} item(s) have no production plan — a month with unplaceable work is not confirmed. Required by: `}
+                {[...new Map(summary.unscheduled.map((u) => [u.requiredBy, 0])).keys()]
+                  .map((day) => `${dayLabel(day, isAr)} (${num(summary.unscheduled.filter((u) => u.requiredBy === day).length, isAr)})`)
+                  .join(' · ')}
+              </div>
+            )}
+          </div>
+        )}
+
         {summary && !summary.exhausted
           && (summary.isPartial || summary.startMoved || summary.shortLeadRows.length > 0) && (
           /*

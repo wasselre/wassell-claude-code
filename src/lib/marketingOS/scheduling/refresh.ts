@@ -53,7 +53,13 @@ export interface ForecastInput {
 export function forecastCycles(input: ForecastInput, cal: WorkCalendar): CycleForecast[] {
   const { policy } = input;
   const slate = Math.max(1, Math.floor(policy.slateSize));
-  const keepMin = Math.max(0, Math.min(slate - 1, Math.floor(policy.keepMin)));
+  // A date the operator sized by hand wins for that date alone. `keepMin` is
+  // re-clamped against it, so a 2-creative batch cannot be asked to keep 4.
+  const slateFor = (day: string): number => {
+    const v = policy.slateOn?.[day];
+    return Number.isFinite(v) && (v as number) > 0 ? Math.max(1, Math.floor(v as number)) : slate;
+  };
+  const keepMinFor = (s: number): number => Math.max(0, Math.min(s - 1, Math.floor(policy.keepMin)));
   const cycleDays = Math.max(1, Math.floor(policy.cycleDays));
   const minRemaining = Math.max(0, Math.floor(policy.minRemainingDays));
   const lead = Math.max(1, Math.floor(policy.leadTimeWorkingDays));
@@ -63,6 +69,7 @@ export function forecastCycles(input: ForecastInput, cal: WorkCalendar): CycleFo
 
   // Round 0 — the launch slate.
   const launchReady = addWorkingDays(input.startsOn, -1, cal);
+  const launchSlate = slateFor(input.startsOn);
   out.push({
     executionKey: input.executionKey,
     round: 0,
@@ -70,10 +77,10 @@ export function forecastCycles(input: ForecastInput, cal: WorkCalendar): CycleFo
     readyBy: launchReady,
     productionStartOn: addWorkingDays(launchReady, -(lead - 1), cal),
     decisionDueOn: null,
-    produced: slate,
+    produced: launchSlate,
     bankedSpareSlotId: null,
-    slotKinds: Array.from({ length: slate }, () => 'initial' as const),
-    note: 'launch slate',
+    slotKinds: Array.from({ length: launchSlate }, () => 'initial' as const),
+    note: launchSlate === slate ? 'launch slate' : `launch slate — sized ${launchSlate} for this date`,
   });
 
   if (totalDays <= 0) return out;
@@ -101,10 +108,12 @@ export function forecastCycles(input: ForecastInput, cal: WorkCalendar): CycleFo
     }
     const readyBy = addWorkingDays(refreshOn, -1, cal);
     const productionStartOn = addWorkingDays(readyBy, -(lead - 1), cal);
-    const replacements = slate - keepMin;
+    const cycleSlate = slateFor(refreshOn);
+    const cycleKeep = keepMinFor(cycleSlate);
+    const replacements = cycleSlate - cycleKeep;
     const kinds: Array<'replacement' | 'fifth'> = Array.from({ length: replacements }, () => 'replacement' as const);
     if (policy.fifthPolicy === 'A') {
-      for (let i = 0; i < keepMin; i += 1) kinds.push('fifth');
+      for (let i = 0; i < cycleKeep; i += 1) kinds.push('fifth');
     }
     out.push({
       executionKey: input.executionKey,
@@ -117,7 +126,7 @@ export function forecastCycles(input: ForecastInput, cal: WorkCalendar): CycleFo
       bankedSpareSlotId: null,
       slotKinds: kinds,
       note: policy.fifthPolicy === 'A'
-        ? `${replacements} replacements + ${keepMin} fifth (replace-all always available)`
+        ? `${replacements} replacements + ${cycleKeep} fifth (replace-all always available)`
         : `${replacements} replacements; a fifth is conditional`,
     });
   }

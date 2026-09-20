@@ -3636,6 +3636,36 @@ export interface MosMonthSkippedDay {
   leadWorkingDays: number | null;
 }
 
+/** One requested item the plan could not place, and why. */
+export interface MosMonthUnscheduled {
+  itemKey: string;
+  projectId: string | null;
+  kind: 'row' | 'creative';
+  requiredBy: string;
+  /** `no_capacity` — nobody free. `unreachable` — no window in time. */
+  reason: 'no_capacity' | 'unreachable';
+}
+
+/**
+ * What one capacity key needs against what it has.
+ *
+ * `required` counts EVERY requested unit, placed or not — which is exactly
+ * what the per-person load lines cannot report, because those are summed from
+ * bookings and an unplaced item books nothing.
+ */
+export interface MosMonthDemandLine {
+  capacityKey: 'design' | 'writing';
+  roleKey: 'montage' | 'writer';
+  required: number;
+  scheduled: number;
+  unscheduled: number;
+  unitsPerDay: number;
+  workingDays: number;
+  capacity: number;
+  utilisationPct: number | null;
+  over: boolean;
+}
+
 export interface MosMonthGeometry {
   month: string;
   weeks: Array<{ index: number; start: string; end: string }>;
@@ -3815,6 +3845,13 @@ export interface MosMonthSummary {
   paidBatchesRemaining: number;
   /** Calendar months this ONE plan covers. Reported; the budget is not prorated. */
   monthsCovered: number;
+  /**
+   * Requested items the plan could NOT place. Empty is the only healthy value;
+   * a month with entries here is refused at confirm and each one is named.
+   */
+  unscheduled: MosMonthUnscheduled[];
+  /** Demand against capacity per capacity key, in the dispatcher's units. */
+  demand: MosMonthDemandLine[];
   items: number;
   firstPostingDay: string;
   lastPostingDay: string;

@@ -242,6 +242,17 @@ export interface PlatformFrequency {
  */
 export interface PaidPolicy {
   slateSize: number;
+  /**
+   * `YYYY-MM-DD` → the slate size for THAT refresh date, overriding
+   * `slateSize` for it alone.
+   *
+   * A batch near the start of a month begun part-way through has fewer working
+   * days in front of it than a normal one, so the honest answer is often "this
+   * batch is smaller", not "this batch is late" or "this month is impossible".
+   * The operator sets it per batch day (and, through `creative_overrides`, per
+   * project) — every other date keeps `slateSize`.
+   */
+  slateOn?: Record<string, number>;
   keepMin: number;
   cycleDays: number;
   minRemainingDays: number;

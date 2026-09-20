@@ -97,6 +97,18 @@ jobs:
       - name: Smoke assertions
         run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_translation.sql
 
+      # The month PLANNER (TypeScript) and the task DISPATCHER (SQL) decide two
+      # halves of the same question — "does this month fit?" and "can this
+      # person be handed this task?" — from two different tables. On 2026-09-20
+      # they disagreed in production for the first time anyone checked:
+      # `mos_task_units` had zero references in the whole TypeScript codebase.
+      # This asserts the SQL half; `monthHonestCapacity.test.ts` asserts the
+      # TypeScript half.
+      - name: Planner and dispatcher agree on cost and capacity
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/fixture_engine_conformance.sql
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/assert_engine_conformance.sql
+
       # The file-link projection (Phase 1) needs its own fixture: the translation
       # bootstrap has no models/records/files tables. Without this step the
       # db-migrations badge would be green while never executing this migration
