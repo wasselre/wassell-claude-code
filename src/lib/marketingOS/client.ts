@@ -3782,6 +3782,34 @@ export interface MosMonthGet {
   ranking: MosMonthRankingRow[];
   notes: MosMonthNote[];
   exceptions: MosMonthException[];
+  /**
+   * Work the dispatcher has parked for capacity RIGHT NOW — reality, not
+   * forecast. Empty is healthy.
+   */
+  backlog: MosCapacityBacklog[];
+}
+
+/**
+ * One capacity key with work waiting on it.
+ *
+ * Units, not task counts: a social batch is three units and a creative is one,
+ * so "four tasks waiting" says nothing about how long it takes to clear.
+ * `nextPublishAt` is the nearest deadline the queue is threatening — without
+ * it a backlog looks the same whether it is due tomorrow or next month.
+ */
+export interface MosCapacityBacklog {
+  capacity_key: string;
+  role_key: string;
+  waiting_tasks: number;
+  waiting_units: number;
+  daily_limit: number | null;
+  holders: number;
+  /** Working days to clear at the current rate. `null` when nobody holds the role. */
+  days_to_clear: number | null;
+  oldest_waiting_at: string | null;
+  oldest_waiting_hours: number | null;
+  next_publish_at: string | null;
+  next_publish_in_hours: number | null;
 }
 
 export interface MosMonthGridDay {

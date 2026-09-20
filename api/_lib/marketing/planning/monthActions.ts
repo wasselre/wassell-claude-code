@@ -442,7 +442,7 @@ export async function monthGet(ctx: PlanCtx): Promise<Response> {
   const template = tpl.row;
   const geometry = monthGeometry(month, template);
 
-  const [camps, notes, excRes, metricsRes] = await Promise.all([
+  const [camps, notes, excRes, metricsRes, backlogRes] = await Promise.all([
     loadMonthCampaigns(svc, month),
     loadNotes(svc, month),
     ctx.sb.rpc('mos_month_exceptions', { p_month: `${month}-01` }),
@@ -456,7 +456,16 @@ export async function monthGet(ctx: PlanCtx): Promise<Response> {
       p_project_ids: null,
       p_include_ranking: true,
     }),
+    // The live backlog — work the dispatcher has parked for capacity RIGHT
+    // NOW, which a forecast cannot know. Never fatal: a month page that will
+    // not render because a reporting query failed is worse than a page with
+    // one missing line, so a failure is logged and the line is simply absent.
+    svc.rpc('mos_capacity_backlog'),
   ]);
+  if (backlogRes.error) {
+    console.error('[month_get] mos_capacity_backlog failed',
+      backlogRes.error.code, backlogRes.error.message);
+  }
   if (camps.error) return fail('mos_campaigns', { message: camps.error });
   if (notes.error) return fail('mos_month_notes', { message: notes.error });
   if (excRes.error) return fail('mos_month_exceptions', excRes.error);
@@ -498,6 +507,7 @@ export async function monthGet(ctx: PlanCtx): Promise<Response> {
     ranking,
     notes: notes.notes,
     exceptions: excRes.data ?? [],
+    backlog: backlogRes.error ? [] : (backlogRes.data ?? []),
   });
 }
 

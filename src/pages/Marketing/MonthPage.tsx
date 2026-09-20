@@ -594,6 +594,42 @@ export default function MonthPage() {
           </div>
         )}
 
+        {data.backlog.length > 0 && (
+          /*
+           * THE LIVE BACKLOG — reality, not forecast.
+           *
+           * The compile above is a prediction. This is what the dispatcher has
+           * actually parked for capacity right now. It is shown even when the
+           * month's own plan is fine, because a backlog is usually caused by
+           * something the plan never knew about: leave, a revision, a month
+           * started late. Until 2026-09-20 the only trace of it was a pill on
+           * a per-task card.
+           *
+           * Units and the nearest deadline, never a task count: a batch is
+           * three units and a creative is one, so «٤ مهام» says nothing about
+           * how long the queue takes to clear or whether it threatens anything.
+           */
+          <div className="notice bad" style={{ marginBlockEnd: 14 }} role="alert">
+            {data.backlog.map((b) => (
+              <div key={`${b.capacity_key}:${b.role_key}`}>
+                {isAr
+                  ? `${b.capacity_key === 'design' ? 'التصميم' : 'الكتابة'} — ${num(b.waiting_units, true)} وحدة بانتظار السعة`
+                    + (b.days_to_clear === null
+                      ? ' · لا أحد يتولّى هذا الدور'
+                      : ` · تُنجَز خلال ${num(b.days_to_clear, true)} يوم عمل`)
+                    + (b.oldest_waiting_hours === null ? '' : ` · أقدمها منتظر ${num(Math.round(b.oldest_waiting_hours), true)} ساعة`)
+                    + (b.next_publish_at === null ? '' : ` · أقرب نشر ${dayLabel(b.next_publish_at.slice(0, 10), true)}`)
+                  : `${b.capacity_key === 'design' ? 'Design' : 'Writing'} — ${num(b.waiting_units, false)} unit(s) waiting on capacity`
+                    + (b.days_to_clear === null
+                      ? ' · nobody holds this role'
+                      : ` · clears in ${num(b.days_to_clear, false)} working days`)
+                    + (b.oldest_waiting_hours === null ? '' : ` · oldest waiting ${num(Math.round(b.oldest_waiting_hours), false)}h`)
+                    + (b.next_publish_at === null ? '' : ` · nearest publish ${dayLabel(b.next_publish_at.slice(0, 10), false)}`)}
+              </div>
+            ))}
+          </div>
+        )}
+
         {summary && summary.demand.length > 0 && (
           /*
            * THE CAPACITY LINE — two numbers, never one.
