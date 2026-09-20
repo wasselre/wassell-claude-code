@@ -108,6 +108,62 @@ function monthRefusal(err: unknown, isAr: boolean): string {
  * today, which is a different month from the one that was confirmed the moment
  * anything has been edited, replaced or moved.
  */
+/*
+ * The month's project choice, kept on the DEVICE until it is confirmed.
+ *
+ * Choosing three projects is real work — reading the ranking, weighing the
+ * three numbers — and until now none of it was written anywhere before the
+ * confirm: a refresh, a crash or a stray Cmd-R and the page came back with the
+ * system's suggestion as if nothing had happened. Same rule as the writing
+ * fields: what you type is saved as you type it.
+ *
+ * It is device-local on purpose. A draft selection is one operator's thinking
+ * in one sitting, not a shared record — the shared record is the confirmed
+ * month, whose campaigns ARE the selection (`mos_campaigns.ref` carries each
+ * project id). So this restores your own tab and nothing more, and it is
+ * dropped the moment the month is confirmed.
+ */
+const SELECTION_KEY = (month: string): string => `wassel.mos.month-selection.v1:${month}`;
+
+export function readSelectionDraft(month: string): string[] | null {
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(SELECTION_KEY(month));
+  } catch (e) {
+    // Storage blocked (private mode / policy). The page still works; the
+    // choice simply is not remembered across a reload.
+    console.error('[marketing] month selection read failed', month, e);
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const ids = parsed.map(String).filter(Boolean);
+    return ids.length > 0 ? ids : null;
+  } catch (e) {
+    console.error('[marketing] month selection unreadable — discarded', month, e);
+    return null;
+  }
+}
+
+export function writeSelectionDraft(month: string, ids: string[]): void {
+  try {
+    if (ids.length === 0) window.localStorage.removeItem(SELECTION_KEY(month));
+    else window.localStorage.setItem(SELECTION_KEY(month), JSON.stringify(ids));
+  } catch (e) {
+    console.error('[marketing] month selection save failed', month, e);
+  }
+}
+
+export function clearSelectionDraft(month: string): void {
+  try {
+    window.localStorage.removeItem(SELECTION_KEY(month));
+  } catch (e) {
+    console.error('[marketing] month selection clear failed', month, e);
+  }
+}
+
 function weeksFromReport(report: MosMonthReport): {
   weeks: MosMonthGridWeek[];
   state: Map<string, DayReleaseState>;
@@ -216,7 +272,14 @@ export default function MonthPage() {
     try {
       const r = await fetchMonth(month);
       setData(r);
-      setSelection(r.selection.map((s) => s.project_id));
+      // A DRAFT month restores what was picked on this device; once the month
+      // is confirmed its campaigns are the record and the draft is discarded.
+      const kept = r.state === 'draft' ? readSelectionDraft(month) : null;
+      if (kept) setSelection(kept);
+      else {
+        if (r.state !== 'draft') clearSelectionDraft(month);
+        setSelection(r.selection.map((s) => s.project_id));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -470,7 +533,11 @@ export default function MonthPage() {
                   const next = [...prev];
                   while (next.length < template.projectsPerMonth) next.push('');
                   next[index] = projectId;
-                  return next.filter(Boolean);
+                  const picked = next.filter(Boolean);
+                  // Persisted the moment it changes, like the writing fields:
+                  // a refresh before confirming used to throw the choice away.
+                  writeSelectionDraft(month, picked);
+                  return picked;
                 });
               }}
             />
