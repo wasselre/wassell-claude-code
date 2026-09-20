@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PlayCircle, ChevronLeft, Lock, CheckCircle2, User, Phone, Loader2 } from 'lucide-react';
+import { PlayCircle, ChevronLeft, Lock, CheckCircle2, User, Phone, Loader2, Award, TrendingUp, Wallet, CalendarCheck } from 'lucide-react';
 import { ProgressRail, JourneyStep, FlowConnector, Reveal } from './hireUi';
 import OpeningSummary from './OpeningSummary';
 import { resolveInvite, postExperience, type InviteInfo } from '@/lib/careers/experience';
@@ -27,7 +27,7 @@ const STEPS: { title: string; blurb: string; Body: () => JSX.Element; after?: st
 export default function HireExperiencePage() {
   const navigate = useNavigate();
   const { token } = useParams();
-  const [phase, setPhase] = useState<'loading' | 'confirm' | 'ready'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'confirm' | 'welcome' | 'ready'>('loading');
   const [invite, setInvite] = useState<InviteInfo | null>(null);
 
   useEffect(() => {
@@ -54,14 +54,18 @@ export default function HireExperiencePage() {
 
   const goToVideo = () => navigate(`/careers/experience/${token ?? 'preview'}/video`);
 
-  if (phase !== 'ready') {
+  if (phase === 'loading' || phase === 'confirm') {
     return (
       <ConfirmGate
         invite={invite}
         loading={phase === 'loading'}
-        onConfirm={() => { void postExperience(token ?? '', 'confirm'); setPhase('ready'); }}
+        onConfirm={() => { void postExperience(token ?? '', 'confirm'); setPhase('welcome'); }}
       />
     );
+  }
+
+  if (phase === 'welcome') {
+    return <WelcomeScreen onStart={() => setPhase('ready')} />;
   }
 
   return (
@@ -166,6 +170,71 @@ export default function HireExperiencePage() {
         <footer className="mt-12 text-center text-xs" style={{ color: '#A79B86' }}>
           وصل العقارية · الرياض
         </footer>
+      </div>
+    </div>
+  );
+}
+
+// ── Welcome / orientation — a calm overview before the deep-dive ──────────────
+function WelcomeScreen({ onStart }: { onStart: () => void }) {
+  const items: { icon: typeof Award; title: string; text: string }[] = [
+    { icon: TrendingUp, title: 'الفرصة', text: 'لماذا العمل في وصل مختلف، وكيف يوسّع فرصك في البيع والدخل.' },
+    { icon: PlayCircle, title: 'طريقة العمل', text: 'فيديو قصير + تجربة عملية تجرّبها بنفسك مع عميل افتراضي.' },
+    { icon: Wallet, title: 'تفاصيل العمل والدخل', text: 'الراتب والعمولة وطبيعة الدوام.' },
+    { icon: CalendarCheck, title: 'قرارك', text: 'إن ناسبتك الوظيفة تحجز مقابلة، وإن لم تناسبك تخبرنا بذلك.' },
+  ];
+  return (
+    <div className="min-h-screen font-amiri" style={{ background: 'radial-gradient(ellipse at top, #FAF7F2 0%, #F1E6D4 60%, #E4D2B4 100%)', color: '#4A4E54' }}>
+      <ProgressRail active={0} />
+      <div className="mx-auto w-full max-w-xl px-4 py-8">
+        <header className="mb-6 flex flex-col items-center text-center">
+          <img src="/assets/wassel-logo.png" alt="وصل العقارية" className="h-14 sm:h-16" />
+          <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 bg-white/70 px-3 py-1 text-xs font-bold text-copper">
+            <Lock size={12} /> تجربة خاصة بالمرشّحين
+          </span>
+        </header>
+
+        <div className="rounded-3xl border bg-white/85 p-7 shadow-xl backdrop-blur sm:p-9" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
+          <div className="text-center">
+            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-copper/10 text-copper"><Award size={32} /></span>
+            <h1 className="mt-4 text-3xl font-bold leading-snug sm:text-4xl" style={{ color: '#4A2C2A' }}>تهانينا 🎉 لقد تأهّلت للمرحلة التالية</h1>
+            <p className="mt-2 text-sm font-semibold text-copper sm:text-base">مرشّح لوظيفة مستشار مبيعات عقارية في وصل</p>
+            <p className="mx-auto mt-4 max-w-lg text-base leading-loose" style={{ color: '#4A4E54' }}>
+              سعدنا بطلبك، وقد اخترناك للانتقال إلى الخطوة التالية. قبل المقابلة، أعددنا لك هذه التجربة القصيرة لتتعرّف على الوظيفة بشكل مختصر:
+              ما الذي يميّزها، وما الذي نتوقّعه منك، وكيف يبدو عملك اليومي — حتى تقرّر عن معرفة، لا عن تخمين.
+            </p>
+          </div>
+
+          <div className="mt-6">
+            <p className="mb-3 text-center text-sm font-bold uppercase tracking-wider text-copper">ماذا ستستعرض؟</p>
+            <div className="space-y-2.5">
+              {items.map(({ icon: Icon, title, text }) => (
+                <div key={title} className="flex items-start gap-3 rounded-2xl border border-sand/40 bg-white p-3.5 shadow-sm">
+                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-copper/10 text-copper"><Icon size={18} /></span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-chocolate sm:text-base">{title}</div>
+                    <div className="mt-0.5 text-sm leading-relaxed text-charcoal/70">{text}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <p className="mt-5 rounded-2xl bg-cream/50 p-3.5 text-center text-sm leading-relaxed text-charcoal/70">
+            تأخذ التجربة بضع دقائق، وخذ وقتك في الاطّلاع. هذه خطوة تعريفية قبل المقابلة — وليست التزامًا أو قبولًا للوظيفة.
+          </p>
+
+          <button
+            type="button"
+            onClick={onStart}
+            className="mt-6 inline-flex w-full items-center justify-center gap-2.5 rounded-2xl px-7 py-4 text-lg font-bold text-white shadow-lg transition-transform hover:scale-[1.01]"
+            style={{ background: '#B8734F' }}
+          >
+            لنبدأ <ChevronLeft size={20} />
+          </button>
+        </div>
+
+        <footer className="mt-8 text-center text-xs" style={{ color: '#A79B86' }}>وصل العقارية · الرياض</footer>
       </div>
     </div>
   );

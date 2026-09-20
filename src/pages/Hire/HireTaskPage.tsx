@@ -218,7 +218,7 @@ function Recommend({ loading, recId, onPick, onNext }: { loading: boolean; recId
       {loading ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-3xl border bg-white/85 py-16 text-center shadow-xl" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
           <Loader2 size={32} className="animate-spin text-copper" />
-          <div className="text-base font-bold text-chocolate">واصل يطابق تفضيلات العميل…</div>
+          <div className="text-base font-bold text-chocolate">وصل يطابق تفضيلات العميل…</div>
           <div className="text-sm text-charcoal/55">فيلا · ٤–٥ غرف · حتى 2.2 مليون · شمال الرياض</div>
         </div>
       ) : (
