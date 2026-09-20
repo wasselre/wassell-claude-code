@@ -156,6 +156,38 @@ describe('a stretched month — September 2026 through October', () => {
     expect(geo.skippedPostingDays.find((d) => d.day === '2026-09-20')?.reason).toBe('lead');
   });
 
+  it('draws the grid on the weeks that HOLD something, starting the 20th', () => {
+    const out = compileMonth({
+      month: '2026-09', template: STRETCH, projects: [PROJECT_A, PROJECT_B, PROJECT_C],
+      snapshot: snapshot('2026-09-20'), rules: RULES, startFrom: '2026-09-20',
+    });
+    const grid = monthGrid(out, [PROJECT_A, PROJECT_B, PROJECT_C]);
+    // The cycle frame still opens on September's first Sunday — that is how the
+    // month is numbered — but the two weeks before the 20th hold no row and no
+    // batch, and drawing them made a plan that starts on the 20th read as one
+    // that starts on the 6th.
+    expect(out.geometry.weeks).toHaveLength(8);
+    expect(grid).toHaveLength(6);
+    expect(grid[0]!.start).toBe('2026-09-20');
+    expect(grid[grid.length - 1]!.end).toBe('2026-10-31');
+    expect(grid.every((w) => w.days.length > 0 || w.paid.length > 0)).toBe(true);
+
+    // THE PAID PANE IS NOT EMPTY. The batch is matched to its week by date
+    // range: it used to be matched on the week's START, which is a Sunday, and
+    // every batch here is a Tuesday — that check would have found none of them
+    // and quietly emptied the whole paid side of the grid.
+    expect(grid.filter((w) => w.paid.length > 0)).toHaveLength(6);
+    expect(grid[0]!.paid.map((c) => c.batchDay)).toEqual(
+      [PROJECT_A, PROJECT_B, PROJECT_C].map(() => '2026-09-22'),
+    );
+    expect(grid.flatMap((w) => w.paid)).toHaveLength(18);
+    expect(grid.flatMap((w) => w.paid).reduce((a, c) => a + c.creatives, 0)).toBe(90);
+    // Each week's cells carry THAT week's batch, never a repeat of the first.
+    expect(grid.map((w) => w.paid[0]?.batchDay)).toEqual([
+      '2026-09-22', '2026-09-29', '2026-10-06', '2026-10-13', '2026-10-20', '2026-10-27',
+    ]);
+  });
+
   it('hands October to September rather than letting it be planned twice', () => {
     const starts = STRETCH.monthStarts;
     expect(monthCoveredBy('2026-10', starts)).toBe('2026-09');
@@ -843,14 +875,17 @@ describe('the weeks grid dates a paid batch by its DAY, never by its position', 
     // with Sun 20's batch, and then dated week 3 with it again — two grid cells
     // for one batch, and a note coordinate pointing at the wrong week.
     const weeks = monthGrid(SEP, PROJECTS);
-    expect(weeks.map((w) => w.paid.length)).toEqual([0, 0, 3, 3]);
-    expect(weeks[2]!.paid[0]!.batchDay).toBe('2026-09-20');
-    expect(weeks[3]!.paid[0]!.batchDay).toBe('2026-09-27');
+    // Week 1 (6–12 Sep) held nothing at all and is no longer drawn: an empty
+    // leading week made a plan that starts later look like one that starts on
+    // the 6th. Week 2 KEEPS its place — it still has the two days left of it
+    // (Thu 17, Sat 19), so it is not empty and dropping it would hide work.
+    expect(weeks.map((w) => w.start)).toEqual(['2026-09-13', '2026-09-20', '2026-09-27']);
+    expect(weeks.map((w) => w.paid.length)).toEqual([0, 3, 3]);
+    expect(weeks[1]!.paid[0]!.batchDay).toBe('2026-09-20');
+    expect(weeks[2]!.paid[0]!.batchDay).toBe('2026-09-27');
     const dated = weeks.flatMap((w) => w.paid.map((p) => p.batchDay));
     expect(new Set(dated).size).toBe(2);
-    // The organic side thins out the same way: week 1 is gone, week 2 keeps the
-    // two days left of it (Thu 17, Sat 19).
-    expect(weeks.map((w) => w.days.length)).toEqual([0, 2, 4, 4]);
+    expect(weeks.map((w) => w.days.length)).toEqual([2, 4, 4]);
   });
 });
 

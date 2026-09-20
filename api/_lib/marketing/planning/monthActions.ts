@@ -308,11 +308,21 @@ const slotLetter = (slot: number | null): string | null =>
  * not a summary line under the organic week.
  *
  * A week whose batch day has PASSED (a month compiled part-way through) gets no
- * paid cells at all. The batch day is matched to the week by DATE — every batch
- * day is a week start — and never by position: `paidBatchDays[w.index]` was
- * right only while that list held one entry per week, and a partial month's
- * shorter list would have dated week 1's cells with week 3's batch and then
- * repeated that same batch further down the grid.
+ * paid cells at all. The batch day is matched to the week by DATE RANGE, never
+ * by position and no longer by week start: `paidBatchDays[w.index]` was right
+ * only while that list held one entry per week, and a partial month's shorter
+ * list would have dated week 1's cells with week 3's batch and then repeated it
+ * further down the grid. Matching on `w.start` was right only while every batch
+ * fell on a Sunday — an operator `paid_from` now ANCHORS the weekly rhythm
+ * (September 2026's batches are Tuesdays), and that check would have found
+ * nothing at all, emptying the whole paid pane.
+ *
+ * WEEKS THAT ARE ENTIRELY IN THE PAST ARE DROPPED. A month compiled part-way
+ * through keeps its full cycle frame — September's weeks are numbered from its
+ * first Sunday, the 6th — so the first weeks carry no row, no batch and nothing
+ * to decide. Drawing them made a plan that starts on the 20th look like a plan
+ * that starts on the 6th. They are dropped from the GRID only; the geometry
+ * keeps every week, because «buys 6 batches instead of 8» counts them.
  */
 export function monthGrid(compiled: CompiledMonth, projects: MonthProject[]): MonthGridWeek[] {
   const slotOfProject = new Map<string, number>();
@@ -321,8 +331,18 @@ export function monthGrid(compiled: CompiledMonth, projects: MonthProject[]): Mo
       slotOfProject.set(r.projectId, r.slot);
     }
   });
-  const batchDays = new Set(compiled.geometry.paidBatchDays);
-  return compiled.geometry.weeks.map((w) => ({
+  const batchDayOfWeek = new Map<number, string>();
+  compiled.geometry.weeks.forEach((w) => {
+    const day = compiled.geometry.paidBatchDays.find((d) => d >= w.start && d <= w.end);
+    if (day) batchDayOfWeek.set(w.index, day);
+  });
+  const shown = compiled.geometry.weeks.filter((w) => (
+    batchDayOfWeek.has(w.index) || compiled.rows.some((r) => r.weekIndex === w.index)
+  ));
+  // Every week is empty only when the month itself is (`exhausted`). Keep the
+  // frame then rather than rendering nothing, so the page can say why.
+  const weeks = shown.length > 0 ? shown : compiled.geometry.weeks;
+  return weeks.map((w) => ({
     index: w.index,
     start: w.start,
     end: w.end,
@@ -339,11 +359,11 @@ export function monthGrid(compiled: CompiledMonth, projects: MonthProject[]): Mo
         slotLetter: slotLetter(r.slot),
         posts: r.posts,
       })),
-    paid: batchDays.has(w.start)
+    paid: batchDayOfWeek.has(w.index)
       ? projects.map((p) => {
         const slot = slotOfProject.get(p.projectId) ?? null;
         return {
-          batchDay: w.start,
+          batchDay: batchDayOfWeek.get(w.index) as string,
           projectId: p.projectId,
           projectName: p.projectName ?? null,
           slot: slot ?? 0,
