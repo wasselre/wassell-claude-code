@@ -19,7 +19,17 @@
  *  2. **Never a literal.** A fourth terminal stage added by the Sales OS must
  *     change this set by itself. The derivation below is "a stage no follow-up
  *     type can be scheduled on" — which is exactly how the config marks a
- *     terminal stage (`followup_types: []`) — minus «مغلق ناجح».
+ *     terminal stage (`followup_types: []`) — minus «مغلق ناجح» and minus any
+ *     stage flagged `is_suspended`.
+ *
+ *  3. **Empty `followup_types` no longer implies terminal** (2026-09-20).
+ *     «طلب غير مجاب» has no follow-up types because its work lives in
+ *     `sales_tasks`, not `followups` — the relationship is very much alive and
+ *     the client is demand we failed to meet. Counting it as terminal-lost
+ *     would drop those clients from the qualified measure and make
+ *     cost-per-qualified-lead look BETTER the worse our inventory matches the
+ *     market. Hence the explicit `is_suspended` flag: a stage now has to say
+ *     which kind of "no follow-up" it means.
  *
  * Pure: type-only imports apart from the config constant itself, so the api
  * bundle and the Fly worker can import it as freely as the SPA can. It reads the
@@ -47,7 +57,9 @@ export function terminalLostStages(
   config: SalesProcessConfig = getSalesProcessConfig(),
 ): string[] {
   return config.stages
-    .filter((s) => (s.followup_types?.length ?? 0) === 0 && s.value !== CLOSED_WON_STAGE)
+    .filter((s) => (s.followup_types?.length ?? 0) === 0
+      && s.value !== CLOSED_WON_STAGE
+      && !s.is_suspended)
     .map((s) => s.value)
     .sort();
 }

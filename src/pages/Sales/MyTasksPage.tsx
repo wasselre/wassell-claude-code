@@ -13,7 +13,7 @@ import {
 } from './lib/myWork';
 import FollowupTaskCard from './components/FollowupTaskCard';
 
-type Section = 'actions' | 'waiting' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
+type Section = 'actions' | 'waiting' | 'search' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
 type ApptBucket = 'today' | 'tomorrow' | 'future' | 'last7' | 'older' | 'no_show';
 
 function ownerIdOf(v: unknown): string | null {
@@ -103,6 +103,7 @@ export default function MyTasksPage() {
   const clientsModel = models.find((m) => m.name === 'clients');
   const appointmentsModel = models.find((m) => m.name === 'appointments');
   const tasksModel = models.find((m) => m.name === 'tasks');
+  const salesTasksModel = models.find((m) => m.name === 'sales_tasks');
   const canCreateTask = usePermission(tasksModel?.id ?? '', 'create');
 
   // Whole records (not just `data`) — the hot-lead rule needs the client's
@@ -196,6 +197,32 @@ export default function MyTasksPage() {
       });
   }, [tasksModel, records, currentUserId, isManager, showAll]);
 
+  // Search tasks — the sales_tasks lane. These are NOT follow-ups: the client
+  // is parked at «طلب غير مجاب» and ordinary follow-up is suspended for them,
+  // so they appear in NO other section on this page. If this list is not
+  // rendered, the work is invisible and the client is silently forgotten —
+  // which is the exact failure the whole search lane exists to prevent.
+  const searchTasks = useMemo(() => {
+    if (!salesTasksModel) return [];
+    const rows = records[salesTasksModel.id] ?? [];
+    return rows
+      .filter((r) => {
+        const d = r.data as Record<string, unknown>;
+        const status = typeof d.task_status === 'string' && d.task_status ? d.task_status : 'open';
+        if (status !== 'open' && status !== 'in_progress') return false;
+        if (isManager && showAll) return true;
+        return ownerIdOf(d.assignee) === currentUserId || r.created_by_user_id === currentUserId;
+      })
+      .slice()
+      .sort((a, b) => {
+        // Soonest due first; undated last (they are the least specific claim
+        // on the rep's day, not the most urgent).
+        const av = typeof a.data.due_date === 'string' ? Date.parse(a.data.due_date) : Infinity;
+        const bv = typeof b.data.due_date === 'string' ? Date.parse(b.data.due_date) : Infinity;
+        return av - bv;
+      });
+  }, [salesTasksModel, records, currentUserId, isManager, showAll]);
+
   const userName = (id: string | null) => {
     if (!id) return '';
     const u = users.find((x) => x.id === id);
@@ -223,6 +250,9 @@ export default function MyTasksPage() {
     { id: 'waiting', label: { ar: 'ملعب العميل', en: "Client's court" }, count: waitingTasks.length },
     // Section badge counts only the LIVE schedule (today + tomorrow + future +
     // no-shows) — the stale past buckets shouldn't inflate the headline number.
+    // Overdue search tasks are flagged: a search nobody has touched is a client
+    // waiting on us with no other task anywhere in the system.
+    { id: 'search', label: { ar: 'طلبات البحث', en: 'Search requests' }, count: searchTasks.length, danger: searchTasks.some((r) => typeof r.data.due_date === 'string' && Date.parse(r.data.due_date) < now) },
     { id: 'appointments', label: { ar: 'المواعيد', en: 'Appointments' }, count: appointments.today.length + appointments.tomorrow.length + appointments.future.length + appointments.no_show.length },
     { id: 'ai_notifications', label: { ar: 'إشعارات الذكاء', en: 'AI notifications' }, count: aiUnread, danger: aiNotifs.some((n) => !n.read_at && n.severity === 'warning') },
     { id: 'preferences', label: { ar: 'تفضيلات ناقصة', en: 'Incomplete Preferences' } },
@@ -231,7 +261,12 @@ export default function MyTasksPage() {
   // The Other Tasks tab is backed by the `tasks` model — drop it entirely
   // when that model is archived (ARCHIVED_MODULE_MODELS) so the tab's "new
   // task" button can't route into the archived-section notice.
-  const SECTIONS = ALL_SECTIONS.filter((s) => s.id !== 'other' || !isRetiredModel('tasks'));
+  const SECTIONS = ALL_SECTIONS
+    .filter((s) => s.id !== 'other' || !isRetiredModel('tasks'))
+    // Drop the search tab entirely when the model isn't loaded (offline seeds,
+    // or a profile without permission) rather than showing an empty tab that
+    // reads as "no searches" when it really means "you cannot see them".
+    .filter((s) => s.id !== 'search' || !!salesTasksModel);
 
   if (!initialized) {
     return <div className="p-6 text-sm text-charcoal/50">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>;
@@ -521,6 +556,66 @@ export default function MyTasksPage() {
 
       {section === 'actions' && renderActions()}
       {section === 'waiting' && renderWaiting()}
+      {section === 'search' && (
+        <>
+          <p className="mb-3 text-xs text-charcoal/55">
+            {isAr
+              ? 'عملاء طلبوا شيئاً لا يتوفر لدينا. المتابعة المعتادة متوقفة لهم — هذه المهمة هي الشيء الوحيد الذي يبقيهم على الرادار.'
+              : "Clients who asked for something we don't have. Ordinary follow-up is paused for them — this task is the only thing keeping them on the radar."}
+          </p>
+          {searchTasks.length === 0 ? (
+            <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">
+              {isAr ? 'لا توجد طلبات بحث مفتوحة.' : 'No open search requests.'}
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {searchTasks.map((r) => {
+                const d = r.data as Record<string, unknown>;
+                const title = typeof d.title === 'string' && d.title ? d.title : isAr ? 'مهمة بحث' : 'Search task';
+                const dueISO = typeof d.due_date === 'string' ? d.due_date : null;
+                const overdue = !!dueISO && Date.parse(dueISO) < now;
+                const clientId = typeof d.client_id === 'string' ? d.client_id : null;
+                const clientName = clientId
+                  ? (clientsById.get(clientId)?.data.client_name as string | undefined) ?? null
+                  : null;
+                const owner = userName(ownerIdOf(d.assignee));
+                return (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/model/sales_tasks/${r.id}`)}
+                      className="card flex w-full items-center justify-between gap-3 p-4 text-start transition-colors hover:bg-cream/60"
+                    >
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-2">
+                          <Hourglass size={15} className="shrink-0 text-[#8B5CF6]" />
+                          <span className="truncate font-bold text-chocolate">
+                            {clientName ? `${clientName} — ${title}` : title}
+                          </span>
+                        </span>
+                        <span className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-charcoal/60">
+                          {dueISO && (
+                            <span className={overdue ? 'font-bold text-terracotta' : undefined}>
+                              {isAr ? 'الاستحقاق: ' : 'Due: '}
+                              {new Date(dueISO).toLocaleDateString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'short' })}
+                            </span>
+                          )}
+                          {owner && <span>{isAr ? 'المسؤول: ' : 'Owner: '}{owner}</span>}
+                        </span>
+                      </span>
+                      {overdue && (
+                        <span className="shrink-0 rounded-full bg-terracotta/15 px-2 py-0.5 text-xs font-bold text-terracotta">
+                          {isAr ? 'متأخرة' : 'Overdue'}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
+      )}
       {section === 'appointments' && renderAppointments()}
       {section === 'ai_notifications' && renderAiNotifications()}
 

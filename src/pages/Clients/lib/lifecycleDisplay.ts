@@ -41,6 +41,9 @@ const LIFECYCLE: Record<LifecycleHealth, BadgeStyle> = {
   overdue: { label_ar: 'متأخر', label_en: 'Overdue', tone: 'danger', color: TONE_COLOR.danger },
   no_next_action: { label_ar: 'لا يوجد إجراء تالٍ', label_en: 'No next action', tone: 'warning', color: TONE_COLOR.warning },
   closed: { label_ar: 'مغلق', label_en: 'Closed', tone: 'muted', color: TONE_COLOR.muted },
+  // Parked at «طلب غير مجاب» while we source what they asked for. 'info', not
+  // 'muted' — this client is live demand waiting on US, not a dormant record.
+  searching: { label_ar: 'قيد البحث', label_en: 'Searching', tone: 'info', color: TONE_COLOR.info },
 };
 
 /** Display style for a lifecycle_health value. Null/unknown → a neutral chip. */
@@ -64,6 +67,10 @@ export function lifecycleHealthExplanation(value: LifecycleHealth | string | nul
       return isAr
         ? 'العميل في مرحلة نهائية (مغلق ناجح أو خاسر/غير مؤهل).'
         : 'The client is in a terminal stage (closed-won or lost/unqualified).';
+    case 'searching':
+      return isAr
+        ? 'طلب العميل غير متوفر لدينا حاليًا — المتابعة المعتادة متوقفة ويجري البحث عن خيار مناسب.'
+        : "We don't have what this client asked for — ordinary follow-up is paused while we source an option.";
     case 'on_track':
       return isAr
         ? 'يوجد إجراء تالٍ مجدول ولم يتأخر بعد.'

@@ -23,6 +23,7 @@ import QualityBadge from '@/components/market/QualityBadge';
 import DeliveryPill from '@/components/matching/DeliveryPill';
 import { resolveDeliveryStatus } from '@/lib/matching/deliveryStatus';
 import AddOptionModal from '../AddOptionModal';
+import LogUnansweredRequestModal from '../LogUnansweredRequestModal';
 import ClientOptionsMapView from '../ClientOptionsMapView';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
@@ -283,6 +284,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
   const [eliminateTarget, setEliminateTarget] = useState<AppRecord | null>(null);
   const [eliminateNotes, setEliminateNotes] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [unansweredOpen, setUnansweredOpen] = useState(false);
   // "Send to client" from an option card — the WhatsApp flow for this option.
   const [sendTarget, setSendTarget] = useState<{ sourceType: 'project' | 'market_listing'; sourceId: string; sourceName: string } | null>(null);
   // "Units" from a PROJECT option card — the project's inventory in a popup
@@ -871,6 +873,18 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
             <Plus size={13} /> {L('إضافة خيار', 'Add option')}
           </button>
         )}
+        {/* The honest third option: we looked, and we have nothing that fits.
+            Opens a search request instead of leaving the client in limbo. */}
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => setUnansweredOpen(true)}
+            title={L('العميل مهتم لكن لا يوجد لدينا ما يناسبه', "The client is interested but we have nothing that fits")}
+            className="inline-flex items-center gap-1 rounded-lg border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 px-2.5 py-1 text-xs font-bold text-[#6D3FC4] transition hover:bg-[#8B5CF6]/20"
+          >
+            <Search size={13} /> {L('لم نجد ما يناسبه', 'Nothing fits')}
+          </button>
+        )}
         </div>
 
         {/* Search + source filter + sort */}
@@ -1088,6 +1102,17 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
                 <Plus size={15} /> {L('إضافة خيار يدوياً', 'Add option manually')}
               </button>
             )}
+            {/* The empty state is exactly when a rep learns we have nothing —
+                so the "we came up short" path belongs here, not buried in a menu. */}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setUnansweredOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 px-3 py-2 text-sm font-bold text-[#6D3FC4] transition hover:bg-[#8B5CF6]/20"
+              >
+                <Search size={15} /> {L('لم نجد ما يناسبه', 'Nothing fits')}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1106,6 +1131,9 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
 
       {/* Manual add-option picker */}
       {addOpen && <AddOptionModal clientId={client.id} isAr={isAr} onClose={() => setAddOpen(false)} />}
+      {unansweredOpen && (
+        <LogUnansweredRequestModal clientId={client.id} isAr={isAr} onClose={() => setUnansweredOpen(false)} />
+      )}
 
       {/* Project units inventory — opened from a project option's "Units" button.
           Reuses UnitsInventory (filters, sort, unit drawer, compare, PDF). The

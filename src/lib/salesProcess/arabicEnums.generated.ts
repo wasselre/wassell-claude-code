@@ -26,6 +26,7 @@ export const CLIENT_STAGE_VALUES = [
   'خاسر',                  // Lost            (added — sales OS)
   'مغلق ناجح',             // Closed Won      (added — sales OS)
   'يريد إيجار',            // Wants Rent      (added — wants-rent classification)
+  'طلب غير مجاب',          // Unanswered Request (added — search lane, 2026-09-20)
 ] as const;
 
 export type ClientStageValue = (typeof CLIENT_STAGE_VALUES)[number];
@@ -67,6 +68,7 @@ export const CLIENT_STATUS_VALUES = [
   'زار مشروعًا آخر — للمراجعة', // Visited another project — review (added — visits phase)
   'تعذّر التواصل بعد الزيارة',  // Unreachable after visit (added — visits phase)
   'يريد إيجار',            // Wants Rent      (added — wants-rent classification)
+  'يتم البحث',             // Searching       (added — search lane, 2026-09-20)
 ] as const;
 
 export type ClientStatusValue = (typeof CLIENT_STATUS_VALUES)[number];

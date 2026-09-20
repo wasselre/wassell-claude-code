@@ -84,6 +84,37 @@ function wantsRent(): FollowUpOutcomeConfig {
   };
 }
 
+/**
+ * 'Unanswered request' — the client is interested but wants something Wassel
+ * does not have. NOT a loss: the gap is ours, and the client is unmet demand.
+ *
+ * It SUSPENDS ordinary follow-up rather than ending the relationship — the four
+ * task-engine functions treat «طلب غير مجاب» like a terminal stage so no
+ * follow-up is armed, but `recalc_client_derived_data` deliberately maps it to
+ * lifecycle 'searching', NOT 'closed', so the client keeps counting as live
+ * demand (buildActiveClientDemand excludes 'closed').
+ *
+ * `outcome_notes` is hard-required because that text IS the search file: the
+ * request-creating workflow copies it into `unanswered_requests.request_notes`.
+ * An unanswered request with no description of the ask is unworkable.
+ *
+ * is_terminal here means "creates no follow-up" — the replacement work is a
+ * `sales_tasks` search task, opened by the request-created workflow.
+ */
+function unansweredRequest(): FollowUpOutcomeConfig {
+  return {
+    value: 'unanswered_request',
+    requires: { ...REQ_ACTUAL, outcome_notes: true },
+    client_update_preview: {
+      stage: 'طلب غير مجاب',
+      status: 'يتم البحث',
+      note_en: 'Opens a search request — no further follow-up until we find something',
+      note_ar: 'يفتح طلب بحث — تتوقف المتابعة المعتادة حتى نجد خياراً',
+    },
+    is_terminal: true,
+  };
+}
+
 const APPOINTMENT_BOOKED: FollowUpOutcomeConfig = {
   // Owned by the Appointment Created workflow (W3). The Workspace requires an
   // Appointment record to be created+linked; it does NOT move the client here.
@@ -109,6 +140,10 @@ const STAGES: SalesStageConfig[] = [
   { value: 'خاسر', label_ar: 'خاسر', label_en: 'Lost', order: 11, color: '#8E4E3A', followup_types: [] },
   // Terminal — client wants a rental we don't offer. No follow-up type maps here.
   { value: 'يريد إيجار', label_ar: 'يريد إيجار', label_en: 'Wants Rent', order: 12, color: '#8E4E3A', followup_types: [] },
+  // SUSPENDED, not terminal — the client is still live demand; we are the ones
+  // searching. No follow-up type maps here because the replacement work is a
+  // `sales_tasks` search task, not a follow-up.
+  { value: 'طلب غير مجاب', label_ar: 'طلب غير مجاب', label_en: 'Unanswered Request', order: 13, color: '#8B5CF6', followup_types: [], is_suspended: true },
 ];
 
 // ── follow-up types with their per-type outcome matrix ───────────────────────
@@ -145,6 +180,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       recontactLater('appointment_booking_call'),
       notInterested('غير مؤهل'),
       wantsRent(),
+      unansweredRequest(),
       { value: 'invalid_number', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'رقم خاطئ' }, is_terminal: true },
       { value: 'duplicate', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'مكرر' }, is_terminal: true },
     ],
@@ -211,6 +247,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       },
       notInterested('غير مؤهل'),
       wantsRent(),
+      unansweredRequest(),
       {
         // The rep deliberately did NOT send a message. A pre-reply action (shown
         // before any customer response). Requires a reason (notes) + the next

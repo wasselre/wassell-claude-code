@@ -98,7 +98,11 @@ export interface ClientViewCtx {
   translate?: (entityId: string, fieldPath: string, lang: 'ar' | 'en') => string | null;
 }
 
-export type LifecycleHealth = 'on_track' | 'overdue' | 'no_next_action' | 'closed';
+// 'searching' (2026-09-20) — the client is parked at «طلب غير مجاب» while we
+// source what they asked for. Deliberately NOT 'closed': the relationship is
+// live and they are still unmet demand, and buildActiveClientDemand excludes
+// 'closed'. Written by recalc_client_derived_data.
+export type LifecycleHealth = 'on_track' | 'overdue' | 'no_next_action' | 'closed' | 'searching';
 
 export interface LookupRef {
   id: string;
@@ -521,7 +525,7 @@ export function buildClientTimeline(ctx: ClientViewCtx, clientId: string, opts?:
 // The resolver
 // ---------------------------------------------------------------------------
 
-const LIFECYCLE_VALUES = new Set<LifecycleHealth>(['on_track', 'overdue', 'no_next_action', 'closed']);
+const LIFECYCLE_VALUES = new Set<LifecycleHealth>(['on_track', 'overdue', 'no_next_action', 'closed', 'searching']);
 
 function asLifecycle(v: unknown): LifecycleHealth | null {
   const s = nonEmptyString(v);

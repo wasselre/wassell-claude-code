@@ -20,6 +20,14 @@
  * smoke test, a Vercel retry) are no-ops; the "zero open tasks" predicate means a
  * client with a fresh task no longer qualifies.
  *
+ * SECOND LANE (2026-09-20): the same tick also runs `reconcile_open_searches()`,
+ * which enforces "an open unanswered request always has one open search task".
+ * Clients parked at «طلب غير مجاب» are deliberately excluded from the backstop
+ * above — that stage SUSPENDS ordinary follow-up — so without this second call
+ * nothing at all would notice a stalled search. The two results are reported
+ * under separate keys (`stranded_clients` / `open_searches`) so a failure in one
+ * lane can never be hidden by success in the other.
+ *
  * Auth: `Authorization: Bearer $CRON_SECRET` (Vercel Cron) OR `?secret=` for a
  * manual smoke test; `?dry=1` previews (writes nothing, bypasses the daily guard).
  *
@@ -64,7 +72,32 @@ export default async function handler(req: Request): Promise<Response> {
     return json({ ok: false, error: `reconcile_stranded_clients failed: ${error.message}` }, 500);
   }
 
-  return json({ ok: true, result: data, duration_ms: Date.now() - startedAt }, 200);
+  // 4. The SEARCH lane's equivalent invariant: "an open unanswered request
+  //    always has one open search task". Those clients are deliberately OUTSIDE
+  //    the backstop above (stage «طلب غير مجاب» suspends ordinary follow-up), so
+  //    nothing else would notice a stalled search. Recurrence there is
+  //    completion-driven, which does not self-stop — it STALLS if nobody ever
+  //    completes the task, and a stalled search is a client quietly forgotten.
+  //
+  //    Runs even if the first reconciler was a no-op; reported separately so a
+  //    failure in one lane is never hidden by success in the other.
+  const { data: searchData, error: searchError } = await supabase.rpc('reconcile_open_searches', {
+    p_dry_run: dry,
+  });
+  if (searchError) {
+    return json({
+      ok: false,
+      stranded_clients: data,
+      error: `reconcile_open_searches failed: ${searchError.message}`,
+    }, 500);
+  }
+
+  return json({
+    ok: true,
+    stranded_clients: data,
+    open_searches: searchData,
+    duration_ms: Date.now() - startedAt,
+  }, 200);
 }
 
 function json(body: unknown, status: number): Response {

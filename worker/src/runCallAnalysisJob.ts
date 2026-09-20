@@ -74,7 +74,7 @@ interface RunArgs {
 // ── outcome matrix (COPY of src/lib/salesProcess/config.ts — keep in sync) ────
 
 const OUTCOMES_BY_TYPE: Record<string, string[]> = {
-  appointment_booking_call: ['appointment_booked', 'interested', 'no_answer', 'recontact_later', 'not_interested', 'wants_rent', 'invalid_number', 'duplicate'],
+  appointment_booking_call: ['appointment_booked', 'interested', 'no_answer', 'recontact_later', 'not_interested', 'wants_rent', 'unanswered_request', 'invalid_number', 'duplicate'],
   appointment_confirmation_call: ['attendance_confirmed', 'no_answer', 'rescheduled', 'appointment_cancelled_rebook', 'appointment_cancelled_lost', 'recontact_later', 'not_interested'],
   same_day_appointment_confirmation: ['attendance_confirmed', 'no_answer', 'rescheduled', 'appointment_cancelled_lost'],
   no_show_recovery_call: ['rescheduled', 'still_interested', 'not_interested', 'no_answer', 'recontact_later'],
@@ -98,6 +98,7 @@ const OUTCOME_HELP: Record<string, { ar: string; hint: string }> = {
   not_interested:               { ar: 'غير مهتم', hint: 'Declined outright — not looking, already bought, mismatch, or asked not to be contacted at all.' },
   invalid_number:               { ar: 'رقم خاطئ', hint: 'Wrong person; the number does not belong to the intended client.' },
   duplicate:                    { ar: 'مكرر', hint: 'Customer says the same company already contacted them about this.' },
+  unanswered_request:           { ar: 'طلب غير مجاب', hint: 'The customer IS interested but asked for something we do not have — a district, size, budget or property type outside our stock. The gap is OURS, not a refusal. Do NOT use this when the customer simply declined (not_interested) or wants a rental (wants_rent).' },
   attendance_confirmed:         { ar: 'تم تأكيد الحضور', hint: 'Customer confirmed they will attend the booked appointment.' },
   rescheduled:                  { ar: 'تمت إعادة الجدولة', hint: 'Appointment moved to a new date/time the customer accepted.' },
   appointment_cancelled_rebook: { ar: 'إلغاء الموعد - إعادة حجز', hint: 'Appointment cancelled but the customer wants another one.' },

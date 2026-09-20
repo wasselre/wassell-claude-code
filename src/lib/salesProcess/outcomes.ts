@@ -67,6 +67,12 @@ export const OUTCOME_CATALOG: readonly OutcomeCatalogEntry[] = [
   // follow-up (like not_interested), but as its own status so rent-seekers stay
   // countable and re-engageable if rentals ever launch. ---
   { value: 'wants_rent', label_ar: 'يريد إيجار', label_en: 'Wants Rent', tone: 'negative' },
+  // --- 'unanswered request' (2026-09-20): the client is interested but wants
+  // something we do NOT have. Not a loss — it is unmet demand, and the failure
+  // is ours. Recording it suspends ordinary follow-up and opens a search file
+  // (an `unanswered_requests` record) plus a recurring search task. Neutral
+  // tone on purpose: a rep must not read it as either a win or a write-off.
+  { value: 'unanswered_request', label_ar: 'طلب غير مجاب', label_en: 'Unanswered Request', tone: 'neutral' },
 ] as const;
 
 export type OutcomeValue = (typeof OUTCOME_CATALOG)[number]['value'];

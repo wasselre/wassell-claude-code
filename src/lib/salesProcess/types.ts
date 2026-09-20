@@ -151,6 +151,19 @@ export interface SalesStageConfig {
   color?: string;
   /** Activities (follow-up types) that belong to this stage. */
   followup_types: FollowUpTypeKey[];
+  /**
+   * SUSPENDED, not ended: ordinary follow-up is paused but the relationship is
+   * live and the client is still demand we intend to serve.
+   *
+   * Until 2026-09-20 an empty `followup_types` was read as "terminal" — that
+   * was safe while the only reason to have no activities was that the
+   * relationship was over. «طلب غير مجاب» broke it: the work is real, it just
+   * lives in `sales_tasks` instead of `followups`. Without this flag the stage
+   * is swept into `terminalLostStages()` and those clients vanish from the
+   * qualified-lead measure, flattering cost-per-qualified-lead exactly when we
+   * are failing to match demand.
+   */
+  is_suspended?: boolean;
 }
 
 export interface SalesProcessConfig {

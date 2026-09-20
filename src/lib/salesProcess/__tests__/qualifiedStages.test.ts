@@ -21,8 +21,10 @@ import { getSalesProcessConfig } from '../config';
 describe('qualifiedStages', () => {
   it('derives exactly the terminal stages that are not a win', () => {
     const config = getSalesProcessConfig();
+    // A stage with no follow-up types is terminal UNLESS it is flagged
+    // suspended — see the third test below for why that distinction exists.
     const terminal = config.stages
-      .filter((s) => (s.followup_types?.length ?? 0) === 0)
+      .filter((s) => (s.followup_types?.length ?? 0) === 0 && !s.is_suspended)
       .map((s) => s.value);
 
     // Today: «مغلق ناجح», «غير مؤهل», «خاسر», «يريد إيجار».
@@ -30,6 +32,22 @@ describe('qualifiedStages', () => {
     expect(terminalLostStages().sort()).toEqual(
       terminal.filter((v) => v !== CLOSED_WON_STAGE).sort(),
     );
+  });
+
+  it('does NOT count a suspended stage as lost', () => {
+    // «طلب غير مجاب» has no follow-up types because its work lives in
+    // `sales_tasks`, not `followups` — the client is live demand we failed to
+    // match, not a lost lead. Counting it as terminal-lost would drop those
+    // clients from the qualified measure, making cost-per-qualified-lead look
+    // BETTER the worse our inventory fits the market. Caught for real on
+    // 2026-09-20 when the stage was added and this suite went red.
+    const config = getSalesProcessConfig();
+    const suspended = config.stages.filter((s) => s.is_suspended).map((s) => s.value);
+    expect(suspended.length).toBeGreaterThan(0);
+    for (const stage of suspended) {
+      expect(terminalLostStages(), `${stage} must not be terminal-lost`).not.toContain(stage);
+      expect(isQualifiedStage(stage), `${stage} must count as qualified`).toBe(true);
+    }
   });
 
   it('is the three D5 named it, and nothing else', () => {
