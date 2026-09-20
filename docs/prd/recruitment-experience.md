@@ -37,8 +37,9 @@ Real-estate salespeople normally can only carry one or two projects because of h
 
 ## User flows
 1. **Main happy path:** candidate opens their invitation link → reads the opening copy → scrolls the seven product steps → reads the closing statement → taps **شاهد طريقة العمل** → routed to the video stage.
-2. **Preview (internal):** open `/careers/experience` (no token) to review the page.
-3. **Next stage (stub):** the video route currently renders a clearly-labelled placeholder ("مرحلة الفيديو … قريبًا") with a link back to the walkthrough.
+2. **Reopen after answering:** a candidate who already chose interested/declined and reopens their link sees the `ReceivedScreen` confirmation («تم استلام ردك» + the interested/declined message), not the experience again — even if the link has since expired.
+3. **Expired link:** past `careers_settings.experience_expires_at` (currently set to 24h after the 2026-09-20 cohort send), opening the link shows `ExpiredScreen` («لقد انتهت صلاحية الدعوة») and the API refuses any confirm/decision. NULL cutoff = no expiry.
+4. **Preview (internal):** open `/careers/experience` (no token) to review the page.
 
 ## Data touched
 - **None.** Fully static/self-contained by design (public link, no auth, no PII). No tables read or written.
@@ -46,11 +47,12 @@ Real-estate salespeople normally can only carry one or two projects because of h
 ## Key files
 | File | What it does |
 |---|---|
-| `src/pages/Hire/HireExperiencePage.tsx` | Stage 1 page shell: the entry `ConfirmGate` (resolve token → confirm name/phone), sticky `ProgressRail`, the `OpeningSummary`, the seven steps as one connected journey, closing statement, dominant video CTA |
+| `src/pages/Hire/HireExperiencePage.tsx` | Stage 1 page shell: on open it resolves the token and branches — a candidate who **already answered** (decision interested/declined) sees `ReceivedScreen` («تم استلام ردك» confirmation, precedence over expiry); a link past the global cutoff shows `ExpiredScreen` («لقد انتهت صلاحية الدعوة»); otherwise the entry `ConfirmGate` (confirm name/phone) → sticky `ProgressRail`, `OpeningSummary`, the seven steps as one connected journey, closing statement, dominant video CTA |
 | `src/pages/Hire/HireOfferPage.tsx` | Stage 4 — the offer: compensation cards (fixed salary shown as a **3,000 – 5,000 ريال** range; income model still computes at the 3,000 base), a "why the base salary is modest" philosophy panel (`WhyBaseSalary` — commission-is-the-target story with a three-actor flow strip: التسويق يجذب → النظام يجهّز → أنت تبني وتُتمّ), the interactive income chart (`IncomeChart`, self-contained SVG, touch + keyboard), the year-one target, working arrangements, closing + interested/decline actions |
 | `src/pages/Hire/HireDecisionPage.tsx` | Stage 5 — `/book` (records interested → offer_accepted) and `/decline` (reason → offer_rejected) |
 | `src/lib/careers/experience.ts` | Browser client for the link: `resolveInvite` (confirm gate) + `postExperience` (confirm/interested/declined); fails soft to demo |
-| `api/careers/experience.ts` | Public, token-authed, rate-limited: GET resolve name/phone; POST confirm / interested / declined → updates `job_applications` |
+| `api/careers/experience.ts` | Public, token-authed, rate-limited: GET resolve name/phone/decision + `expired` flag; POST confirm / interested / declined → updates `job_applications`. Reads `careers_settings.experience_expires_at` (global cutoff); past it GET returns `expired:true` and every POST is refused with 403 `expired` (fail-open on a settings read error) |
+| `supabase/migrations/2026-09-20_careers_experience_expiry.sql` | Adds `careers_settings.experience_expires_at` (nullable global cutoff for the link; NULL = never) |
 | `api/careers/send-experience.ts` | Admin-gated: mints the token, WhatsApp-sends the personal link, sets `offer_sent` |
 | `supabase/migrations/2026-09-17_job_applications_experience_link.sql` | Adds `invite_token` (unique) + `experience_confirmed_at` / `experience_decided_at` / `experience_decision` / `experience_decline_reason` |
 | `supabase/migrations/2026-09-20_job_applications_decline_category.sql` | Adds `experience_decline_category` (salary/commission/other) |

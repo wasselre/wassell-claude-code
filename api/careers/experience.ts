@@ -27,6 +27,22 @@ function displayPhone(canon: string | null | undefined): string {
   return canon ?? '';
 }
 
+/**
+ * Global expiry: one cutoff in careers_settings for the whole cohort. Past it,
+ * the link is dead — the page shows «لقد انتهت صلاحية الدعوة» and no action is
+ * accepted. NULL = never expires. Fail-open on a read error (a settings hiccup
+ * must not silently kill every live link).
+ */
+async function isExpired(svc: NonNullable<ReturnType<typeof makeServiceClient>>): Promise<boolean> {
+  try {
+    const { data } = await svc.from('careers_settings').select('experience_expires_at').eq('id', 1).maybeSingle();
+    const at = data?.experience_expires_at as string | null | undefined;
+    return !!at && Date.now() > new Date(at).getTime();
+  } catch {
+    return false;
+  }
+}
+
 async function underLimit(svc: NonNullable<ReturnType<typeof makeServiceClient>>, req: Request, max: number, windowSeconds: number): Promise<boolean> {
   try {
     const ip = await hashIp(clientIp(req));
@@ -59,6 +75,7 @@ export default async function handler(req: Request): Promise<Response> {
       phone: displayPhone(data.phone as string | null),
       decision: (data.experience_decision as string | null) ?? null,
       status: data.status,
+      expired: await isExpired(svc),
     });
   }
 
@@ -77,6 +94,9 @@ export default async function handler(req: Request): Promise<Response> {
       .maybeSingle();
     if (error) return jsonError(500, error.message);
     if (!app) return jsonError(404, 'not found');
+
+    // The link is dead past the global cutoff — accept no confirm/decision.
+    if (await isExpired(svc)) return jsonError(403, 'expired');
 
     const now = new Date().toISOString();
 

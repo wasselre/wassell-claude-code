@@ -11,6 +11,7 @@ export interface InviteInfo {
   phone: string;                                   // display form, e.g. 05XXXXXXXX
   decision: 'interested' | 'declined' | null;
   status: string;
+  expired: boolean;                                // past the global cutoff → link dead
 }
 
 /** Resolve a link token → candidate name/phone. null = unknown token / demo. */

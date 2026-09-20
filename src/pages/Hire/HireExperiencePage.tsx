@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PlayCircle, ChevronLeft, Lock, CheckCircle2, User, Phone, Loader2, Award, TrendingUp, Wallet, CalendarCheck } from 'lucide-react';
+import { PlayCircle, ChevronLeft, Lock, CheckCircle2, User, Phone, Loader2, Award, TrendingUp, Wallet, CalendarCheck, Clock } from 'lucide-react';
 import { ProgressRail, JourneyStep, FlowConnector, Reveal } from './hireUi';
 import OpeningSummary from './OpeningSummary';
 import { resolveInvite, postExperience, type InviteInfo } from '@/lib/careers/experience';
@@ -27,7 +27,7 @@ const STEPS: { title: string; blurb: string; Body: () => JSX.Element; after?: st
 export default function HireExperiencePage() {
   const navigate = useNavigate();
   const { token } = useParams();
-  const [phase, setPhase] = useState<'loading' | 'confirm' | 'welcome' | 'ready'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'confirm' | 'welcome' | 'ready' | 'submitted' | 'expired'>('loading');
   const [invite, setInvite] = useState<InviteInfo | null>(null);
 
   useEffect(() => {
@@ -52,7 +52,12 @@ export default function HireExperiencePage() {
     void resolveInvite(token ?? '').then((info) => {
       if (!alive) return;
       setInvite(info);
-      setPhase('confirm');
+      // A candidate who already answered always sees the "we got your response"
+      // confirmation — even after the link expires (they shouldn't be told the
+      // invitation lapsed when we have their answer). Expiry gates everyone else.
+      if (info?.decision === 'interested' || info?.decision === 'declined') setPhase('submitted');
+      else if (info?.expired) setPhase('expired');
+      else setPhase('confirm');
     });
     return () => { alive = false; };
   }, [token]);
@@ -67,6 +72,14 @@ export default function HireExperiencePage() {
         onConfirm={() => { void postExperience(token ?? '', 'confirm'); setPhase('welcome'); }}
       />
     );
+  }
+
+  if (phase === 'submitted') {
+    return <ReceivedScreen decision={invite?.decision ?? null} />;
+  }
+
+  if (phase === 'expired') {
+    return <ExpiredScreen />;
   }
 
   if (phase === 'welcome') {
@@ -240,6 +253,70 @@ function WelcomeScreen({ onStart }: { onStart: () => void }) {
         </div>
 
         <footer className="mt-8 text-center text-xs" style={{ color: '#A79B86' }}>وصل العقارية · الرياض</footer>
+      </div>
+    </div>
+  );
+}
+
+// ── Already answered — shown when a decided candidate reopens their link ──────
+function ReceivedScreen({ decision }: { decision: 'interested' | 'declined' | null }) {
+  const interested = decision === 'interested';
+  return (
+    <div className="min-h-screen font-amiri" style={{ background: 'radial-gradient(ellipse at top, #FAF7F2 0%, #F1E6D4 60%, #E4D2B4 100%)', color: '#4A4E54' }}>
+      <ProgressRail active={4} />
+      <div className="mx-auto flex min-h-[80vh] w-full max-w-md items-center px-4 py-8">
+        <div className="w-full">
+          <header className="mb-6 flex flex-col items-center text-center">
+            <img src="/assets/wassel-logo.png" alt="وصل العقارية" className="h-14 sm:h-16" />
+            <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-copper/30 bg-white/70 px-3 py-1 text-xs font-bold text-copper">
+              <Lock size={12} /> تجربة خاصة بالمرشّحين
+            </span>
+          </header>
+          <div className="rounded-3xl border bg-white/90 p-8 text-center shadow-xl backdrop-blur" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
+            <span
+              className="mx-auto flex h-16 w-16 items-center justify-center rounded-full"
+              style={{ background: interested ? '#10B98118' : '#B8734F18' }}
+            >
+              {interested ? <CalendarCheck size={38} style={{ color: '#10B981' }} /> : <CheckCircle2 size={38} className="text-copper" />}
+            </span>
+            <span className="mt-4 inline-block rounded-full bg-cream/70 px-3 py-1 text-xs font-bold text-charcoal/60">تم استلام ردك</span>
+            <h1 className="mt-3 text-2xl font-bold" style={{ color: '#4A2C2A' }}>
+              {interested ? 'شكرًا لاهتمامك!' : 'شكرًا لوقتك'}
+            </h1>
+            <p className="mx-auto mt-3 max-w-sm text-base leading-loose" style={{ color: '#4A4E54' }}>
+              {interested
+                ? 'سجّلنا رغبتك في المقابلة مسبقًا. سنتواصل معك قريبًا لتحديد موعد زيارتك لمكتبنا في الرياض — حي النزهة.'
+                : 'استلمنا ردك مسبقًا ونقدّر مشاركتك رأيك. نتمنى لك التوفيق.'}
+            </p>
+            <p className="mt-4 text-sm text-charcoal/50">لا حاجة لأي خطوة إضافية — يمكنك إغلاق هذه الصفحة.</p>
+          </div>
+          <footer className="mt-8 text-center text-xs" style={{ color: '#A79B86' }}>وصل العقارية · الرياض</footer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Expired — shown when the link is reopened past the global cutoff ──────────
+function ExpiredScreen() {
+  return (
+    <div className="min-h-screen font-amiri" style={{ background: 'radial-gradient(ellipse at top, #FAF7F2 0%, #F1E6D4 60%, #E4D2B4 100%)', color: '#4A4E54' }}>
+      <div className="mx-auto flex min-h-[85vh] w-full max-w-md items-center px-4 py-8">
+        <div className="w-full">
+          <header className="mb-6 flex flex-col items-center text-center">
+            <img src="/assets/wassel-logo.png" alt="وصل العقارية" className="h-14 sm:h-16" />
+          </header>
+          <div className="rounded-3xl border bg-white/90 p-8 text-center shadow-xl backdrop-blur" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
+            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-charcoal/10 text-charcoal/60">
+              <Clock size={36} />
+            </span>
+            <h1 className="mt-4 text-2xl font-bold" style={{ color: '#4A2C2A' }}>لقد انتهت صلاحية الدعوة</h1>
+            <p className="mx-auto mt-3 max-w-sm text-base leading-loose" style={{ color: '#4A4E54' }}>
+              انتهت صلاحية هذا الرابط. إن كنت لا تزال مهتمًا بالفرصة، تواصل معنا على نفس الرقم الذي وصلتك منه الدعوة.
+            </p>
+          </div>
+          <footer className="mt-8 text-center text-xs" style={{ color: '#A79B86' }}>وصل العقارية · الرياض</footer>
+        </div>
       </div>
     </div>
   );
