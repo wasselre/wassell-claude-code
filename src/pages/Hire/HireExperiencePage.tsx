@@ -40,6 +40,11 @@ export default function HireExperiencePage() {
     return () => { html.dir = prevDir; html.lang = prevLang; };
   }, []);
 
+  // Each phase is a full-screen swap (confirm → welcome → ready), so reset scroll
+  // to the top on every transition — otherwise the new screen inherits the
+  // previous one's scroll offset and opens partway down.
+  useEffect(() => { window.scrollTo({ top: 0 }); }, [phase]);
+
   // Resolve the per-candidate token → name/phone for the confirm gate. Unknown /
   // preview tokens resolve to null → a labelled demo confirm (never a dead page).
   useEffect(() => {
