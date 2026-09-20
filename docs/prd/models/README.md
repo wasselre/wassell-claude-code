@@ -37,7 +37,7 @@
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 17 | yes | 2026-08-20 |
 | [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-08-20 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
-| [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 1 | 18 | no | 2026-08-20 |
+| [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 5 | 15 | no | 2026-09-20 |
 | [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | New Group | 1 | 8 | no | 2026-06-17 |
 | [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | New Group | 2 | 16 | no | 2026-08-20 |
 | [Post Batches](posts-batches.md) | `posts_batches` | JSONB | — | 1 | 13 | no | 2026-07-26 |

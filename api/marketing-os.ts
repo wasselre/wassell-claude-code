@@ -78,6 +78,7 @@ import {
 /* ── the month page (F1/F2) — one screen in two tenses ── */
 import {
   monthGet, monthCompile, monthConfirm, monthReport, monthNoteSet,
+  monthBudgetSet, monthBatchSizeSet,
 } from './_lib/marketing/planning/monthActions.js';
 /* ── the row as a readable, actionable subject (F4/F5) ── */
 import {
@@ -10040,6 +10041,16 @@ export default async function handler(req: Request): Promise<Response> {
       case 'month_report': {
         const gate = await requireCap(sb, 'read'); if (gate) return gate;
         return monthReport(planCtx(sb, body, user.userId));
+      }
+      /* The two decisions the plan page can make. Both edit the TEMPLATE, so
+         both are gated on planning, not on read. */
+      case 'month_budget_set': {
+        const gate = await requireCap(sb, 'plan_campaign'); if (gate) return gate;
+        return monthBudgetSet(planCtx(sb, body, user.userId));
+      }
+      case 'month_batch_size_set': {
+        const gate = await requireCap(sb, 'plan_campaign'); if (gate) return gate;
+        return monthBatchSizeSet(planCtx(sb, body, user.userId));
       }
       case 'month_note_set': {
         // Instructions to the writer are part of planning the month, so they

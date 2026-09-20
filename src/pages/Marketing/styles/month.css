@@ -264,6 +264,49 @@
 .mos-root .mth-tiny { font-size: 11.5px; color: var(--mute); line-height: 1.8; }
 .mos-root .mth-sep { height: 1px; background: var(--line-soft); margin: 12px 0; }
 
+/* ── the month's standing facts, as cards ────────────────────────────── */
+/*
+ * One fact per card, the number IS the card, and a card that implies a
+ * decision carries its control. Replaced six stacked paragraphs of prose on
+ * 2026-09-20 — the operator could not read a plan out of them, and the ones
+ * that asked for a decision («raise the budget», «lower it yourself») gave
+ * nowhere to make it.
+ *
+ * Built on the shared `.stat` shape; only the tone edge and the control row
+ * are new. Logical properties throughout, so RTL needs no second rule.
+ */
+.mos-root .mth-fact {
+  border-inline-start: 3px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+.mos-root .mth-fact.warn { border-inline-start-color: var(--wait); }
+.mos-root .mth-fact.bad { border-inline-start-color: var(--late); }
+.mos-root .mth-fact .v { font-size: 27px; }
+.mos-root .mth-fact.bad .v { color: var(--late); }
+.mos-root .mth-fact .meter { margin-block: 8px 0; }
+/* The detail takes the slack so every control in the row sits on one line. */
+.mos-root .mth-fact .d { flex: 1 1 auto; }
+.mos-root .mth-fact-act {
+  margin-block-start: 10px;
+  padding-block-start: 10px;
+  border-block-start: 1px solid var(--line-soft);
+}
+.mos-root .mth-pick {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* The selected preset is the state readout as well as the control, so it stays
+   legible while disabled — a greyed-out chip would hide the current value. */
+.mos-root .mth-pick .btn.on {
+  background: var(--copper);
+  border-color: var(--copper);
+  color: #fff;
+  opacity: 1;
+}
+.mos-root .mth-pick .btn.on:disabled { opacity: 1; }
+
 @media (max-width: 1000px) {
   .mos-root .mth-slots { grid-template-columns: 1fr; }
   .mos-root .mth-week { grid-template-columns: 1fr; }

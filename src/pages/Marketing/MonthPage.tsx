@@ -35,6 +35,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
   fetchMonth, compileMonthPlan, confirmMonth, fetchMonthReport, setMonthNote,
+  setMonthBudget, setMonthBatchSize,
   type MosMonthGet, type MosMonthCompile, type MosMonthReport,
   type MosMonthGridWeek, type MosMonthCapacityLine,
 } from '@/lib/marketingOS/client';
@@ -47,6 +48,10 @@ import MonthNoteModal, { type NoteCoord } from './components/MonthNoteModal';
 import MonthWeeksGrid, { type DayReleaseState } from './components/MonthWeeksGrid';
 import { MonthProjectSlots, MonthProjectResults } from './components/MonthProjectSlots';
 import { num, money, pct, dayLabel, monthName } from './lib/format';
+import {
+  MonthFactCards, demandFact, unscheduledFact, budgetFact, batchSizeFact,
+  type MonthFact,
+} from './components/MonthFactCards';
 import { monthDate } from './components/MonthDates';
 import './styles/month.css';
 
@@ -338,6 +343,50 @@ export default function MonthPage() {
     }
   }, [month, load, addToast, isAr]);
 
+  /*
+   * The two decisions the cards can take.
+   *
+   * Both edit `mos_month_template`, so both re-load the month afterwards
+   * rather than patching local state: the compile that follows has to be the
+   * one the confirm will re-run, and a card showing a number the server did
+   * not accept is the same class of lie this page was rebuilt to remove.
+   */
+  const [factBusy, setFactBusy] = useState<string | null>(null);
+
+  const applyBudget = useCallback(async (perProject: number) => {
+    setFactBusy('budget');
+    try {
+      await setMonthBudget(perProject);
+      await load();
+      addToast(
+        isAr ? `الميزانية الآن ${money(perProject, true)} لكل مشروع.` : `Budget is now ${money(perProject, false)} a project.`,
+        'success',
+      );
+    } catch (e) {
+      addToast(monthRefusal(e, isAr), 'error');
+    } finally {
+      setFactBusy(null);
+    }
+  }, [load, addToast, isAr]);
+
+  const applyBatchSize = useCallback(async (batchDay: string, creatives: number) => {
+    setFactBusy('batch-size');
+    try {
+      await setMonthBatchSize(month, batchDay, creatives);
+      await load();
+      addToast(
+        isAr
+          ? `دفعة ${dayLabel(batchDay, true)} الآن ${num(creatives, true)} لكل مشروع.`
+          : `The ${dayLabel(batchDay, false)} batch is now ${num(creatives, false)} per project.`,
+        'success',
+      );
+    } catch (e) {
+      addToast(monthRefusal(e, isAr), 'error');
+    } finally {
+      setFactBusy(null);
+    }
+  }, [month, load, addToast, isAr]);
+
   const doConfirm = useCallback(async () => {
     setConfirmBusy(true);
     try {
@@ -370,6 +419,108 @@ export default function MonthPage() {
   const staffedOutBatches = compiled?.geometry.skippedPaidBatchDays.filter((d) => d.reason === 'capacity') ?? [];
   const firstAdBatch = compiled?.geometry.paidBatchDays[0] ?? null;
   const template = data?.template ?? compiled?.template ?? report?.template ?? null;
+
+  /*
+   * THE FACTS, in the order an operator reads them: can the team do it, is
+   * anything unplanned, how long is the month, what does it cost, how big is
+   * the first batch, and did anything move.
+   */
+  const facts = useMemo((): MonthFact[] => {
+    if (!summary || !template || summary.exhausted) return [];
+    const out: MonthFact[] = [];
+    const runningProjects = Math.min(
+      selection.length || summary.projectSlots, summary.projectSlots,
+    );
+
+    for (const d of summary.demand) out.push(demandFact(d, isAr));
+
+    if (summary.unscheduled.length > 0) {
+      const days = [...new Set(summary.unscheduled.map((u) => u.requiredBy))]
+        .sort().map((d) => dayLabel(d, isAr));
+      out.push(unscheduledFact(summary.unscheduled.length, days, isAr));
+    }
+
+    if (summary.monthsCovered > 1 || summary.isPartial) {
+      out.push({
+        id: 'span',
+        label: isAr ? 'المدة' : 'The stretch',
+        value: `${dayLabel(summary.firstPostingDay, isAr)} — ${dayLabel(summary.lastPostingDay, isAr)}`,
+        tone: 'ok',
+        // `pastDays` is the count the old prose carried as «أيام نشر فائتة»:
+        // posting days this month will never use because they are behind us.
+        // It belongs to the span, not to a paragraph of its own.
+        detail: isAr
+          ? `${summary.monthsCovered > 1 ? `خطة واحدة تغطي ${num(summary.monthsCovered, true)} أشهر · ` : ''}${num(summary.productionWorkingDays, true)} يوم عمل · الإنتاج من ${dayLabel(summary.productionStart, true)}${pastDays.length > 0 ? ` · أيام نشر فائتة ${num(pastDays.length, true)}` : ''}`
+          : `${summary.monthsCovered > 1 ? `one plan over ${num(summary.monthsCovered, false)} months · ` : ''}${num(summary.productionWorkingDays, false)} working days · production from ${dayLabel(summary.productionStart, false)}${pastDays.length > 0 ? ` · ${num(pastDays.length, false)} posting days missed` : ''}`,
+      });
+    }
+
+    out.push(budgetFact({
+      perProject: template.budgetPerProject,
+      budgetTotal: summary.budgetTotal,
+      running: runningProjects,
+      monthsCovered: summary.monthsCovered,
+      isAr,
+      canEdit: canPlan && data?.state !== 'confirmed',
+      busy: factBusy === 'budget',
+      onSet: (v) => { void applyBudget(v); },
+    }));
+
+    if (firstAdBatch) {
+      const sized = template.monthStarts[month]?.creativeOverrides ?? [];
+      const rule = sized.find((r) => r.batchDay === firstAdBatch && r.projectId === null);
+      out.push(batchSizeFact({
+        batchDay: firstAdBatch,
+        dayText: dayLabel(firstAdBatch, isAr),
+        current: rule ? rule.creatives : template.creativesPerProjectWeek,
+        templateValue: template.creativesPerProjectWeek,
+        projects: runningProjects,
+        isAr,
+        canEdit: canPlan && data?.state !== 'confirmed',
+        busy: factBusy === 'batch-size',
+        onSet: (v) => { void applyBatchSize(firstAdBatch, v); },
+      }));
+    }
+
+    if (summary.startMoved && lateDays.length > 0) {
+      out.push({
+        id: 'start-moved',
+        label: isAr ? 'البداية تحرّكت' : 'The start moved',
+        value: dayLabel(summary.startsOn, isAr),
+        tone: 'warn',
+        detail: isAr
+          ? `${lateDays.map((d) => dayLabel(d.day, true)).join(' و')} لا يمكن إنتاجها — الدفعة تحتاج ${num(summary.minLeadWorkingDays, true)} أيام عمل`
+          : `${lateDays.map((d) => dayLabel(d.day, false)).join(', ')} cannot be produced — a batch needs ${num(summary.minLeadWorkingDays, false)} working days`,
+      });
+    }
+
+    if (summary.shortLeadRows.length > 0) {
+      out.push({
+        id: 'short-lead',
+        label: isAr ? 'مهلة أقصر' : 'Less slack',
+        value: num(summary.shortLeadRows.length, isAr),
+        tone: 'warn',
+        detail: isAr
+          ? `دفعات مهلتها دون ${num(summary.targetLeadWorkingDays, true)} أيام عمل — العمل لم يكبر، المساحة للمراجعة هي التي ضاقت`
+          : `batches with under ${num(summary.targetLeadWorkingDays, false)} working days of lead — the work is no bigger, there is less room for a revision`,
+      });
+    }
+
+    if (staffedOutBatches.length > 0 && firstAdBatch) {
+      out.push({
+        id: 'ads-moved',
+        label: isAr ? 'الإعلانات تأخّرت' : 'Ads moved',
+        value: dayLabel(firstAdBatch, isAr),
+        tone: 'warn',
+        detail: isAr
+          ? `${staffedOutBatches.map((d) => dayLabel(d.day, true)).join(' و')} لا تتّسع للمصممين — المنشورات تبقى في مواعيدها`
+          : `${staffedOutBatches.map((d) => dayLabel(d.day, false)).join(', ')} does not fit the designers — the posts keep their dates`,
+      });
+    }
+
+    return out;
+  }, [summary, template, isAr, selection.length, canPlan, data?.state, factBusy, pastDays.length,
+      applyBudget, applyBatchSize, firstAdBatch, month, lateDays, staffedOutBatches]);
 
   const gridProjects = useMemo(
     () => selection.map((id, i) => ({
@@ -630,139 +781,19 @@ export default function MonthPage() {
           </div>
         )}
 
-        {summary && summary.demand.length > 0 && (
-          /*
-           * THE CAPACITY LINE — two numbers, never one.
-           *
-           * `required` counts every requested unit whether or not the planner
-           * placed it, which is precisely what the per-person load lines
-           * cannot report: those are summed from bookings, so on 2026-09-20
-           * sixty unplaced ad creatives charged nothing to them and the month
-           * read as 69% used while it actually needed 110% of the hours.
-           *
-           * The per-batch line beside it answers the OTHER question. Measured
-           * the same day: the 22 Sep batch stayed unreachable at 5, 6 and 8
-           * designs a day and only opened at 9, because its window is two days
-           * wide. A total alone would have called that a throughput problem.
-           */
-          <div className={summary.unscheduled.length > 0 ? 'notice bad' : 'notice'} style={{ marginBlockEnd: 14 }}>
-            {summary.demand.map((d) => (
-              <div key={d.capacityKey}>
-                {isAr
-                  ? `${d.capacityKey === 'design' ? 'التصميم' : 'الكتابة'} — مطلوب ${num(d.required, true)} · مجدول ${num(d.scheduled, true)} · غير مجدول ${num(d.unscheduled, true)} · الطاقة ${num(d.capacity, true)} خلال ${num(d.workingDays, true)} يوم عمل (${num(d.unitsPerDay, true)} يوميًا)${d.utilisationPct === null ? '' : ` — ${pct(d.utilisationPct / 100, true)}`}`
-                  : `${d.capacityKey === 'design' ? 'Design' : 'Writing'} — required ${num(d.required, false)} · scheduled ${num(d.scheduled, false)} · unscheduled ${num(d.unscheduled, false)} · capacity ${num(d.capacity, false)} over ${num(d.workingDays, false)} working days (${num(d.unitsPerDay, false)}/day)${d.utilisationPct === null ? '' : ` — ${pct(d.utilisationPct / 100, false)}`}`}
-              </div>
-            ))}
-            {summary.unscheduled.length > 0 && (
-              <div style={{ marginBlockStart: 8 }}>
-                {isAr
-                  ? `${num(summary.unscheduled.length, true)} عنصرًا بلا خطة إنتاج — لا يُعتمد شهر فيه عمل بلا موعد. المطلوب: `
-                  : `${num(summary.unscheduled.length, false)} item(s) have no production plan — a month with unplaceable work is not confirmed. Required by: `}
-                {[...new Map(summary.unscheduled.map((u) => [u.requiredBy, 0])).keys()]
-                  .map((day) => `${dayLabel(day, isAr)} (${num(summary.unscheduled.filter((u) => u.requiredBy === day).length, isAr)})`)
-                  .join(' · ')}
-              </div>
-            )}
-          </div>
-        )}
-
-        {summary && !summary.exhausted
-          && (summary.isPartial || summary.startMoved || summary.shortLeadRows.length > 0) && (
-          /*
-           * A PARTIAL month, said out loud.
-           *
-           * Warning tone, never `bad`: a month that starts today is a smaller
-           * month, not a broken one, and a row with less slack than the target
-           * lead is still a row the team can make. What must never happen is
-           * the page showing a full month's numbers for a month that has two
-           * weeks left — which is what it did while `productionStart` was
-           * computed as «first posting day − ten working days» whatever the
-           * date, and every row it drew was already in the past.
-           */
-          <div className="notice" style={{ marginBlockEnd: 14 }}>
-            {staffedOutBatches.length > 0 && firstAdBatch && (
-              /*
-               * The ADS moved, and why.
-               *
-               * The posts in these days still run; only the ad batch did not
-               * fit. Its creatives would have had to be designed in the few
-               * days left before it, alongside the posts due the same days, by
-               * the designers there are. Naming the batch and the new first
-               * batch is what lets the operator confirm instead of being told
-               * to «move the ads» by a page with no way to do it.
-               */
-              <div>
-                {isAr
-                  ? `دفعة الإعلانات ${staffedOutBatches.map((d) => dayLabel(d.day, true)).join(' و')} لا تتّسع — تصاميمها تحتاج إنجازها قبلها مع منشورات الأيام نفسها، وهذا أكثر مما يتسع له المصممون. تبدأ الإعلانات ${dayLabel(firstAdBatch, true)}، والمنشورات تبقى في مواعيدها.`
-                  : `The ${staffedOutBatches.map((d) => dayLabel(d.day, false)).join(', ')} ad batch does not fit — its designs would have to be made before it, alongside the posts due the same days, which is more than the designers can carry. The ads start ${dayLabel(firstAdBatch, false)}; the posts keep their dates.`}
-              </div>
-            )}
-            {summary.startMoved && (
-              /*
-               * The START MOVED, and why.
-               *
-               * The month does not begin on the day it was compiled from: the
-               * first posting days after it cannot be PRODUCED in time, and
-               * offering them and then refusing the month is not an answer. The
-               * days are named with the lead each actually had, so the number
-               * is checkable rather than asserted.
-               */
-              <div>
-                {isAr
-                  ? `${monthLabel(month, true)} يبدأ ${dayLabel(summary.startsOn, true)}، لا ${dayLabel(summary.startedFrom, true)}: ${lateDays.map((d) => dayLabel(d.day, true)).join(' و')} لا يمكن إنتاجها في الوقت. الدفعة تحتاج ${num(summary.minLeadWorkingDays, true)} أيام عمل قبل النشر، وهذه الأيام لديها ${lateDays.map((d) => num(d.leadWorkingDays, true)).join(' و')} على التوالي.`
-                  : `${monthLabel(month, false)} starts ${dayLabel(summary.startsOn, false)}, not ${dayLabel(summary.startedFrom, false)}: ${lateDays.map((d) => dayLabel(d.day, false)).join(', ')} cannot be produced in time. A batch needs ${num(summary.minLeadWorkingDays, false)} working days before it publishes, and those days have ${lateDays.map((d) => num(d.leadWorkingDays, false)).join(', ')} respectively.`}
-              </div>
-            )}
-            {summary.isPartial && (
-              <div>
-                {/* Counted nouns are written as LABELS with the number after
-                    them («الصفوف ١٠»), not as «١٠ صفًا»: the count here is
-                    whatever is left of the month, and Arabic changes the noun's
-                    form between 3–10 and 11–99. A label reads correctly at
-                    every number. */}
-                {isAr
-                  ? `هذا الشهر محسوب من ${monthDate(summary.startedFrom, true)}، وما قبله مضى — أيام نشر فائتة: ${num(pastDays.length, true)}. المتبقي — دفعات السوشيال ميديا: ${num(summary.rows, true)} · المنشورات: ${num(summary.posts, true)} · الدفعات الإعلانية: ${num(summary.paidBatchesRemaining, true)} · أيام العمل: ${num(summary.productionWorkingDays, true)}.`
-                  : `This month is compiled from ${monthDate(summary.startedFrom, false)}; everything before it has passed — posting days missed: ${num(pastDays.length, false)}. What is left — social media batches: ${num(summary.rows, false)} · posts: ${num(summary.posts, false)} · ad batches: ${num(summary.paidBatchesRemaining, false)} · working days: ${num(summary.productionWorkingDays, false)}.`}
-              </div>
-            )}
-            {summary.monthsCovered > 1 && (
-              /*
-               * ONE plan over more than one month (`month_starts.through`).
-               *
-               * Said before any other note, because every number under it —
-               * batches, posts, the budget — is a figure for the whole stretch
-               * and reads wrong if you think you are looking at one month. The
-               * budget line is the part that costs money: `budget_per_project`
-               * is a MONTHLY figure and nothing here prorates it.
-               */
-              <div>
-                {isAr
-                  ? `هذه خطة واحدة تغطي ${num(summary.monthsCovered, true)} أشهر — حتى ${monthLabel(compiled?.geometry.through ?? month, true)}. كل الأرقام أدناه للمدة كاملة. الميزانية ${money(template.budgetPerProject, true)} لكل مشروع رقم شهري واحد ولم يُعدَّل — ارفعه إن أردت تغطية المدة كلها.`
-                  : `This is ONE plan covering ${num(summary.monthsCovered, false)} months — through ${monthLabel(compiled?.geometry.through ?? month, false)}. Every number below is for the whole stretch. The budget of ${money(template.budgetPerProject, false)} a project is a MONTHLY figure and has not been changed — raise it if you want it to cover the whole stretch.`}
-              </div>
-            )}
-            {summary.isPartial && (
-              <div>
-                {isAr
-                  ? `${money(template.budgetPerProject, true)} لكل مشروع رقم شهري كامل، والشهر الجزئي يشتري دفعات أقل: ${num(summary.paidBatchesRemaining, true)} بدل ${num(compiled?.geometry.weeks.length ?? 0, true)}. الرقم لم يُعدَّل — خفّضه بنفسك إن أردت.`
-                  : `The ${money(template.budgetPerProject, false)} a project is a MONTHLY figure, and a partial month buys fewer batches: ${num(summary.paidBatchesRemaining, false)} instead of ${num(compiled?.geometry.weeks.length ?? 0, false)}. The number has not been changed — lower it yourself if you want to.`}
-              </div>
-            )}
-            {summary.shortLeadRows.length > 0 && (
-              <div>
-                {isAr
-                  ? `مهلة أقصر من المعتاد (المعتاد ${num(summary.targetLeadWorkingDays, true)} أيام عمل) في هذه الدفعات — اليوم ثم أيام العمل المتاحة له: `
-                  : `Less slack than the usual ${num(summary.targetLeadWorkingDays, false)} working days on these batches — the day, then the working days it actually has: `}
-                {summary.shortLeadRows
-                  .map((r) => `${dayLabel(r.day, isAr)} (${num(r.leadWorkingDays, isAr)})`)
-                  .join(' · ')}
-                {isAr
-                  ? '. العمل نفسه لم يكبر — المساحة للمراجعة والتعديل هي التي ضاقت.'
-                  : '. The work itself is no bigger — there is simply less room for a revision.'}
-              </div>
-            )}
-          </div>
-        )}
+        {/*
+          * THE MONTH'S FACTS — one per card, with the decision attached.
+          *
+          * This replaced six stacked paragraphs of centred Arabic prose on
+          * 2026-09-20. The numbers were buried inside sentences, and the two
+          * that asked for a decision («raise the budget for the stretch»,
+          * «lower it yourself for a partial month») appeared together, said
+          * opposite things, and offered no control for either.
+          *
+          * Cards are built in `MonthFactCards.tsx`; the list is assembled in
+          * the `facts` memo above so the ordering rule lives in one place.
+          */}
+        <MonthFactCards facts={facts} />
 
         {/* A month that cannot be started has no numbers worth showing: every
             stat would be a zero, and the grid four empty weeks. The notice

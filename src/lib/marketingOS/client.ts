@@ -3610,6 +3610,27 @@ export interface MosMonthTemplate {
   minImpressions: number;
   minLeaderLeads: number;
   leaderMarginPct: number;
+  /**
+   * One-off starts per month, keyed `YYYY-MM` — including the batch sizing
+   * rules the plan page reads back to show what the first ad batch buys.
+   */
+  monthStarts: Record<string, MosMonthStart>;
+}
+
+/** A month's own start rules. All optional; an absent key means "the template". */
+export interface MosMonthStart {
+  organicFrom?: string;
+  paidFrom?: string;
+  adsLiveWhenReady?: boolean;
+  through?: string;
+  creativeOverrides?: MosCreativeOverride[];
+}
+
+/** One batch-sizing rule. `null` on a field means "any". */
+export interface MosCreativeOverride {
+  batchDay: string | null;
+  projectId: string | null;
+  creatives: number;
 }
 
 /** One REMAINING posting day, with the slack production actually has for it. */
@@ -4035,6 +4056,25 @@ export const compileMonthPlan = (
  * (nothing reachable is left of the month), `month_infeasible`,
  * `plan_changed` or `capacity_conflict`. Show it; never retry blindly.
  */
+/**
+ * The two decisions the plan page can make, both of which edit the TEMPLATE.
+ *
+ * They exist because the page used to state a decision and offer no way to
+ * take it — «raise the budget», «lower it yourself» — which is a sentence, not
+ * a control.
+ */
+export const setMonthBudget = (
+  budgetPerProject: number,
+): Promise<{ budget_per_project: number; previous: number }> =>
+  call('month_budget_set', { budget_per_project: budgetPerProject });
+
+export const setMonthBatchSize = (
+  month: string, batchDay: string, creatives: number, projectId?: string | null,
+): Promise<{ month: string; batch_day: string; creatives: number }> =>
+  call('month_batch_size_set', {
+    month, batch_day: batchDay, creatives, ...(projectId ? { project_id: projectId } : {}),
+  });
+
 export const confirmMonth = (
   month: string, projectIds: string[], startFrom?: string | null,
 ): Promise<MosMonthConfirmResult> =>

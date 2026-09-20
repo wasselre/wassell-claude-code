@@ -1144,6 +1144,145 @@ const NOTE_KINDS = new Set(['month', 'project', 'row', 'paid_batch']);
  *
  * An empty body DELETES the note — the same pencil clears what it wrote.
  */
+
+/* ------------------------------------------------------------------ */
+/* the two decisions the plan page can actually make                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A number the operator typed, bounded, or `null` when it is not a number.
+ *
+ * Bounds are refused rather than clamped: silently turning 50,000 into 20,000
+ * is the app making a spending decision and then hiding it, which is the same
+ * class of defect as the capacity lie this page was rebuilt to fix.
+ */
+function boundedInt(v: unknown, min: number, max: number): number | 'bad' | null {
+  if (v === undefined || v === null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return 'bad';
+  if (n < min || n > max) return 'bad';
+  return n;
+}
+
+/**
+ * `month_budget_set` — the per-project monthly budget.
+ *
+ * Before this existed the page said «ارفعه إن أردت» / «خفّضه بنفسك إن أردت»
+ * and gave the operator nowhere to do either: two contradictory sentences
+ * about money with no control between them. The figure is a TEMPLATE value,
+ * not a per-month one, so changing it here changes it for every month — which
+ * is stated on the card rather than discovered later.
+ */
+export async function monthBudgetSet(ctx: PlanCtx): Promise<Response> {
+  const svc = ctx.svc;
+  if (!svc) return jsonError(500, 'service client unavailable');
+
+  const budget = boundedInt(ctx.body.budget_per_project, 0, 1_000_000);
+  if (budget === 'bad' || budget === null) {
+    return jsonError(400, JSON.stringify({
+      error: 'bad_budget',
+      error_ar: 'الميزانية لكل مشروع رقم صحيح بين ٠ و ١٬٠٠٠٬٠٠٠ ريال.',
+      error_en: 'budget_per_project must be a whole number between 0 and 1,000,000.',
+    }));
+  }
+
+  const tpl = await loadTemplate(svc);
+  if (tpl.error) return fail('mos_month_template', { message: tpl.error });
+  if (!tpl.row.id) {
+    return jsonError(409, JSON.stringify({
+      error: 'no_month_template',
+      error_ar: 'لا يوجد قالب شهر لتعديله.',
+      error_en: 'There is no month template row to change.',
+    }));
+  }
+
+  const up = await svc.from('mos_month_template')
+    .update({ budget_per_project: budget, updated_at: new Date().toISOString() })
+    .eq('id', tpl.row.id).select('budget_per_project').maybeSingle();
+  if (up.error) return fail('mos_month_template', up.error);
+
+  return jsonOk({
+    budget_per_project: (up.data as { budget_per_project: number } | null)?.budget_per_project ?? budget,
+    previous: tpl.row.budgetPerProject,
+  });
+}
+
+/**
+ * `month_batch_size_set` — how many creatives ONE ad batch buys.
+ *
+ * The honest answer to a batch with too little runway is a smaller batch, and
+ * until now expressing that meant writing JSON into `month_starts` by hand.
+ * Writes a `creative_overrides` rule scoped to the day (and optionally one
+ * project); passing the template's own number REMOVES the rule rather than
+ * writing a redundant one, so the stored shape stays the minimum that explains
+ * the plan.
+ */
+export async function monthBatchSizeSet(ctx: PlanCtx): Promise<Response> {
+  const month = monthOf(ctx.body);
+  if (!month) return jsonError(400, 'month must be YYYY-MM');
+  const svc = ctx.svc;
+  if (!svc) return jsonError(500, 'service client unavailable');
+
+  const batchDay = str(ctx.body.batch_day);
+  if (!batchDay || !/^\d{4}-\d{2}-\d{2}$/.test(batchDay)) {
+    return jsonError(400, 'batch_day must be YYYY-MM-DD');
+  }
+  const projectId = str(ctx.body.project_id) ?? null;
+  const creatives = boundedInt(ctx.body.creatives, 1, 50);
+  if (creatives === 'bad' || creatives === null) {
+    return jsonError(400, JSON.stringify({
+      error: 'bad_creatives',
+      error_ar: 'عدد التصاميم للدفعة رقم صحيح بين ١ و ٥٠.',
+      error_en: 'creatives must be a whole number between 1 and 50.',
+    }));
+  }
+
+  const tpl = await loadTemplate(svc);
+  if (tpl.error) return fail('mos_month_template', { message: tpl.error });
+  if (!tpl.row.id) {
+    return jsonError(409, JSON.stringify({
+      error: 'no_month_template',
+      error_ar: 'لا يوجد قالب شهر لتعديله.',
+      error_en: 'There is no month template row to change.',
+    }));
+  }
+
+  const cur = await svc.from('mos_month_template').select('month_starts').eq('id', tpl.row.id).maybeSingle();
+  if (cur.error) return fail('mos_month_template', cur.error);
+  const starts = ((cur.data as { month_starts?: Record<string, unknown> } | null)?.month_starts ?? {}) as Record<string, Record<string, unknown>>;
+  const forMonth = { ...(starts[month] ?? {}) };
+
+  const rules = Array.isArray(forMonth.creative_overrides)
+    ? (forMonth.creative_overrides as Array<Record<string, unknown>>) : [];
+  // Replace any rule with the SAME scope; never stack two rules that would
+  // both match, because "most specific wins" cannot break a tie between equals.
+  const kept = rules.filter((r) => !(
+    (str(r.batch_day) ?? null) === batchDay && (str(r.project_id) ?? null) === projectId
+  ));
+  const next = creatives === tpl.row.creativesPerProjectWeek
+    ? kept
+    : [...kept, { batch_day: batchDay, ...(projectId ? { project_id: projectId } : {}), creatives }];
+
+  forMonth.creative_overrides = next;
+  const up = await svc.from('mos_month_template')
+    .update({ month_starts: { ...starts, [month]: forMonth }, updated_at: new Date().toISOString() })
+    .eq('id', tpl.row.id).select('month_starts').maybeSingle();
+  if (up.error) return fail('mos_month_template', up.error);
+
+  return jsonOk({
+    month,
+    batch_day: batchDay,
+    project_id: projectId,
+    creatives,
+    removed: next.length < rules.length + 1 && creatives === tpl.row.creativesPerProjectWeek,
+    creative_overrides: next,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* month_note_set                                                      */
+/* ------------------------------------------------------------------ */
+
 export async function monthNoteSet(ctx: PlanCtx): Promise<Response> {
   const month = monthOf(ctx.body);
   if (!month) return jsonError(400, 'month must be YYYY-MM');
