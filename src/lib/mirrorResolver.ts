@@ -288,3 +288,83 @@ export function resolveLookupDisplayValue(
   }
   return targetRecord.data[displaySlug];
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Field types whose stored value is a REFERENCE or a structure — never a name.
+ *  A `lookup` is excluded here and handled by the hop below, which reads the label
+ *  of the record it points at instead of the id it stores. */
+const NON_LABEL_TYPES = new Set<string>([
+  'lookup', 'assignee', 'section_mirror', 'section_selector', 'attachment',
+  'image', 'multi_image', 'multi_video', 'notes', 'table',
+  'whatsapp_history', 'call_history',
+]);
+
+/** A stored value that reads as a human label — not an opaque id, not a blob. */
+function asHumanText(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const t = value.trim();
+    // A uuid is an ID that merely happens to be stored as text. Printing it as a
+    // name is what made a stale display config look like real data (the
+    // our_projects picker showed 96 raw uuids for a month).
+    return t === '' || UUID_RE.test(t) ? null : t;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+/**
+ * The human label for one linked record — the full chain {@link resolveLookupDisplayValue}
+ * starts, finished so that it can never end on an opaque id.
+ *
+ * Order: (1) the configured display field; (2) the first field in schema order that
+ * holds human text; (3) ONE hop through a `lookup` field to the label of the record it
+ * points at. Step 3 is what keeps a POINTER model readable — an `our_projects` row
+ * stores nothing but a link to its master in `all_projects`, so its only human name
+ * lives one hop away. Returns `null` when the record genuinely has no label, leaving
+ * the caller to render its own placeholder rather than printing a uuid.
+ *
+ * `depth` is internal: the lookup hop is single-level by design (a cycle between two
+ * pointer models must not recurse, and a two-hop label stops being recognisable).
+ */
+export function resolveLookupLabel(
+  targetRecord: { id: string; data: Record<string, unknown> },
+  displaySlug: string,
+  ctx: LookupDisplayContext = {},
+  depth = 0,
+): string | null {
+  const primary = asHumanText(resolveLookupDisplayValue(targetRecord, displaySlug, ctx));
+  if (primary !== null) return primary;
+
+  const { targetModel, allModels, allRecords } = ctx;
+  if (!targetModel) return null;
+
+  const fields = targetModel.schema.sections.flatMap((s) => s.fields);
+
+  for (const f of fields) {
+    if (f.name === displaySlug || NON_LABEL_TYPES.has(f.type)) continue;
+    const direct = asHumanText(targetRecord.data[f.name]);
+    if (direct !== null) return direct;
+  }
+
+  if (depth > 0 || !allModels || !allRecords) return null;
+
+  for (const f of fields) {
+    if (f.type !== 'lookup' || !f.lookup_model_id) continue;
+    const raw = targetRecord.data[f.name];
+    const linkedId = typeof raw === 'string' ? raw : Array.isArray(raw) && typeof raw[0] === 'string' ? raw[0] : null;
+    if (!linkedId) continue;
+    const linkedModel = allModels.find((m) => m.id === f.lookup_model_id);
+    const linked = (allRecords[f.lookup_model_id] ?? []).find((r) => r.id === linkedId);
+    if (!linkedModel || !linked) continue;
+    const hopped = resolveLookupLabel(
+      linked,
+      f.lookup_display_field || 'name',
+      { targetModel: linkedModel, allModels, allRecords },
+      depth + 1,
+    );
+    if (hopped !== null) return hopped;
+  }
+
+  return null;
+}

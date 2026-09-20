@@ -5,7 +5,7 @@ import { useAppStore } from '@/stores/appStore';
 import Badge from '@/components/ui/Badge';
 import WhatsAppIcon from '@/components/ui/WhatsAppIcon';
 import { telUrl, whatsappUrl } from '@/lib/phone';
-import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
+import { resolveMirror, resolveLookupDisplayValue, resolveLookupLabel } from '@/lib/mirrorResolver';
 import { formatRangeValue } from './RangeField';
 import { formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import {
@@ -485,10 +485,15 @@ function DynamicCell({ field, value, allRecords, recordData, recordId }: Dynamic
         if (!linkedRecord) {
           return <span key={id} className="text-charcoal/30 italic text-xs">{isAr ? 'سجل محذوف' : 'Deleted record'}</span>;
         }
-        const displayVal = resolveLookupDisplayValue(linkedRecord, displayFieldName, displayCtx);
-        const text = displayVal !== null && displayVal !== undefined && typeof displayVal !== 'object'
-          ? String(displayVal)
-          : (displayVal ? String(displayVal) : id.slice(0, 8));
+        // Falls back through schema order and one lookup hop, so a POINTER row
+        // (our_projects holds only a link to its master) reads as a name instead
+        // of an id fragment. Null = genuinely unnamed; say so rather than
+        // printing a fragment of its uuid as if it were one.
+        const label = resolveLookupLabel(linkedRecord, displayFieldName, displayCtx);
+        if (label === null) {
+          return <span key={id} className="text-charcoal/30 italic text-xs">{isAr ? 'سجل بلا اسم' : 'Unnamed record'}</span>;
+        }
+        const text = label;
         // Lookup display fields are almost always names (project, developer,
         // client). The LINKED record's own id is at hand, so this resolves
         // authoritatively against its translation store entry regardless of

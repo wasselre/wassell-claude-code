@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveLookupDisplayValue } from '../mirrorResolver';
+import { resolveLookupDisplayValue, resolveLookupLabel } from '../mirrorResolver';
 import type { AppModel, AppRecord, ModelField, ModelSection } from '@/types';
 
 // Fresh builders per call so tests never share mutable schema state.
@@ -236,5 +236,126 @@ describe('resolveLookupDisplayValue', () => {
   it('degrades a compound id to the raw read (undefined) without full context', () => {
     const op = rec('op1', 'm_our', { project: 'ap1' });
     expect(resolveLookupDisplayValue(op, 'op_unit_details::unit_count', {})).toBeUndefined();
+  });
+});
+
+// The label chain that sits on top of resolveLookupDisplayValue. Regression cover for
+// the live our_projects case: a POINTER model whose rows store nothing but a link to
+// their master, displayed through a `${containerId}::child` id that a schema wipe had
+// left dangling — so every picker listed 96 raw uuids as if they were project names.
+describe('resolveLookupLabel', () => {
+  function buildPointer() {
+    const allProjects = model({
+      id: 'm_all',
+      name: 'all_projects',
+      sections: [section({ id: 'ap_identity', fields: [field({ name: 'project_name' })] })],
+    });
+    const ourProjects = model({
+      id: 'm_our',
+      name: 'our_projects',
+      sections: [
+        section({
+          id: 'op_s0',
+          fields: [
+            // Mirrors the live shape after the wipe: a `project_name` text field
+            // exists in the schema but no record ever carries a value for it.
+            field({ name: 'project_name' }),
+            field({
+              id: 'op_project',
+              name: 'project',
+              type: 'lookup',
+              lookup_model_id: 'm_all',
+              lookup_display_field: 'project_name',
+            }),
+          ],
+        }),
+      ],
+    });
+    const allModels = [allProjects, ourProjects];
+    const allRecords: Record<string, AppRecord[]> = {
+      m_all: [rec('7ab6a649-6d73-4e28-9fc7-bb017d2e2e01', 'm_all', { project_name: 'الماجدية 178' })],
+      m_our: [rec('op1', 'm_our', { project: '7ab6a649-6d73-4e28-9fc7-bb017d2e2e01' })],
+    };
+    return { allProjects, ourProjects, allModels, allRecords, ctx: { targetModel: ourProjects, allModels, allRecords } };
+  }
+
+  it('uses the configured display field when it resolves', () => {
+    const { ourProjects, allModels, allRecords } = buildPointer();
+    expect(
+      resolveLookupLabel(allRecords.m_our[0]!, 'op_container::project_name', {
+        targetModel: ourProjects,
+        allModels,
+        allRecords,
+      }),
+    ).toBe('الماجدية 178'); // via the lookup hop — the container id below is dangling
+  });
+
+  it('hops one level through a lookup when the display field is a DANGLING reference', () => {
+    const { ctx, allRecords } = buildPointer();
+    // The exact production shape: the container `27ae1692-...` no longer exists, so
+    // the configured display field resolves to nothing.
+    const label = resolveLookupLabel(allRecords.m_our[0]!, '27ae1692-c5dd-4ee7-85e2-8b9272b05afc::project_name', ctx);
+    expect(label).toBe('الماجدية 178');
+  });
+
+  it('never returns a uuid as a label', () => {
+    const { ctx, allRecords } = buildPointer();
+    // Master is gone: the only value left on the record is the uuid in `project`.
+    delete (allRecords as Record<string, AppRecord[]>).m_all;
+    const label = resolveLookupLabel(allRecords.m_our[0]!, 'gone::project_name', {
+      ...ctx,
+      allRecords,
+    });
+    expect(label).toBeNull();
+  });
+
+  it('prefers human text on the record itself over a lookup hop', () => {
+    const { ctx, allRecords } = buildPointer();
+    const withOwnName = rec('op2', 'm_our', {
+      project: '7ab6a649-6d73-4e28-9fc7-bb017d2e2e01',
+      project_name: 'اسم محلي',
+    });
+    allRecords.m_our.push(withOwnName);
+    expect(resolveLookupLabel(withOwnName, 'gone::project_name', ctx)).toBe('اسم محلي');
+  });
+
+  it('does not recurse past one hop', () => {
+    // a → b → c. Resolving a's label may reach b's own fields but must not follow
+    // b's lookup into c, so two pointer models cannot loop.
+    const c = model({ id: 'm_c', name: 'c', sections: [section({ id: 'c_s', fields: [field({ name: 'c_name' })] })] });
+    const b = model({
+      id: 'm_b',
+      name: 'b',
+      sections: [
+        section({
+          id: 'b_s',
+          fields: [field({ id: 'b_c', name: 'c', type: 'lookup', lookup_model_id: 'm_c', lookup_display_field: 'c_name' })],
+        }),
+      ],
+    });
+    const a = model({
+      id: 'm_a',
+      name: 'a',
+      sections: [
+        section({
+          id: 'a_s',
+          fields: [field({ id: 'a_b', name: 'b', type: 'lookup', lookup_model_id: 'm_b', lookup_display_field: 'gone' })],
+        }),
+      ],
+    });
+    const allRecords: Record<string, AppRecord[]> = {
+      m_c: [rec('c1', 'm_c', { c_name: 'deep' })],
+      m_b: [rec('b1', 'm_b', { c: 'c1' })],
+      m_a: [rec('a1', 'm_a', { b: 'b1' })],
+    };
+    expect(
+      resolveLookupLabel(allRecords.m_a[0]!, 'gone', { targetModel: a, allModels: [a, b, c], allRecords }),
+    ).toBeNull();
+  });
+
+  it('returns null rather than a label for a record with nothing human on it', () => {
+    const empty = model({ id: 'm_e', name: 'e', sections: [section({ id: 'e_s', fields: [field({ name: 'note' })] })] });
+    const r = rec('e1', 'm_e', {});
+    expect(resolveLookupLabel(r, 'note', { targetModel: empty, allModels: [empty], allRecords: { m_e: [r] } })).toBeNull();
   });
 });

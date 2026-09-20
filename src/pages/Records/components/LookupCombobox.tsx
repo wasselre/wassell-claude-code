@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
-import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
+import { resolveLookupLabel } from '@/lib/mirrorResolver';
 import { resolveFieldDisplay, useFieldDisplayVersion } from '@/lib/recordTranslation/resolver';
 import { Search, X, Plus } from 'lucide-react';
 
@@ -60,39 +60,40 @@ export default function LookupCombobox({
       .flatMap((s) => s.fields)
       .find((f) => f.name === lookupDisplayField)?.type === 'mirror';
 
-  // Resolve a record's display label. Primary source is the configured display
-  // field (resolving a mirror display field through its sibling-lookup hop); if
-  // that's empty (record was created before the field existed, the user hasn't
-  // filled it in, or the mirror's source isn't selected), fall back to the first
-  // non-empty scalar on the record in schema order, and finally to an id suffix.
-  const labelFor = useMemo(() => {
-    const orderedSlugs = linkedModel
-      ? linkedModel.schema.sections.flatMap((s) => s.fields.map((f) => f.name))
-      : [];
-    return (rec: { id: string; data: Record<string, unknown> }): string => {
-      const primary = resolveLookupDisplayValue(rec, lookupDisplayField, {
-        targetModel: linkedModel,
-        allModels: models,
-        allRecords: records,
-      });
-      if (primary !== null && primary !== undefined && String(primary).trim() !== '') {
-        return String(primary);
-      }
-      for (const slug of orderedSlugs) {
-        if (slug === lookupDisplayField) continue;
-        const v = rec.data[slug];
-        if (typeof v === 'string' && v.trim() !== '') return v;
-        if (typeof v === 'number' && Number.isFinite(v)) return String(v);
-      }
-      return rec.id.slice(0, 8);
-    };
-  }, [linkedModel, lookupDisplayField, models, records]);
+  // Resolve a record's display label: the configured display field, else the
+  // first human scalar in schema order, else one hop through a lookup to the
+  // record it points at (so a POINTER row like our_projects — which stores only
+  // a link to its master — still reads as the master's name). Empty string means
+  // the record genuinely has no label; the render sites below say so in words
+  // rather than printing its uuid.
+  const labelFor = useMemo(
+    () =>
+      (rec: { id: string; data: Record<string, unknown> }): string =>
+        resolveLookupLabel(rec, lookupDisplayField, {
+          targetModel: linkedModel,
+          allModels: models,
+          allRecords: records,
+        }) ?? '',
+    [linkedModel, lookupDisplayField, models, records],
+  );
 
   // Display variant of labelFor — overlay-translates the (usually Arabic) name
   // for the current UI language. Search matches BOTH the source label and the
   // translated label so typing either "مساكن" or "Masaken" finds the record.
   const displayFor = (rec: { id: string; data: Record<string, unknown> }): string =>
     resolveFieldDisplay(rec.id, lookupDisplayField, labelFor(rec), isAr ? 'ar' : 'en', { kind: 'name' });
+
+  // Render a label, or SAY that the record has none. The id fragment is a
+  // disambiguator between two unnamed rows — never a stand-in for a name.
+  const renderLabel = (rec: { id: string; data: Record<string, unknown> }) => {
+    const text = displayFor(rec);
+    if (text.trim() !== '') return text;
+    return (
+      <span className="italic text-charcoal/40">
+        {isAr ? 'سجل بلا اسم' : 'Unnamed record'} · {rec.id.slice(0, 8)}
+      </span>
+    );
+  };
 
   // Normalize value: in multi mode always string[]; in single mode a string or undefined.
   const selectedIds = useMemo<string[]>(() => {
@@ -104,8 +105,10 @@ export default function LookupCombobox({
   // previously-saved selection still displays after view-scope tightens.
   // Only the dropdown's candidate list is scoped — once an id is picked,
   // it stays bound until the user changes it.
+  // A selected record renders as selected even when its label is unresolvable —
+  // gating the chip on a non-empty label used to hide a real selection behind an
+  // empty-looking search box whose dropdown never opened.
   const singleSelectedRecord = !isMulti ? allLinkedRecords.find((r) => r.id === selectedIds[0]) : undefined;
-  const singleDisplayValue = singleSelectedRecord ? displayFor(singleSelectedRecord) : '';
 
   const limit = maxRecords && maxRecords > 0 ? maxRecords : 20;
   const filteredRecords = useMemo(() => {
@@ -208,13 +211,12 @@ export default function LookupCombobox({
         {selectedRecords.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-1.5">
             {selectedRecords.map((rec) => {
-              const label = displayFor(rec);
               return (
                 <span
                   key={rec.id}
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-copper/10 text-copper"
                 >
-                  {label}
+                  {renderLabel(rec)}
                   <button type="button" onClick={() => removeRecord(rec.id)} className="hover:opacity-70">
                     <X size={12} />
                   </button>
@@ -248,7 +250,7 @@ export default function LookupCombobox({
                 onClick={() => pickRecord(rec.id)}
                 className="w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm"
               >
-                {displayFor(rec)}
+                {renderLabel(rec)}
               </button>
             ))}
             {canCreate && (
@@ -270,9 +272,9 @@ export default function LookupCombobox({
   // ── Single-select mode (original behavior) ──
   return (
     <div ref={ref} className="relative">
-      {selectedIds.length > 0 && singleDisplayValue ? (
+      {singleSelectedRecord ? (
         <div className="form-input flex items-center justify-between">
-          <span className="text-copper font-bold">{singleDisplayValue}</span>
+          <span className="text-copper font-bold">{renderLabel(singleSelectedRecord)}</span>
           <button type="button" onClick={() => onChange(undefined)} className="text-charcoal/30 hover:text-red-500">
             <X size={14} />
           </button>
@@ -305,7 +307,7 @@ export default function LookupCombobox({
               onClick={() => pickRecord(rec.id)}
               className="w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm"
             >
-              {displayFor(rec)}
+              {renderLabel(rec)}
             </button>
           ))}
           {canCreate && (

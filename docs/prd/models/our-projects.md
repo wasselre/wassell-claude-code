@@ -25,7 +25,7 @@
 - Shown: Sales Priority (`sales_priority`), Exclusive Status (`exclusive_status`)
 
 ## Maps view
-- Location URL field: `0cf73ff9-fb05-452f-9d5b-30d2d9c3c4b2::project_location` (unknown field)
+- Location URL field: Geographic Information → `project_location` (mirrored via `geographic_info`)
 - Pin label field: Project (`project`)
 - Click action: popup
 

@@ -250,6 +250,17 @@ function fieldLabelBySlug(model, slug) {
 }
 function fieldLabelById(model, id) {
   if (!id) return '(none)';
+  // A section_mirror CHILD is stored as the compound `${containerId}::${childSlug}`.
+  // Resolve the container so a LIVE reference does not print "(unknown field)" — that
+  // marker has to stay trustworthy, because it is the only signal that a reference has
+  // actually gone stale (a dangling one went unnoticed for a month in our_projects).
+  if (typeof id === 'string' && id.includes('::')) {
+    const [containerId, childSlug] = id.split('::');
+    const container = model ? fieldByIdOf(model, containerId) : null;
+    return container
+      ? `${container.label_en} → ${bt(childSlug)} (mirrored via ${bt(container.name)})`
+      : `${bt(id)} (unknown field)`;
+  }
   const f = model ? fieldByIdOf(model, id) : null;
   return f ? `${f.label_en} (${bt(f.name)})` : `${bt(id)} (unknown field)`;
 }
