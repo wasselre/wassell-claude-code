@@ -29,14 +29,14 @@ export async function resolveInvite(token: string): Promise<InviteInfo | null> {
 export async function postExperience(
   token: string,
   action: 'confirm' | 'interested' | 'declined',
-  reason?: string,
+  opts?: { reason?: string; category?: 'salary' | 'commission' | 'other' },
 ): Promise<boolean> {
   if (!token || token === 'preview') return false;
   try {
     const r = await fetch('/api/careers/experience', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, action, reason }),
+      body: JSON.stringify({ token, action, reason: opts?.reason, category: opts?.category }),
     });
     return r.ok;
   } catch {

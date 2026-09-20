@@ -63,7 +63,7 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   if (req.method === 'POST') {
-    const body = (await req.json().catch(() => ({}))) as { token?: string; action?: string; reason?: string };
+    const body = (await req.json().catch(() => ({}))) as { token?: string; action?: string; reason?: string; category?: string };
     const token = (body.token ?? '').trim();
     const action = body.action ?? '';
     if (!token) return jsonError(400, 'token is required');
@@ -104,10 +104,12 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 2000) : '';
+    const category = ['salary', 'commission', 'other'].includes(body.category ?? '') ? body.category : null;
     const { error: upErr } = await svc.from('job_applications').update({
       status: 'offer_rejected',
       experience_decision: 'declined',
       experience_decided_at: now,
+      experience_decline_category: category,
       experience_decline_reason: reason || null,
     }).eq('id', app.id);
     if (upErr) return jsonError(500, upErr.message);

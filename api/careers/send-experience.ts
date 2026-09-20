@@ -45,13 +45,25 @@ export default async function handler(req: Request): Promise<Response> {
     const token = (app.invite_token as string | null) || crypto.randomUUID();
     const link = `${origin}/careers/experience/${token}`;
     const name = ((app.full_name as string | null) ?? '').trim();
-    const greeting = name ? `أهلًا ${name} 👋` : 'أهلًا 👋';
-    const message =
-      `${greeting}\n` +
+
+    // The message is admin-editable (careers_settings.experience_message) with
+    // {name} / {link} placeholders. Fall back to the default if unset. The link
+    // is force-appended if the edited template dropped the {link} placeholder.
+    const svc = getServiceClient();
+    const DEFAULT_MESSAGE =
+      `أهلًا {name} 👋\n` +
       `يسعدنا اهتمامك بالانضمام إلى فريق وصل العقارية.\n` +
       `جهّزنا لك تجربة قصيرة تعرّفك على طريقة العمل والدخل قبل المقابلة — تأخذ دقائق من جوالك:\n` +
-      `${link}\n\n` +
+      `{link}\n\n` +
       `هذا الرابط خاص بك.`;
+    let template = DEFAULT_MESSAGE;
+    try {
+      const { data: settings } = await svc.from('careers_settings').select('experience_message').eq('id', 1).maybeSingle();
+      const t = (settings?.experience_message as string | null)?.trim();
+      if (t) template = t;
+    } catch { /* keep default */ }
+    let message = template.split('{name}').join(name).split('{link}').join(link);
+    if (!message.includes(link)) message = `${message}\n${link}`;
 
     const deviceId = (await resolveOperationsDeviceId()) || (await resolveDefaultDeviceId());
     if (!deviceId) return jsonError(409, 'no active WhatsApp number is configured to send from');
@@ -70,7 +82,6 @@ export default async function handler(req: Request): Promise<Response> {
     const offerSentAt = (app.offer_sent_at as string | null) ?? new Date().toISOString();
     if (!app.offer_sent_at) patch.offer_sent_at = offerSentAt;
 
-    const svc = getServiceClient();
     const { error: upErr } = await svc.from('job_applications').update(patch).eq('id', id);
     if (upErr) return jsonError(500, `link sent, but saving status failed: ${upErr.message}`);
 

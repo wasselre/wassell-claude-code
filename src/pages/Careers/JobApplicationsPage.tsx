@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Loader2, Search, FileText, Download, Play, X, RefreshCw, Phone, Clock,
   Megaphone, AlertTriangle, Briefcase, StickyNote, HandCoins, Save, Calculator, FileDown,
-  Send, Copy, CheckCircle2, XCircle, MessageCircle, Link2,
+  Send, Copy, CheckCircle2, XCircle, MessageCircle, Link2, Settings, Eye,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
@@ -55,6 +55,7 @@ interface JobApplication {
   experience_confirmed_at: string | null;
   experience_decided_at: string | null;
   experience_decision: string | null;         // 'interested' | 'declined'
+  experience_decline_category: string | null;  // 'salary' | 'commission' | 'other'
   experience_decline_reason: string | null;
 }
 
@@ -98,6 +99,20 @@ const situationLabel = (v: string | null) => SITUATION_OPTIONS.find((o) => o.val
 const experienceLabel = (v: string | null) => EXPERIENCE_OPTIONS.find((o) => o.value === v)?.label ?? '—';
 const yesNoLabel = (v: string | null) => YES_NO_OPTIONS.find((o) => o.value === v)?.label ?? '—';
 const statusOf = (v: string) => STATUSES.find((s) => s.value === v) ?? STATUSES[0];
+const declineCategoryLabel = (c: string, isAr: boolean) =>
+  c === 'salary' ? (isAr ? 'الراتب' : 'Salary')
+  : c === 'commission' ? (isAr ? 'العمولة' : 'Commission')
+  : (isAr ? 'سبب آخر' : 'Other');
+
+/** One tile in the offer-experience funnel. */
+function FunnelStat({ n, label, color }: { n: number; label: string; color: string }) {
+  return (
+    <div className="rounded-xl border border-sand/30 bg-cream/40 px-2 py-2.5 text-center">
+      <div className="text-xl font-extrabold" style={{ color }}>{n}</div>
+      <div className="mt-0.5 text-[11px] text-charcoal/55 leading-tight">{label}</div>
+    </div>
+  );
+}
 
 async function authHeader(): Promise<Record<string, string>> {
   if (!supabase) return {};
@@ -140,6 +155,26 @@ export default function JobApplicationsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [expFilter, setExpFilter] = useState('');
   const [selected, setSelected] = useState<JobApplication | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [msgTemplate, setMsgTemplate] = useState('');
+  const [msgSaving, setMsgSaving] = useState(false);
+
+  // Editable WhatsApp message for the experience link (careers_settings singleton).
+  useEffect(() => {
+    if (!supabase) return;
+    void supabase.from('careers_settings').select('experience_message').eq('id', 1).maybeSingle()
+      .then(({ data }) => { if (data?.experience_message != null) setMsgTemplate(data.experience_message as string); });
+  }, []);
+
+  const saveMessage = async () => {
+    if (!supabase) return;
+    setMsgSaving(true);
+    const { error: err } = await supabase.from('careers_settings').update({ experience_message: msgTemplate }).eq('id', 1);
+    setMsgSaving(false);
+    if (err) { addToast(isAr ? `تعذّر الحفظ: ${err.message}` : `Could not save: ${err.message}`, 'error'); return; }
+    addToast(isAr ? 'تم حفظ الرسالة' : 'Message saved', 'success');
+    setSettingsOpen(false);
+  };
 
   const load = useCallback(async () => {
     if (!supabase) { setError(isAr ? 'قاعدة البيانات غير متصلة' : 'Database not connected'); setLoading(false); return; }
@@ -173,6 +208,21 @@ export default function JobApplicationsPage() {
     const m: Record<string, number> = {};
     for (const a of apps) m[a.status] = (m[a.status] ?? 0) + 1;
     return m;
+  }, [apps]);
+
+  // Offer-experience funnel: who got a link, opened it, stalled, or finished.
+  const expStats = useMemo(() => {
+    let sent = 0, opened = 0, notOpened = 0, noDecision = 0, interested = 0, declined = 0;
+    for (const a of apps) {
+      if (!a.offer_sent_at && !a.invite_token) continue; // link never sent
+      sent++;
+      const isOpened = !!a.experience_confirmed_at;
+      if (isOpened) opened++; else notOpened++;
+      if (a.experience_decision === 'interested') interested++;
+      else if (a.experience_decision === 'declined') declined++;
+      else if (isOpened) noDecision++;
+    }
+    return { sent, opened, notOpened, noDecision, interested, declined };
   }, [apps]);
 
   /**
@@ -224,9 +274,14 @@ export default function JobApplicationsPage() {
             <p className="text-sm text-charcoal/50">{isAr ? 'مستشار مبيعات عقارية' : 'Real-estate sales consultant'} · {apps.length}</p>
           </div>
         </div>
-        <button onClick={() => void load()} className="p-2.5 rounded-xl bg-white border border-sand/30 hover:bg-cream" title={isAr ? 'تحديث' : 'Refresh'}>
-          <RefreshCw size={18} className="text-charcoal/60" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setSettingsOpen(true)} className="p-2.5 rounded-xl bg-white border border-sand/30 hover:bg-cream" title={isAr ? 'إعدادات رسالة الرابط' : 'Link message settings'}>
+            <Settings size={18} className="text-charcoal/60" />
+          </button>
+          <button onClick={() => void load()} className="p-2.5 rounded-xl bg-white border border-sand/30 hover:bg-cream" title={isAr ? 'تحديث' : 'Refresh'}>
+            <RefreshCw size={18} className="text-charcoal/60" />
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -250,6 +305,20 @@ export default function JobApplicationsPage() {
           {EXPERIENCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </div>
+
+      {expStats.sent > 0 && (
+        <div className="mb-5 rounded-2xl bg-white border border-sand/30 p-4">
+          <p className="text-xs text-charcoal/40 mb-3 flex items-center gap-1.5"><MessageCircle size={13} /> {isAr ? 'تحليل تجربة العرض' : 'Offer-experience funnel'}</p>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+            <FunnelStat n={expStats.sent} label={isAr ? 'أُرسل الرابط' : 'Link sent'} color="#0EA5E9" />
+            <FunnelStat n={expStats.notOpened} label={isAr ? 'لم يُفتح' : 'Not opened'} color="#9CA3AF" />
+            <FunnelStat n={expStats.opened} label={isAr ? 'فُتح الرابط' : 'Opened'} color="#8B5CF6" />
+            <FunnelStat n={expStats.noDecision} label={isAr ? 'فتح ولم يُكمل' : 'Opened, no decision'} color="#D97706" />
+            <FunnelStat n={expStats.interested} label={isAr ? 'مهتم' : 'Interested'} color="#059669" />
+            <FunnelStat n={expStats.declined} label={isAr ? 'اعتذر' : 'Declined'} color="#B45309" />
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-20 text-charcoal/50"><Loader2 className="animate-spin" size={20} /> {isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>
@@ -294,6 +363,65 @@ export default function JobApplicationsPage() {
           fmtDate={fmtDate}
         />
       )}
+
+      {settingsOpen && (
+        <MessageSettingsModal
+          isAr={isAr}
+          value={msgTemplate}
+          onChange={setMsgTemplate}
+          saving={msgSaving}
+          onSave={() => void saveMessage()}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** View + edit the WhatsApp message sent with the experience link. */
+function MessageSettingsModal({
+  isAr, value, onChange, saving, onSave, onClose,
+}: {
+  isAr: boolean; value: string; onChange: (v: string) => void;
+  saving: boolean; onSave: () => void; onClose: () => void;
+}) {
+  const preview = value
+    .split('{name}').join('أبو فيصل')
+    .split('{link}').join('https://app.wassel.re/careers/experience/…');
+  const inputCls = 'w-full rounded-lg border border-sand/40 bg-white px-3 py-2 text-sm text-charcoal outline-none focus:ring-2 focus:ring-copper/20';
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => { if (!saving) onClose(); }}>
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-copper/10 text-copper"><MessageCircle size={18} /></span>
+            <h3 className="font-bold text-charcoal">{isAr ? 'رسالة رابط التجربة' : 'Experience link message'}</h3>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-sand/20"><X size={18} className="text-charcoal/60" /></button>
+        </div>
+
+        <p className="text-xs text-charcoal/50 leading-relaxed mb-2">
+          {isAr
+            ? 'هذه الرسالة تُرسَل مع الرابط عبر واتساب. استخدم {name} لاسم المرشّح و{link} لرابطه الخاص.'
+            : 'This message is sent with the link over WhatsApp. Use {name} for the candidate name and {link} for their personal link.'}
+        </p>
+
+        <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={7} className={`${inputCls} resize-y`} dir="rtl" />
+
+        <div className="mt-3">
+          <p className="text-xs text-charcoal/40 mb-1.5 flex items-center gap-1.5"><Eye size={13} /> {isAr ? 'معاينة' : 'Preview'}</p>
+          <div className="rounded-xl p-3" style={{ background: '#EDE0CC' }}>
+            <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-white px-3 py-2 text-sm leading-relaxed text-charcoal whitespace-pre-wrap break-words">{preview}</div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} disabled={saving} className="rounded-lg border border-sand/40 bg-white px-4 py-2 text-sm font-bold text-charcoal disabled:opacity-50">{isAr ? 'إلغاء' : 'Cancel'}</button>
+          <button onClick={onSave} disabled={saving} className="flex items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} {isAr ? 'حفظ' : 'Save'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -665,7 +793,20 @@ function DetailDrawer({
             {app.experience_decision === 'declined' && (
               <div className="mt-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-800">
                 <div className="flex items-center gap-2 font-bold"><XCircle size={15} /> {isAr ? 'العرض غير مناسب له' : 'Not interested'}</div>
-                {app.experience_decline_reason && <p className="mt-1 text-[13px] leading-relaxed whitespace-pre-wrap">{app.experience_decline_reason}</p>}
+                {app.experience_decline_category && (
+                  <p className="mt-1 text-[13px]">
+                    <span className="font-semibold">{isAr ? 'السبب:' : 'Reason:'}</span>{' '}
+                    {declineCategoryLabel(app.experience_decline_category, isAr)}
+                    {app.experience_decline_reason && (
+                      <> — {app.experience_decline_category === 'salary' ? (isAr ? 'الراتب المناسب له:' : 'Desired salary:')
+                        : app.experience_decline_category === 'commission' ? (isAr ? 'العمولة المناسبة له:' : 'Desired commission:')
+                        : ''} {app.experience_decline_reason}</>
+                    )}
+                  </p>
+                )}
+                {!app.experience_decline_category && app.experience_decline_reason && (
+                  <p className="mt-1 text-[13px] leading-relaxed whitespace-pre-wrap">{app.experience_decline_reason}</p>
+                )}
               </div>
             )}
           </div>

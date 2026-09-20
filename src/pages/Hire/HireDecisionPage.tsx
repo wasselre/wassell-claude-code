@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { CalendarCheck, CheckCircle2, Loader2, Send } from 'lucide-react';
+import { CalendarCheck, CheckCircle2, Loader2, Send, Wallet, Percent, HelpCircle, ChevronRight } from 'lucide-react';
 import { ProgressRail } from './hireUi';
 import { postExperience } from '@/lib/careers/experience';
 
 /**
- * Stage 5 — the decision (القرار). Two entries off the offer page:
- *   /book     → the candidate is interested; records `offer_accepted` and tells
- *               them we'll be in touch to schedule the office visit.
- *   /decline  → asks "why not?" (optional), records `offer_rejected` + reason.
- * Best-effort writes: in preview / no-token the message still shows.
+ * Stage 5 — the decision (القرار).
+ *   /book     → interested; records `offer_accepted` + "we'll be in touch".
+ *   /decline  → a 2-step questionnaire: why? (salary / commission / other) then a
+ *               follow-up (desired salary, desired commission, or free text) →
+ *               `offer_rejected` + category + reason.
+ * Best-effort writes: in preview / no-token the flow still completes.
  */
 export default function HireDecisionPage() {
   const { token } = useParams();
@@ -49,17 +50,22 @@ function Interested({ token }: { token?: string }) {
   );
 }
 
+type Category = 'salary' | 'commission' | 'other';
+
 function Decline({ token }: { token?: string }) {
-  const [reason, setReason] = useState('');
-  const [phase, setPhase] = useState<'ask' | 'sending' | 'done'>('ask');
+  const [step, setStep] = useState<'q1' | 'q2' | 'sending' | 'done'>('q1');
+  const [category, setCategory] = useState<Category | null>(null);
+  const [answer, setAnswer] = useState('');
+
+  const pick = (c: Category) => { setCategory(c); setAnswer(''); setStep('q2'); };
 
   const submit = async () => {
-    setPhase('sending');
-    await postExperience(token ?? '', 'declined', reason.trim() || undefined);
-    setPhase('done');
+    setStep('sending');
+    await postExperience(token ?? '', 'declined', { reason: answer.trim() || undefined, category: category ?? undefined });
+    setStep('done');
   };
 
-  if (phase === 'done') {
+  if (step === 'done') {
     return (
       <div className="w-full rounded-3xl border bg-white/90 p-8 text-center shadow-xl backdrop-blur" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
         <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full" style={{ background: '#B8734F18' }}>
@@ -75,26 +81,81 @@ function Decline({ token }: { token?: string }) {
 
   return (
     <div className="w-full rounded-3xl border bg-white/90 p-7 shadow-xl backdrop-blur" style={{ borderColor: 'rgba(212,184,150,0.5)' }}>
-      <h1 className="text-center text-2xl font-bold" style={{ color: '#4A2C2A' }}>العرض غير مناسب لي</h1>
-      <p className="mx-auto mt-2 max-w-sm text-center text-base leading-relaxed" style={{ color: '#4A4E54' }}>
-        نودّ أن نتحسّن — ما سبب عدم اهتمامك؟ <span className="text-charcoal/45">(اختياري)</span>
-      </p>
-      <textarea
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        rows={4}
-        placeholder="مثال: الراتب الأساسي أقل من المطلوب، المكان بعيد، لست متفرّغًا حاليًا…"
-        className="form-input mt-4 w-full resize-none text-base"
-      />
-      <button
-        type="button"
-        onClick={() => void submit()}
-        disabled={phase === 'sending'}
-        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-copper px-6 text-base font-bold text-white shadow-lg disabled:opacity-50"
-        style={{ minHeight: 52 }}
-      >
-        {phase === 'sending' ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />} إرسال
-      </button>
+      {step === 'q1' ? (
+        <>
+          <h1 className="text-center text-2xl font-bold" style={{ color: '#4A2C2A' }}>العرض غير مناسب لي</h1>
+          <p className="mx-auto mt-2 max-w-sm text-center text-base leading-relaxed" style={{ color: '#4A4E54' }}>
+            نودّ أن نتحسّن — ما سبب عدم اهتمامك؟
+          </p>
+          <div className="mt-5 space-y-2.5">
+            <OptionBtn icon={<Wallet size={18} />} label="الراتب" onClick={() => pick('salary')} />
+            <OptionBtn icon={<Percent size={18} />} label="العمولة" onClick={() => pick('commission')} />
+            <OptionBtn icon={<HelpCircle size={18} />} label="سبب آخر" onClick={() => pick('other')} />
+          </div>
+        </>
+      ) : (
+        <>
+          <button type="button" onClick={() => setStep('q1')} className="mb-2 inline-flex items-center gap-1 text-sm font-semibold text-charcoal/55 hover:text-copper">
+            <ChevronRight size={16} /> رجوع
+          </button>
+          <h1 className="text-center text-xl font-bold sm:text-2xl" style={{ color: '#4A2C2A' }}>
+            {category === 'salary' && 'ما الراتب الشهري الذي تراه مناسبًا لك؟'}
+            {category === 'commission' && 'ما نسبة العمولة المناسبة لك؟'}
+            {category === 'other' && 'إذا لم يكن بسبب الوظيفة، فما سبب اعتذارك؟'}
+          </h1>
+
+          {category === 'salary' && (
+            <div className="relative mt-4">
+              <input
+                value={answer} onChange={(e) => setAnswer(e.target.value)}
+                inputMode="numeric" dir="ltr" placeholder="مثال: 8000"
+                className="form-input w-full text-center text-lg"
+                style={{ paddingInlineEnd: '3.5rem' }}
+              />
+              <span className="pointer-events-none absolute inset-y-0 end-3 flex items-center text-sm text-charcoal/50">ريال</span>
+            </div>
+          )}
+          {category === 'commission' && (
+            <input
+              value={answer} onChange={(e) => setAnswer(e.target.value)}
+              dir="ltr" placeholder="مثال: 20%"
+              className="form-input mt-4 w-full text-center text-lg"
+            />
+          )}
+          {category === 'other' && (
+            <textarea
+              value={answer} onChange={(e) => setAnswer(e.target.value)}
+              rows={4} placeholder="أخبرنا بالسبب…"
+              className="form-input mt-4 w-full resize-none text-base"
+            />
+          )}
+
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={step === 'sending'}
+            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-copper px-6 text-base font-bold text-white shadow-lg disabled:opacity-50"
+            style={{ minHeight: 52 }}
+          >
+            {step === 'sending' ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />} إرسال
+          </button>
+        </>
+      )}
     </div>
+  );
+}
+
+function OptionBtn({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-2xl border-2 border-sand/60 bg-white px-4 text-start font-bold text-charcoal transition-colors hover:border-copper hover:bg-copper/5"
+      style={{ minHeight: 56 }}
+    >
+      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-copper/10 text-copper">{icon}</span>
+      <span className="flex-1">{label}</span>
+      <ChevronRight size={18} className="rotate-180 text-charcoal/30" />
+    </button>
   );
 }
