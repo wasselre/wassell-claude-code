@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search, Pencil, Megaphone, CalendarClock, PackageCheck } from 'lucide-react';
+import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search, Pencil, Megaphone, CalendarClock, PackageCheck, SlidersHorizontal, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -80,12 +80,22 @@ export default function OurProjectsPortfolioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ourModel, allModel, records, models, projectField, statusField, priorityField, exclusiveField, isAr, translationVersion]);
 
-  // ── simple filters ──────────────────────────────────────────────────────────
+  // ── filters ───────────────────────────────────────────────────────────────
+  // Common filters (always visible) + advanced filters (behind "More filters").
+  const NO_MARKETER = '__none__'; // sentinel: match projects with NO marketer.
   const [search, setSearch] = useState('');
   const [city, setCity] = useState('');
   const [developer, setDeveloper] = useState('');
   const [pstatus, setPstatus] = useState('');
+  // advanced
+  const [district, setDistrict] = useState('');
+  const [marketer, setMarketer] = useState('');
+  const [delivery, setDelivery] = useState<'' | 'ready' | 'off_plan' | 'unknown'>('');
+  const [priceMin, setPriceMin] = useState('');
+  const [priceMax, setPriceMax] = useState('');
+  const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [gap, setGap] = useState<'all' | 'our_brochure' | 'dev_brochure' | 'location'>('all');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   // all_projects record id currently open in the edit popup (null = closed).
   // Editing the MASTER project from here keeps the user on the portfolio grid
   // instead of bouncing them through the project page to a form.
@@ -93,23 +103,55 @@ export default function OurProjectsPortfolioPage() {
 
   const cities = useMemo(() => [...new Set(items.map((i) => i.linked?.city).filter((x): x is string => !!x))].sort(), [items]);
   const developers = useMemo(() => [...new Set(items.map((i) => i.linked?.developer).filter((x): x is string => !!x))].sort(), [items]);
+  const marketers = useMemo(() => [...new Set(items.map((i) => i.linked?.marketer).filter((x): x is string => !!x))].sort(), [items]);
+  // Districts are scoped to the selected city (a district name only means something
+  // inside its city) — so the dropdown never offers a district that can't match.
+  const districts = useMemo(
+    () => [...new Set(items.filter((i) => !city || i.linked?.city === city).map((i) => i.linked?.district).filter((x): x is string => !!x))].sort(),
+    [items, city],
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const min = priceMin.trim() && Number.isFinite(Number(priceMin)) ? Number(priceMin) : null;
+    const max = priceMax.trim() && Number.isFinite(Number(priceMax)) ? Number(priceMax) : null;
     return items.filter((i) => {
       if (q) {
-        const hay = `${i.linked?.name ?? ''} ${i.linked?.developer ?? ''} ${i.linked?.city ?? ''} ${i.linked?.district ?? ''}`.toLowerCase();
+        const hay = `${i.linked?.name ?? ''} ${i.linked?.developer ?? ''} ${i.linked?.marketer ?? ''} ${i.linked?.city ?? ''} ${i.linked?.district ?? ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       if (city && i.linked?.city !== city) return false;
       if (developer && i.linked?.developer !== developer) return false;
       if (pstatus && i.status?.value !== pstatus) return false;
+      if (district && i.linked?.district !== district) return false;
+      if (marketer === NO_MARKETER) { if (i.linked?.marketer) return false; }
+      else if (marketer && i.linked?.marketer !== marketer) return false;
+      if (delivery && (i.linked?.delivery.kind ?? 'unknown') !== delivery) return false;
+      if (min !== null || max !== null) {
+        const pr = i.linked?.priceRange ?? null;
+        if (!pr) return false; // a price filter can't match a project with no price
+        if (min !== null && pr.max < min) return false;
+        if (max !== null && pr.min > max) return false;
+      }
+      if (onlyAvailable && !((i.linked?.availableUnits ?? 0) > 0)) return false;
       if (gap === 'our_brochure' && i.linked?.brochureOurs) return false;
       if (gap === 'dev_brochure' && i.linked?.brochureDeveloper) return false;
       if (gap === 'location' && (i.linked?.hasGeo || i.linked?.locationLink)) return false;
       return true;
     });
-  }, [items, search, city, developer, pstatus, gap]);
+  }, [items, search, city, developer, pstatus, district, marketer, delivery, priceMin, priceMax, onlyAvailable, gap]);
+
+  // Count of ACTIVE advanced filters (drives the badge on "More filters").
+  const advancedCount =
+    (district ? 1 : 0) + (marketer ? 1 : 0) + (delivery ? 1 : 0) +
+    (priceMin.trim() ? 1 : 0) + (priceMax.trim() ? 1 : 0) +
+    (onlyAvailable ? 1 : 0) + (gap !== 'all' ? 1 : 0);
+  const anyFilterActive = advancedCount > 0 || !!(search.trim() || city || developer || pstatus);
+  const clearAllFilters = () => {
+    setSearch(''); setCity(''); setDeveloper(''); setPstatus('');
+    setDistrict(''); setMarketer(''); setDelivery(''); setPriceMin(''); setPriceMax('');
+    setOnlyAvailable(false); setGap('all');
+  };
 
   // Per-navigation scoped context for the drill-in: visible portfolio order +
   // the surface to return to (this page, standalone or inside the workspace).
@@ -154,10 +196,11 @@ export default function OurProjectsPortfolioPage() {
       <div className="card p-4 space-y-3">
         <div className="relative">
           <Search size={16} className="absolute top-1/2 -translate-y-1/2 start-3 text-charcoal/40" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isAr ? 'ابحث بالاسم أو المطور أو المدينة…' : 'Search by name, developer, city…'} className="form-input w-full ps-9" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isAr ? 'ابحث بالاسم أو المطور أو المسوّق أو المدينة…' : 'Search by name, developer, marketer, city…'} className="form-input w-full ps-9" />
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <select className={selectCls} value={city} onChange={(e) => setCity(e.target.value)}>
+        {/* Common filters — always visible */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <select className={selectCls} value={city} onChange={(e) => { setCity(e.target.value); setDistrict(''); }}>
             <option value="">{isAr ? 'كل المدن' : 'All cities'}</option>
             {cities.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -169,14 +212,64 @@ export default function OurProjectsPortfolioPage() {
             <option value="">{isAr ? 'كل حالات المحفظة' : 'All portfolio statuses'}</option>
             {(statusField?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
           </select>
-          <select className={selectCls} value={gap} onChange={(e) => setGap(e.target.value as typeof gap)}>
-            <option value="all">{isAr ? 'كل المشاريع' : 'All projects'}</option>
-            <option value="our_brochure">{isAr ? 'بدون بروشورنا' : 'Without our brochure'}</option>
-            <option value="dev_brochure">{isAr ? 'بدون بروشور المطور' : 'Without developer brochure'}</option>
-            <option value="location">{isAr ? 'بدون موقع' : 'Without location'}</option>
-          </select>
         </div>
-        <div className="text-xs text-charcoal/50">{isAr ? `عرض ${filtered.length} من ${items.length} مشروع` : `Showing ${filtered.length} of ${items.length} projects`}</div>
+        {/* Toggle row: More filters (+ active count) · Clear all · results count */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-sand/60 bg-cream hover:bg-sand/30 text-charcoal transition-colors"
+            aria-expanded={showAdvanced}
+          >
+            <SlidersHorizontal size={14} />
+            {isAr ? 'فلاتر متقدمة' : 'More filters'}
+            {advancedCount > 0 && (
+              <span className="ms-1 min-w-[1.25rem] h-5 px-1 inline-flex items-center justify-center rounded-full bg-copper text-white text-[11px] font-bold">{advancedCount}</span>
+            )}
+          </button>
+          {anyFilterActive && (
+            <button type="button" onClick={clearAllFilters} className="inline-flex items-center gap-1 text-sm text-charcoal/50 hover:text-terracotta transition-colors">
+              <X size={13} /> {isAr ? 'مسح الكل' : 'Clear all'}
+            </button>
+          )}
+          <div className="text-xs text-charcoal/50 ms-auto">{isAr ? `عرض ${filtered.length} من ${items.length} مشروع` : `Showing ${filtered.length} of ${items.length} projects`}</div>
+        </div>
+        {/* Advanced filters — collapsible */}
+        {showAdvanced && (
+          <div className="pt-3 border-t border-sand/40 space-y-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <select className={selectCls} value={district} onChange={(e) => setDistrict(e.target.value)}>
+                <option value="">{isAr ? 'كل الأحياء' : 'All districts'}</option>
+                {districts.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+              <select className={selectCls} value={marketer} onChange={(e) => setMarketer(e.target.value)}>
+                <option value="">{isAr ? 'كل المسوّقين' : 'All marketers'}</option>
+                <option value={NO_MARKETER}>{isAr ? 'بدون مسوّق' : 'No marketer'}</option>
+                {marketers.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <select className={selectCls} value={delivery} onChange={(e) => setDelivery(e.target.value as typeof delivery)}>
+                <option value="">{isAr ? 'كل حالات التسليم' : 'All delivery statuses'}</option>
+                <option value="ready">{isAr ? 'جاهز' : 'Ready'}</option>
+                <option value="off_plan">{isAr ? 'على الخارطة' : 'Off-plan'}</option>
+                <option value="unknown">{isAr ? 'غير محدد' : 'Not specified'}</option>
+              </select>
+              <select className={selectCls} value={gap} onChange={(e) => setGap(e.target.value as typeof gap)}>
+                <option value="all">{isAr ? 'كل المشاريع' : 'All projects'}</option>
+                <option value="our_brochure">{isAr ? 'بدون بروشورنا' : 'Without our brochure'}</option>
+                <option value="dev_brochure">{isAr ? 'بدون بروشور المطور' : 'Without developer brochure'}</option>
+                <option value="location">{isAr ? 'بدون موقع' : 'Without location'}</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-center">
+              <input type="number" inputMode="numeric" className={selectCls} value={priceMin} onChange={(e) => setPriceMin(e.target.value)} placeholder={isAr ? 'السعر من (ر.س)' : 'Price from (SAR)'} />
+              <input type="number" inputMode="numeric" className={selectCls} value={priceMax} onChange={(e) => setPriceMax(e.target.value)} placeholder={isAr ? 'السعر إلى (ر.س)' : 'Price to (SAR)'} />
+              <label className="flex items-center gap-2 text-sm text-charcoal/70 cursor-pointer select-none md:col-span-2">
+                <input type="checkbox" checked={onlyAvailable} onChange={(e) => setOnlyAvailable(e.target.checked)} className="w-4 h-4 rounded border-sand text-copper focus:ring-copper" />
+                {isAr ? 'وحدات متاحة فقط' : 'Has available units only'}
+              </label>
+            </div>
+          </div>
+        )}
       </div>
 
       {items.length === 0 ? (
