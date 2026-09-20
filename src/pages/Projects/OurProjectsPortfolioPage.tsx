@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search, Pencil, Megaphone, CalendarClock, PackageCheck, SlidersHorizontal, X } from 'lucide-react';
+import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, Map as MapIcon, Table as TableIcon, ChevronUp, ChevronDown, FileText, Search, Pencil, Megaphone, CalendarClock, PackageCheck, SlidersHorizontal, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import RecordListPage from '@/pages/Records/RecordListPage';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
+import MapsView from '@/pages/Records/components/MapsView';
+import type { AppRecord } from '@/types';
 import {
   resolveProjectView, modelByName, fieldByCandidates, optionFor, formatPriceRange,
   asString, asFiniteNumber, type ProjectView, type OptionView,
@@ -96,6 +98,7 @@ export default function OurProjectsPortfolioPage() {
   const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [gap, setGap] = useState<'all' | 'our_brochure' | 'dev_brochure' | 'location'>('all');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [view, setView] = useState<'grid' | 'map' | 'table'>('grid');
   // all_projects record id currently open in the edit popup (null = closed).
   // Editing the MASTER project from here keeps the user on the portfolio grid
   // instead of bouncing them through the project page to a form.
@@ -141,6 +144,20 @@ export default function OurProjectsPortfolioPage() {
     });
   }, [items, search, city, developer, pstatus, district, marketer, delivery, priceMin, priceMax, onlyAvailable, gap]);
 
+  // For the map view: the underlying all_projects records of the FILTERED
+  // portfolio (geo lives on the master project, not the our_projects row), plus
+  // a lookup from a master id back to its portfolio row so a pin click opens the
+  // portfolio detail rather than the raw all_projects record.
+  const linkedRecords = useMemo(
+    () => filtered.map((i) => i.linked?.raw).filter((r): r is AppRecord => !!r),
+    [filtered],
+  );
+  const ourIdByLinked = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const i of filtered) if (i.linkedId && !m.has(i.linkedId)) m.set(i.linkedId, i.ourId);
+    return m;
+  }, [filtered]);
+
   // Count of ACTIVE advanced filters (drives the badge on "More filters").
   const advancedCount =
     (district ? 1 : 0) + (marketer ? 1 : 0) + (delivery ? 1 : 0) +
@@ -175,6 +192,20 @@ export default function OurProjectsPortfolioPage() {
           <p className="text-sm text-charcoal/50">{isAr ? 'محفظة المبيعات المختارة فوق قاعدة المشاريع' : 'Curated sales portfolio over the project database'}</p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex rounded-lg overflow-hidden border border-sand">
+            {([['grid', LayoutGrid, isAr ? 'بطاقات' : 'Cards'], ['table', TableIcon, isAr ? 'جدول' : 'Table'], ['map', MapIcon, isAr ? 'خريطة' : 'Map']] as const).map(([m, Icon, label]) => (
+              <button
+                key={m}
+                onClick={() => setView(m)}
+                className={`px-3 py-2 flex items-center gap-1.5 text-sm ${view === m ? 'bg-copper text-white' : 'bg-white text-charcoal/60 hover:bg-cream'}`}
+                title={label}
+                aria-label={label}
+                aria-pressed={view === m}
+              >
+                <Icon size={16} /> <span className="hidden sm:inline">{label}</span>
+              </button>
+            ))}
+          </div>
           <Button variant="ghost" onClick={() => navigate('/model/our_projects?generic=1')}>{isAr ? 'العرض الكلاسيكي' : 'Classic view'}</Button>
           <Button variant="primary" onClick={() => navigate('/model/our_projects/new')}>
             <Plus size={16} className="inline -mt-0.5 me-1" /> {isAr ? 'إضافة للمحفظة' : 'Add to portfolio'}
@@ -276,6 +307,27 @@ export default function OurProjectsPortfolioPage() {
         <div className="card p-16 text-center text-charcoal/40">{isAr ? 'لا توجد مشاريع في المحفظة بعد.' : 'No portfolio projects yet.'}</div>
       ) : filtered.length === 0 ? (
         <div className="card p-16 text-center text-charcoal/40">{isAr ? 'لا توجد مشاريع مطابقة.' : 'No matching projects.'}</div>
+      ) : view === 'map' && allModel ? (
+        // Map of the FILTERED portfolio. Geography lives on the linked
+        // all_projects master, so we feed the master model + its records to the
+        // shared MapsView and route a pin click back to the portfolio detail.
+        <div className="card p-2 h-[70vh]">
+          <MapsView
+            model={allModel}
+            records={linkedRecords}
+            onCardClick={(r) => {
+              const ourId = ourIdByLinked.get(r.id);
+              if (ourId) navigate(`/model/our_projects/${ourId}`, openState());
+              else navigate(`/model/all_projects/${r.id}`);
+            }}
+          />
+        </div>
+      ) : view === 'table' ? (
+        <PortfolioTable
+          items={filtered}
+          isAr={isAr}
+          onOpen={(ourId) => navigate(`/model/our_projects/${ourId}`, openState())}
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((item) => (
@@ -416,6 +468,130 @@ function PortfolioCard({ item, isAr, onOpenDetail, onEdit, onEditMaster }: { ite
         </div>
         <button onClick={onEdit} className="mt-1 text-[11px] text-charcoal/40 hover:text-copper">{isAr ? 'تحرير إعدادات المحفظة' : 'Edit portfolio settings'}</button>
       </div>
+    </div>
+  );
+}
+
+type SortKey = 'name' | 'city' | 'district' | 'developer' | 'marketer' | 'price' | 'available' | 'delivery' | 'status';
+// Ready first, then off-plan, then unknown — matches how a salesperson scans.
+const DELIVERY_ORDER: Record<string, number> = { ready: 0, off_plan: 1, unknown: 2 };
+
+// Sortable table view of the portfolio. Same resolved facts as the cards, laid
+// out as rows/columns; click a header to sort (toggles asc/desc), click a row to
+// open the project. Horizontal-scrolls on narrow screens rather than reflowing.
+function PortfolioTable({ items, isAr, onOpen }: { items: PortfolioItem[]; isAr: boolean; onOpen: (ourId: string) => void }) {
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const dash = isAr ? 'غير متوفر' : 'N/A';
+
+  const nameOf = (i: PortfolioItem) => i.linked?.name ?? asString(i.ourData.project_name) ?? `#${i.ourId.slice(0, 8)}`;
+  const sortVal = (i: PortfolioItem, k: SortKey): string | number | null => {
+    switch (k) {
+      case 'name': return nameOf(i);
+      case 'city': return i.linked?.city ?? null;
+      case 'district': return i.linked?.district ?? null;
+      case 'developer': return i.linked?.developer ?? null;
+      case 'marketer': return i.linked?.marketer ?? null;
+      case 'price': return i.linked?.priceRange?.min ?? null;
+      case 'available': return i.linked?.availableUnits ?? null;
+      case 'delivery': return DELIVERY_ORDER[i.linked?.delivery.kind ?? 'unknown'] ?? 2;
+      case 'status': return i.status ? (isAr ? i.status.label_ar : i.status.label_en) : null;
+    }
+  };
+
+  const sorted = useMemo(() => {
+    if (!sortKey) return items; // no explicit sort → keep the page's active-first order
+    const factor = sortDir === 'asc' ? 1 : -1;
+    return [...items].sort((a, b) => {
+      const va = sortVal(a, sortKey);
+      const vb = sortVal(b, sortKey);
+      if (va === null && vb === null) return 0;
+      if (va === null) return 1; // nulls always sink to the bottom
+      if (vb === null) return -1;
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * factor;
+      return String(va).localeCompare(String(vb), isAr ? 'ar' : 'en') * factor;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, sortKey, sortDir, isAr]);
+
+  const toggleSort = (k: SortKey) => {
+    if (sortKey === k) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(k); setSortDir('asc'); }
+  };
+
+  const cols: { key: SortKey; label: string; end?: boolean }[] = [
+    { key: 'name', label: isAr ? 'المشروع' : 'Project' },
+    { key: 'city', label: isAr ? 'المدينة' : 'City' },
+    { key: 'district', label: isAr ? 'الحي' : 'District' },
+    { key: 'developer', label: isAr ? 'المطور' : 'Developer' },
+    { key: 'marketer', label: isAr ? 'المسوّق' : 'Marketer' },
+    { key: 'price', label: isAr ? 'السعر' : 'Price', end: true },
+    { key: 'available', label: isAr ? 'المتاح' : 'Available', end: true },
+    { key: 'delivery', label: isAr ? 'التسليم' : 'Delivery' },
+    { key: 'status', label: isAr ? 'الحالة' : 'Status' },
+  ];
+
+  return (
+    <div className="card overflow-x-auto">
+      <table className="w-full text-sm min-w-[900px]">
+        <thead>
+          <tr className="border-b border-sand/50 bg-cream/40">
+            {cols.map((c) => (
+              <th key={c.key} className={`px-3 py-2.5 font-semibold text-charcoal/60 whitespace-nowrap ${c.end ? 'text-end' : 'text-start'}`}>
+                <button
+                  type="button"
+                  onClick={() => toggleSort(c.key)}
+                  className={`inline-flex items-center gap-1 hover:text-copper transition-colors ${sortKey === c.key ? 'text-copper' : ''}`}
+                >
+                  {c.label}
+                  {sortKey === c.key && (sortDir === 'asc' ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                </button>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((i) => {
+            const d = i.linked?.delivery;
+            return (
+              <tr
+                key={i.ourId}
+                onClick={() => onOpen(i.ourId)}
+                className="border-b border-sand/30 last:border-0 hover:bg-cream/50 cursor-pointer"
+              >
+                <td className="px-3 py-2.5 font-bold text-charcoal max-w-[220px] truncate">{nameOf(i)}</td>
+                <td className="px-3 py-2.5 text-charcoal/70">{i.linked?.city ?? dash}</td>
+                <td className="px-3 py-2.5 text-charcoal/70">{i.linked?.district ?? dash}</td>
+                <td className="px-3 py-2.5 text-charcoal/70 max-w-[160px] truncate">{i.linked?.developer ?? dash}</td>
+                <td className="px-3 py-2.5 text-charcoal/70 max-w-[140px] truncate">{i.linked?.marketer ?? '—'}</td>
+                <td className="px-3 py-2.5 text-charcoal/80 text-end whitespace-nowrap">{formatPriceRange(i.linked?.priceRange ?? null, isAr) ?? dash}</td>
+                <td className="px-3 py-2.5 text-charcoal/80 text-end whitespace-nowrap">
+                  {i.linked?.availableUnits != null
+                    ? `${i.linked.availableUnits.toLocaleString(isAr ? 'ar-SA' : 'en-US')}${i.linked?.unitCount != null ? ` / ${i.linked.unitCount.toLocaleString(isAr ? 'ar-SA' : 'en-US')}` : ''}`
+                    : dash}
+                </td>
+                <td className="px-3 py-2.5 whitespace-nowrap">
+                  {d && d.kind !== 'unknown' ? (
+                    <span className="text-charcoal/80">
+                      {d.kind === 'ready' ? (isAr ? 'جاهز' : 'Ready') : (isAr ? 'على الخارطة' : 'Off-plan')}
+                      {d.kind === 'off_plan' && d.handoverLabel ? ` · ${isAr ? d.handoverLabel.ar : d.handoverLabel.en}` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-charcoal/30">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5">
+                  {i.status ? (
+                    <Badge label={isAr ? i.status.label_ar : i.status.label_en} color={i.status.color ?? undefined} />
+                  ) : (
+                    <span className="text-charcoal/30">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
