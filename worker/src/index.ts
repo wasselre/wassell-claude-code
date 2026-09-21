@@ -1633,6 +1633,18 @@ async function runBalanceProbeTick(): Promise<void> {
         console.warn(`[worker] balance probe ${p.provider}: ${p.status} — ${p.error ?? 'no detail'}`);
       }
     }
+
+    // Low-balance / over-budget WhatsApp. Same SQL function the Vercel cron
+    // calls — it row-locks its per-provider state, so both evaluating within
+    // the same minute still sends one message per crossing. Run it HERE too
+    // because Anthropic and Modal are only ever read by this probe: waiting for
+    // the next cron tick would delay their alert by up to an hour.
+    const { data: alerts, error: alertError } = await supabase.rpc('ai_balance_alerts_evaluate');
+    if (alertError) {
+      console.error(`[worker] balance alert evaluation failed: ${alertError.message}`);
+    } else {
+      console.log('[worker] balance alerts:', JSON.stringify(alerts));
+    }
   } catch (err) {
     // runBrowserBalanceProbes settles per-provider internally; this boundary is
     // for the unexpected. Log loudly and swallow — the worker must never die

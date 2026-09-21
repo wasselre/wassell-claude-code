@@ -1,7 +1,7 @@
 # PRD: AI Usage, Cost & Credit Tracking
 
 **Status:** Live
-**Last updated:** 2026-09-14
+**Last updated:** 2026-09-21
 **Related PRDs:** [internationalization.md](internationalization.md) (translation is the highest-volume AI lane), [marketing-operations.md](marketing-operations.md), [chats.md](chats.md), [copywriter-intelligence.md](copywriter-intelligence.md)
 
 ## What it is (in plain English)
@@ -19,12 +19,19 @@ entire history re-prices itself. An unknown price shows as "unknown", never as
 zero — so a cost report can never quietly under-report by treating an unpriced
 provider as free.
 
-On top of that sits a **credit tracker**. None of the five providers exposes a
-balance an API key can read, so the operator types in what each account holds —
-once, as an opening balance — and the app subtracts the metered spend from it
-from that moment on. Later top-ups are added the same way. A page at
-**Settings → AI Usage & Credit** shows what is left per account, the daily burn
-rate, and how many days that leaves.
+On top of that sits a **balance check** (since 2026-09-21 the vendor is the
+source of truth — nobody types a balance in any more). Every hour the app reads
+each provider's own figure: DeepSeek, Moonshot and fal through their balance
+APIs, Anthropic and Modal by opening their dashboards in a headless browser with
+a saved session cookie. It then compares how much the vendor's balance FELL with
+what our ledger recorded over the same window. A gap means money left an account
+without passing through the ledger. A top-up (the balance rising) is detected
+automatically and kept apart from spending.
+
+When an account runs low (prepaid) or a postpaid account's cycle passes its
+budget, the admin gets **one WhatsApp per crossing** and the page shows a red
+banner for as long as the condition lasts. **Settings → AI Usage & Credit**
+shows all of this.
 
 ## Why it exists
 
@@ -67,21 +74,36 @@ app — was invisible.
   There is no retry queue — a lost row is a metering gap, and the gap is visible
   in the daily view rather than hidden.
 
-### Credit balances
+### Vendor balance check (2026-09-21)
 
-- **Balances are entered, spend is automatic.** An account with no entries reads
-  as "not tracked yet", never as "$0 left" — those are different statements and
-  the page says which one it means.
-- **Spend before tracking started is never subtracted.** Counting begins at the
-  earliest credit entry's effective date, so usage that predates the opening
-  balance cannot eat into it.
-- **Nothing is edited in place.** A wrong figure is corrected with an
-  `adjustment` entry (the only kind allowed to be negative), so the record of
-  what was believed, and when, survives.
-- **A balance resting on unpriced usage is labelled an upper bound.** The page
-  says so on the card rather than presenting the number as fact.
-- **Runway is measured, not projected.** Days remaining come from the last 30
-  days of actual metered spend; with no spend in the window it shows "—".
+- **The vendor's latest successful reading is the balance.** Hand-entered opening
+  balances are no longer the headline figure (the credit-entry tables still
+  exist; the page's top totals now come from the vendor readings).
+- **Prepaid vs postpaid.** `ai_provider_accounts.billing_mode`. Prepaid accounts
+  (Anthropic, DeepSeek, Moonshot, fal) report money LEFT: spend = the balance
+  falling, a rise = a top-up. Modal is postpaid: the reading is the current
+  billing cycle's spend (the usage page's "Total Usage"), so spend = the reading
+  rising, and a fall = the cycle resetting.
+- **Unmetered spend is flagged only when it matters:** vendor spend minus metered
+  spend over the same window must exceed both $0.50 and 20% of what we metered
+  (dashboards round to the cent; our rows carry six decimals). Unpriced calls no
+  longer silence the alarm — in the old view three unpriced calls worth cents
+  hid an $11.58 gap.
+- **Alerts.** `low_balance_threshold` (Anthropic $15, DeepSeek $5, Moonshot $5,
+  fal $3) and `spend_alert_threshold` (Modal $150 per cycle).
+  `ai_balance_alerts_evaluate()` sends ONE WhatsApp per crossing through the
+  existing scheduled-WhatsApp lane (device `wassel_ops`), re-arms when the
+  condition clears, and row-locks its state so the Vercel cron and the worker
+  can both call it without double-sending. The recipient lives only in
+  `ai_alert_settings` in the database, never in the repo.
+- **Verdicts are words, not ticks:** `ok`, `UNMETERED_SPEND`, `LOW_BALANCE`,
+  `OVER_BUDGET`, `stale` (last good reading older than 24h), `no_reading`,
+  `unsupported`.
+- **Modal's own estimate is calibrated.** Our per-video Modal cost under-counted
+  the real bill 4.13x (OCR fan-out containers' cold-start and idle time). The
+  factor lives in `mkt_settings` `cv.modal_cost_calibration` and
+  `mkt_cv_cost_add` applies it to both ledgers, keeping the raw estimate in
+  `meta`.
 
 ## User flows
 
@@ -95,13 +117,15 @@ app — was invisible.
    The return value is how many historical rows just became costed.
 3. **Attributing a spike.** Group by `call_site` — each is a stable slug naming
    one file, so a spike points at one feature rather than a department.
-4. **Starting to track an account.** Settings → AI Usage & Credit → the account
-   card → *Set opening balance*. Enter what the account holds right now. From
-   that moment every recorded call is subtracted from it.
-5. **Topping up.** Same card → *Record credit* → *Top-up*, with the amount and
-   the date the money landed.
-6. **Fixing a mistake.** *Record credit* → *Adjustment*, which accepts a negative
-   number. The original entry stays in the history.
+4. **Checking nothing is unmetered.** Settings → AI Usage & Credit → *Balance at
+   the provider*. Each row shows the vendor's figure, what it spent in 24h, what
+   we recorded, and the gap.
+5. **Topping up.** Top up at the vendor. The next hourly reading sees the rise
+   and counts it as a top-up — nothing to record by hand.
+6. **Getting an alert.** A low balance or an over-budget Modal cycle sends one
+   WhatsApp to the admin number in `ai_alert_settings` and shows a red banner at
+   the top of the page until it clears. Change the number or switch alerts off
+   with an `UPDATE` on that table.
 7. **Empty state.** A brand-new environment records nothing and says so: if
    `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` are not both set, the recorder
    logs `AI usage is NOT being recorded in this environment` once per process.
@@ -113,7 +137,11 @@ app — was invisible.
 - Reads/writes: `ai_provider_accounts`, `ai_credit_entries` (via `ai_account_upsert()`,
   `ai_credit_add()`, `ai_credit_delete()` — all admin-only, all SECURITY DEFINER)
 - Reads: `v_ai_usage_daily`, `v_ai_usage_unpriced`, `v_ai_account_balances`,
-  `v_ai_account_runway`
+  `v_ai_account_runway`, `v_ai_balance_reconciliation`
+- Writes: `ai_provider_balance_probes` (hourly, from `/api/cron/ai-balance-probe`
+  and the worker's browser probe), `ai_balance_alert_state`,
+  `scheduled_whatsapp` (via `scheduled_whatsapp_enqueue`)
+- Reads: `ai_alert_settings` (admin-only; holds the alert recipient)
 - RLS: service-role writes only; admins read. A browser cannot forge a usage row
   or write a balance directly.
 
@@ -168,6 +196,9 @@ app — was invisible.
 | `supabase/migrations/2026-09-14_ai_credit_accounts.sql` | Accounts + credit ledger, balance/runway views, write RPCs, RLS |
 | `src/pages/Settings/AiUsagePage.tsx` | The page: balances, burn rate, spend breakdown, unpriced worklist |
 | `src/pages/Settings/components/AddCreditModal.tsx` | Opening balance / top-up / adjustment entry |
+| `supabase/migrations/2026-09-21_ai_vendor_truth_and_alerts.sql` | Vendor-truth reconciliation view, billing modes, thresholds, alert state + `ai_balance_alerts_evaluate`, Modal calibration |
+| `api/_lib/aiBalance.ts` + `api/cron/ai-balance-probe.ts` | DeepSeek / Moonshot / fal balance APIs, hourly |
+| `worker/src/lib/balanceBrowserProbe.ts` | Anthropic console + Modal usage page via Browserbase (cookie secrets; Modal needs `MODAL_WORKSPACE`) |
 | `src/lib/aiUsage/client.ts` | Browser client + the pure aggregation helpers |
 | `src/lib/aiUsage/__tests__/aggregation.test.ts` | Tests for the page's arithmetic |
 
@@ -187,10 +218,11 @@ app — was invisible.
   `cv_process` in only one of them.
 - **No retention policy yet.** At current volumes (~10k rows/month) this is not
   urgent, but the table grows forever.
-- **Balances cannot be auto-synced.** No provider here exposes a readable
-  balance, so the opening figure is only as current as the last time someone
-  typed it in. If the operator tops up without recording it, the page
-  under-reports what is left.
+- **Browser probes depend on saved session cookies.** When a cookie expires the
+  probe records an error saying so (never a $0), and the row goes `stale` after
+  24h. Refresh by capturing a new cookie and `fly secrets set`.
+- **Modal's spend limit is the operator's setting**, in Modal → Settings → Usage
+  & billing. The app alerts at $150 per cycle but cannot stop spending.
 - **Spend is attributed by PROVIDER, not by key.** v1 allows exactly one active
   account per provider (a unique partial index enforces it). Two Anthropic keys
   billed separately would need per-key attribution on `ai_usage` first.

@@ -47,7 +47,22 @@ export default async function handler(req: Request): Promise<Response> {
   const written: string[] = [];
   const failed: Array<{ provider: string; error: string }> = [];
 
+  const skipped: string[] = [];
+
   for (const p of probes) {
+    // Do not store an `unsupported` API reading. Anthropic and Modal publish no
+    // balance endpoint, and the Fly worker's BROWSER probe owns them. Storing
+    // "no endpoint" here every hour made the page's probe-health column read
+    // "unsupported" over a browser probe that was working fine (and, before
+    // 2026-09-21, the view took the latest row of ANY status, so these rows
+    // actually buried the real balance — 18 correct Anthropic readings hidden).
+    // If a browser probe is not configured, the worker writes its own
+    // `unsupported` row saying which cookie is missing, which is the accurate
+    // message; this one carried nothing it did not.
+    if (p.status === 'unsupported') {
+      skipped.push(p.provider);
+      continue;
+    }
     const { error } = await sb.rpc('ai_balance_probe_add', {
       p_provider: p.provider,
       p_source: p.source,
@@ -67,16 +82,29 @@ export default async function handler(req: Request): Promise<Response> {
     }
   }
 
+  // Low-balance / over-budget alerts. Evaluated in SQL so this cron and the Fly
+  // worker's browser probe share ONE implementation; the function row-locks its
+  // state, so both calling it within the same minute still sends exactly one
+  // WhatsApp per crossing. It sends through the existing scheduled-WhatsApp
+  // lane — no second sender to monitor.
+  const { data: alertResult, error: alertError } = await sb.rpc('ai_balance_alerts_evaluate');
+  if (alertError) {
+    // Loud: an alert that silently fails to evaluate is exactly how 2026-09-17
+    // happened — the probe saw $0.18 a day early and nobody was told.
+    console.error(`[ai-balance-probe] alert evaluation failed: ${alertError.message}`);
+  }
+
   // Surface the comparison in the same response so a manual run answers the
   // question directly instead of requiring a second query.
-  const { data: recon } = await sb
+  const { data: recon, error: reconError } = await sb
     .from('v_ai_balance_reconciliation')
-    .select('provider, ours_remaining_usd, provider_balance_usd, drift_usd, verdict');
+    .select('provider, billing_mode, vendor_value_usd, vendor_spent_24h, metered_24h, unmetered_24h, verdict');
+  if (reconError) console.error(`[ai-balance-probe] reconciliation read failed: ${reconError.message}`);
 
   const alarms = (recon ?? []).filter((r) => r.verdict === 'UNMETERED_SPEND');
   if (alarms.length > 0) {
     console.error(
-      `[ai-balance-probe] UNMETERED SPEND on ${alarms.map((a) => `${a.provider} ($${a.drift_usd})`).join(', ')} — money left an account without passing through ai_usage`,
+      `[ai-balance-probe] UNMETERED SPEND on ${alarms.map((a) => `${a.provider} ($${a.unmetered_24h} in 24h)`).join(', ')} — money left an account without passing through ai_usage`,
     );
   }
 
@@ -87,7 +115,9 @@ export default async function handler(req: Request): Promise<Response> {
       ok: true,
       probed: probes.map((p) => ({ provider: p.provider, status: p.status, balance_usd: p.balanceUsd ?? null, error: p.error ?? null })),
       written,
+      skipped_unsupported: skipped,
       store_failures: failed,
+      alerts: alertResult ?? null,
       reconciliation: recon ?? [],
       unmetered_alarms: alarms,
       duration_ms: Date.now() - startedAt,

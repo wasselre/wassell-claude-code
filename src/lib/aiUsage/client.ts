@@ -136,34 +136,54 @@ function normalizeBalance(r: Record<string, unknown>): AiAccountBalance {
 }
 
 /**
- * Our computed remaining beside the provider's REAL balance.
+ * The vendor's own number for each provider, and whether anything spent that
+ * we did not meter.
  *
- * This is the only figure on the page that can catch spend the ledger never
- * saw. `ai_usage` reports the call sites somebody wired; starting from the
- * vendor's own balance catches the ones nobody did — which on 2026-09-15 was
- * an operator-run calibration batch worth 20x the app's whole daily spend.
+ * Since 2026-09-21 the vendor's reading IS the balance. The earlier model —
+ * a hand-entered opening balance minus metered spend — was right only while
+ * someone recorded every top-up, and nobody did (Anthropic read $0.06 left
+ * against a real $99.63).
  *
- * ALWAYS read `verdict` before `drift_usd`: most rows cannot support a
- * comparison at all, and a bare number would be read as though they could.
+ * "Unmetered" is now measured by comparing how far the vendor's balance FELL
+ * across consecutive readings with what we metered over the same window. A
+ * top-up makes the balance RISE, so it is detected and reported separately
+ * rather than corrupting the comparison.
+ *
+ * Postpaid providers (Modal) are the mirror image: the vendor figure is this
+ * billing cycle's spend, which rises; the alert is spend going OVER a line
+ * rather than a balance going under one.
+ *
+ * ALWAYS read `verdict` before any number: several verdicts mean there is no
+ * comparison to read at all.
  */
 export interface AiBalanceCheck {
   provider: string;
   label: string;
-  ours_remaining_usd: number;
-  provider_balance_usd: number | null;
-  drift_usd: number | null;
+  billing_mode: 'prepaid' | 'postpaid';
+  low_balance_threshold: number | null;
+  spend_alert_threshold: number | null;
+  /** Balance (prepaid) or this cycle's spend (postpaid), from the vendor. */
+  vendor_value_usd: number | null;
+  vendor_value_at: string | null;
+  vendor_value_source: string | null;
   probe_checked_at: string | null;
-  probe_source: string | null;
   probe_status: string | null;
+  probe_source: string | null;
   probe_error: string | null;
+  vendor_spent_24h: number | null;
+  metered_24h: number | null;
+  topups_24h: number | null;
+  unmetered_24h: number | null;
+  unpriced_calls_24h: number;
+  needs_alert: boolean;
   verdict:
-    | 'match'
+    | 'ok'
     | 'UNMETERED_SPEND'
-    | 'credit_added'
-    | 'ours_is_upper_bound'
-    | 'no_probe'
-    | 'not_tracked'
-    | 'stale_probe';
+    | 'LOW_BALANCE'
+    | 'OVER_BUDGET'
+    | 'stale'
+    | 'no_reading'
+    | 'unsupported';
 }
 
 export interface AiUsageData {
@@ -257,13 +277,22 @@ export function useAiUsage(days = 30) {
         checks: ((checksRes.data ?? []) as Record<string, unknown>[]).map((r) => ({
           provider: String(r.provider),
           label: String(r.label ?? r.provider),
-          ours_remaining_usd: num(r.ours_remaining_usd),
-          provider_balance_usd: numOrNull(r.provider_balance_usd),
-          drift_usd: numOrNull(r.drift_usd),
+          billing_mode: r.billing_mode === 'postpaid' ? 'postpaid' : 'prepaid',
+          low_balance_threshold: numOrNull(r.low_balance_threshold),
+          spend_alert_threshold: numOrNull(r.spend_alert_threshold),
+          vendor_value_usd: numOrNull(r.vendor_value_usd),
+          vendor_value_at: (r.vendor_value_at as string | null) ?? null,
+          vendor_value_source: (r.vendor_value_source as string | null) ?? null,
           probe_checked_at: (r.probe_checked_at as string | null) ?? null,
-          probe_source: (r.probe_source as string | null) ?? null,
           probe_status: (r.probe_status as string | null) ?? null,
+          probe_source: (r.probe_source as string | null) ?? null,
           probe_error: (r.probe_error as string | null) ?? null,
+          vendor_spent_24h: numOrNull(r.vendor_spent_24h),
+          metered_24h: numOrNull(r.metered_24h),
+          topups_24h: numOrNull(r.topups_24h),
+          unmetered_24h: numOrNull(r.unmetered_24h),
+          unpriced_calls_24h: num(r.unpriced_calls_24h),
+          needs_alert: r.needs_alert === true,
           verdict: String(r.verdict) as AiBalanceCheck['verdict'],
         })),
       });

@@ -10,7 +10,7 @@ import BackToSettings from './components/BackToSettings';
 import AddCreditModal from './components/AddCreditModal';
 import {
   useAiUsage, setModelPrice, usd, usdPrecise, formatTokens,
-  summarizeAccounts, summarizeSpend,
+  summarizeSpend,
   areaLabel, PROVIDER_LABELS,
   type AiAccountBalance, type AiUnpricedModel, type AiBalanceCheck,
 } from '@/lib/aiUsage/client';
@@ -35,7 +35,7 @@ export default function AiUsagePage() {
   const { balances, runway, spend, unpriced, checks, loading, error, reload } = useAiUsage(30);
   const [creditFor, setCreditFor] = useState<AiAccountBalance | null>(null);
 
-  const totals = useMemo(() => summarizeAccounts(balances), [balances]);
+  const vendor = useMemo(() => summarizeVendor(checks), [checks]);
 
   const spend30 = useMemo(() => summarizeSpend(spend), [spend]);
 
@@ -63,8 +63,8 @@ export default function AiUsagePage() {
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-charcoal/55">
             {isAr
-              ? 'كل نداء للذكاء الاصطناعي في التطبيق يُسجَّل هنا. الرصيد تُدخله يدويًا — لا يوفّر أي مزوّد واجهة لقراءة رصيدك — ثم يُخصم الاستهلاك المُسجَّل تلقائيًا.'
-              : 'Every AI call the app makes is recorded here. Balances are typed in by hand — no provider exposes a balance an API key can read — and the metered spend is subtracted automatically.'}
+              ? 'كل نداء للذكاء الاصطناعي في التطبيق يُسجَّل هنا. الرصيد يُقرأ من كل مزوّد مباشرة كل ساعة ويُقارن بما سجّلناه، وأي إنفاق لم يمرّ عبر سجلّنا يظهر فورًا.'
+              : 'Every AI call the app makes is recorded here. Each provider\'s balance is read directly every hour and compared with what we recorded, so any spend that bypassed our ledger shows up.'}
           </p>
         </div>
         <button
@@ -89,24 +89,25 @@ export default function AiUsagePage() {
         </div>
       )}
 
+      <BalanceAlertBanner checks={checks} isAr={isAr} />
+
       {/* ── Totals ───────────────────────────────────────────────── */}
       <section className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
-          label={isAr ? 'الرصيد المتبقي' : 'Credit remaining'}
-          value={totals.trackedCount ? usd(totals.remaining) : '—'}
+          label={isAr ? 'الرصيد لدى المزوّدين' : 'Balance at providers'}
+          value={vendor.prepaidCount ? usd(vendor.prepaid) : '—'}
           hint={
-            totals.trackedCount
-              ? totals.anyUpperBound
-                ? isAr ? 'حد أعلى — راجع التسعير' : 'upper bound — see pricing'
-                : isAr ? `عبر ${totals.trackedCount} حساب` : `across ${totals.trackedCount} accounts`
-              : isAr ? 'لم تُدخل أي رصيد بعد' : 'no balances entered yet'
+            vendor.prepaidCount
+              ? isAr ? `مقروء من ${vendor.prepaidCount} مزوّد` : `read from ${vendor.prepaidCount} providers`
+              : isAr ? 'لا توجد قراءة بعد' : 'no reading yet'
           }
-          tone={totals.anyUpperBound ? 'warn' : 'default'}
+          tone={vendor.anyLow ? 'warn' : 'default'}
         />
         <Stat
-          label={isAr ? 'إجمالي ما أُضيف' : 'Total loaded'}
-          value={totals.trackedCount ? usd(totals.credited) : '—'}
-          hint={isAr ? 'منذ بداية التتبّع' : 'since tracking started'}
+          label={isAr ? 'إنفاق الدورة (بعد الاستخدام)' : 'Billed-after-use, this cycle'}
+          value={vendor.postpaidCount ? usd(vendor.postpaid) : '—'}
+          hint={isAr ? 'مثل Modal — يُحاسب في نهاية الشهر' : 'e.g. Modal — invoiced at month end'}
+          tone={vendor.anyOverBudget ? 'warn' : 'default'}
         />
         <Stat
           label={isAr ? 'أُنفق (٣٠ يومًا)' : 'Spent (30 days)'}
@@ -262,6 +263,21 @@ export default function AiUsagePage() {
 
 // ---------------------------------------------------------------------------
 
+/** Totals straight from the vendors' own latest readings. */
+function summarizeVendor(checks: AiBalanceCheck[]) {
+  let prepaid = 0, prepaidCount = 0, postpaid = 0, postpaidCount = 0;
+  for (const c of checks) {
+    if (c.vendor_value_usd === null) continue;
+    if (c.billing_mode === 'postpaid') { postpaid += c.vendor_value_usd; postpaidCount += 1; }
+    else { prepaid += c.vendor_value_usd; prepaidCount += 1; }
+  }
+  return {
+    prepaid, prepaidCount, postpaid, postpaidCount,
+    anyLow: checks.some((c) => c.verdict === 'LOW_BALANCE'),
+    anyOverBudget: checks.some((c) => c.verdict === 'OVER_BUDGET'),
+  };
+}
+
 type Tone = 'bad' | 'warn' | 'good' | 'mute';
 
 const TONE_CLASS: Record<Tone, string> = {
@@ -271,88 +287,146 @@ const TONE_CLASS: Record<Tone, string> = {
   mute: 'bg-charcoal/5 text-charcoal/50 border-sand/40',
 };
 
+const VERDICT_COPY: Record<AiBalanceCheck['verdict'], { ar: string; en: string; tone: Tone }> = {
+  LOW_BALANCE: { ar: 'رصيد منخفض', en: 'Low balance', tone: 'bad' },
+  OVER_BUDGET: { ar: 'تجاوز الحد', en: 'Over budget', tone: 'bad' },
+  UNMETERED_SPEND: { ar: 'إنفاق غير محتسب', en: 'Unmetered spend', tone: 'bad' },
+  ok: { ar: 'سليم', en: 'OK', tone: 'good' },
+  stale: { ar: 'القراءة قديمة', en: 'Reading is stale', tone: 'warn' },
+  no_reading: { ar: 'تعذّرت القراءة', en: 'No reading', tone: 'warn' },
+  unsupported: { ar: 'لا يمكن فحصه', en: 'Cannot be checked', tone: 'mute' },
+};
+
 /**
- * Our figure beside the provider's real balance.
+ * Low balance / over budget, shown ABOVE everything else.
  *
- * WHY THIS IS THE MOST IMPORTANT PANEL HERE. Every other number on this page
- * comes out of `ai_usage`, so it can only ever report the call sites somebody
- * remembered to meter. On 2026-09-15 an operator-run calibration batch spent
- * about 20x the app's entire daily Anthropic bill from a laptop, through the
- * same key, and not one row of it reached the ledger. No amount of internal
- * arithmetic can see that. Starting from the vendor's own balance can.
+ * On 2026-09-17 the Anthropic account emptied and 116 calls failed with
+ * "Your credit balance is too low". The browser probe had read $0.18 almost a
+ * day earlier — the data existed and nobody saw it. A WhatsApp goes to the
+ * admin at the moment of crossing; this banner is the same warning for whoever
+ * is on the page, and it stays for as long as the condition does.
+ */
+function BalanceAlertBanner({ checks, isAr }: { checks: AiBalanceCheck[]; isAr: boolean }) {
+  const hot = checks.filter((c) => c.verdict === 'LOW_BALANCE' || c.verdict === 'OVER_BUDGET');
+  if (hot.length === 0) return null;
+
+  return (
+    <section role="alert" className="mb-6 rounded-xl border border-red-300 bg-red-50 p-4">
+      <h2 className="mb-2 text-sm font-bold text-red-800">
+        {isAr ? 'تنبيه: رصيد الذكاء الاصطناعي' : 'AI credit alert'}
+      </h2>
+      <ul className="space-y-1.5 text-sm text-red-800">
+        {hot.map((c) => {
+          const label = PROVIDER_LABELS[c.provider];
+          const name = label ? (isAr ? label.ar : label.en) : c.provider;
+          const value = c.vendor_value_usd === null ? '—' : usd(c.vendor_value_usd);
+          return (
+            <li key={c.provider}>
+              {c.verdict === 'LOW_BALANCE'
+                ? isAr
+                  ? `${name}: الرصيد ${value} أقل من حد التنبيه ${usd(c.low_balance_threshold ?? 0)}. اشحن الرصيد قبل أن ينفد — عند الصفر تتوقف الخصائص التي تعتمد عليه.`
+                  : `${name}: balance ${value} is below the ${usd(c.low_balance_threshold ?? 0)} alert. Top up before it runs out — at zero, the features that use it stop.`
+                : isAr
+                  ? `${name}: إنفاق دورة الفوترة الحالية ${value} تجاوز حد التنبيه ${usd(c.spend_alert_threshold ?? 0)}. هذا المزوّد يحاسب بعد الاستخدام، فالتكلفة تستمر بالارتفاع ما دام العمل يجري.`
+                  : `${name}: this billing cycle is at ${value}, past the ${usd(c.spend_alert_threshold ?? 0)} alert. This provider bills after use, so the cost keeps rising while work runs.`}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * The vendor's own number beside what we metered.
  *
- * Each verdict is written out rather than reduced to a green tick, because
- * "we checked and it matches" and "we have never been able to check" are
- * completely different facts and a blank would blur them.
+ * Every other figure on this page comes out of `ai_usage`, so they all agree
+ * with each other by construction and can only report the call sites somebody
+ * remembered to wire. This panel starts from the VENDOR, which is the only way
+ * to see spend the ledger never recorded.
+ *
+ * The comparison is on how much the vendor's balance FELL over the last 24h
+ * versus what we metered in that same window — so a top-up (the balance
+ * rising) is reported separately instead of looking like a discrepancy.
+ *
+ * Each verdict is written out, never reduced to a tick: "checked and fine",
+ * "could not check" and "cannot be checked" are different facts.
  */
 function BalanceCheckPanel({ checks, isAr }: { checks: AiBalanceCheck[]; isAr: boolean }) {
   if (checks.length === 0) return null;
 
-  const alarms = checks.filter((c) => c.verdict === 'UNMETERED_SPEND');
-  const matched = checks.filter((c) => c.verdict === 'match');
-
-  const COPY: Record<AiBalanceCheck['verdict'], { ar: string; en: string; tone: Tone }> = {
-    UNMETERED_SPEND: { ar: 'إنفاق غير محتسب', en: 'Unmetered spend', tone: 'bad' },
-    match: { ar: 'مطابق', en: 'Matches', tone: 'good' },
-    credit_added: { ar: 'رصيد مُضاف لم يُسجّل', en: 'Top-up not recorded', tone: 'warn' },
-    ours_is_upper_bound: { ar: 'رقمنا حدّ أعلى', en: 'Ours is an upper bound', tone: 'warn' },
-    stale_probe: { ar: 'القراءة قديمة', en: 'Reading is stale', tone: 'warn' },
-    no_probe: { ar: 'لم يتم الفحص', en: 'Not checked yet', tone: 'mute' },
-    not_tracked: { ar: 'غير متتبّع', en: 'Not tracked', tone: 'mute' },
-  };
+  const unmetered = checks.filter((c) => c.verdict === 'UNMETERED_SPEND');
+  const healthy = checks.filter((c) => c.verdict === 'ok');
 
   return (
     <section
       className={`mb-8 rounded-xl border p-4 ${
-        alarms.length > 0 ? 'border-red-200 bg-red-50/60' : 'border-sand/50 bg-white'
+        unmetered.length > 0 ? 'border-red-200 bg-red-50/60' : 'border-sand/50 bg-white'
       }`}
     >
       <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-bold text-charcoal">
-          {isAr ? 'مطابقة الرصيد مع المزوّد' : 'Balance check against the provider'}
+          {isAr ? 'الرصيد لدى المزوّد' : 'Balance at the provider'}
         </h2>
         <span className="text-xs text-charcoal/45">
           {isAr
-            ? `${matched.length} من ${checks.length} مطابق`
-            : `${matched.length} of ${checks.length} reconciled`}
+            ? `${healthy.length} من ${checks.length} سليم`
+            : `${healthy.length} of ${checks.length} OK`}
         </span>
       </div>
       <p className="mb-3 text-xs leading-relaxed text-charcoal/55">
         {isAr
-          ? 'كل رقم آخر في هذه الصفحة محسوب من سجلّنا، فلا يمكنه رؤية إنفاق لم يُسجّل أصلاً. هذه المقارنة تبدأ من رصيد المزوّد نفسه، وهي الوحيدة القادرة على كشف ذلك.'
-          : 'Every other number here is computed from our own ledger, so none of them can see spend that was never recorded. This row starts from the provider’s own balance, which is the only thing that can.'}
+          ? 'الرصيد هنا يُقرأ من المزوّد نفسه كل ساعة، ولا يعتمد على أي رقم مُدخل يدويًا. نقارن مقدار نقص الرصيد خلال آخر ٢٤ ساعة بما سجّلناه نحن؛ أي فرق يعني إنفاقًا لم يمرّ عبر سجلّنا.'
+          : 'The balance here is read from the provider itself every hour — no hand-entered figure is involved. We compare how much it fell over the last 24h with what we recorded ourselves; any gap is spending that never passed through our ledger.'}
       </p>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] text-sm">
+        <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-b border-sand/40 text-xs text-charcoal/45">
               <th className="py-1.5 text-start font-medium">{isAr ? 'المزوّد' : 'Provider'}</th>
-              <th className="py-1.5 text-end font-medium">{isAr ? 'حسب سجلّنا' : 'Our figure'}</th>
-              <th className="py-1.5 text-end font-medium">{isAr ? 'لدى المزوّد' : 'Provider says'}</th>
-              <th className="py-1.5 text-end font-medium">{isAr ? 'الفرق' : 'Difference'}</th>
+              <th className="py-1.5 text-end font-medium">{isAr ? 'لدى المزوّد' : 'At provider'}</th>
+              <th className="py-1.5 text-end font-medium">{isAr ? 'أُنفق (٢٤ س)' : 'Spent 24h'}</th>
+              <th className="py-1.5 text-end font-medium">{isAr ? 'سجّلناه (٢٤ س)' : 'We recorded'}</th>
+              <th className="py-1.5 text-end font-medium">{isAr ? 'غير محتسب' : 'Unmetered'}</th>
               <th className="py-1.5 text-end font-medium">{isAr ? 'الحالة' : 'Status'}</th>
             </tr>
           </thead>
           <tbody>
             {checks.map((c) => {
-              const copy = COPY[c.verdict];
+              const copy = VERDICT_COPY[c.verdict] ?? VERDICT_COPY.no_reading;
               const label = PROVIDER_LABELS[c.provider];
+              const postpaid = c.billing_mode === 'postpaid';
               return (
                 <tr key={c.provider} className="border-b border-sand/20 last:border-0">
                   <td className="py-2 font-medium text-charcoal">
                     {label ? (isAr ? label.ar : label.en) : c.provider}
+                    {postpaid && (
+                      <span className="ms-1.5 text-xs font-normal text-charcoal/45">
+                        {isAr ? '(يُحاسب بعد الاستخدام)' : '(billed after use)'}
+                      </span>
+                    )}
                   </td>
-                  <td className="py-2 text-end tabular-nums text-charcoal/70">{usdPrecise(c.ours_remaining_usd)}</td>
                   <td className="py-2 text-end tabular-nums text-charcoal/70">
-                    {c.provider_balance_usd === null ? '—' : usdPrecise(c.provider_balance_usd)}
+                    {c.vendor_value_usd === null ? '—' : usdPrecise(c.vendor_value_usd)}
+                    {postpaid && c.vendor_value_usd !== null && (
+                      <span className="block text-[11px] text-charcoal/40">
+                        {isAr ? 'إنفاق هذه الدورة' : 'spent this cycle'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 text-end tabular-nums text-charcoal/70">
+                    {c.vendor_spent_24h === null ? '—' : usdPrecise(c.vendor_spent_24h)}
+                  </td>
+                  <td className="py-2 text-end tabular-nums text-charcoal/70">
+                    {c.metered_24h === null ? '—' : usdPrecise(c.metered_24h)}
                   </td>
                   <td
                     className={`py-2 text-end tabular-nums ${
                       c.verdict === 'UNMETERED_SPEND' ? 'font-bold text-red-700' : 'text-charcoal/70'
                     }`}
                   >
-                    {c.drift_usd === null ? '—' : usdPrecise(c.drift_usd)}
+                    {c.unmetered_24h === null ? '—' : usdPrecise(c.unmetered_24h)}
                   </td>
                   <td className="py-2 text-end">
                     <span className={`inline-block rounded-md border px-2 py-0.5 text-xs ${TONE_CLASS[copy.tone]}`}>
@@ -366,21 +440,27 @@ function BalanceCheckPanel({ checks, isAr }: { checks: AiBalanceCheck[]; isAr: b
         </table>
       </div>
 
-      {alarms.length > 0 && (
+      {unmetered.length > 0 && (
         <p className="mt-3 rounded-lg bg-red-100/70 px-3 py-2 text-xs leading-relaxed text-red-800">
           {isAr
-            ? 'خرج مال من الحساب دون المرور على السجلّ. الأسباب المعتادة: تشغيل يدوي لسكربت أو اختبار حيّ من جهاز، أو موضع استدعاء جديد غير موصول.'
-            : 'Money left the account without passing through the ledger. Usual causes: a script or live e2e test run by hand from a laptop, or a new call site nobody wired.'}
+            ? 'نقص الرصيد لدى المزوّد أكثر مما سجّلناه، أي أن مالًا خرج دون المرور على السجلّ. الأسباب المعتادة: تشغيل Kimi كمبرمج (سكربت kimi-code)، أو تشغيل يدوي لسكربت أو اختبار حيّ من جهاز، أو موضع استدعاء جديد غير موصول.'
+            : 'The provider balance fell by more than we recorded — money left without passing through the ledger. Usual causes: Kimi used as the coder (kimi-code), a script or live e2e test run by hand from a laptop, or a new call site nobody wired.'}
         </p>
       )}
 
-      {/* A provider we cannot check at all is stated plainly rather than left
-          as a dash somebody reads as agreement. */}
-      {checks.some((c) => c.probe_status === 'unsupported') && (
+      {checks.some((c) => c.topups_24h !== null && c.topups_24h > 0) && (
         <p className="mt-2 text-xs leading-relaxed text-charcoal/45">
           {isAr
-            ? 'بعض المزوّدين لا يوفّرون واجهة لقراءة الرصيد، فلا يمكن فحصهم تلقائياً بعد.'
-            : 'Some providers publish no balance endpoint, so they cannot be checked automatically yet.'}
+            ? 'رُصد شحن للرصيد خلال آخر ٢٤ ساعة، واحتُسب منفصلًا عن الإنفاق — لا حاجة لتسجيله يدويًا.'
+            : 'A top-up was detected in the last 24h and counted separately from spending — there is no need to record it by hand.'}
+        </p>
+      )}
+
+      {checks.some((c) => c.verdict === 'unsupported') && (
+        <p className="mt-2 text-xs leading-relaxed text-charcoal/45">
+          {isAr
+            ? 'بعض المزوّدين لا يوفّرون طريقة لقراءة الرصيد، فلا يمكن فحصهم تلقائيًا.'
+            : 'Some providers offer no way to read the balance, so they cannot be checked automatically.'}
         </p>
       )}
     </section>

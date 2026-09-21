@@ -895,6 +895,31 @@ by `/api/cron/ai-balance-probe` and shown at the TOP of Settings -> AI Usage.
     It cannot catch a test that drives an already-metered function in a loop —
     which is exactly what the calibration run does. That class is caught only by
     the balance comparison.
+**Vendor is the truth; alerts on crossings (added 2026-09-21,
+`supabase/migrations/2026-09-21_ai_vendor_truth_and_alerts.sql`):**
+
+22. **The vendor's latest OK reading is the balance** — hand-entered opening
+    balances are no longer compared against. `v_ai_balance_reconciliation`
+    compares how much the vendor FELL (prepaid) or ROSE (postpaid — Modal's
+    "Total Usage" cycle figure, a POSITIVE number) against metered spend over
+    the SAME window. A prepaid rise is a top-up, reported separately. Never
+    record Modal's cycle spend as a negative balance.
+23. **Unpriced calls must not silence UNMETERED_SPEND.** Flag when the gap
+    exceeds max($0.50, 20% of metered). The previous rule (any unpriced call =
+    "can't tell") hid an $11.58 Moonshot gap behind three cent-sized calls.
+24. **One WhatsApp per crossing, from SQL.** `ai_balance_alerts_evaluate()` is
+    the ONLY sender; both the Vercel cron and the worker's browser-probe tick
+    call it, and its row lock keeps that to one message. Don't add a second
+    sender in TypeScript. The recipient lives ONLY in `ai_alert_settings` (DB)
+    — never put a phone number in the repo.
+25. **Don't store `unsupported` API-probe rows for providers the browser probe
+    owns** (Anthropic, Modal); they buried real readings before 2026-09-21.
+26. **Modal's own cost estimate is calibrated ×4.13** (`mkt_settings`
+    `cv.modal_cost_calibration`, applied in `mkt_cv_cost_add`) because the
+    per-frame OCR estimate misses fan-out containers' cold-start/idle time.
+    Re-derive the factor from `ai_vendor_cost` (Modal's invoice breakdown)
+    rather than editing it by feel.
+
 **Where the money actually goes** (measured 2026-09-14, $87.50 all-time before
 this ledger existed): Modal GPU $53.27 (competitor video), Anthropic $25.37,
 fal $8.85. Detail in `docs/prd/ai-usage-tracking.md`.

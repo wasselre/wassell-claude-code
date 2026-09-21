@@ -50,7 +50,10 @@ export interface BalanceProbe {
   provider: string;
   source: BalanceSource;
   status: 'ok' | 'error' | 'unsupported';
-  /** Always dollars. Modal is usage-billed: an amount OWED is recorded NEGATIVE. */
+  /** Always dollars. For a POSTPAID provider (Modal) this is the current
+   *  billing cycle's spend so far — a positive number that rises with use and
+   *  resets at the cycle boundary. `v_ai_balance_reconciliation` reads it that
+   *  way for any account whose billing_mode is 'postpaid'. */
   balanceUsd?: number;
   currency?: string;
   raw?: unknown;
@@ -59,6 +62,9 @@ export interface BalanceProbe {
 
 /** Hard ceiling per provider — a hung browser must not wedge the worker. */
 const PROVIDER_TIMEOUT_MS = 60_000;
+/** How long to wait for an SPA dashboard to render its figure (inside the ceiling above). */
+const HYDRATE_BUDGET_MS = 20_000;
+const HYDRATE_POLL_MS = 1_000;
 
 // ---------------------------------------------------------------------------
 // Narrow browser surfaces. The real objects are playwright-core's Browser /
@@ -226,19 +232,17 @@ export function extractAnthropicCredits(pageText: string): ExtractResult {
 }
 
 /**
- * Modal — usage-billed, NOT prepaid: there is no credit balance, only an
- * accruing amount owed. We read it only when it appears under a label that
- * unambiguously means "owed" (amount due / current bill / unbilled usage …);
- * the caller records it as a NEGATIVE balanceUsd. Anything else — no label,
- * or several different figures — is NOT forced into a number (spec: do not
- * force a number that does not mean what the column header says).
+ * Modal — usage-billed, NOT prepaid. The workspace usage overview
+ * (modal.com/settings/<workspace>/usage?tab=overview) shows "Total Usage $x"
+ * for the CURRENT billing cycle, and that is the one figure we read: it is the
+ * same number the invoice is built from (verified 2026-09-21 — $220.18 on the
+ * page, matching the resource breakdown in ai_vendor_cost).
+ *
+ * The older /settings/billing page carries no such figure, which is why every
+ * probe until 2026-09-21 came back 'unsupported'.
  */
-export function extractModalAmountOwed(pageText: string): ExtractResult {
-  return collectLabelledAmounts(
-    pageText,
-    /(?:amount due|balance due|current (?:bill|usage|charges?)|unbilled (?:usage|charges?|balance)|outstanding (?:balance|charges?))\b/gi,
-    80,
-  );
+export function extractModalCycleSpend(pageText: string): ExtractResult {
+  return collectLabelledAmounts(pageText, /total usage\b/gi, 40);
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +256,9 @@ interface ProviderSpec {
    *  console.anthropic.com and platform.claude.com; we set the cookie on both
    *  so a captured session survives the redirect between them. */
   cookieDomains: string[];
-  url: string;
+  /** Returns the page to read, or null + why when it cannot be built. */
+  url: () => { url: string } | { error: string };
+  extract: (pageText: string) => ExtractResult;
   /** Map an extracted amount (or its absence) to the final probe fields. */
   interpret: (ex: ExtractResult, ctx: { url: string; pageText: string; scrapedAt: string }) => Omit<BalanceProbe, 'provider' | 'source'>;
 }
@@ -269,18 +275,13 @@ function interpretAnthropic(ex: ExtractResult, ctx: { url: string; pageText: str
 }
 
 function interpretModal(ex: ExtractResult, ctx: { url: string; pageText: string; scrapedAt: string }): Omit<BalanceProbe, 'provider' | 'source'> {
-  const raw = { url: ctx.url, scraped_at: ctx.scrapedAt, ...(ex.ok ? { matched: ex.matched, convention: 'usage-billed: amount owed recorded as a NEGATIVE balance' } : { seen: ex.seen, page_excerpt: ctx.pageText.slice(0, 300) }) };
+  const raw = { url: ctx.url, scraped_at: ctx.scrapedAt, ...(ex.ok ? { matched: ex.matched, convention: 'postpaid: current billing cycle spend so far' } : { seen: ex.seen, page_excerpt: ctx.pageText.slice(0, 300) }) };
   if (ex.ok) {
-    return { status: 'ok', balanceUsd: -ex.amount, currency: 'USD', raw };
+    return { status: 'ok', balanceUsd: ex.amount, currency: 'USD', raw };
   }
-  if (ex.seen.length > 0) {
-    return { status: 'error', raw, error: `${ex.error} on the Modal billing page` };
-  }
-  return {
-    status: 'unsupported',
-    raw,
-    error: 'Modal is usage-billed, not prepaid: no amount-owed figure was found on the billing page, so there is no balance to compare — nothing recorded rather than a number that does not mean what the header says',
-  };
+  // A missing figure is an ERROR, not 'unsupported': we know exactly which
+  // page carries it, so its absence means the page changed or never loaded.
+  return { status: 'error', raw, error: `${ex.error} for "Total Usage" on the Modal usage overview — the page layout may have changed, or MODAL_CONSOLE_COOKIE has expired` };
 }
 
 const PROVIDERS: ProviderSpec[] = [
@@ -288,14 +289,24 @@ const PROVIDERS: ProviderSpec[] = [
     provider: 'anthropic',
     cookieEnv: 'ANTHROPIC_CONSOLE_COOKIE',
     cookieDomains: ['.claude.com', '.anthropic.com'],
-    url: 'https://platform.claude.com/settings/billing',
+    url: () => ({ url: 'https://platform.claude.com/settings/billing' }),
+    extract: extractAnthropicCredits,
     interpret: (ex, ctx) => interpretAnthropic(ex, ctx),
   },
   {
     provider: 'modal',
     cookieEnv: 'MODAL_CONSOLE_COOKIE',
     cookieDomains: ['.modal.com'],
-    url: 'https://modal.com/settings/billing',
+    // The usage page is scoped to a workspace slug. It is configuration, not a
+    // secret, but it names a person, so it lives in the worker env rather than
+    // in this public repo.
+    url: () => {
+      const ws = process.env.MODAL_WORKSPACE?.trim();
+      return ws
+        ? { url: `https://modal.com/settings/${encodeURIComponent(ws)}/usage?tab=overview` }
+        : { error: 'MODAL_WORKSPACE is not set on the worker — set it to the workspace slug shown in modal.com/settings/<workspace>/usage' };
+    },
+    extract: extractModalCycleSpend,
     interpret: (ex, ctx) => interpretModal(ex, ctx),
   },
 ];
@@ -314,6 +325,11 @@ async function probeWithBrowser(spec: ProviderSpec, deps: BrowserProbeDeps): Pro
       error: `${spec.cookieEnv} is not configured — capture the session cookie from a logged-in browser and set it as a worker secret`,
     };
   }
+  const target = spec.url();
+  if ('error' in target) {
+    return { provider: spec.provider, source: 'browser', status: 'unsupported', error: target.error };
+  }
+  const url = target.url;
   const secrets = secretsOf(cookie);
   const fail = (error: string, raw?: unknown): BalanceProbe => ({
     provider: spec.provider,
@@ -332,37 +348,51 @@ async function probeWithBrowser(spec: ProviderSpec, deps: BrowserProbeDeps): Pro
       if (!ctx) throw new Error('Browserbase session exposed no browser context');
       await ctx.addCookies(parseCookieHeader(cookie, spec.cookieDomains));
       const page = ctx.pages()[0] ?? (await ctx.newPage());
-      await page.goto(spec.url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-      await page.waitForTimeout(2500); // let the SPA hydrate before reading text
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
       // An expired session cookie does not error — it REDIRECTS to a login
       // page. Detect that before trusting anything on the page.
       if (LOGIN_URL_RE.test(page.url())) {
         return fail(
-          `session expired: ${spec.url} redirected to a login page — ${spec.cookieEnv} needs refreshing (capture a fresh cookie from a logged-in browser)`,
-          { url: spec.url, landed_on: page.url(), scraped_at: new Date().toISOString() },
+          `session expired: ${url} redirected to a login page — ${spec.cookieEnv} needs refreshing (capture a fresh cookie from a logged-in browser)`,
+          { url, landed_on: page.url(), scraped_at: new Date().toISOString() },
         );
       }
 
-      const pageText = await page.evaluate(() => {
-        // Runs in the browser page (serialized by Playwright) — reference the
-        // DOM through a narrow typed view of globalThis so the Node-only
-        // worker tsconfig type-checks without the DOM lib.
-        const doc = (globalThis as unknown as { document: { body: { innerText: string } | null } }).document;
-        return doc.body ? doc.body.innerText : '';
-      });
+      // Both dashboards are SPAs: domcontentloaded fires on an empty shell and
+      // the figure arrives with a later XHR. A fixed 2.5 s sleep read the shell
+      // on 103 of 121 Anthropic runs ("no matching figure"). Poll instead: read
+      // the text, stop as soon as the figure (or a login screen) is there, and
+      // give up after HYDRATE_BUDGET_MS with the last text we saw.
+      let pageText = '';
+      let ex: ExtractResult = { ok: false, error: 'no matching figure found', seen: [] };
+      const hydrateDeadline = Date.now() + HYDRATE_BUDGET_MS;
+      for (;;) {
+        pageText = await page.evaluate(() => {
+          // Runs in the browser page (serialized by Playwright) — reference the
+          // DOM through a narrow typed view of globalThis so the Node-only
+          // worker tsconfig type-checks without the DOM lib.
+          const doc = (globalThis as unknown as { document: { body: { innerText: string } | null } }).document;
+          return doc.body ? doc.body.innerText : '';
+        });
+        ex = spec.extract(pageText);
+        // An ambiguous page will not become unambiguous by waiting, and a
+        // login screen will not turn into a dashboard.
+        if (ex.ok || ex.seen.length > 0 || LOGIN_TEXT_RE.test(pageText)) break;
+        if (Date.now() >= hydrateDeadline) break;
+        await page.waitForTimeout(HYDRATE_POLL_MS);
+      }
 
       // Same redirect, second signal: some dashboards client-side route to a
       // login screen without the URL matching LOGIN_URL_RE.
       if (LOGIN_TEXT_RE.test(pageText)) {
         return fail(
           `session expired: landed on a login page — ${spec.cookieEnv} needs refreshing (capture a fresh cookie from a logged-in browser)`,
-          { url: spec.url, landed_on: page.url(), scraped_at: new Date().toISOString() },
+          { url, landed_on: page.url(), scraped_at: new Date().toISOString() },
         );
       }
 
-      const ex = spec.provider === 'anthropic' ? extractAnthropicCredits(pageText) : extractModalAmountOwed(pageText);
-      const interpreted = spec.interpret(ex, { url: spec.url, pageText, scrapedAt: new Date().toISOString() });
+      const interpreted = spec.interpret(ex, { url, pageText, scrapedAt: new Date().toISOString() });
       return { provider: spec.provider, source: 'browser', ...interpreted };
     } catch (e) {
       return fail(`browser probe failed: ${errMsg(e)}`);

@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   runBrowserBalanceProbes,
   extractAnthropicCredits,
-  extractModalAmountOwed,
+  extractModalCycleSpend,
   parseCookieHeader,
   type BrowserProbeDeps,
   type ProbeBrowser,
@@ -89,7 +89,7 @@ function fakeSb(): { sb: SupabaseClient; calls: RpcCall[] } {
 
 const COOKIE = 'session_token=sup3rs3cret-c00kie-value-12345; other=abc';
 
-const ENV_VARS = ['ANTHROPIC_CONSOLE_COOKIE', 'MODAL_CONSOLE_COOKIE'] as const;
+const ENV_VARS = ['ANTHROPIC_CONSOLE_COOKIE', 'MODAL_CONSOLE_COOKIE', 'MODAL_WORKSPACE'] as const;
 const savedEnv = new Map<string, string | undefined>();
 
 beforeEach(() => {
@@ -141,13 +141,13 @@ describe('extractAnthropicCredits', () => {
   });
 });
 
-describe('extractModalAmountOwed', () => {
-  it('reads a single amount-due figure', () => {
-    const ex = extractModalAmountOwed('Billing\nCurrent usage $53.27\nPayment method Visa •••• 4242');
-    expect(ex).toEqual({ ok: true, amount: 53.27, matched: '$53.27' });
+describe('extractModalCycleSpend', () => {
+  it('reads the usage overview "Total Usage" figure', () => {
+    const ex = extractModalCycleSpend('Usage\nOverview  Apps\nTotal Usage\n$220.18\nGPU $189.46');
+    expect(ex).toEqual({ ok: true, amount: 220.18, matched: '$220.18' });
   });
-  it('finds nothing on a page with no amount-owed label', () => {
-    const ex = extractModalAmountOwed('Billing\nInvoices\nSeptember 2026');
+  it('finds nothing on a page without the label (the old billing page)', () => {
+    const ex = extractModalCycleSpend('Billing\nInvoices\nSeptember 2026');
     expect(ex.ok).toBe(false);
   });
 });
@@ -258,13 +258,14 @@ describe('runBrowserBalanceProbes', () => {
     expect(row.params.p_balance).toBeNull();
   });
 
-  it('a Modal amount-owed is recorded NEGATIVE (usage-billed, not prepaid)', async () => {
+  it('Modal records the current cycle spend as a POSITIVE figure (postpaid)', async () => {
     process.env.MODAL_CONSOLE_COOKIE = COOKIE;
+    process.env.MODAL_WORKSPACE = 'test-ws';
     const tracker = { closed: 0 };
     const counters = { sessions: 0, connects: 0 };
     // Anthropic runs first (no cookie → unsupported, no connect), Modal second.
     const deps = fakeDeps(
-      [fakeBrowser({ text: 'Billing\nCurrent usage $53.27\nInvoices' }, tracker)],
+      [fakeBrowser({ text: 'Usage\nTotal Usage $53.27\nInvoices' }, tracker)],
       counters,
     );
     const { sb, calls } = fakeSb();
@@ -272,14 +273,43 @@ describe('runBrowserBalanceProbes', () => {
     const probes = await runBrowserBalanceProbes(sb, deps);
     const modal = probes.find((p) => p.provider === 'modal')!;
 
-    expect(modal).toMatchObject({ status: 'ok', balanceUsd: -53.27, currency: 'USD' });
+    expect(modal).toMatchObject({ status: 'ok', balanceUsd: 53.27, currency: 'USD' });
     const row = calls.find((c) => c.params.p_provider === 'modal')!;
-    expect(row.params.p_balance).toBe(-53.27);
+    expect(row.params.p_balance).toBe(53.27);
+  });
+
+  it('Modal without MODAL_WORKSPACE is unsupported and opens no browser', async () => {
+    process.env.MODAL_CONSOLE_COOKIE = COOKIE;
+    const counters = { sessions: 0, connects: 0 };
+    const { sb } = fakeSb();
+    const probes = await runBrowserBalanceProbes(sb, fakeDeps([], counters));
+    const modal = probes.find((p) => p.provider === 'modal')!;
+    expect(modal.status).toBe('unsupported');
+    expect(modal.error).toMatch(/MODAL_WORKSPACE/);
+    expect(counters.sessions).toBe(0);
+  });
+
+  it('waits for a slow SPA to render the figure instead of reading the empty shell', async () => {
+    process.env.ANTHROPIC_CONSOLE_COOKIE = COOKIE;
+    const tracker = { closed: 0 };
+    const counters = { sessions: 0, connects: 0 };
+    const browser = fakeBrowser({}, tracker);
+    const page = browser.contexts()[0]!.pages()[0]!;
+    const texts = ['Loading…', 'Claude Console', 'Claude Console\nCredits $9.43'];
+    let reads = 0;
+    page.evaluate = async () => texts[Math.min(reads++, texts.length - 1)]!;
+    const { sb } = fakeSb();
+
+    const probes = await runBrowserBalanceProbes(sb, fakeDeps([browser], counters));
+    const anthropic = probes.find((p) => p.provider === 'anthropic')!;
+    expect(anthropic).toMatchObject({ status: 'ok', balanceUsd: 9.43 });
+    expect(reads).toBe(3);
   });
 
   it('the cookie value never appears in any recorded field or error string', async () => {
     process.env.ANTHROPIC_CONSOLE_COOKIE = COOKIE;
     process.env.MODAL_CONSOLE_COOKIE = COOKIE;
+    process.env.MODAL_WORKSPACE = 'test-ws';
     const tracker = { closed: 0 };
     const counters = { sessions: 0, connects: 0 };
     // Worst case: the underlying failure ECHOES the credential (a proxy error
@@ -305,13 +335,14 @@ describe('runBrowserBalanceProbes', () => {
   it('one provider throwing does not stop the other being read and recorded', async () => {
     process.env.ANTHROPIC_CONSOLE_COOKIE = COOKIE;
     process.env.MODAL_CONSOLE_COOKIE = COOKIE;
+    process.env.MODAL_WORKSPACE = 'test-ws';
     const tracker = { closed: 0 };
     const counters = { sessions: 0, connects: 0 };
     // Anthropic's connect throws; Modal's browser works.
     const deps = fakeDeps(
       [
         new Error('CDP websocket exploded'),
-        fakeBrowser({ text: 'Billing\nAmount due $12.34\nInvoices' }, tracker),
+        fakeBrowser({ text: 'Usage\nTotal Usage $12.34\nInvoices' }, tracker),
       ],
       counters,
     );
@@ -323,7 +354,7 @@ describe('runBrowserBalanceProbes', () => {
 
     expect(anthropic.status).toBe('error');
     expect(anthropic.error).toMatch(/CDP websocket exploded/);
-    expect(modal).toMatchObject({ status: 'ok', balanceUsd: -12.34 });
+    expect(modal).toMatchObject({ status: 'ok', balanceUsd: 12.34 });
     expect(calls).toHaveLength(2);
     expect(calls.find((c) => c.params.p_provider === 'modal')!.params.p_status).toBe('ok');
     expect(calls.find((c) => c.params.p_provider === 'anthropic')!.params.p_status).toBe('error');
