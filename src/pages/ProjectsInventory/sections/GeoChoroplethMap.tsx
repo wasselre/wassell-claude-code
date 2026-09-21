@@ -15,11 +15,12 @@
  * real area and could not be drilled. The polygons join to demand EXACTLY via
  * the district record id (see 2026-09-21_geo_choropleth_drilldown.sql).
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useJsApiLoader } from '@react-google-maps/api';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { GEO_MAP_STYLE } from '@/lib/locationUtils';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
+import { pickVisibleLabels, geometryExtent, type LabelCandidate } from '@/lib/geo/labelDeclutter';
 import { geometryBounds, type GeoShape, type GeoTier, type DistrictMetric } from '@/lib/geo/choropleth';
 
 const RIYADH = { lat: 24.7136, lng: 46.6753 };
@@ -72,6 +73,51 @@ export default function GeoChoroplethMap({
   useEffect(() => { clickRef.current = onFeatureClick; }, [onFeatureClick]);
   const selectedRef = useRef(selectedKey);
   useEffect(() => { selectedRef.current = selectedKey; }, [selectedKey]);
+  // Current-render props the once-created 'idle' listener + renderLabels must read.
+  const shapesRef = useRef(shapes);
+  const labelOfRef = useRef(labelOf);
+  const keyOfRef = useRef(keyOf);
+  const levelRef = useRef(level);
+  useEffect(() => { shapesRef.current = shapes; }, [shapes]);
+  useEffect(() => { labelOfRef.current = labelOf; }, [labelOf]);
+  useEffect(() => { keyOfRef.current = keyOf; }, [keyOf]);
+  useEffect(() => { levelRef.current = level; }, [level]);
+  const labelsRef = useRef<google.maps.Marker[]>([]);
+
+  // Persistent NAME on every area, decluttered so they never stack (the SAME rule the
+  // ambient boundary layer uses): big-enough features get named, biggest first; the
+  // selected feature always keeps its name. Re-placed on every zoom/pan, so district
+  // names that don't fit at city zoom appear as you zoom into them.
+  const renderLabels = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    for (const m of labelsRef.current) m.setMap(null);
+    labelsRef.current = [];
+    const zoom = map.getZoom();
+    const centerLat = map.getCenter()?.lat() ?? 24;
+    if (typeof zoom !== 'number') return;
+    const sel = selectedRef.current;
+    const cands: LabelCandidate[] = [];
+    for (const s of shapesRef.current) {
+      if (!s.geojson) continue;
+      const ext = geometryExtent(s.geojson);
+      if (!ext) continue;
+      const id = keyOfRef.current(s);
+      cands.push({ id, text: labelOfRef.current(s), lat: ext.lat, lng: ext.lng, spanLat: ext.spanLat, spanLng: ext.spanLng, priority: id === sel ? 10 : 0 });
+    }
+    const keep = pickVisibleLabels(cands, { zoom, centerLat });
+    const byId = new Map(cands.map((c) => [c.id, c]));
+    const fs = levelRef.current === 'district' ? '10px' : '12px';
+    const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
+    for (const id of keep) {
+      const c = byId.get(id);
+      if (!c) continue;
+      labelsRef.current.push(new google.maps.Marker({
+        map, position: { lat: c.lat, lng: c.lng }, icon: invisible, clickable: false, zIndex: 5,
+        label: { text: c.text, color: '#3A241E', fontSize: fs, fontWeight: '700' },
+      }));
+    }
+  }, []);
 
   // ── Map init (once) ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -95,6 +141,14 @@ export default function GeoChoroplethMap({
       setHover(byKeyRef.current.get(k) ?? null);
     });
     data.addListener('mouseout', () => setHover(null));
+    // Re-place labels after every settled zoom/pan — declutter depends on the zoom.
+    map.addListener('idle', () => renderLabels());
+
+    return () => {
+      for (const m of labelsRef.current) m.setMap(null);
+      labelsRef.current = [];
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded]);
 
   // ── (Re)draw features + fit to the drawn set ────────────────────────────────
@@ -118,6 +172,7 @@ export default function GeoChoroplethMap({
       const gb = new google.maps.LatLngBounds({ lat: agg.south, lng: agg.west }, { lat: agg.north, lng: agg.east });
       map.fitBounds(gb, 24);
     }
+    renderLabels(); // draw names now; the 'idle' listener re-places them after the fit settles
     // Redraw + refit whenever the drawn SET changes (a drill loads new shapes),
     // AND once the map itself becomes ready — shapes often resolve before the Maps
     // library finishes loading, and without mapInstance in the deps that first set
@@ -158,6 +213,9 @@ export default function GeoChoroplethMap({
       48,
     );
   }, [focusBounds]);
+
+  // Re-label when the selection changes so the selected feature keeps its name.
+  useEffect(() => { renderLabels(); }, [selectedKey, renderLabels]);
 
   if (!isMapsKeyConfigured()) return <div className={`grid ${heightClass} place-items-center rounded-xl bg-cream text-sm text-charcoal/50`}>{isAr ? 'مفتاح خرائط Google غير مُعد' : 'Google Maps key not configured'}</div>;
   if (!isLoaded) return <div className={`grid ${heightClass} place-items-center rounded-xl bg-cream text-sm text-charcoal/40`}>{isAr ? 'جارٍ تحميل الخريطة…' : 'Loading map…'}</div>;
