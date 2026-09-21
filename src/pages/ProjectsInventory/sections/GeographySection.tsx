@@ -1,16 +1,20 @@
 /**
- * Demand-vs-supply geography (Phase 4, layer B).
+ * Demand-vs-supply geography (Command Center) — a TRUE drill-down choropleth.
  *
- * The MAP is the default view: every relevant district (has demand or supply)
- * is a pin, keyed by its record id, coloured by the shared canonical
- * demand-vs-supply severity. Region / City are FILTERS (not a card drill) that
- * narrow which districts show and refit the map. Selecting a district reveals
- * its projects → open project + units. Every aggregate is a sum of real
- * records; demand uses the one canonical active-client layer.
+ * Country → Region → City → District, each level drawn as FILLED admin polygons
+ * (from public.geo_boundaries) coloured by demand-vs-supply. Click a region to
+ * fly into its cities, a city into its districts, a district to zoom in and see
+ * its projects. A breadcrumb walks back up. This replaces the centroid-pin map:
+ * pins never lined up with a real area and could not be drilled.
+ *
+ * The metric is the ONE canonical active-client demand layer
+ * (buildActiveClientDemand → Sales isActive). District demand joins the district
+ * polygons EXACTLY via the district record id; city + region colours are the
+ * additive rollup of their districts (rollupMetrics).
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, ArrowRight } from 'lucide-react';
+import { MapPin, ArrowRight, ChevronLeft } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { modelByName, asFiniteNumber } from '@/lib/projects/projectView';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
@@ -18,12 +22,32 @@ import {
   buildActiveClientDemand, aggregateDemandByDistrict, buildDistrictSupply,
   computeOpportunityGaps, projectDistrictIds,
 } from '@/lib/demand/demandAggregation';
-import DemandSupplyMap, { type DistrictMetric, type DistrictPin } from './DemandSupplyMap';
+import {
+  fetchGeoTree, fetchGeoShapes, rollupMetrics, geometryBounds,
+  type GeoNode, type GeoShape, type GeoTier, type DistrictMetric,
+} from '@/lib/geo/choropleth';
+import GeoChoroplethMap from './GeoChoroplethMap';
 
 const num = (v: unknown) => asFiniteNumber(v);
 const idArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : typeof v === 'string' && v ? [v] : []);
 
-interface DistrictNode { id: string; name: string; cityLookup: string; cityName: string; regionLookup: string; regionName: string; lat: number | null; lng: number | null; metric: DistrictMetric }
+const EMPTY_METRIC: DistrictMetric = { demand: 0, available: 0, severity: 0 };
+const NO_DATA = '#E5E7EB';
+const NO_DEMAND = '#9CA3AF';
+
+/** Colour by the FRACTION of demand left unmet — scale-free, so it reads the
+ *  same whether the polygon is one district or a whole region. */
+function severityColor(m: DistrictMetric): string {
+  if (m.demand === 0) return m.available > 0 ? NO_DEMAND : NO_DATA;
+  const ratio = Math.max(0, Math.min(1, m.severity / m.demand));
+  if (ratio <= 0) return '#10B981';
+  if (ratio <= 0.2) return '#84CC16';
+  if (ratio <= 0.5) return '#F59E0B';
+  if (ratio <= 0.8) return '#EF4444';
+  return '#B91C1C';
+}
+
+interface Crumb { ext: string; name: string }
 
 export default function GeographySection({ isAr }: { isAr: boolean }) {
   const navigate = useNavigate();
@@ -32,18 +56,25 @@ export default function GeographySection({ isAr }: { isAr: boolean }) {
   const allModel = modelByName(models, 'all_projects');
   const ourModel = modelByName(models, 'our_projects');
   const clientsModel = modelByName(models, 'clients');
-  const districtsModel = modelByName(models, 'districts');
 
-  const [selRegion, setSelRegion] = useState('');
-  const [selCity, setSelCity] = useState('');
+  const [country, setCountry] = useState<'SA' | 'AE'>('SA');
+  const [tree, setTree] = useState<GeoNode[]>([]);
+  const [level, setLevel] = useState<GeoTier>('region');
+  const [shapes, setShapes] = useState<GeoShape[]>([]);
+  const [region, setRegion] = useState<Crumb | null>(null);
+  const [city, setCity] = useState<Crumb | null>(null);
   const [selDistrict, setSelDistrict] = useState<string | null>(null);
+  const [focus, setFocus] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
+  const [fitToken, setFitToken] = useState('region:SA');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reqRef = useRef(0);
 
-  const data = useMemo(() => {
+  // ── Metric: the one canonical active-client demand layer, per district id ────
+  const districtMetric = useMemo(() => {
     const allRecords = allModel ? records[allModel.id] ?? [] : [];
     const ourRecords = ourModel ? records[ourModel.id] ?? [] : [];
     const clientRecords = clientsModel ? records[clientsModel.id] ?? [] : [];
-    const districtRecords = districtsModel ? records[districtsModel.id] ?? [] : [];
-
     const portfolioMasterIds = new Set<string>();
     for (const r of ourRecords) { const id = idArr((r.data as Record<string, unknown> | undefined)?.project)[0]; if (id) portfolioMasterIds.add(id); }
 
@@ -53,80 +84,112 @@ export default function GeographySection({ isAr }: { isAr: boolean }) {
     const supply = buildDistrictSupply(allRecords, portfolioMasterIds);
     const gaps = new Map(computeOpportunityGaps(demand, allRecords, portfolioMasterIds).map((g) => [g.districtId, g.severity]));
 
-    const nodes: DistrictNode[] = [];
-    for (const r of districtRecords) {
-      const dd = demandByDistrict.get(r.id), s = supply.get(r.id);
-      if (!dd && !s) continue; // relevant only
-      const d = (r.data ?? {}) as Record<string, unknown>;
-      nodes.push({
-        id: r.id,
-        name: String((isAr ? d.name_ar : d.name_en) ?? d.name_ar ?? d.name_en ?? '—'),
-        cityLookup: String(d.city_lookup ?? ''), cityName: String((isAr ? d.city_name_ar : d.city_name_en) ?? d.city_name_ar ?? d.city_name_en ?? (isAr ? 'غير محدد' : 'Unknown')),
-        regionLookup: String(d.region_lookup ?? ''), regionName: String((isAr ? d.region_name_ar : d.region_name_en) ?? d.region_name_ar ?? d.region_name_en ?? (isAr ? 'غير محدد' : 'Unknown')),
-        lat: num(d.center_lat) ?? num(d.centroid_lat), lng: num(d.center_lng) ?? num(d.centroid_lng),
-        metric: { demand: dd?.count ?? 0, available: s?.availableUnits ?? 0, severity: gaps.get(r.id) ?? 0 },
+    const map = new Map<string, DistrictMetric>();
+    const ids = new Set<string>([...demandByDistrict.keys(), ...supply.keys()]);
+    for (const id of ids) {
+      map.set(id, {
+        demand: demandByDistrict.get(id)?.count ?? 0,
+        available: supply.get(id)?.availableUnits ?? 0,
+        severity: gaps.get(id) ?? 0,
       });
     }
-    return { nodes, allRecords, districtCount: districtRecords.length };
+    return { map, allRecords };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allModel, ourModel, clientsModel, districtsModel, models, records, users, isAr, translationVersion]);
+  }, [allModel, ourModel, clientsModel, models, records, users, isAr, translationVersion]);
 
-  // Region / city filter option lists.
-  const regionOpts = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const n of data.nodes) if (n.regionLookup) m.set(n.regionLookup, n.regionName);
-    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [data]);
-  const cityOpts = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const n of data.nodes) if (n.cityLookup && (!selRegion || n.regionLookup === selRegion)) m.set(n.cityLookup, n.cityName);
-    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [data, selRegion]);
+  // ── Roll district demand up to city + region via the hierarchy tree ─────────
+  const rollup = useMemo(() => rollupMetrics(tree, districtMetric.map), [tree, districtMetric.map]);
 
-  const filtered = useMemo(
-    () => data.nodes.filter((n) => (!selRegion || n.regionLookup === selRegion) && (!selCity || n.cityLookup === selCity)),
-    [data, selRegion, selCity],
+  const metricForShape = (s: GeoShape): DistrictMetric => {
+    if (level === 'district') return districtMetric.map.get(s.record_id ?? '') ?? EMPTY_METRIC;
+    if (level === 'city') return rollup.city.get(s.external_id) ?? EMPTY_METRIC;
+    return rollup.region.get(s.external_id) ?? EMPTY_METRIC;
+  };
+  const keyOf = (s: GeoShape): string => (level === 'district' ? (s.record_id ?? s.external_id) : s.external_id);
+  const labelOf = (s: GeoShape): string => String((isAr ? s.name_ar : s.name_en) || s.name_ar || s.name_en || '—');
+
+  // ── Load the hierarchy tree once per country ────────────────────────────────
+  useEffect(() => {
+    let alive = true;
+    fetchGeoTree(country).then((t) => { if (alive) setTree(t); }).catch((e) => { if (alive) setError(String(e?.message ?? e)); });
+    return () => { alive = false; };
+  }, [country]);
+
+  // ── Load a tier slice (regions / a region's cities / a city's districts) ────
+  const loadSlice = (tier: GeoTier, parentExt: string | null, token: string) => {
+    const id = ++reqRef.current;
+    setLoading(true); setError(null);
+    fetchGeoShapes(tier, parentExt, country)
+      .then((s) => { if (id !== reqRef.current) return; setShapes(s); setLevel(tier); setFitToken(token); setLoading(false); })
+      .catch((e) => { if (id !== reqRef.current) return; setError(String(e?.message ?? e)); setLoading(false); });
+  };
+
+  // Initial regions + reset when the country changes.
+  useEffect(() => {
+    setRegion(null); setCity(null); setSelDistrict(null); setFocus(null);
+    loadSlice('region', null, `region:${country}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [country]);
+
+  const onFeatureClick = (s: GeoShape) => {
+    if (level === 'region') {
+      setRegion({ ext: s.external_id, name: labelOf(s) }); setCity(null); setSelDistrict(null); setFocus(null);
+      loadSlice('city', s.external_id, `city:${s.external_id}`);
+    } else if (level === 'city') {
+      setCity({ ext: s.external_id, name: labelOf(s) }); setSelDistrict(null); setFocus(null);
+      loadSlice('district', s.external_id, `district:${s.external_id}`);
+    } else {
+      setSelDistrict(s.record_id ?? null);
+      setFocus(geometryBounds(s.geojson));
+    }
+  };
+
+  // Breadcrumb navigation (walk back up).
+  const goRegions = () => { setRegion(null); setCity(null); setSelDistrict(null); setFocus(null); loadSlice('region', null, `region:${country}`); };
+  const goCities = () => { if (!region) return; setCity(null); setSelDistrict(null); setFocus(null); loadSlice('city', region.ext, `city:${region.ext}`); };
+
+  const selNode = selDistrict ? shapes.find((s) => s.record_id === selDistrict) ?? null : null;
+  const districtProjects = useMemo(
+    () => (selDistrict ? districtMetric.allRecords.filter((p) => projectDistrictIds(p).includes(selDistrict)) : []),
+    [selDistrict, districtMetric.allRecords],
   );
-  const pins: DistrictPin[] = useMemo(
-    () => filtered.filter((n) => n.lat != null && n.lng != null).map((n) => ({ id: n.id, label: n.name, lat: n.lat!, lng: n.lng!, metric: n.metric })),
-    [filtered],
-  );
-
-  const selNode = selDistrict ? data.nodes.find((n) => n.id === selDistrict) ?? null : null;
-  const districtProjects = useMemo(() => {
-    if (!selDistrict) return [];
-    return data.allRecords.filter((p) => projectDistrictIds(p).includes(selDistrict));
-  }, [selDistrict, data]);
 
   if (!initialized) return <div className="card p-8 text-center text-charcoal/40 text-sm">{isAr ? 'جارٍ تحميل بيانات الجغرافيا والطلب…' : 'Loading geography + demand data…'}</div>;
-  if (data.districtCount === 0) return <div className="card p-8 text-center text-charcoal/45 text-sm">{isAr ? 'لا تتوفر بيانات الأحياء.' : 'District data is not available.'}</div>;
 
   const nFmt = (v: number) => v.toLocaleString(isAr ? 'ar-SA' : 'en-US');
-  const sel = 'form-input text-sm py-1.5';
+  const crumbBtn = 'inline-flex items-center gap-1 text-charcoal/60 hover:text-copper transition-colors';
+  const countryBtn = (c: 'SA' | 'AE', label: string) =>
+    <button onClick={() => setCountry(c)} className={`px-2.5 py-1 rounded-md text-xs font-bold transition-colors ${country === c ? 'bg-copper text-white' : 'bg-cream text-charcoal/60 hover:text-charcoal'}`}>{label}</button>;
 
   return (
     <div className="space-y-3">
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <select className={sel} value={selRegion} onChange={(e) => { setSelRegion(e.target.value); setSelCity(''); setSelDistrict(null); }}>
-          <option value="">{isAr ? 'كل المناطق' : 'All regions'}</option>
-          {regionOpts.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-        </select>
-        <select className={sel} value={selCity} onChange={(e) => { setSelCity(e.target.value); setSelDistrict(null); }}>
-          <option value="">{isAr ? 'كل المدن' : 'All cities'}</option>
-          {cityOpts.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-        </select>
-        <span className="text-xs text-charcoal/45">{isAr ? `${nFmt(filtered.length)} حي بطلب أو معروض` : `${nFmt(filtered.length)} districts with demand/supply`}</span>
+      {/* Breadcrumb + country switch */}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <button onClick={goRegions} className={level === 'region' ? 'font-bold text-charcoal' : crumbBtn}>{isAr ? (country === 'SA' ? 'المملكة' : 'الإمارات') : (country === 'SA' ? 'Saudi Arabia' : 'UAE')}</button>
+        {region && <><ChevronLeft size={13} className="text-charcoal/30 rtl:rotate-180" /><button onClick={goCities} className={level === 'city' ? 'font-bold text-charcoal' : crumbBtn}>{region.name}</button></>}
+        {city && <><ChevronLeft size={13} className="text-charcoal/30 rtl:rotate-180" /><span className="font-bold text-charcoal">{city.name}</span></>}
+        {loading && <span className="text-xs text-charcoal/40">· {isAr ? 'جارٍ التحميل…' : 'loading…'}</span>}
+        <span className="ms-auto inline-flex items-center gap-1">{countryBtn('SA', isAr ? 'السعودية' : 'SA')}{countryBtn('AE', isAr ? 'الإمارات' : 'AE')}</span>
       </div>
 
-      {/* Map (default view) */}
-      <DemandSupplyMap pins={pins} selectedId={selDistrict} onDistrictClick={setSelDistrict} isAr={isAr} language={isAr ? 'ar' : 'en'} />
+      {error && <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200">{isAr ? 'تعذّر تحميل الحدود الجغرافية: ' : 'Could not load geography: '}{error}</div>}
+
+      {/* Map */}
+      <GeoChoroplethMap
+        shapes={shapes} level={level}
+        keyOf={keyOf} colorOf={(s) => severityColor(metricForShape(s))} metricOf={metricForShape} labelOf={labelOf}
+        selectedKey={level === 'district' ? selDistrict : null}
+        onFeatureClick={onFeatureClick}
+        fitToken={fitToken} focusBounds={focus}
+        isAr={isAr} language={isAr ? 'ar' : 'en'}
+      />
 
       {/* Selected district → its projects */}
       {selNode && (
         <div className="space-y-2">
           <div className="text-[0.6875rem] font-bold text-charcoal/40 uppercase tracking-widest">
-            {selNode.name}{selNode.cityName && <span className="text-charcoal/30"> · {selNode.cityName}</span>} — {isAr ? 'المشاريع' : 'Projects'} ({districtProjects.length}) · {isAr ? `${nFmt(selNode.metric.demand)} طلب · ${nFmt(selNode.metric.available)} متاحة` : `${nFmt(selNode.metric.demand)} demand · ${nFmt(selNode.metric.available)} available`}
+            {labelOf(selNode)} — {isAr ? 'المشاريع' : 'Projects'} ({districtProjects.length})
+            {(() => { const m = districtMetric.map.get(selDistrict ?? '') ?? EMPTY_METRIC; return <span className="text-charcoal/30"> · {isAr ? `${nFmt(m.demand)} طلب · ${nFmt(m.available)} متاحة` : `${nFmt(m.demand)} demand · ${nFmt(m.available)} available`}</span>; })()}
           </div>
           {districtProjects.length === 0 ? (
             <div className="card p-6 text-center text-charcoal/45 text-sm">{isAr ? 'لا مشاريع معروفة في هذا الحي.' : 'No known projects in this district.'}</div>
