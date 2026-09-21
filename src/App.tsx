@@ -28,6 +28,7 @@ const UsersPage = lazy(() => import('@/pages/Settings/UsersPage'));
 const AuditLogPage = lazy(() => import('@/pages/Settings/AuditLogPage'));
 const AiUsagePage = lazy(() => import('@/pages/Settings/AiUsagePage'));
 const GeoElementsPage = lazy(() => import('@/pages/Settings/GeoElementsPage'));
+const GeoZonesPage = lazy(() => import('@/pages/Settings/GeoZonesPage'));
 const GeoLabelingPage = lazy(() => import('@/pages/GeoLabeling/GeoLabelingPage'));
 const GeoGradePage = lazy(() => import('@/pages/GeoGrade/GeoGradePage'));
 const MarketingOpsPage = lazy(() => import('@/pages/Settings/MarketingOpsPage'));
@@ -537,6 +538,7 @@ export default function App() {
           <Route path="/settings/audit-log" element={<RequireAdmin><AuditLogPage /></RequireAdmin>} />
           <Route path="/settings/ai-usage" element={<RequireAdmin><AiUsagePage /></RequireAdmin>} />
           <Route path="/settings/geo-elements" element={<RequireAdmin><GeoElementsPage /></RequireAdmin>} />
+          <Route path="/settings/geo-zones" element={<RequireAdmin><GeoZonesPage /></RequireAdmin>} />
           <Route path="/settings/marketing-ops" element={<RequireAdmin><MarketingOpsPage /></RequireAdmin>} />
           <Route path="/settings/content-intelligence" element={<RequireAdmin><ContentIntelligencePage /></RequireAdmin>} />
           <Route path="/settings/marketing-advertisers" element={<RequireAdmin><MarketingAdvertisersPage /></RequireAdmin>} />

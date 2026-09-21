@@ -25,8 +25,10 @@ const RED = '#B91C1C';
 const CHOCOLATE = '#4A2C2A';
 
 /** Wassel basemap + Google's own district (neighborhood) names forced ON — the
- *  grader must read district names like a normal map. */
-const GRADER_MAP_STYLE: google.maps.MapTypeStyle[] = [
+ *  grader must read district names like a normal map. Exported because the
+ *  City Zones settings page (src/pages/Settings/GeoZonesPage.tsx) needs the
+ *  exact same "labels stay on" basemap when an admin curates a zone by hand. */
+export const GRADER_MAP_STYLE: google.maps.MapTypeStyle[] = [
   ...WASSEL_MAP_STYLE,
   { featureType: 'administrative.neighborhood', elementType: 'labels.text', stylers: [{ visibility: 'on' }] },
   { featureType: 'administrative.neighborhood', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },

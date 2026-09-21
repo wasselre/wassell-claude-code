@@ -145,6 +145,12 @@ fallback for calls with no diarized words. Calls are HATIF — not Retell.
    ids (e.g. `calib-001`) shows nothing — rebuild the batch from the new evidence.
 3. `auto_write_enabled` stays `false` throughout.
 
+## 2b. Curating a city zone (added 2026-09-21)
+
+1. Go to **Settings → City Zones** (`/settings/geo-zones`, admin only), pick the city, then the direction on the 3×3 compass — the badge says whether that zone is already «محدَّد» (curated) or «افتراضي» (coordinate default).
+2. Click districts on the map to add/remove them (or find them with the name search under it), then **حفظ / Save**. *Start from coordinate default* loads what the geometry alone would pick, as a starting point.
+3. **إعادة للافتراضي / Reset to default** deletes the curated rows so the zone falls back to coordinates. Saves take effect immediately for the resolver and the Project Finder — nothing is cached and no deploy is needed.
+
 ## 3. How review works
 
 1. The pipeline (`runReviewFirst` in `orchestrator.ts`) writes **one `pending`

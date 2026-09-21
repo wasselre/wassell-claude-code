@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot, ShieldCheck, Wallet,
+  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot, ShieldCheck, Wallet, Compass,
 } from 'lucide-react';
 
 // Settings sections (architecture cleanup Phase 1 — D40 System Administration
@@ -289,6 +289,17 @@ const CARDS: SettingsCard[] = [
     bg: '#B8734F14',
     route: '/settings/geo-elements',
     section: 'system_admin',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'مناطق المدن (شمال/جنوب…)',
+    titleEn: 'City Zones (north/south…)',
+    descAr: 'حدّد ما يقصده الناس بـ«شمال الرياض» وغيرها لكل مدينة؛ المدن غير المحددة تستخدم الافتراضي حسب الإحداثيات',
+    descEn: 'Define what people mean by “north Riyadh” etc. per city; undefined cities fall back to the coordinate default',
+    icon: Compass,
+    color: '#B8734F',
+    bg: '#B8734F14',
+    route: '/settings/geo-zones',
     adminOnly: true,
   },
   {
