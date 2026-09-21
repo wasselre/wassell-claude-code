@@ -65,7 +65,6 @@ export default function GeographySection({ isAr }: { isAr: boolean }) {
   const [city, setCity] = useState<Crumb | null>(null);
   const [selDistrict, setSelDistrict] = useState<string | null>(null);
   const [focus, setFocus] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
-  const [fitToken, setFitToken] = useState('region:SA');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reqRef = useRef(0);
@@ -116,28 +115,28 @@ export default function GeographySection({ isAr }: { isAr: boolean }) {
   }, [country]);
 
   // ── Load a tier slice (regions / a region's cities / a city's districts) ────
-  const loadSlice = (tier: GeoTier, parentExt: string | null, token: string) => {
+  const loadSlice = (tier: GeoTier, parentExt: string | null) => {
     const id = ++reqRef.current;
     setLoading(true); setError(null);
     fetchGeoShapes(tier, parentExt, country)
-      .then((s) => { if (id !== reqRef.current) return; setShapes(s); setLevel(tier); setFitToken(token); setLoading(false); })
+      .then((s) => { if (id !== reqRef.current) return; setShapes(s); setLevel(tier); setLoading(false); })
       .catch((e) => { if (id !== reqRef.current) return; setError(String(e?.message ?? e)); setLoading(false); });
   };
 
   // Initial regions + reset when the country changes.
   useEffect(() => {
     setRegion(null); setCity(null); setSelDistrict(null); setFocus(null);
-    loadSlice('region', null, `region:${country}`);
+    loadSlice('region', null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [country]);
 
   const onFeatureClick = (s: GeoShape) => {
     if (level === 'region') {
       setRegion({ ext: s.external_id, name: labelOf(s) }); setCity(null); setSelDistrict(null); setFocus(null);
-      loadSlice('city', s.external_id, `city:${s.external_id}`);
+      loadSlice('city', s.external_id);
     } else if (level === 'city') {
       setCity({ ext: s.external_id, name: labelOf(s) }); setSelDistrict(null); setFocus(null);
-      loadSlice('district', s.external_id, `district:${s.external_id}`);
+      loadSlice('district', s.external_id);
     } else {
       setSelDistrict(s.record_id ?? null);
       setFocus(geometryBounds(s.geojson));
@@ -145,8 +144,8 @@ export default function GeographySection({ isAr }: { isAr: boolean }) {
   };
 
   // Breadcrumb navigation (walk back up).
-  const goRegions = () => { setRegion(null); setCity(null); setSelDistrict(null); setFocus(null); loadSlice('region', null, `region:${country}`); };
-  const goCities = () => { if (!region) return; setCity(null); setSelDistrict(null); setFocus(null); loadSlice('city', region.ext, `city:${region.ext}`); };
+  const goRegions = () => { setRegion(null); setCity(null); setSelDistrict(null); setFocus(null); loadSlice('region', null); };
+  const goCities = () => { if (!region) return; setCity(null); setSelDistrict(null); setFocus(null); loadSlice('city', region.ext); };
 
   const selNode = selDistrict ? shapes.find((s) => s.record_id === selDistrict) ?? null : null;
   const districtProjects = useMemo(
@@ -180,7 +179,7 @@ export default function GeographySection({ isAr }: { isAr: boolean }) {
         keyOf={keyOf} colorOf={(s) => severityColor(metricForShape(s))} metricOf={metricForShape} labelOf={labelOf}
         selectedKey={level === 'district' ? selDistrict : null}
         onFeatureClick={onFeatureClick}
-        fitToken={fitToken} focusBounds={focus}
+        focusBounds={focus}
         isAr={isAr} language={isAr ? 'ar' : 'en'}
       />
 

@@ -38,8 +38,6 @@ interface Props {
   labelOf: (s: GeoShape) => string;
   selectedKey: string | null;
   onFeatureClick: (s: GeoShape) => void;
-  /** Changes whenever the drawn set changes → re-fit the viewport to all features. */
-  fitToken: string;
   /** When set, zoom to this one feature (a selected district). */
   focusBounds?: Bounds | null;
   isAr: boolean;
@@ -49,7 +47,7 @@ interface Props {
 
 export default function GeoChoroplethMap({
   shapes, level, keyOf, colorOf, metricOf, labelOf, selectedKey, onFeatureClick,
-  fitToken, focusBounds, isAr, language, heightClass = 'h-[32rem]',
+  focusBounds, isAr, language, heightClass = 'h-[32rem]',
 }: Props) {
   const { isLoaded } = useJsApiLoader(getMapsLoaderOptions(language));
   const divRef = useRef<HTMLDivElement | null>(null);
@@ -120,8 +118,14 @@ export default function GeoChoroplethMap({
       const gb = new google.maps.LatLngBounds({ lat: agg.south, lng: agg.west }, { lat: agg.north, lng: agg.east });
       map.fitBounds(gb, 24);
     }
+    // Redraw + refit whenever the drawn SET changes (a drill loads new shapes),
+    // AND once the map itself becomes ready — shapes often resolve before the Maps
+    // library finishes loading, and without mapInstance in the deps that first set
+    // would be dropped (the effect bails on !map and never re-runs).
+    // Selecting a district does NOT change `shapes`, so it won't refit here — the
+    // focusBounds effect handles zooming to the one selected district.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fitToken]);
+  }, [shapes, mapInstance]);
 
   // ── Style (re-runs on colour / selection change, not on redraw) ─────────────
   useEffect(() => {
