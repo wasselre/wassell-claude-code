@@ -61,6 +61,35 @@ describe('provider health — credentials not configured', () => {
     expect(h.health).toBe('not_configured');
   });
 
+  // /users/me answers 200 while the monthly limit is spent; the check must read
+  // the limit too (it said 'connected' through the Sept 2026 blackout).
+  const limitsFetch = (used: number) => vi.fn(async (input: string | URL) => {
+    const url = input.toString();
+    if (url.endsWith('/users/me')) return new Response('{"data":{"id":"u"}}', { status: 200 });
+    return new Response(JSON.stringify({ data: {
+      monthlyUsageCycle: { endAt: '2026-09-22T23:59:59.999Z' }, limits: { maxMonthlyUsageUsd: 29 }, current: { monthlyUsageUsd: used },
+    } }), { status: 200 });
+  });
+
+  it('Apify reports budget_exhausted when the monthly limit is used up', async () => {
+    vi.stubEnv('APIFY_API_TOKEN', 'tok');
+    vi.stubGlobal('fetch', limitsFetch(31.65));
+    const h = await new ApifyProvider().validateConnection();
+    expect(h.health).toBe('budget_exhausted');
+    expect(h.detail).toContain('$31.65 of $29');
+    expect(h.detail).toContain('2026-09-22');
+    vi.unstubAllGlobals();
+  });
+
+  it('Apify reports connected, with spend, while under the limit', async () => {
+    vi.stubEnv('APIFY_API_TOKEN', 'tok');
+    vi.stubGlobal('fetch', limitsFetch(4.1));
+    const h = await new ApifyProvider().validateConnection();
+    expect(h.health).toBe('connected');
+    expect(h.detail).toBe('$4.10 of $29 used this cycle');
+    vi.unstubAllGlobals();
+  });
+
   it('Browserbase reports not_configured without keys', async () => {
     vi.stubEnv('BROWSERBASE_API_KEY', '');
     vi.stubEnv('BROWSERBASE_PROJECT_ID', '');

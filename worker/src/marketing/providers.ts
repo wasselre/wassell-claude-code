@@ -13,7 +13,10 @@ import { createHash } from 'node:crypto';
 
 export type ProviderKey = 'apify' | 'youtube' | 'browserbase';
 export type Platform = 'instagram' | 'tiktok' | 'snapchat' | 'youtube' | 'x' | 'facebook';
-export type ProviderHealth = 'not_configured' | 'connected' | 'auth_failed' | 'rate_limited' | 'unavailable' | 'config_invalid';
+// 'budget_exhausted': the account's monthly spending limit is used up. Distinct
+// from 'unavailable' on purpose — an outage is worth retrying, a spent budget is
+// not until the billing cycle renews (see apifyLifecycle.classifyApifyError).
+export type ProviderHealth = 'not_configured' | 'connected' | 'auth_failed' | 'rate_limited' | 'unavailable' | 'config_invalid' | 'budget_exhausted';
 
 export interface NormalizedMetrics { views?: number; likes?: number; comments?: number; shares?: number; saves?: number; playCount?: number; followers?: number }
 export interface NormalizedContentPost {

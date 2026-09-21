@@ -18,7 +18,9 @@ export type ProviderHealth =
   | 'auth_failed'
   | 'rate_limited'
   | 'unavailable'
-  | 'config_invalid';
+  | 'config_invalid'
+  /** Monthly spending limit used up; renews with the billing cycle. */
+  | 'budget_exhausted';
 
 export interface ProviderHealthResult {
   provider: ProviderKey;

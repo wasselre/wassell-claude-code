@@ -37,7 +37,22 @@ export class ApifyProvider implements MarketingIntelligenceProvider {
       if (res.status === 401) return { provider: 'apify', health: 'auth_failed', detail: 'invalid token', checkedAt };
       if (res.status === 429) return { provider: 'apify', health: 'rate_limited', checkedAt };
       if (!res.ok) return { provider: 'apify', health: 'unavailable', detail: `HTTP ${res.status}`, checkedAt };
-      return { provider: 'apify', health: 'connected', checkedAt };
+      // /users/me answers 200 even when the monthly limit is spent, so "the token
+      // works" is not "we can collect". Read the limit too: until 2026-09-21 this
+      // check reported 'connected' through a 16-day budget blackout.
+      const lim = await fetch(`${APIFY}/users/me/limits`, { headers: { Authorization: `Bearer ${token()}` } });
+      if (!lim.ok) return { provider: 'apify', health: 'unavailable', detail: `limits HTTP ${lim.status}`, checkedAt };
+      const body = (await lim.json()) as {
+        data?: { monthlyUsageCycle?: { endAt?: string }; limits?: { maxMonthlyUsageUsd?: number }; current?: { monthlyUsageUsd?: number } };
+      };
+      const used = body.data?.current?.monthlyUsageUsd;
+      const cap = body.data?.limits?.maxMonthlyUsageUsd;
+      const renews = body.data?.monthlyUsageCycle?.endAt;
+      const spend = used != null && cap != null ? `$${used.toFixed(2)} of $${cap} used this cycle` : 'usage unknown';
+      if (used != null && cap != null && used >= cap) {
+        return { provider: 'apify', health: 'budget_exhausted', detail: `${spend}; renews ${renews ?? 'unknown'}`, checkedAt };
+      }
+      return { provider: 'apify', health: 'connected', detail: spend, checkedAt };
     } catch (e) {
       return { provider: 'apify', health: 'unavailable', detail: e instanceof Error ? e.message : String(e), checkedAt };
     }

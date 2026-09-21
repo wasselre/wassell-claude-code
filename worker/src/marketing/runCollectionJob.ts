@@ -10,7 +10,9 @@ import {
   YouTube, ProviderError,
   type NormalizedContentPost, type NormalizedMetrics, type ProviderKey,
 } from './providers.js';
-import { collectViaApify } from './apifyLifecycle.js';
+import {
+  collectViaApify, incrementalWindow, apifyCycleEnd, ProviderPausedError,
+} from './apifyLifecycle.js';
 import { collectMetaAdsByPage, discoverAdvertiser } from './metaAdsLifecycle.js';
 import { storeCreative } from './creativeStore.js';
 import { normalizeLandingUrl, campaignSignature, urlKey, insightKey } from './adIntel.js';
@@ -31,6 +33,50 @@ export interface CollectionJob {
 }
 interface Ctx { supabase: SupabaseClient; env: WorkerEnv; job: CollectionJob }
 interface RunStats { received: number; inserted: number; updated: number; skipped: number; errors: string[] }
+
+/** Newest published_at we hold for an account — the anchor of the incremental
+ *  window. A failed read is thrown: guessing "no history" would drop the date
+ *  cutoff and re-buy the account's latest posts, which is the bug this replaces. */
+async function newestStoredPost(sb: SupabaseClient, accountId: string): Promise<string | null> {
+  const { data, error } = await sb.from('mkt_content_posts').select('published_at')
+    .eq('social_account_id', accountId).not('published_at', 'is', null)
+    .order('published_at', { ascending: false }).limit(1).maybeSingle();
+  if (error) throw new ProviderError(`could not read newest stored post: ${error.message}`, 'unavailable');
+  return (data?.published_at as string | undefined) ?? null;
+}
+
+/** Which of these external ids do we already store? Drives the TikTok download
+ *  pass. Thrown on error: "none known" would download everything (cost), "all
+ *  known" would lose new videos (data). */
+function knownExternalIdsFor(sb: SupabaseClient, platform: string) {
+  return async (ids: string[]): Promise<Set<string>> => {
+    if (ids.length === 0) return new Set();
+    const { data, error } = await sb.from('mkt_content_posts').select('external_id').eq('platform', platform).in('external_id', ids);
+    if (error) throw new ProviderError(`could not check stored posts: ${error.message}`, 'unavailable');
+    return new Set((data ?? []).map((r) => r.external_id as string));
+  };
+}
+
+/** The monthly budget is spent: pause the provider until Apify's cycle renews.
+ *  mkt_provider_pause_for_budget cancels its queued jobs, raises one alert and
+ *  notifies admins once. Failures here are logged loudly and do not mask the
+ *  original error, which the caller re-throws. */
+async function pauseForBudget(sb: SupabaseClient, provider: string, detail: string): Promise<void> {
+  let until: string | null = null;
+  let untilNote = '';
+  try {
+    until = await apifyCycleEnd();
+  } catch (e) {
+    untilNote = ` (cycle end unreadable: ${e instanceof Error ? e.message : String(e)}; pausing 24h and re-checking)`;
+  }
+  if (!until || new Date(until).getTime() <= Date.now()) {
+    until = new Date(Date.now() + 24 * 3_600_000).toISOString();
+    if (!untilNote) untilNote = ' (no future cycle end reported; pausing 24h and re-checking)';
+  }
+  const { data, error } = await sb.rpc('mkt_provider_pause_for_budget', { p_provider: provider, p_until: until, p_detail: `${detail}${untilNote}`.slice(0, 500) });
+  if (error) console.error(`[collect] 🚨 budget pause for ${provider} FAILED — collection will keep hitting the limit: ${error.message}`);
+  else console.error(`[collect] 🚨 ${provider} monthly budget spent — paused until ${until}: ${JSON.stringify(data)}`);
+}
 
 // ── project index, SCOPED to a set of project ids ───────────────────────────
 // A publisher's post is only attributed to projects that publisher is linked to
@@ -145,8 +191,18 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       // Explicit params.limit wins (capped 50) — used for bounded validation runs;
       // else backfill uses the settings default, incremental a fixed recent window.
       const paramLimit = typeof job.params.limit === 'number' ? Math.min(50, Math.max(1, job.params.limit)) : null;
-      const limit = paramLimit ?? (job.kind === 'backfill' ? Number((await sb.from('mkt_settings').select('value').eq('key', 'default_backfill_limit').maybeSingle()).data?.value ?? 30) : 30);
+      let limit = paramLimit ?? (job.kind === 'backfill' ? Number((await sb.from('mkt_settings').select('value').eq('key', 'default_backfill_limit').maybeSingle()).data?.value ?? 30) : 30);
       const platform = acct!.platform as NormalizedContentPost['platform'];
+      // Scheduled Apify incrementals ask only for what can have changed: posts
+      // newer than the last one stored, and at least the last 14 days (for fresh
+      // engagement). An explicit params.limit is a bounded validation run and
+      // keeps the old "latest N" behaviour.
+      let newerThan: string | undefined;
+      if (job.provider === 'apify' && job.kind === 'incremental' && paramLimit == null) {
+        const w = incrementalWindow(await newestStoredPost(sb, acct!.id as string));
+        newerThan = w.newerThan;
+        limit = w.limit;
+      }
 
       // INCREMENTAL always fetches the newest page (cursor null) so repeat runs
       // re-see recent posts and dedup UPDATES them — idempotent. Only BACKFILL
@@ -157,8 +213,14 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         batch = await YouTube.collect({ platform: 'youtube', handle: acct!.handle as string, externalAccountId: acct!.external_account_id as string | undefined, cursor: useCursor, mode: job.kind as 'incremental' | 'backfill', limit });
       } else if (job.provider === 'apify') {
         // Full Apify lifecycle (start run → poll → dataset) — the ONE implementation.
-        const result = await collectViaApify(sb, { platform, handle: acct!.handle as string, limit });
+        const result = await collectViaApify(sb, {
+          platform, handle: acct!.handle as string, limit, newerThan,
+          knownExternalIds: knownExternalIdsFor(sb, platform),
+        });
         apifyCost = result.cost;
+        // Partial problems (ceiling hit, a video with no file, storage left
+        // behind) mark the run 'partial' so they show up, instead of vanishing.
+        for (const w of result.warnings) stats.errors.push(`apify: ${w}`);
         batch = { posts: result.posts, nextCursor: null };
       } else {
         // browserbase fallback path: items pre-scraped into params.items
@@ -455,6 +517,13 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
     // is still spend, and dropping it here would under-report the cost dashboard
     // for exactly the runs most worth accounting for.
     await sb.rpc('mkt_ingestion_run_finish', { p_run_id: runId, p_status: 'failed', p_received: stats.received, p_inserted: stats.inserted, p_updated: stats.updated, p_skipped: stats.skipped, p_errors: [err.message], p_cost: apifyCost ?? null });
+    if (err.health === 'budget_exhausted') {
+      // The ACCOUNT is fine; the budget is spent. Leave its status alone, pause
+      // the provider (unless this error came FROM the pause), and let index.ts
+      // cancel the job instead of retrying it.
+      if (!(err instanceof ProviderPausedError)) await pauseForBudget(sb, job.provider, err.message);
+      throw err;
+    }
     await sb.from('mkt_social_accounts').update({ scrape_status: err.health === 'auth_failed' ? 'auth_failed' : err.health === 'rate_limited' ? 'rate_limited' : 'error' }).eq('id', job.social_account_id ?? '00000000-0000-0000-0000-000000000000');
 
     // Browserbase fallback — only when eligible per the strict rules.

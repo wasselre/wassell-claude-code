@@ -402,7 +402,7 @@ export function shouldSnapshot(
 
 // ── Browserbase fallback eligibility ────────────────────────────────────────
 export type ProviderHealthCode =
-  | 'not_configured' | 'connected' | 'auth_failed' | 'rate_limited' | 'unavailable' | 'config_invalid';
+  | 'not_configured' | 'connected' | 'auth_failed' | 'rate_limited' | 'unavailable' | 'config_invalid' | 'budget_exhausted';
 
 /**
  * Browserbase is a strict fallback. Eligible ONLY when the primary failed with a
@@ -418,7 +418,9 @@ export function browserbaseFallbackEligible(input: {
 }): { eligible: boolean; reason: string } {
   if (input.manualRequest) return { eligible: true, reason: 'manual_request' };
   if (input.unsupportedSource) return { eligible: true, reason: 'unsupported_source' };
-  if (['auth_failed', 'rate_limited', 'not_configured', 'config_invalid'].includes(input.primaryHealth)) {
+  // budget_exhausted: a fallback scraper would not make the budget come back,
+  // and paying a second vendor to cover a spent first one is a decision, not a retry.
+  if (['auth_failed', 'rate_limited', 'not_configured', 'config_invalid', 'budget_exhausted'].includes(input.primaryHealth)) {
     return { eligible: false, reason: `no_fallback_on_${input.primaryHealth}` };
   }
   if (input.primaryHealth === 'unavailable' && input.attemptsExhausted) {

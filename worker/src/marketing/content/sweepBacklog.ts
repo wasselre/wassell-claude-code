@@ -39,8 +39,9 @@
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { repairMediaDimensions } from '../../repairMediaDimensions.js';
+import { sweepApifyStorage } from '../apifyStorageSweep.js';
 
-export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
 /** Stage 5 ceilings. A cv_process job is a multi-minute GPU run on Modal, so
  *  the re-enqueue is deliberately small per tick; anything it does not reach
@@ -192,7 +193,7 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
 
@@ -479,6 +480,18 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
     if (r.errors.length > 0) console.error(`[sweep] dimension repair: ${r.errors.length} failed, first: ${r.errors[0]}`);
   } catch (e) {
     console.error(`[sweep] dimension repair threw: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // ── stage 8: Apify storage cleanup (2026-09-21) ─────────────────────────
+  // Delete datasets / video stores our Apify runs left behind once our own
+  // copy exists. They were billed hourly for 31 days ($4.98 of a $29 month).
+  // Small batch per tick; see apifyStorageSweep.ts for the safety rule.
+  try {
+    const r = await sweepApifyStorage(sb, { limit: 25 });
+    stats.apify_storage_swept = r.swept;
+    if (r.errors.length > 0) console.error(`[sweep] apify storage: ${r.errors.length} run(s) failed, first: ${r.errors[0]}`);
+  } catch (e) {
+    console.error(`[sweep] apify storage sweep threw: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return stats;

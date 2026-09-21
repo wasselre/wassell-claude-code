@@ -1,7 +1,7 @@
 # PRD: Competitor Watch (مرصد المنافسين)
 
 **Status:** Live (all five surfaces: Content Library + Agents & runs, Content pipeline, Storage, Companies)
-**Last updated:** 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
+**Last updated:** 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
 
 > A NEW, from-scratch workspace that succeeds the **Marketing Intelligence**
 > page (`marketing-intelligence.md`), built because the operator found that page
@@ -121,6 +121,35 @@ that study the corpus (how competitors write posts, script reels, price offers).
   its real count; the full spoken-transcript TEXT is not yet inlined (only a
   "transcript exists" flag) — flagged in-UI as a coming update.
 - Bilingual AR/EN, RTL-correct; its own scoped design system (`.cw-root`).
+- **How collection runs, and what it costs (rebuilt 2026-09-21).** Instagram and
+  TikTok posts are fetched through Apify (paid per post, $29/month plan limit);
+  YouTube through the free YouTube API. Measured before the rebuild: 9,961 posts
+  paid for in one cycle, 221 new, budget gone on day 14, nothing collected for the
+  rest of the month. Now:
+  - **Only what can have changed.** A scheduled run asks for posts newer than
+    the last one we stored, and never less than the last 14 days so recent posts'
+    likes/views keep updating. After a gap the window reaches back to the last
+    stored post, so nothing is skipped. A run that hits its ceiling (30, or 100
+    when catching up) is marked partial with a warning, never silently cut.
+  - **TikTok in two passes.** A metadata pass (no downloads) finds new videos;
+    a second pass downloads only those. Instagram media comes from Instagram's
+    own CDN.
+  - **Apify storage is deleted** once read (metadata) or once our copy of the
+    video exists (downloads) — stage 8 of the content sweep, 25 runs per tick.
+  - **Schedule.** Once per Riyadh calendar day per account (was every 20 h,
+    i.e. 1.2×/day). An account with no post in 30 days, or none ever, is checked
+    weekly and returns to daily by itself when it posts again. An account's
+    `cadence.incremental = 'weekly'` is honoured.
+  - **A spent budget pauses, it does not retry.** Apify's "monthly usage hard
+    limit" (403) / "not enough usage" (402) is classified `budget_exhausted`. The
+    provider is paused until the billing cycle Apify reports renews
+    (`mkt_providers.paused_until`), its queued jobs are cancelled, ONE critical
+    alert «نفدت ميزانية apify الشهرية» appears on Settings → Marketing Ops, and
+    admins get one push notification. The pause lifts itself at renewal and the
+    alert resolves. Paused providers no longer occupy scheduler slots, which had
+    starved YouTube collection for 16 days. Settings → Marketing Ops' manual
+    health check also reads the limit, so it shows `budget_exhausted` with the
+    spend instead of "connected".
 
 ## User flows
 
@@ -180,6 +209,10 @@ Reads, plus two admin writes (`attribution_set`, `attribution_rerun`).
 | `.claude/skills/content-enrichment/SKILL.md` | Runner skill: candidates-only + `evidence_quote` + `mentioned_projects` |
 | `scripts/lib/mkt-enrichment-validate.mjs` | Mechanical proof check (`attributionRejection`) — a pick without a valid quote becomes «no project» |
 | `src/pages/CompetitorWatch/components/PipelineSurface.tsx` | «صحة ربط المشاريع» panel |
+| `supabase/migrations/2026-09-21_01_apify_efficient_collection.sql` | Calendar-day + dormancy scheduler (`mkt_incremental_due`, `mkt_enqueue_due_accounts`), provider budget pause (`mkt_provider_pause_for_budget`, `mkt_provider_resume_expired`, `mkt_job_cancel_paused`) |
+| `worker/src/marketing/apifyLifecycle.ts` | `incrementalWindow`, date-filtered inputs, TikTok two-pass download, inline storage delete, `classifyApifyError`, pause guard |
+| `worker/src/marketing/apifyStorageSweep.ts` | Deletes leftover Apify run storage once media is safe (sweep stage 8) |
+| `api/_lib/marketing/providers/apify.ts` | Manual health check reads the monthly limit |
 
 ## Open questions / known limitations
 
@@ -197,5 +230,10 @@ Reads, plus two admin writes (`attribution_set`, `attribution_rerun`).
   dropdown yet.
 - **The "learner" agents** that study this corpus are the next major build; this
   Library is their foundation.
+- **Recorded Apify cost under-counts** Apify's bill (about $20 recorded vs
+  $26.56 billed for scraping in the Aug–Sep 2026 cycle; storage not recorded at
+  all). Apify's billing page is the source of truth for spend.
+- **The `post_metrics` job for Instagram/TikTok is a stub** — it never calls
+  Apify. Engagement is refreshed only by the 14-day window of incremental runs.
 - **Follower / engagement completeness** inherits the pipeline's gaps (e.g. views
   absent on some platforms) — shown as-is, never faked.

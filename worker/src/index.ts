@@ -50,6 +50,7 @@ import { runPortalRegistrationJob, type PortalRegistrationJob } from './runPorta
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
 import { runUnitPdfJob, type UnitPdfJob } from './runUnitPdfJob.js';
 import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
+import { ProviderError } from './marketing/providers.js';
 import { runCreativeCleanup } from './marketing/creativeCleanup.js';
 import { sweepContentBacklog } from './marketing/content/sweepBacklog.js';
 import { getSessionStatus, restartSession, stopSession, type WahaSendConfig } from './waha.js';
@@ -2707,6 +2708,15 @@ async function claimAndRunOneMarketing(): Promise<boolean> {
     console.log(`[worker] marketing job=${job.id} ok: received=${stats.received} inserted=${stats.inserted} updated=${stats.updated} skipped=${stats.skipped}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // A spent monthly budget is not an outage: retrying it only produces more
+    // refusals (~450 a day in Sept 2026). The provider is already paused by
+    // runCollectionJob; end this job without queueing retries.
+    if (err instanceof ProviderError && err.health === 'budget_exhausted') {
+      const { data: outcome, error: cErr } = await supabase.rpc('mkt_job_cancel_paused', { p_job_id: job.id, p_error: msg });
+      if (cErr) console.error(`[worker] marketing job=${job.id} budget-cancel FAILED: ${cErr.message}`);
+      console.error(`[worker] marketing job=${job.id} cancelled (${outcome ?? 'error'}) — provider budget spent: ${msg}`);
+      return true;
+    }
     const { data: outcome } = await supabase.rpc('mkt_job_fail', { p_job_id: job.id, p_error: msg });
     console.error(`[worker] marketing job=${job.id} failed (${outcome}): ${msg}`);
   }
