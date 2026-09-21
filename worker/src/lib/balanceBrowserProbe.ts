@@ -242,7 +242,10 @@ export function extractAnthropicCredits(pageText: string): ExtractResult {
  * probe until 2026-09-21 came back 'unsupported'.
  */
 export function extractModalCycleSpend(pageText: string): ExtractResult {
-  return collectLabelledAmounts(pageText, /total usage\b/gi, 40);
+  // "(?!\s*limit)": the same page also says "Total usage limit, with credits
+  // included. $500" — Modal's spend cap, not spend. Reading it made the first
+  // live run (2026-09-21) come back ambiguous ($220.18 vs $500).
+  return collectLabelledAmounts(pageText, /total usage\b(?!\s*limit)/gi, 40);
 }
 
 // ---------------------------------------------------------------------------

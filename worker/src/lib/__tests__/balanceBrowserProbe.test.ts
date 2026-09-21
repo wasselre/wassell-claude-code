@@ -146,6 +146,10 @@ describe('extractModalCycleSpend', () => {
     const ex = extractModalCycleSpend('Usage\nOverview  Apps\nTotal Usage\n$220.18\nGPU $189.46');
     expect(ex).toEqual({ ok: true, amount: 220.18, matched: '$220.18' });
   });
+  it('ignores the "Total usage limit" figure on the same page (live layout 2026-09-21)', () => {
+    const text = 'Total Spend: $190.18\nTotal Usage\n$220.18\nCredits Applied\n$-30.00\n$220.18 / $500\nUsage limit\nSet by Modal\n\nTotal usage limit, with credits included.\n\n$500';
+    expect(extractModalCycleSpend(text)).toEqual({ ok: true, amount: 220.18, matched: '$220.18' });
+  });
   it('finds nothing on a page without the label (the old billing page)', () => {
     const ex = extractModalCycleSpend('Billing\nInvoices\nSeptember 2026');
     expect(ex.ok).toBe(false);
