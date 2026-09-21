@@ -300,6 +300,7 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/geo-zones',
+    section: 'system_admin',
     adminOnly: true,
   },
   {
