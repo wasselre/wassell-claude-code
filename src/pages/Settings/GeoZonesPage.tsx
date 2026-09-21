@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, MarkerF, Polygon, useJsApiLoader } from '@react-google-maps/api';
-import { Compass, Loader2, Plus, RotateCcw, Save, Search, X } from 'lucide-react';
+import { Compass, Eraser, Loader2, Plus, RotateCcw, Save, Search, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import BackToSettings from './components/BackToSettings';
@@ -232,6 +232,7 @@ export default function GeoZonesPage() {
   }, []);
 
   const startFromDefault = () => setWorking(new Set(defaultIds));
+  const clearAll = () => setWorking(new Set());
 
   const save = async () => {
     if (!supabase || !city) return;
@@ -511,6 +512,9 @@ export default function GeoZonesPage() {
         <Button variant="secondary" className="!px-3 !py-2 !text-xs" onClick={startFromDefault} disabled={saving}>
           <Compass size={14} /> {isAr ? 'ابدأ من الافتراضي الإحداثي' : 'Start from coordinate default'}
         </Button>
+        <Button variant="secondary" className="!px-3 !py-2 !text-xs" onClick={clearAll} disabled={working.size === 0 || saving}>
+          <Eraser size={14} /> {isAr ? 'مسح الكل' : 'Clear all'}
+        </Button>
         <Button className="!px-3 !py-2 !text-xs" onClick={() => void save()} disabled={!dirty || saving}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />} {isAr ? 'حفظ' : 'Save'}
         </Button>
@@ -526,6 +530,13 @@ export default function GeoZonesPage() {
         {dirty && (
           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
             {isAr ? 'تغييرات غير محفوظة' : 'unsaved changes'}
+          </span>
+        )}
+        {dirty && working.size === 0 && (
+          <span className="basis-full text-[11px] text-charcoal/60">
+            {isAr
+              ? 'المجموعة فارغة — الحفظ الآن يلغي التحديد اليدوي ويعيد الجهة إلى الافتراضي الإحداثي.'
+              : 'The set is empty — saving now clears the curation and hands the zone back to the coordinate default.'}
           </span>
         )}
       </div>
