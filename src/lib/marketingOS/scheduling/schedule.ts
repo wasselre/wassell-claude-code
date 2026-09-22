@@ -268,7 +268,11 @@ export function scheduleProduction(
     // the day its successor starts; otherwise it must finish the day before.
     const chain = itemByKey.get(r.itemKey)?.workflow.sameDayChain === true;
     const cap = chain ? succ.start : addWorkingDays(succ.start, -1, cal);
-    return daysBetween(cap, r.deadline) < 0 ? cap : r.deadline;
+    // The EARLIER of the two. Until 2026-09-22 this returned the later one, so
+    // a predecessor kept its own deadline when its successor had been pulled
+    // earlier by capacity, and 35 live creatives had the design booked after
+    // the writer's check of it (`successorCap.test.ts`).
+    return daysBetween(cap, r.deadline) > 0 ? cap : r.deadline;
   };
 
   function succKeyOf(r: StageReq): string {
