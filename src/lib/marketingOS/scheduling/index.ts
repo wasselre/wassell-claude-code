@@ -15,7 +15,7 @@ export {
   distribute, buildSlots, slotCapacity, publishingDays,
   type DistItem, type PlatformPlan,
 } from './distribute';
-export { planCampaign, DEFAULT_RULES, type RuleSet } from './plan';
+export { planCampaign, planSeed, DEFAULT_RULES, type RuleSet } from './plan';
 export {
   buildReleases, releaseTotals, releaseReason, rowSlotTime, rowReleaseInstant, checkRowPublishing,
   DEFAULT_PUBLISHING, DEFAULT_ROW_PUBLISHING,

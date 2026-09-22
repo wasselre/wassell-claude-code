@@ -214,6 +214,8 @@ export function parsePlanInput(raw: Record<string, unknown>, publishBufferDays: 
     crossPost: Boolean(raw.cross_post),
     publishBufferDays: Number.isFinite(Number(raw.publish_buffer_days))
       ? Number(raw.publish_buffer_days) : publishBufferDays,
+    productionLeadWorkingDays: Number.isFinite(Number(raw.production_lead_working_days)) && Number(raw.production_lead_working_days) > 0
+      ? Number(raw.production_lead_working_days) : undefined,
     paid: kind === 'paid' ? paid : undefined,
     overrides: {
       lockedPlacements: Array.isArray(ov.locked_placements) ? (ov.locked_placements as unknown[]).map((l) => {
@@ -534,6 +536,7 @@ export function toSnake(input: Record<string, unknown>): Record<string, unknown>
     }) : [],
     cross_post: input.crossPost,
     publish_buffer_days: input.publishBufferDays,
+    production_lead_working_days: input.productionLeadWorkingDays,
     paid: Array.isArray(input.paid) ? (input.paid as unknown[]).map((c) => {
       const r = asRecord(c);
       const pol = asRecord(r.policy);

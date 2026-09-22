@@ -311,6 +311,14 @@ export interface PlanInput {
   crossPost: boolean;
   /** Working days between the final approval and the publish day. Default 1. */
   publishBufferDays: number;
+  /**
+   * How many WORKING days before an item's need day its production may start
+   * — the month template's `lead_time_working_days`. With earliest-first
+   * placement (2026-09-22, the operator's rule: «book as early as possible»)
+   * this is the floor every stage is placed forward from; without it the
+   * floor is today. Paid items read the same number off their refresh policy.
+   */
+  productionLeadWorkingDays?: number;
   /** Paid-only. One entry per paid child. */
   paid?: Array<{ executionKey: string; executionId: string | null; platform: string; policy: PaidPolicy }>;
   overrides?: PlanOverrides;

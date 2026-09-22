@@ -181,6 +181,22 @@ export function workingWindowEndingAt(end: string, spanDays: number, cal: WorkCa
 }
 
 /**
+ * The window of `spanDays` consecutive WORKING days that STARTS on `start`
+ * (which must itself be a working day). Ascending; `[length - 1]` is the end.
+ * The forward twin of `workingWindowEndingAt` (earliest-first placement, 2026-09-22).
+ */
+export function workingWindowStartingAt(start: string, spanDays: number, cal: WorkCalendar): string[] {
+  if (spanDays < 1) throw new Error('scheduling/calendar: spanDays must be >= 1');
+  const out: string[] = [start];
+  let d = start;
+  for (let i = 1; i < spanDays; i += 1) {
+    d = addWorkingDays(d, 1, cal);
+    out.push(d);
+  }
+  return out;
+}
+
+/**
  * A civil date + `HH:MM` wall clock in the calendar's zone → an ISO instant.
  * Riyadh has a fixed +03:00 offset, so this is exact without a tz database.
  */

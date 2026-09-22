@@ -62,7 +62,7 @@
 import {
   DEFAULTS, DEFAULT_RULES, DEFAULT_CALENDAR, DEFAULT_PUBLISHING, ENGINE_VERSION, POST_WORKFLOW,
   addDays, addWorkingDays, daysBetween, effortWeights, nextWorkingDay, weekdayOf, workingDaysIn,
-  planCampaign, conflictBlocksConfirm, conflictBlocksPlan,
+  planCampaign, planSeed, conflictBlocksConfirm, conflictBlocksPlan,
   type LedgerRow, type LoadBucket, type PlanConflict, type PlanInput, type PlanResult,
   type RowRequirement, type RuleSet, type WorkCalendar, type WorkflowSpec, type WorkloadSnapshot,
 } from '../../../../src/lib/marketingOS/scheduling/index.js';
@@ -1001,6 +1001,7 @@ export function organicPlanInput(
       weekdays: Array.from(new Set(template.postingWeekdays)).sort((a, b) => a - b),
       times: [template.publishTime],
     }],
+    productionLeadWorkingDays: template.leadTimeWorkingDays,
     crossPost: false,
     publishBufferDays: DEFAULTS.publishBufferDays,
   };
@@ -1029,6 +1030,7 @@ export function paidPlanInput(
     frequency: [],
     crossPost: false,
     publishBufferDays: DEFAULTS.publishBufferDays,
+    productionLeadWorkingDays: template.leadTimeWorkingDays,
     paid: [{
       executionKey,
       executionId: null,
@@ -1253,6 +1255,15 @@ export interface CompileMonthArgs {
  * sees the load the previous ones proposed. Four independent calls would each
  * book the same designer day and none of them would notice; the month would
  * look feasible four times over and break on the first commit.
+ *
+ * TWO PASSES (2026-09-22). The sequence above always places BACKWARD
+ * (latest-first): that is the search whose feasibility the month rests on.
+ * When the rules ask for earliest-first placement — the default since the
+ * operator's rule «tasks should be booked as early as possible, not as late
+ * as possible» — a second pass re-places each plan from its own bookings
+ * (`planSeed`) against a ledger holding every OTHER plan's cells, and the
+ * scheduler's forward pass moves its stages into free capacity only. See
+ * `placeEarliest`.
  */
 export function compileMonth(args: CompileMonthArgs): CompiledMonth {
   const { month, template, projects, snapshot } = args;
@@ -1325,8 +1336,11 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
     };
   }
 
-  const organicPlan = planCampaign(
-    organicInput, { ...snapshot, ledger: snapshot.ledger }, rules, { withAlternatives: false },
+  // Pass 1 is ALWAYS backward — see the function comment. The forward pass
+  // runs once, over all four plans, in `placeEarliest` below.
+  const latestRules: RuleSet = { ...rules, placement: 'latest' };
+  let organicPlan = planCampaign(
+    organicInput, { ...snapshot, ledger: snapshot.ledger }, latestRules, { withAlternatives: false },
   );
   const afterOrganic = extendLedger(snapshot.ledger, organicPlan);
 
@@ -1337,7 +1351,7 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
     const out: CompiledMonth['paid'] = [];
     for (const project of running) {
       const input = paidPlanInput(geo, template, project, frozenByProject[project.projectId] ?? []);
-      const plan = planCampaign(input, { ...snapshot, ledger }, rules, { withAlternatives: false });
+      const plan = planCampaign(input, { ...snapshot, ledger }, latestRules, { withAlternatives: false });
       ledger = extendLedger(ledger, plan);
       out.push({ projectId: project.projectId, input, plan });
     }
@@ -1425,6 +1439,14 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
    * operator sees which ads run late and when. `no_capacity` is never
    * forgiven, and an item with no placement never becomes feasible.
    */
+  // Pass 2 — earliest-first, over the FINAL set of plans (after any skipped
+  // leading batch), before the live-when-ready relaxation reads them.
+  if ((rules.placement ?? 'earliest') === 'earliest') {
+    const placed = placeEarliest(organicInput, organicPlan, paid, snapshot, rules);
+    organicPlan = placed.organic;
+    paid = placed.paid;
+  }
+
   if (liveWhenReady) {
     paid = paid.map((p) => {
       if (p.plan.feasible) return p;
@@ -1604,10 +1626,16 @@ function noPlan(snapshot: WorkloadSnapshot): PlanResult {
  * load and nothing is double-counted.
  */
 function extendLedger(ledger: LedgerRow[], plan: PlanResult): LedgerRow[] {
-  const added: LedgerRow[] = [];
+  const added = proposedRows(plan);
+  return added.length ? [...ledger, ...added] : ledger;
+}
+
+/** A plan's PROPOSED load as ledger rows — what the other plans must treat as taken. */
+function proposedRows(plan: PlanResult): LedgerRow[] {
+  const rows: LedgerRow[] = [];
   for (const cell of plan.load) {
     if (cell.proposed <= 0) continue;
-    added.push({
+    rows.push({
       userId: cell.userId,
       day: cell.day,
       bucket: cell.bucket,
@@ -1616,7 +1644,90 @@ function extendLedger(ledger: LedgerRow[], plan: PlanResult): LedgerRow[] {
       refId: null,
     });
   }
-  return added.length ? [...ledger, ...added] : ledger;
+  return rows;
+}
+
+/** Every stage every plan booked, as one string — equal iff nothing moved. */
+function stageSignature(plans: PlanResult[]): string {
+  const parts: string[] = [];
+  for (const plan of plans) {
+    for (const row of plan.rows) {
+      for (const s of row.stages) parts.push(`${row.rowKey}|${s.stepKey}|${s.assigneeUserId}|${s.start}|${s.end}`);
+    }
+    for (const it of plan.items) {
+      if (it.rowKey) continue;
+      for (const s of it.stages) parts.push(`${it.key}|${s.stepKey}|${s.assigneeUserId}|${s.start}|${s.end}`);
+    }
+  }
+  return parts.join('\n');
+}
+
+/** True when the plan booked a chain for every subject it has (an empty plan counts). */
+function fullyPlaced(plan: PlanResult): boolean {
+  return plan.rows.every((r) => r.stages.length > 0)
+    && plan.items.every((it) => (it.rowKey ? true : it.stages.length > 0));
+}
+
+/**
+ * EARLIEST-FIRST across the month (2026-09-22).
+ *
+ * Each plan is re-placed from the stages pass 1 found (`planSeed`) with the
+ * rules' own placement, against a ledger that holds the base load plus every
+ * OTHER plan's proposed cells — the ones before it already re-placed, the
+ * ones after it still at their pass-1 positions. The scheduler books the seed
+ * as-is (the union of pass-1 placements fits by construction: each plan was
+ * placed against the ones before it and avoided by the ones after) and its
+ * forward pass then moves stages only into capacity no plan is using.
+ * Feasibility therefore cannot change; only the dates get earlier.
+ *
+ * Repeated while anything still moves (a later plan moving frees days an
+ * earlier one can take), at most three rounds — every round is cheap, there
+ * is no search in it.
+ *
+ * A plan that placed nothing (infeasible in pass 1) is left exactly as pass 1
+ * reported it: its refusal is the month's finding and must not be re-derived.
+ */
+function placeEarliest(
+  organicInput: PlanInput,
+  organicPlan: PlanResult,
+  paid: CompiledMonth['paid'],
+  snapshot: WorkloadSnapshot,
+  rules: RuleSet,
+): { organic: PlanResult; paid: CompiledMonth['paid'] } {
+  const inputs = [organicInput, ...paid.map((p) => p.input)];
+  let plans = [organicPlan, ...paid.map((p) => p.plan)];
+  const movable = plans.map(fullyPlaced);
+
+  for (let round = 0; round < 3; round += 1) {
+    const before = stageSignature(plans);
+    const next = plans.slice();
+    for (let k = 0; k < next.length; k += 1) {
+      if (!movable[k]) continue;
+      const current = next[k]!;
+      const ledger = [
+        ...snapshot.ledger,
+        ...next.flatMap((p, j) => (j === k ? [] : proposedRows(p))),
+      ];
+      const re = planCampaign(
+        inputs[k]!, { ...snapshot, ledger }, rules,
+        { withAlternatives: false, seed: planSeed(current) },
+      );
+      if (!fullyPlaced(re) || re.items.length !== current.items.length) {
+        // The seed was booked, so this can only be a bug in the engine — say so
+        // rather than hand the operator a month that silently lost work.
+        throw new Error(`placeEarliest: plan ${k} lost stages on re-placement`);
+      }
+      // The search happened in pass 1; report ITS effort, not the seeded no-op.
+      next[k] = { ...re, searchStats: current.searchStats };
+    }
+    plans = next;
+    if (stageSignature(plans) === before) break;
+  }
+
+  return {
+    organic: plans[0]!,
+    paid: paid.map((p, i) => ({ ...p, plan: plans[i + 1]! })),
+  };
 }
 
 export function summariseMonth(args: {

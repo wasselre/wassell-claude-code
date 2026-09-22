@@ -28,6 +28,8 @@ export function riyadhToday(): string {
 
 export interface PlanningSettings {
   publishBufferDays: number;
+  /** Stage placement inside its window: `earliest` (the rule since 2026-09-22) or `latest` (rollback). */
+  placement: 'earliest' | 'latest';
   manualTaskWeight: number;
   approvalsCapPerDay: number;
   weekendDays: number[];
@@ -47,6 +49,7 @@ export interface PlanningSettings {
 
 export const PLANNING_DEFAULTS: PlanningSettings = {
   publishBufferDays: DEFAULTS.publishBufferDays,
+  placement: 'earliest',
   manualTaskWeight: DEFAULTS.manualTaskWeight,
   approvalsCapPerDay: DEFAULTS.approvalsCapPerDay,
   weekendDays: [5],
@@ -83,6 +86,9 @@ export async function loadPlanningSettings(sb: SupabaseClient): Promise<Planning
     : PLANNING_DEFAULTS.weekendDays;
   return {
     publishBufferDays: num(v.publish_buffer_days, PLANNING_DEFAULTS.publishBufferDays),
+    // Only the exact word `latest` restores backward placement; anything else
+    // (absent, misspelt) is the rule.
+    placement: v.placement === 'latest' ? 'latest' : 'earliest',
     manualTaskWeight: num(v.manual_task_weight, PLANNING_DEFAULTS.manualTaskWeight),
     approvalsCapPerDay: num(v.approvals_cap_per_day, PLANNING_DEFAULTS.approvalsCapPerDay),
     weekendDays: wd.length ? wd : PLANNING_DEFAULTS.weekendDays,
@@ -425,6 +431,7 @@ export async function loadRuleSet(
       rowPublishing,
     },
     searchBudget: settings.searchBudget,
+    placement: settings.placement,
   };
 }
 

@@ -22,6 +22,25 @@ import { distribute, type DistItem, type PlatformPlan } from './distribute';
 import { platformRulesFor } from './platforms';
 import { forecastCycles, creativeTotals, type CycleForecast } from './refresh';
 import { scheduleProduction, type ScheduleItem } from './schedule';
+
+/**
+ * The stages a finished plan booked, keyed the way `scheduleProduction` keys
+ * them (`<subject key>|<step key>` — the ROW's key for a row, since its
+ * members share one chain). Feed it back as `opts.seed` to re-place the same
+ * plan against a different ledger without searching again — `compileMonth`'s
+ * earliest-first pass.
+ */
+export function planSeed(plan: PlanResult): Map<string, PlannedStage> {
+  const seed = new Map<string, PlannedStage>();
+  for (const row of plan.rows) {
+    for (const s of row.stages) seed.set(`${row.rowKey}|${s.stepKey}`, s);
+  }
+  for (const it of plan.items) {
+    if (it.rowKey) continue;
+    for (const s of it.stages) seed.set(`${it.key}|${s.stepKey}`, s);
+  }
+  return seed;
+}
 import {
   DEFAULTS, ENGINE_VERSION,
   type PlanBatch, type PlanConflict, type PlanInput, type PlanResult, type PlannedItem,
@@ -45,6 +64,14 @@ export interface RuleSet {
   /** Who can publish by itself, and what a manual release costs. */
   publishing?: PublishingRules;
   searchBudget?: number;
+  /**
+   * Where inside its window a stage is booked (2026-09-22, the operator's
+   * rule: «tasks should be booked as early as possible, not as late as
+   * possible»). `earliest` (the default) places every stage forward from the
+   * item's production-window start; `latest` is the pre-2026-09-22
+   * backward placement, kept for rollback (`mos_settings.planning.placement`).
+   */
+  placement?: 'earliest' | 'latest';
 }
 
 export const DEFAULT_RULES: RuleSet = {
@@ -52,7 +79,24 @@ export const DEFAULT_RULES: RuleSet = {
   contentTypeWorkflow: CONTENT_TYPE_WORKFLOW,
   contentTypeBucket: CONTENT_TYPE_BUCKET,
   publishing: DEFAULT_PUBLISHING,
+  placement: 'earliest',
 };
+
+/**
+ * The day an item's production may START — `lead_time_working_days` WORKING
+ * days before it is needed (paid items carry the same number on their refresh
+ * policy). `undefined` when the input names no lead: the scheduler then floors
+ * at today. With earliest-first placement this is the floor every stage is
+ * booked forward from (2026-09-22).
+ */
+function productionFloor(
+  input: PlanInput, it: { slot?: PlannedItem['slot'] }, needDay: string, cal: WorkCalendar,
+): string | undefined {
+  const child = it.slot ? (input.paid ?? []).find((c) => c.executionKey === it.slot?.executionKey) : undefined;
+  const lead = child ? child.policy.leadTimeWorkingDays : input.productionLeadWorkingDays;
+  if (!Number.isFinite(lead) || (lead as number) <= 0) return undefined;
+  return addWorkingDays(needDay, -Math.floor(lead as number), cal);
+}
 
 interface BuildItem {
   key: string;
@@ -81,7 +125,7 @@ export function planCampaign(
   input: PlanInput,
   snapshot: WorkloadSnapshot,
   rules: RuleSet = DEFAULT_RULES,
-  opts: { withAlternatives?: boolean } = {},
+  opts: { withAlternatives?: boolean; seed?: ReadonlyMap<string, PlannedStage> } = {},
 ): PlanResult {
   const withAlternatives = opts.withAlternatives !== false;
   const cal = snapshot.calendar;
@@ -365,6 +409,7 @@ export function planCampaign(
       workflow: wf,
       needDay,
       publishBufferDays: input.publishBufferDays ?? DEFAULTS.publishBufferDays,
+      earliestStart: productionFloor(input, it, needDay, cal),
       lockedAssignees: pickLocks(input, it.key),
     });
   }
@@ -383,6 +428,7 @@ export function planCampaign(
         workflow: wf,
         needDay: row.day,
         publishBufferDays: input.publishBufferDays ?? DEFAULTS.publishBufferDays,
+        earliestStart: productionFloor(input, first, row.day, cal),
         lockedAssignees: pickLocks(input, rowKey),
         // THREE slots on ONE day — `effortWeightsSameDay`, whose SQL twin is
         // `mos_spread_effort_same_day`. The two must stay in exact agreement:
@@ -393,7 +439,10 @@ export function planCampaign(
     }
   }
 
-  const sched = scheduleProduction(scheduleInput, book, cal, snapshot.today, placementBudget);
+  const sched = scheduleProduction(scheduleInput, book, cal, snapshot.today, placementBudget, {
+    placement: rules.placement ?? 'earliest',
+    seed: opts.seed,
+  });
   conflicts.push(...sched.conflicts);
 
   // --------------------------------------------------------------- assemble
