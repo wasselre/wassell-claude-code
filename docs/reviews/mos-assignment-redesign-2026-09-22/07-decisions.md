@@ -48,3 +48,15 @@ Technical parameters (§10B) stand as proposed: recovery cron every 1–2 min; 4
 | S5 W1 workflow fix (in 06) + W2 hashtags (`2026-09-22_07`, **applied**: 15 records + `post` type stripped) + PRDs | done | `SELECT count(*) … data ? 'hashtags'` = 0 for content and versions |
 
 Not yet done, by the operator's instruction: **push / deploy** (Vercel + `fly deploy` of the worker for the Meta-ad changes), then **the September re-plan in the app** (D3/D8/D16 — the existing bookings are corrected by that re-plan, never in place).
+
+## Re-plan rehearsal — 2026-09-22 (night)
+
+The operator asked to see the NEW planner's month table before re-planning. Producing it exposed three defects in the re-plan path that the migrations above had not covered; all three are fixed and applied (`2026-09-22_08_replan_started_items.sql`, `2026-09-22_09_replan_execution_lookup.sql`, planner changes in `monthCompiler.ts` / `monthActions.ts` / `refresh.ts`):
+
+1. **The launch batch, due today and already in production, was fed back to the planner.** It could not be produced before today, the paid plan became `time_bound`, and the planner staffs nothing on an infeasible plan — 81 creatives "unscheduled", confirm refused. Fix: a batch on or before the start day is frozen (round kept, nothing new produced).
+2. **The carry only matched `bound`/`consumed` bookings**, so a started item's `reserved` later steps were retired and re-inserted (or counted twice). Fix: all four live statuses are carried; a started subject never loses a booking (adopted); the guard ignores the moved entries' old ledger rows.
+3. **The execution lookup required an EMPTY label.** The live Meta executions are labelled by the Meta push, so a re-plan would have inserted a duplicate unlinked execution per paid campaign. Fix: `mos_campaign_execution_for` (empty label first, else the single live execution on the platform).
+
+Proof: the exact batch `monthConfirm` would send was committed on production inside a transaction that was rolled back — `ok`, 4 plans, `reservations_kept` 110 + 125 + 125 + 125, `adopted` 5 + 10 + 10 + 10, `retired` 0, `tasks_closed` 0, rows / items / publications created 0, open assigned tasks 24 before and after, `mos_assert_ledger_conformance()` = 0.
+
+What the new plan looks like (steps per day, 23 Sep → 29 Oct): Wed/Thu 5, Sat 17, Sun 31, Mon 37, every week; the designer's Sat–Mon at 7/7, the manager's Monday at 20/20, Wed/Thu at 3/7 — the backward planner books as late as capacity allows. Organic batches are still made entirely the day before they publish (`sameDayChain`). Both are policy, not bugs; the operator judges them.

@@ -640,6 +640,13 @@ export function monthStartFrom(month: string, today: string): string | null {
 export function monthGeometry(
   month: string, template: MonthTemplate, cal: WorkCalendar = DEFAULT_CALENDAR,
   startFrom?: string | null, leads: MonthLeadFloors = monthLeadFloors(),
+  /**
+   * Batch days to KEEP even when the clock would drop them (a re-plan: the
+   * batch is already in production). Keeping the day keeps `rangeStart`, and
+   * with it the round numbering the commit maps cycles by. Such a batch is
+   * frozen by `CompileMonthArgs.frozenPaidBatchDays`, never planned.
+   */
+  keepBatchDays: readonly string[] = [],
 ): MonthGeometry {
   if (!MONTH_RE.test(month.trim())) {
     throw new Error(`monthCompiler: bad month "${month}" (expected YYYY-MM)`);
@@ -739,9 +746,11 @@ export function monthGeometry(
   // working day is left before it, because under `ads_live_when_ready` an ad
   // that is not finished by the batch day simply goes live when it is (the
   // month's first day being today is the normal case for a month chosen today).
-  const paidBatchDays = paidFrom
-    ? everyBatchDay.filter((d) => d >= paidFrom)
-    : paidBatchDaysByClock;
+  const keepSet = new Set(keepBatchDays);
+  const paidBatchDays = Array.from(new Set([
+    ...(paidFrom ? everyBatchDay.filter((d) => d >= paidFrom) : paidBatchDaysByClock),
+    ...everyBatchDay.filter((d) => keepSet.has(d)),
+  ])).sort();
   const keptBatch = new Set(paidBatchDays);
   const skippedPaidBatchDays: MonthSkippedDay[] = everyBatchDay
     .filter((d) => !keptBatch.has(d))
@@ -997,9 +1006,12 @@ export function organicPlanInput(
   };
 }
 
-/** One project's paid half: five creatives on each of the four batch dates. */
+/** One project's paid half: five creatives on each of the four batch dates.
+ *  `frozenOn` — batch days already in production (a re-plan): kept in the
+ *  round numbering, nothing new produced for them. */
 export function paidPlanInput(
   geometry: MonthGeometry, template: MonthTemplate, project: MonthProject,
+  frozenOn: readonly string[] = [],
 ): PlanInput {
   const start = geometry.paidBatchDays[0] ?? geometry.firstPostingDay;
   const executionKey = `exec:${template.paidPlatform}:${project.projectId}`;
@@ -1024,6 +1036,7 @@ export function paidPlanInput(
       policy: {
         slateSize: template.creativesPerProjectWeek,
         slateOn: slateOverridesFor(template, geometry.month, project.projectId, geometry.paidBatchDays),
+        ...(frozenOn.length > 0 ? { frozenOn: [...frozenOn] } : {}),
         keepMin: DEFAULTS.paid.keepMin,
         cycleDays: 7,
         minRemainingDays: DEFAULTS.paid.minRemainingDays,
@@ -1222,6 +1235,15 @@ export interface CompileMonthArgs {
    * the whole cycle regardless.
    */
   startFrom?: string | null;
+  /**
+   * A RE-PLAN of a running month (2026-09-22): per project id, the paid batch
+   * days whose production is already underway. Each such batch is kept in the
+   * geometry (so round numbering does not shift) and produces nothing new;
+   * the commit's carry-forward keeps the existing creatives' bookings. Without
+   * this, a batch due today made every paid plan `time_bound` and the confirm
+   * refused the month with "81 items have no production plan".
+   */
+  frozenPaidBatchDays?: Record<string, readonly string[]>;
 }
 
 /**
@@ -1246,8 +1268,11 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
   // the day the geometry promises is reachable is the day the engine agrees is
   // reachable. Deriving them from `DEFAULT_RULES` here while planning against an
   // edited workflow would put the two back out of step.
+  const frozenByProject = args.frozenPaidBatchDays ?? {};
+  const keepBatchDays = Array.from(new Set(Object.values(frozenByProject).flat()));
   const geometry = monthGeometry(
     month, template, cal, startFrom, monthLeadFloors(baseRules, DEFAULTS.publishBufferDays),
+    keepBatchDays,
   );
   // The projects that actually RUN this month — the template's own
   // `projects_per_month`, not however many were handed in. A project with no
@@ -1311,7 +1336,7 @@ export function compileMonth(args: CompileMonthArgs): CompiledMonth {
     let ledger = afterOrganic;
     const out: CompiledMonth['paid'] = [];
     for (const project of running) {
-      const input = paidPlanInput(geo, template, project);
+      const input = paidPlanInput(geo, template, project, frozenByProject[project.projectId] ?? []);
       const plan = planCampaign(input, { ...snapshot, ledger }, rules, { withAlternatives: false });
       ledger = extendLedger(ledger, plan);
       out.push({ projectId: project.projectId, input, plan });

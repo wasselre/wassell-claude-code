@@ -253,6 +253,16 @@ export interface PaidPolicy {
    * project) — every other date keeps `slateSize`.
    */
   slateOn?: Record<string, number>;
+  /**
+   * Batch days whose production is ALREADY UNDERWAY — a re-plan of a running
+   * month (2026-09-22). The round is still emitted, so round numbering stays
+   * stable (the commit maps cycles by `execution_key#round`), but it produces
+   * nothing new: the existing creatives keep their bookings — started steps
+   * keep their dates, unstarted steps are re-dated by the carry-forward.
+   * Without this, a batch due today made the whole paid plan `time_bound`
+   * and every later batch went unscheduled.
+   */
+  frozenOn?: string[];
   keepMin: number;
   cycleDays: number;
   minRemainingDays: number;

@@ -1161,3 +1161,43 @@ describe('monthGeometry — the operator’s start for one month (month_starts)'
     expect(monthGeometry('2026-10', SEPT, CAL).postingDays).toEqual(monthGeometry('2026-10', T, CAL).postingDays);
   });
 });
+
+describe('a re-plan of a running month freezes the batch already in production (2026-09-22)', () => {
+  it('keeps the frozen batch day in the geometry, plans nothing for it, and names nothing unscheduled', () => {
+    const geo = monthGeometry('2026-10', T, CAL);
+    const first = geo.paidBatchDays[0]!;
+    const plain = compileMonth({
+      month: '2026-10', template: T, projects: PROJECTS, snapshot: snapshot('2026-09-15'), rules: RULES, startFrom: null,
+    });
+    const frozen = compileMonth({
+      month: '2026-10', template: T, projects: PROJECTS, snapshot: snapshot('2026-09-15'), rules: RULES, startFrom: null,
+      frozenPaidBatchDays: { [PROJECT_A.projectId]: [first] },
+    });
+    // The batch day is still the first round — round numbering is what the commit maps cycles by.
+    expect(frozen.geometry.paidBatchDays).toEqual(plain.geometry.paidBatchDays);
+    const a = frozen.paid.find((p) => p.projectId === PROJECT_A.projectId)!;
+    const aPlain = plain.paid.find((p) => p.projectId === PROJECT_A.projectId)!;
+    expect(a.plan.cycles[0]!.round).toBe(0);
+    expect(a.plan.cycles[0]!.refreshOn).toBe(first);
+    expect(a.plan.cycles[0]!.produced).toBe(0);
+    expect(a.plan.items.length).toBe(aPlain.plan.items.length - aPlain.plan.cycles[0]!.produced);
+    expect(a.plan.items.some((it) => it.key.includes(':c0:'))).toBe(false);
+    // Nothing is reported as unplaceable for the frozen batch.
+    expect(frozen.summary.unscheduled.filter((u) => u.projectId === PROJECT_A.projectId && u.requiredBy === first)).toHaveLength(0);
+    // The other projects are untouched.
+    const b = frozen.paid.find((p) => p.projectId === PROJECT_B.projectId)!;
+    const bPlain = plain.paid.find((p) => p.projectId === PROJECT_B.projectId)!;
+    expect(b.plan.items.length).toBe(bPlain.plan.items.length);
+  });
+
+  it('keeps a frozen batch day the clock would otherwise drop, so rounds do not shift', () => {
+    // Compiling from the batch day itself: by the clock that batch has no working day left.
+    const geo = monthGeometry('2026-10', T, CAL);
+    const first = geo.paidBatchDays[0]!;
+    const dropped = monthGeometry('2026-10', T, CAL, first, monthLeadFloors(RULES));
+    const kept = monthGeometry('2026-10', T, CAL, first, monthLeadFloors(RULES), [first]);
+    expect(dropped.paidBatchDays.includes(first)).toBe(false);
+    expect(kept.paidBatchDays[0]).toBe(first);
+    expect(kept.paidBatchDays.slice(1)).toEqual(dropped.paidBatchDays);
+  });
+});

@@ -100,3 +100,20 @@ describe('paid refresh forecasting — calculated, never hardcoded', () => {
     expect(fc('2026-10-01', '2026-10-30', { minRemainingDays: 5 }).filter((c) => c.produced > 0 && c.round > 0)).toHaveLength(3);
   });
 });
+
+describe('a re-plan freezes a batch already in production (2026-09-22)', () => {
+  it('keeps the round and its numbering but produces nothing new for a frozen day', () => {
+    const plain = fc('2026-09-22', '2026-10-31');
+    const frozen = fc('2026-09-22', '2026-10-31', { frozenOn: ['2026-09-22', '2026-09-29'] });
+    expect(frozen.map((c) => c.round)).toEqual(plain.map((c) => c.round));
+    expect(frozen.map((c) => c.refreshOn)).toEqual(plain.map((c) => c.refreshOn));
+    expect(frozen[0]!.produced).toBe(0);
+    expect(frozen[0]!.slotKinds).toEqual([]);
+    expect(frozen[1]!.produced).toBe(0);
+    expect(frozen[1]!.note).toMatch(/frozen/);
+    // the later rounds are untouched
+    expect(frozen[2]!.produced).toBe(plain[2]!.produced);
+    expect(frozen[2]!.slotKinds).toEqual(plain[2]!.slotKinds);
+    expect(creativeTotals(frozen).total).toBe(creativeTotals(plain).total - plain[0]!.produced - plain[1]!.produced);
+  });
+});

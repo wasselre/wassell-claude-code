@@ -43,7 +43,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { jsonOk, jsonError } from '../../auth.js';
 import {
   DEFAULT_RULES,
-  type PlanInput, type PlanResult, type RuleSet,
+  type PlanInput, type PlanResult, type RuleSet, type WorkloadSnapshot,
 } from '../../../../src/lib/marketingOS/scheduling/index.js';
 import { terminalLostStages } from '../../../../src/lib/salesProcess/qualifiedStages.js';
 import { ourLeadsByProject, type ProjectLeadTotals } from '../ourLeads.js';
@@ -133,7 +133,7 @@ export interface MonthTemplateRow extends MonthTemplate {
  * The one `mos_month_template` row. SERVICE client: the table is RLS-enabled
  * with no policies (see the header), so a browser read returns nothing at all.
  */
-async function loadTemplate(svc: SupabaseClient): Promise<{ row: MonthTemplateRow; error: string | null }> {
+export async function loadTemplate(svc: SupabaseClient): Promise<{ row: MonthTemplateRow; error: string | null }> {
   const fallback: MonthTemplateRow = {
     ...MONTH_TEMPLATE_DEFAULTS,
     id: null,
@@ -375,13 +375,79 @@ export function monthGrid(compiled: CompiledMonth, projects: MonthProject[]): Mo
   }));
 }
 
+/**
+ * The month's OWN unstarted bookings — reservations of its live plans that no
+ * task has consumed yet. A re-plan of a confirmed month must not count them as
+ * occupied capacity: the commit retires them or re-dates them (carry-forward,
+ * `mos_plan_resolve_carry` / `mos_retire_superseded`), so the preview has to
+ * compile against STARTED work only — exactly what the commit's own capacity
+ * check sees after the retire. Without this, the second compile of a month
+ * found every day already full with the bookings it was about to replace
+ * (2026-09-22). Assigned tasks stay in the ledger: they keep their dates.
+ */
+async function ownUnstartedReservationIds(
+  ctx: PlanCtx, month: string,
+): Promise<{ ids: Set<string> } | { error: Response }> {
+  const svc = ctx.svc ?? ctx.sb;
+  const camps = await loadMonthCampaigns(svc, month);
+  if (camps.error) return { error: fail('mos_campaigns', { message: camps.error }) };
+  if (camps.campaigns.length === 0) return { ids: new Set() };
+  const plans = await svc.from('mos_campaign_plans').select('id')
+    .in('campaign_id', camps.campaigns.map((c) => c.id)).in('status', ['proposed', 'approved']);
+  if (plans.error) return { error: fail('mos_campaign_plans', plans.error) };
+  const planIds = ((plans.data ?? []) as Array<{ id: string }>).map((p) => p.id);
+  if (planIds.length === 0) return { ids: new Set() };
+  const res = await svc.from('mos_task_reservations').select('id')
+    .in('plan_id', planIds).in('status', ['reserved', 'stale', 'bound']);
+  if (res.error) return { error: fail('mos_task_reservations', res.error) };
+  return { ids: new Set(((res.data ?? []) as Array<{ id: string }>).map((r) => r.id)) };
+}
+
+/**
+ * The month's paid batches whose production is ALREADY UNDERWAY, per project
+ * (2026-09-22): every refresh cycle of the month's paid campaigns whose batch
+ * day is on or before `startFrom` — nothing can be produced for it any more,
+ * and its creatives exist with their own bookings (the launch designs due
+ * today). The planner keeps the round but plans nothing new for it; a later
+ * batch that has merely STARTED (its writing handed out) is still planned in
+ * full — the commit keeps the started steps' dates and re-dates the rest.
+ */
+async function frozenPaidBatchDays(
+  ctx: PlanCtx, month: string, startFrom: string | null,
+): Promise<{ frozen: Record<string, string[]> } | { error: Response }> {
+  if (!startFrom) return { frozen: {} };
+  const svc = ctx.svc ?? ctx.sb;
+  const camps = await loadMonthCampaigns(svc, month);
+  if (camps.error) return { error: fail('mos_campaigns', { message: camps.error }) };
+  const paid = camps.campaigns.filter((c) => c.kind === 'paid' && c.project_id);
+  if (paid.length === 0) return { frozen: {} };
+  const execs = await svc.from('mos_campaign_executions').select('id, campaign_id')
+    .in('campaign_id', paid.map((c) => c.id)).is('archived_at', null);
+  if (execs.error) return { error: fail('mos_campaign_executions', execs.error) };
+  const execRows = (execs.data ?? []) as Array<{ id: string; campaign_id: string }>;
+  if (execRows.length === 0) return { frozen: {} };
+  const cycles = await svc.from('mos_refresh_cycles').select('execution_id, refresh_on')
+    .in('execution_id', execRows.map((e) => e.id)).lte('refresh_on', startFrom);
+  if (cycles.error) return { error: fail('mos_refresh_cycles', cycles.error) };
+  const projectByExec = new Map(execRows.map((e) => [e.id, paid.find((c) => c.id === e.campaign_id)?.project_id ?? null]));
+  const frozen: Record<string, string[]> = {};
+  for (const cy of (cycles.data ?? []) as Array<{ execution_id: string; refresh_on: string | null }>) {
+    const projectId = projectByExec.get(cy.execution_id);
+    if (!projectId || !cy.refresh_on) continue;
+    const list = frozen[projectId] ?? [];
+    if (!list.includes(cy.refresh_on)) list.push(cy.refresh_on);
+    frozen[projectId] = list;
+  }
+  return { frozen };
+}
+
 /** Compile one month against the LIVE workload. Pure read — writes nothing. */
-async function compile(
+export async function compile(
   ctx: PlanCtx, month: string, template: MonthTemplate, projects: MonthProject[],
   startFrom: string | null,
 ): Promise<{ compiled: CompiledMonth; rules: RuleSet } | { error: Response }> {
   const settings = await loadPlanningSettings(ctx.sb);
-  let snapshot; let rules: RuleSet | null;
+  let snapshot: WorkloadSnapshot; let rules: RuleSet | null;
   try {
     [snapshot, rules] = await Promise.all([
       loadWorkloadSnapshot(ctx.sb, settings),
@@ -390,8 +456,21 @@ async function compile(
   } catch (e) {
     return { error: fail('snapshot/rules', { message: e instanceof Error ? e.message : String(e) }) };
   }
+  const own = await ownUnstartedReservationIds(ctx, month);
+  if ('error' in own) return { error: own.error };
+  if (own.ids.size > 0) {
+    snapshot = {
+      ...snapshot,
+      ledger: snapshot.ledger.filter((r) => !(r.source === 'reservation' && r.refId !== null && own.ids.has(r.refId))),
+    };
+  }
+  const frozen = await frozenPaidBatchDays(ctx, month, startFrom);
+  if ('error' in frozen) return { error: frozen.error };
   const base: RuleSet = rules ?? DEFAULT_RULES;
-  const compiled = compileMonth({ month, template, projects, snapshot, rules: base, startFrom });
+  const compiled = compileMonth({
+    month, template, projects, snapshot, rules: base, startFrom,
+    frozenPaidBatchDays: frozen.frozen,
+  });
   return { compiled, rules: base };
 }
 

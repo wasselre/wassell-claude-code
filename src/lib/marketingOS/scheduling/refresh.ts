@@ -66,10 +66,13 @@ export function forecastCycles(input: ForecastInput, cal: WorkCalendar): CycleFo
   const totalDays = daysBetween(input.startsOn, input.endsOn) + 1;
 
   const out: CycleForecast[] = [];
+  // A batch already in production (a re-plan) keeps its round and produces nothing new.
+  const frozen = new Set(policy.frozenOn ?? []);
 
   // Round 0 — the launch slate.
   const launchReady = addWorkingDays(input.startsOn, -1, cal);
-  const launchSlate = slateFor(input.startsOn);
+  const launchFrozen = frozen.has(input.startsOn);
+  const launchSlate = launchFrozen ? 0 : slateFor(input.startsOn);
   out.push({
     executionKey: input.executionKey,
     round: 0,
@@ -80,7 +83,9 @@ export function forecastCycles(input: ForecastInput, cal: WorkCalendar): CycleFo
     produced: launchSlate,
     bankedSpareSlotId: null,
     slotKinds: Array.from({ length: launchSlate }, () => 'initial' as const),
-    note: launchSlate === slate ? 'launch slate' : `launch slate — sized ${launchSlate} for this date`,
+    note: launchFrozen
+      ? 'launch slate — already in production, frozen by the re-plan'
+      : launchSlate === slate ? 'launch slate' : `launch slate — sized ${launchSlate} for this date`,
   });
 
   if (totalDays <= 0) return out;
@@ -108,6 +113,21 @@ export function forecastCycles(input: ForecastInput, cal: WorkCalendar): CycleFo
     }
     const readyBy = addWorkingDays(refreshOn, -1, cal);
     const productionStartOn = addWorkingDays(readyBy, -(lead - 1), cal);
+    if (frozen.has(refreshOn)) {
+      out.push({
+        executionKey: input.executionKey,
+        round: k,
+        refreshOn,
+        readyBy,
+        productionStartOn,
+        decisionDueOn: readyBy,
+        produced: 0,
+        bankedSpareSlotId: null,
+        slotKinds: [],
+        note: 'already in production — frozen by the re-plan',
+      });
+      continue;
+    }
     const cycleSlate = slateFor(refreshOn);
     const cycleKeep = keepMinFor(cycleSlate);
     const replacements = cycleSlate - cycleKeep;
