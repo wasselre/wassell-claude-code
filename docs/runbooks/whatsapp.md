@@ -1,5 +1,7 @@
 # WhatsApp — production runbook
 
+> Architecture handoff for another model or engineer (map of every file, table, sender and decision): `docs/handoff/whatsapp/README.md`.
+
 Written 2026-07-28 alongside the WA-01…WA-31 repair work. Every procedure here
 has been executed at least once against production.
 
