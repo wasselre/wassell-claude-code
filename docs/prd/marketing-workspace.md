@@ -330,7 +330,7 @@ This workspace answers the three questions the old process could not:
   failed ad shows an `AdFailedCard` in the review popup with one retry
   (`meta_auto_ad_retry` — a fresh job with the confirmed caption; 409 when the
   caption is unconfirmed, the ad already exists, or it was built with another
-  caption). `meta_auto_ad_approve_caption` answers 410. *The paragraph below
+  caption). `meta_auto_ad_approve_caption` answers 410. The approval panel (`AutoAdApproval.tsx`, shared by the phone sheet, the review popup and the row approval) names the ad set AND the confirmed caption the ad will launch with, or says the writer has not confirmed one yet; `content_auto_ad_preview` returns that `caption` (2026-09-22, late — the panel had kept the retired AI-caption wording). *The paragraph below
   describes the retired two-phase flow as it ran between 2026-09-13 and
   2026-09-22; the ad-building rules from «the TWO design slots» on are
   unchanged.*

@@ -79,8 +79,10 @@ export interface StepDef {
   notify_channels: NotificationChannel[];
   /**
    * 2026-09-10: approving this step hands the rest of the path to the Meta ad
-   * automation — an AI-written caption + the ad created in the campaign's ad
-   * set. A paid-only item finishes on this approval; one that also publishes
+   * automation — the ad is created in the campaign's ad set with the caption
+   * the writer confirmed (D4, 2026-09-22: no AI caption phase, no caption
+   * approval — the final approval refuses until the caption is confirmed). A
+   * paid-only item finishes on this approval; one that also publishes
    * organically continues to scheduling. Absent on legacy rows → false.
    */
   auto_meta_ad?: boolean;
@@ -685,10 +687,19 @@ export interface AutoAdTarget {
   platform_adset_id: string;
   ad_row_id: string | null;
 }
+/**
+ * The caption the ad will launch with (D4, 2026-09-22): the writer's CONFIRMED
+ * caption, or nothing — the approval refuses until one exists.
+ */
+export interface AutoAdCaption {
+  confirmed: boolean;
+  text: string | null;
+  confirmed_at: string | null;
+}
 /** What approving THIS item would do on Meta — shown in the approval dialog. */
 export type AutoAdPreview =
-  | { kind: 'target'; target: AutoAdTarget; choices: AutoAdChoice[] }
-  | { kind: 'choose'; choices: AutoAdChoice[] }
+  | { kind: 'target'; target: AutoAdTarget; choices: AutoAdChoice[]; caption?: AutoAdCaption }
+  | { kind: 'choose'; choices: AutoAdChoice[]; caption?: AutoAdCaption }
   | { kind: 'skip'; reason: string; text_ar: string; text_en: string; choices: AutoAdChoice[] };
 
 export const fetchAutoAdPreview = (contentId: string, adSetId?: string | null) =>
@@ -3231,11 +3242,11 @@ export interface MetaPushResult {
   /** The Meta Saved Audience every new ad set was built on (never broad). */
   audience: { id: string | null; name: string | null; source: string };
   errors: Array<{ ad_set: string; error: string }>;
-  /** Planned ads handed to the worker: AI writes each caption, the manager
-   *  approves it on the creative's Placements tab, THEN the ad is built. */
+  /** Planned ads handed to the worker, each built with the caption its
+   *  writer confirmed (D4, 2026-09-22 — no AI caption, no caption approval). */
   ads_queued: Array<{ wassell_ad_id: string; name: string; job_id: string }>;
-  /** Planned ads the automation was already handling (caption being written
-   *  or awaiting approval) — left alone. */
+  /** Planned ads the automation was already handling (a job in flight) —
+   *  left alone. */
   ads_waiting: number;
   /** Ads that could not be queued (no creative / no linked ad set). The
    *  skeleton stays; fix + re-run. */

@@ -2857,7 +2857,14 @@ export default async function handler(req: Request): Promise<Response> {
             const t = autoAdSkipText(plan.reason);
             return jsonOk({ kind: 'skip', reason: plan.reason, text_ar: t.ar, text_en: t.en, choices: [] });
           }
-          return jsonOk(plan);
+          // D4 (2026-09-22): the ad is built from the caption the WRITER
+          // confirmed — there is no caption phase after the approval any more.
+          // The dialog shows that caption (or that it is missing) BEFORE the tap.
+          const confirmed = await loadConfirmedCaption(svc, contentId);
+          const caption = confirmed
+            ? { confirmed: true, text: confirmed.text, confirmed_at: confirmed.confirmed_at }
+            : { confirmed: false, text: null, confirmed_at: null };
+          return jsonOk({ ...plan, caption });
         } catch (e) {
           return jsonError(500, e instanceof Error ? e.message : String(e));
         }
