@@ -101,10 +101,10 @@ export const RELEASE_REFUSAL = {
 
 export type ReleaseRefusalReason = typeof RELEASE_REFUSAL[keyof typeof RELEASE_REFUSAL];
 
-/** Content-level copy every path needs (hashtags are folded in at publish). */
+/** Content-level copy every path needs. (Hashtags were removed 2026-09-22 —
+ *  nothing is folded into the caption at publish any more.) */
 export interface ContentCopy {
   caption: string;
-  hashtags: string | null;
 }
 
 export type ReleaseMaterial =
@@ -116,7 +116,6 @@ export type ReleaseMaterial =
       variant: PlacementVariant;
       assetIds: string[];
       caption: string;
-      hashtags: string | null;
       /** True when this destination MUST carry text (feed). False for a story. */
       captionRequired: boolean;
     }
@@ -174,7 +173,7 @@ export async function resolveReleaseMaterial(
   if (cRes.error) return { mode: 'error', message: `content: ${cRes.error.message}` };
   const cRow = cRes.data as { data?: Record<string, unknown> | null; workflow_version_id?: unknown } | null;
   const data = (cRow?.data ?? {}) as Record<string, unknown>;
-  const copy: ContentCopy = { caption: asString(data.caption), hashtags: asNonEmpty(data.hashtags) };
+  const copy: ContentCopy = { caption: asString(data.caption) };
 
   const versionId = asNonEmpty(cRow?.workflow_version_id);
   if (!versionId) return { mode: 'legacy', copy };
@@ -224,7 +223,6 @@ export async function resolveReleaseMaterial(
 
   // ── the caption: the approved writing, never a picker. Stories get none ──
   const caption = variant === 'feed' ? copy.caption : '';
-  const hashtags = variant === 'feed' ? copy.hashtags : null;
 
   // ── the hash check: post what was APPROVED, or nothing ──────────────────
   const approvalRes = await sb.from('mos_content_approvals')
@@ -271,7 +269,7 @@ export async function resolveReleaseMaterial(
   // one (build plan §3, settled as D3).
 
   return {
-    mode: 'managed', variant, assetIds, caption, hashtags,
+    mode: 'managed', variant, assetIds, caption,
     captionRequired: variant === 'feed',
   };
 }

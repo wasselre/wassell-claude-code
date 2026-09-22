@@ -1,60 +1,59 @@
 /**
  * Auto Meta ad — the worker half (generation_jobs kind='meta-ad', 2026-09-10;
- * two-phase + house rules 2026-09-13).
+ * two-phase + house rules 2026-09-13; ONE phase since 2026-09-22 — decision D4).
  *
- * ONE ad-creation path: both the manager's design approval (auto_meta_ad step)
- * and the buyer's manual «Create in Meta» push enqueue this job. It runs in
- * two phases, each its own queue row:
+ * ONE ad-creation path: the manager's FINAL approval of a paid creative (the
+ * `auto_meta_ad` step) and the buyer's manual «Create in Meta» push both go
+ * through `mos_meta_ad_enqueue`, which admits ONE job per ad row per approved
+ * caption and stamps `approval_hash` on the row. There is no AI caption phase
+ * and no caption approval any more: the caption the WRITER confirmed on the
+ * creative is the caption of the ad, snapshotted into the job at approval
+ * time (`params.approved_caption = {text, hash, source, approved_at,
+ * approved_by}`). The worker builds EXACTLY that text — it never re-reads a
+ * caption that may have changed since, and it never appends hashtags.
  *
- *   phase 'caption' — writes the ad caption with DeepSeek from the PROJECT'S
- *      OWN facts (name, district, unit types, prices, areas, handover,
- *      features…) plus the writer's approved copy — every number must exist in
- *      the facts, else one retry then a deterministic caption — and PARKS it on
- *      the mos_execution_ads row (`auto_ad.state='caption_review'`). The
- *      manager reads / edits / approves it on the Placements tab. NOTHING
- *      reaches Meta in this phase.
- *   phase 'create' — after `meta_auto_ad_approve_caption`: reads the APPROVED
- *      caption off the row, uploads the TWO design slots (square 1:1 → the
- *      Instagram feed; vertical 9:16 → stories, reels, WhatsApp status — both
- *      required, never one file for every placement), duplicates an existing
- *      Click-to-WhatsApp welcome template with the project name swapped,
- *      creates ONE creative with per-placement asset rules, every Advantage+
- *      enhancement OFF and multi-advertiser OFF, then the ad in the target ad
- *      set; records platform ids + state on the row; notifies the manager.
+ * What a job does: uploads the TWO design slots (square 1:1 → the Instagram
+ * feed; vertical 9:16 → stories, reels, WhatsApp status — both required, never
+ * one file for every placement), duplicates an existing Click-to-WhatsApp
+ * welcome template with the project name swapped, creates ONE creative per
+ * placement with every Advantage+ enhancement OFF and multi-advertiser OFF,
+ * then the ad in the target ad set; records platform ids + state +
+ * `approval_hash` / `built_text_hash` on the row; notifies the approver.
  *
- * Campaign planning (2026-09-13) changed three things:
+ * Legacy jobs (enqueued before 2026-09-22, no `approved_caption` in params)
+ * take the writer-caption path: the creative's confirmed caption, VERIFIED
+ * against the hash bound by the final approval (`mos_content_approvals
+ * .caption_hash`) — a mismatch fails the job loudly instead of sending Meta a
+ * text nobody approved.
  *
- *   1. **The caption phase is skipped when the writer already produced one.**
- *      A content row with `data.caption`, a `data.caption_confirmed_text` that
- *      still equals it, and a `mos_content_approvals` row on its final approval step carries an
- *      APPROVED canonical caption — the manager approved it at writing review.
- *      That caption is copied onto the ad row and the job continues straight to
- *      phase 'create': no DeepSeek, no `caption_review` task, no
- *      `ad_caption_ready` notification. Legacy items (no approved caption) keep
- *      the two-phase flow unchanged. Which path ran is always logged.
- *   2. **Ads are created PAUSED by default** (`mos_settings.planning
- *      .ads_created_paused`, default true) and activated on schedule by the
- *      refresh lane; the linked `mos_creative_slots` row becomes `ready`.
- *      `mos_settings.meta_auto_ad.status` stays the explicit override for tests.
- *   3. **Transient Graph failures retry instead of paging a human**: 5xx,
- *      codes 1/2, rate limits (4/17/32/613/80000/80004) and network timeouts
- *      are retried 3× (2 s / 8 s / 30 s) after a full undo of anything already
- *      built; still failing, the job is requeued ONCE by the lane. Permanent
- *      errors (missing design, policy verdict, bad target) never retry.
+ * Ownership: a job writes the ad row ONLY while `creative.auto_ad.job_id` is
+ * its own id (or unset). A superseding job (a re-approval with another
+ * caption) takes the row over once this one is no longer live; the older
+ * job's late writes are refused and logged, never applied on top.
+ *
+ * Ads are created PAUSED by default (`mos_settings.planning
+ * .ads_created_paused`, default true) and activated on schedule by the
+ * refresh lane; the linked `mos_creative_slots` row becomes `ready`.
+ * `mos_settings.meta_auto_ad.status` stays the explicit override for tests.
+ * Transient Graph failures retry instead of paging a human: 5xx, codes 1/2,
+ * rate limits (4/17/32/613/80000/80004) and network timeouts are retried 3×
+ * (2 s / 8 s / 30 s) after a full undo of anything already built; still
+ * failing, the job is requeued ONCE by the lane. Permanent errors (missing
+ * design, policy verdict, bad target, an unconfirmed caption) never retry.
  *
  * Failure at any step patches `creative.auto_ad = {state:'failed', error}` on
- * the ad row and notifies `ad_failed` — the Placements tab offers a retry.
+ * the ad row (while this job owns it) and notifies `ad_failed` — the
+ * Placements tab offers a retry.
  *
  * Hard rules: never hold an HTTP request for this (the API only enqueues);
  * the Meta client here is the WORKER COPY (worker/src/marketing/
- * metaMarketingApi.ts); no number the facts do not contain may reach Meta; no
- * silent fallbacks (one design everywhere / no template / broad audience) —
- * every shortcut a buyer would have to undo by hand is a loud failure instead.
+ * metaMarketingApi.ts); no silent fallbacks (one design everywhere / no
+ * template / broad audience / a guessed caption) — every shortcut a buyer
+ * would have to undo by hand is a loud failure instead.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
 import { loadMetaConfig, MetaApiError, MetaMarketingClient, type MetaSiblingAd } from './marketing/metaMarketingApi.js';
-import { recordAiUsage, openAiCompatTokens } from './lib/aiUsage.js';
 
 export interface MetaAdJob {
   id: string;
@@ -67,19 +66,23 @@ export interface MetaAdJob {
   attempts: number;
 }
 
+/** Only 'create' exists since 2026-09-22 (D4): the caption is bound at
+ *  approval, so there is no caption phase. Kept as a type for the row's
+ *  `auto_ad.phase` field, which older rows still carry as 'caption'. */
 export type MetaAdPhase = 'caption' | 'create';
 
-/** 'writer' = the canonical caption the writer wrote and the manager approved
- *  at writing review (no AI involved); the other two are the legacy AI path. */
-export type MetaCaptionSource = 'deepseek' | 'fallback' | 'writer';
+/** 'writer' = the caption the writer confirmed and the manager approved at
+ *  the final step — the ONLY source since 2026-09-22 (no AI caption). Older
+ *  rows may still carry 'deepseek' / 'fallback' from the retired AI phase. */
+export type MetaCaptionSource = 'writer';
 
-export type MetaAdJobResult =
-  | { phase: 'caption'; caption_source: MetaCaptionSource; caption_chars: number }
-  | {
-    phase: 'create'; platform_ad_id: string; creative_id: string;
-    caption_source: MetaCaptionSource; format: 'image' | 'video';
-    ad_status: 'ACTIVE' | 'PAUSED'; slot_id: string | null;
-  };
+export interface MetaAdJobResult {
+  phase: 'create'; platform_ad_id: string; creative_id: string;
+  caption_source: MetaCaptionSource; format: 'image' | 'video';
+  ad_status: 'ACTIVE' | 'PAUSED'; slot_id: string | null;
+  /** `mos_caption_hash` of the caption bound at approval / built into the ad. */
+  approval_hash: string | null; built_text_hash: string | null;
+}
 
 interface Deps {
   supabase: SupabaseClient;
@@ -246,199 +249,48 @@ async function loadProjectFacts(sb: SupabaseClient, projectId: string | null): P
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
-/* Caption                                                                    */
+/* Caption — bound at approval, never written here                          */
 /* ────────────────────────────────────────────────────────────────────────── */
 
-/** Digit runs of a text, Arabic-Indic normalized, thousands separators dropped. */
-function numbersIn(text: string): Set<string> {
-  const norm = text
-    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
-    // Arabic decimal separator → '.', then thousands separators between digits dropped.
-    .replace(/(\d)٫(?=\d)/g, '$1.')
-    .replace(/(\d)[,٬،](?=\d{3}\b)/g, '$1');
-  const out = new Set<string>();
-  for (const m of norm.match(/\d+(?:\.\d+)?/g) ?? []) {
-    out.add(m);
-    if (m.includes('.')) out.add(m.split('.')[0]!);
-  }
-  return out;
+/** The caption bound at approval time, as the enqueue RPC put it on the job. */
+interface ApprovedCaptionPayload {
+  /** RAW text — the database hashes `btrim(text)`; the text sent to Meta is this. */
+  text: string;
+  /** `mos_caption_hash(text)` computed by the database at enqueue. */
+  hash: string | null;
+  source: string;
+  approved_at: string | null;
+  approved_by: string | null;
 }
-
-const arDigits = (s: string): string => s.replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]!);
-const arNum = (n: number): string => arDigits(Math.round(n).toLocaleString('en-US').replace(/,/g, '٬'));
-const arPlain = (n: number): string => arDigits(String(Math.round(n)));
-
-function approvedCopy(content: ContentRow): { headline: string | null; lines: string[]; hashtags: string | null } {
-  const d = content.data ?? {};
-  const headlines = Array.isArray(d.headlines) ? d.headlines.map((h) => str(h)).filter((x): x is string => !!x) : [];
-  const headline = str(d.approved_headline) ?? headlines[0] ?? null;
-  const caption = str(d.caption);
-  const lines = [...headlines, ...(caption ? [caption] : [])];
-  return { headline, lines, hashtags: str(d.hashtags) };
-}
-
-function fallbackCaption(content: ContentRow, facts: ProjectFacts | null, campaignOffer: string | null): string {
-  const copy = approvedCopy(content);
-  const out: string[] = [];
-  out.push((copy.headline ?? content.title).replace(/^["«]|["»]$/g, ''));
-  if (facts?.name) out.push(`${facts.name}${facts.district ? ` — ${facts.district}` : ''}${facts.city ? `، ${facts.city}` : ''}`);
-  out.push('');
-  const unitLine: string[] = [];
-  if (facts?.unit_types.length) unitLine.push(facts.unit_types.join(' • '));
-  if (facts?.area_min != null && facts.area_max != null) unitLine.push(`بمساحات من ${arPlain(facts.area_min)} إلى ${arPlain(facts.area_max)} م²`);
-  if (facts?.price_min != null) unitLine.push(`وأسعار تبدأ من ${arNum(facts.price_min)} ر.س`);
-  if (unitLine.length) out.push(unitLine.join('، '));
-  if (facts?.features.length) out.push(facts.features.slice(0, 4).join(' · '));
-  if (campaignOffer) out.push(`🎁 ${campaignOffer}`);
-  if (facts?.landmarks.length) out.push(`📍 ${facts.landmarks.slice(0, 2).join(' · ')}`);
-  if (facts?.available_units != null) out.push(`✅ ${arPlain(facts.available_units)} وحدة متاحة اليوم`);
-  if (facts?.off_plan) out.push(`📅 بيع على الخارطة${facts.handover ? `، التسليم المتوقع ${facts.handover}` : ''}${facts.payment_plan ? ' · خطط دفع مرنة' : ''}`);
-  if (facts?.guarantee_max_years) out.push(`🛡️ ضمانات تصل إلى ${arPlain(facts.guarantee_max_years)} سنة`);
-  out.push('');
-  out.push('تواصل معنا على الواتساب الآن');
-  out.push('');
-  const tags = copy.hashtags ?? [
-    '#وصل_العقارية',
-    facts?.name ? `#${facts.name.replace(/\s+/g, '_')}` : null,
-    facts?.city ? `#عقارات_${facts.city.replace(/\s+/g, '_')}` : null,
-  ].filter(Boolean).join(' ');
-  out.push(tags);
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-const CAPTION_SYSTEM = `أنت كاتب إعلانات عقارية لشركة «وصل العقارية» في السعودية. تكتب كابشن إعلان ميتا (إنستقرام + واتساب) بالعربية السعودية الواضحة، لعملاء يبحثون عن سكن أو استثمار.
-
-قواعد صارمة:
-1. استخدم فقط المعلومات الموجودة في «حقائق المشروع». لا تخترع أي رقم أو سعر أو مساحة أو موقع أو ميزة أو خصم.
-2. كل رقم تكتبه يجب أن يكون موجودًا حرفيًا في الحقائق (بالأرقام الغربية أو العربية). إن لم يوجد رقم لشيء، لا تذكره.
-3. البنية: سطر افتتاحي جذّاب، ثم اسم المشروع والحي والمدينة، ثم سطر الوحدات (الأنواع، المساحات، السعر يبدأ من)، ثم ٢–٤ ميزات مختصرة، ثم سطر الموقع/المعالم القريبة إن وُجدت، ثم عدد الوحدات المتاحة إن وُجد، ثم (إن كان المشروع على الخارطة) سطر «بيع على الخارطة» مع موعد التسليم المتوقع، ثم الضمانات إن وُجدت، ثم دعوة: «تواصل معنا على الواتساب الآن»، ثم ٤–٦ وسوم.
-4. إن كان المشروع على الخارطة يجب ذكر ذلك صراحة.
-5. استخدم إيموجي قليلة مناسبة (🏡 📍 ✅ 📅 🛡️) في بداية بعض الأسطر.
-6. لا تزيد عن ٨٠٠ حرف. لا عناوين ولا ترويسات ولا تنسيق ماركداون.
-8. اكتب كل الأرقام بأسلوب واحد: الأرقام العربية الهندية (٠١٢٣٤٥٦٧٨٩) مع الفاصلة العليا للآلاف (٥٧٦٬٢١٦) — لا تخلط بين النمطين.
-7. استلهم النبرة والزاوية من «النص المعتمد» إن وُجد، لكن لا تنسخه حرفيًا إذا كان طويلًا.
-
-أعد الكابشن فقط، بلا أي مقدمة أو تعليق.`;
 
 /**
- * The ten competitor captions the operator picked for the AI to learn from
- * (`mos_caption_examples`). Style only: the heading tells the model never to
- * lift a name, district, price or number from them, and the invented-number
- * guard still rejects any figure that is not in THIS project's facts.
- * A failed read is logged and the caption is written without examples —
- * examples improve a caption, they are never a reason not to write one.
+ * `params.approved_caption` when the job carries one (every job enqueued since
+ * 2026-09-22); null for a legacy job. An EMPTY text is an error, not a legacy
+ * signal — the RPC never enqueues one, so it means the params were tampered
+ * with or truncated.
  */
-async function captionExamplesBlock(sb: SupabaseClient): Promise<string> {
-  const { data, error } = await sb.from('mos_caption_examples')
-    .select('caption').order('position', { ascending: true }).limit(10);
-  if (error) {
-    console.error('[meta-ad] caption examples read failed', error.code, error.message);
-    return '';
-  }
-  const rows = (data ?? []) as Array<{ caption: string }>;
-  if (rows.length === 0) return '';
-  return 'أمثلة لكابشنات ناجحة من السوق — تعلّم منها الأسلوب والإيقاع والافتتاحية فقط. '
-    + 'لا تنسخ منها أي اسم مشروع أو حي أو سعر أو رقم:\n\n'
-    + rows.map((r, i) => `مثال ${i + 1}:\n${r.caption}`).join('\n\n');
+function approvedCaptionOf(job: MetaAdJob): ApprovedCaptionPayload | null {
+  const raw = job.params.approved_caption;
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'object') throw new Error('approved_caption on the job is not an object');
+  const o = raw as Record<string, unknown>;
+  const text = typeof o.text === 'string' ? o.text : '';
+  if (!text.trim()) throw new Error('approved_caption on the job carries no text');
+  return {
+    text,
+    hash: str(o.hash),
+    source: str(o.source) ?? 'writer',
+    approved_at: str(o.approved_at),
+    approved_by: str(o.approved_by),
+  };
 }
 
-async function deepseekCaption(env: WorkerEnv, userContent: string, extraRule?: string): Promise<string> {
-  if (!env.DEEPSEEK_API_KEY) throw new Error('DEEPSEEK_API_KEY is not set');
-  const base = env.DEEPSEEK_BASE_URL.replace(/\/$/, '');
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 60_000);
-  const started = Date.now();
-  try {
-    const res = await fetch(`${base}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        temperature: 0.4,
-        max_tokens: 900,
-        messages: [
-          { role: 'system', content: extraRule ? `${CAPTION_SYSTEM}\n\n${extraRule}` : CAPTION_SYSTEM },
-          { role: 'user', content: userContent },
-        ],
-      }),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const err = new Error(`deepseek ${res.status}: ${(await res.text()).slice(0, 300)}`);
-      await recordAiUsage({
-        area: 'marketing', callSite: 'worker/runMetaAdJob', operation: 'caption',
-        provider: 'deepseek', model: 'deepseek-chat', status: 'error',
-        error: err.message, latencyMs: Date.now() - started,
-      });
-      throw err;
-    }
-    const body = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number };
-    };
-    await recordAiUsage({
-      area: 'marketing', callSite: 'worker/runMetaAdJob', operation: 'caption',
-      provider: 'deepseek', model: 'deepseek-chat', status: 'ok',
-      latencyMs: Date.now() - started,
-      ...openAiCompatTokens(body),
-    });
-    const text = body.choices?.[0]?.message?.content?.trim() ?? '';
-    if (!text) throw new Error('deepseek returned an empty caption');
-    if (body.choices?.[0]?.finish_reason === 'length') throw new Error('deepseek caption was cut off (finish_reason=length)');
-    return text;
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-async function writeCaption(
-  sb: SupabaseClient, env: WorkerEnv, content: ContentRow, facts: ProjectFacts | null, campaign: { name: string | null; offer: string | null },
-  log: Deps['log'],
-): Promise<{ caption: string; source: 'deepseek' | 'fallback' }> {
-  const copy = approvedCopy(content);
-  const factsBlock = JSON.stringify({
-    project: facts ? {
-      name: facts.name, district: facts.district, city: facts.city,
-      unit_types: facts.unit_types,
-      price_from_sar: facts.price_min, price_to_sar: facts.price_max,
-      area_m2_from: facts.area_min, area_m2_to: facts.area_max,
-      bedrooms_from: facts.bedrooms_min, bedrooms_to: facts.bedrooms_max,
-      available_units: facts.available_units,
-      construction_status: facts.construction_status, off_plan: facts.off_plan,
-      expected_handover: facts.handover, payment_plan: facts.payment_plan,
-      features: facts.features, nearby: facts.landmarks, guarantee_up_to_years: facts.guarantee_max_years,
-    } : null,
-    campaign: { name: campaign.name, offer: campaign.offer },
-    content: { title: content.title, angle: content.angle, audience: content.audience, goal: content.goal, cta: content.cta },
-  }, null, 1);
-  const copyBlock = copy.lines.length
-    ? `\n\nالنص المعتمد من الكاتب (للنبرة والزاوية):\n${copy.lines.join('\n')}${copy.hashtags ? `\nالوسوم: ${copy.hashtags}` : ''}`
-    : '';
-  const user = `حقائق المشروع (JSON):\n${factsBlock}${copyBlock}\n\nاكتب الكابشن الآن.`;
-
-  // Numbers the model may use: anything in the facts + the approved copy.
-  const allowed = numbersIn(`${factsBlock}\n${copy.lines.join('\n')}`);
-  const offending = (text: string): string[] => [...numbersIn(text)].filter((n) => !allowed.has(n));
-
-  if (env.DEEPSEEK_API_KEY) {
-    const examples = await captionExamplesBlock(sb);
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const retry = attempt === 0 ? ''
-          : 'تنبيه: محاولتك السابقة احتوت أرقامًا غير موجودة في الحقائق. أعد الكتابة دون أي رقم غير موجود حرفيًا في الحقائق.';
-        const rule = [examples, retry].filter(Boolean).join('\n\n') || undefined;
-        const text = await deepseekCaption(env, user, rule);
-        const bad = offending(text);
-        if (bad.length === 0 && text.length <= 1500) return { caption: text, source: 'deepseek' };
-        log(`caption attempt ${attempt + 1} rejected — invented numbers: ${bad.join(', ') || 'none'} length=${text.length}`);
-      } catch (e) {
-        console.error(`[meta-ad] deepseek caption attempt ${attempt + 1} failed:`, e instanceof Error ? e.message : e);
-      }
-    }
-  } else {
-    console.error('[meta-ad] DEEPSEEK_API_KEY unset — using the deterministic caption');
-  }
-  return { caption: fallbackCaption(content, facts, campaign.offer), source: 'fallback' };
+/** `mos_caption_hash(text)` — THE hash every comparison uses. Database-side
+ *  on purpose, so the worker can never disagree with the approval by a trim. */
+async function captionHashOf(sb: SupabaseClient, text: string): Promise<string | null> {
+  const { data, error } = await sb.rpc('mos_caption_hash', { p_text: text });
+  if (error) throw new Error(`mos_caption_hash: ${error.message}`);
+  return str(data);
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -780,53 +632,32 @@ async function markSlotReady(sb: SupabaseClient, slotId: string, adRowId: string
 }
 
 /**
- * The canonical caption the WRITER wrote and the manager approved — the whole
- * reason the AI caption phase can be skipped.
- *
- * Three conditions, all required:
+ * LEGACY path — a job enqueued before 2026-09-22 carries no `approved_caption`.
+ * The caption it may build is the one the WRITER confirmed and the manager
+ * approved at the FINAL step, verified by hash. Three conditions, all required:
  *   1. `mos_content.data.caption` is non-empty;
- *   2. `data.caption_confirmed_text` equals it EXACTLY (the writer's «راجعت
- *      الكابشن» confirmation stores the text they confirmed, so a caption
- *      edited afterwards no longer matches — the comparison IS the
- *      invalidation, and it needs no cleanup pass to be correct);
+ *   2. `data.caption_confirmed_text` equals it EXACTLY (raw, untrimmed — the
+ *      database's own rule, `2026-09-14_01:895`, and the writing UI's,
+ *      `WritingFields.tsx`; a caption edited after the confirmation no longer
+ *      matches, and the comparison IS the invalidation);
  *   3. a `mos_content_approvals` row exists for the content's FINAL approval
- *      step (the step flagged `auto_meta_ad` on its pinned workflow version).
- *
- * Anything missing → null, and the legacy two-phase AI flow runs unchanged.
- *
- * **2026-09-15 — this gate was reading `data.caption_confirmed_by_writer_at`,
- * a key NOTHING in `src/`, `api/` or `supabase/` has ever written (only the e2e
- * fixture did).** It therefore concluded on every single job that the writer
- * had not confirmed, and sent Meta a DeepSeek caption instead of the approved
- * one — the manager approved text A and the budget ran on text B, with no error
- * anywhere. The condition now matches the SQL layer's own rule, which is
- * `data->>'caption_confirmed_text' = data->>'caption'`, exact and untrimmed
- * (`2026-09-14_01:895`, `2026-09-14_03:230`) and the UI's
- * (`WritingFields.tsx:405`). All three now agree. Do not reintroduce a fourth
- * spelling: if this ever needs a timestamp it is `caption_confirmed_at`.
+ *      step (the step flagged `auto_meta_ad` on its pinned workflow version)
+ *      whose `caption_hash` equals `mos_caption_hash(caption)` — the text the
+ *      manager approved is the text on the creative NOW. Until 2026-09-22 this
+ *      hash was read and discarded; a caption changed after approval reached
+ *      Meta unnoticed. A mismatch is a loud failure now.
+ * Anything missing THROWS with a sentence — there is no AI fallback any more.
  */
 async function loadApprovedWriterCaption(
   sb: SupabaseClient, contentId: string, content: ContentRow, log: Deps['log'],
-): Promise<{ caption: string; hashtags: string | null; confirmedAt: string | null; stepKey: string; approvedAt: string | null } | null> {
+): Promise<{ caption: string; hash: string | null; confirmedAt: string | null; stepKey: string; approvedAt: string | null }> {
   const d = content.data ?? {};
-  // RAW, untrimmed on purpose. `str()` trims, and the SQL layer's rule is an
-  // exact match on the stored values (`2026-09-14_01:895`), as is the writing
-  // UI's (`WritingFields.tsx:405`). Trimming here would accept a caption the
-  // database considers unconfirmed — the same trim-parity divergence that broke
-  // `record_twin_fill` on 2026-08-05. The text sent to Meta is the raw approved
-  // string too, so the caption hash the approval bound still matches.
   const caption = typeof d.caption === 'string' ? d.caption : '';
   const confirmedText = typeof d.caption_confirmed_text === 'string' ? d.caption_confirmed_text : '';
   const confirmedAt = str(d.caption_confirmed_at);
-  if (!caption.trim()) return null;
-  if (!confirmedText) {
-    log('content carries a caption but no writer confirmation — legacy AI caption phase');
-    return null;
-  }
-  if (confirmedText !== caption) {
-    log('the caption changed after the writer confirmed it — legacy AI caption phase');
-    return null;
-  }
+  if (!caption.trim()) throw new Error('the creative has no caption — nothing to build the ad from');
+  if (!confirmedText) throw new Error('the writer has not confirmed the caption — confirm it on the creative, then retry');
+  if (confirmedText !== caption) throw new Error('the caption changed after the writer confirmed it — confirm it again, then retry');
 
   // The final approval step = the step that triggers the ad on the pinned path.
   const finalSteps: string[] = [];
@@ -855,24 +686,16 @@ async function loadApprovedWriterCaption(
     .select('step_key, approved_at, caption_hash')
     .eq('content_id', contentId).in('step_key', finalSteps)
     .order('approved_at', { ascending: false }).limit(1).maybeSingle();
-  if (appr.error) {
-    // 42P01 = the planning migration has not been applied on this database.
-    console.error('[meta-ad] mos_content_approvals read failed:', appr.error.code, appr.error.message,
-      '— falling back to the legacy AI caption phase');
-    return null;
+  if (appr.error) throw new Error(`mos_content_approvals read failed: ${appr.error.code} ${appr.error.message}`);
+  const row = appr.data as { step_key: string; approved_at: string | null; caption_hash: string | null } | null;
+  if (!row) throw new Error(`no final approval (${finalSteps.join('/')}) for this creative — approve it first`);
+  const hash = await captionHashOf(sb, caption);
+  if (row.caption_hash && hash && row.caption_hash !== hash) {
+    throw new Error('the caption on the creative is not the one the final approval bound — re-approve the creative to launch it with the new caption');
   }
-  const row = appr.data as { step_key: string; approved_at: string | null } | null;
-  if (!row) {
-    log(`no final approval row (${finalSteps.join('/')}) for this caption — legacy AI caption phase`);
-    return null;
-  }
-  return {
-    caption,
-    hashtags: str(d.hashtags),
-    confirmedAt,
-    stepKey: row.step_key,
-    approvedAt: row.approved_at,
-  };
+  if (!row.caption_hash) log(`legacy job: approval '${row.step_key}' carries no caption hash — building from the confirmed caption unverified`);
+  else log(`legacy job: writer caption verified against approval '${row.step_key}' (${caption.length} chars)`);
+  return { caption, hash, confirmedAt, stepKey: row.step_key, approvedAt: row.approved_at };
 }
 
 async function patchAdRow(sb: SupabaseClient, adRowId: string, patch: Record<string, unknown>, autoAd: Record<string, unknown>): Promise<void> {
@@ -886,9 +709,41 @@ async function patchAdRow(sb: SupabaseClient, adRowId: string, patch: Record<str
   if (upd.error) throw new Error(`ad row update: ${upd.error.message}`);
 }
 
+/**
+ * Ownership-guarded row write (2026-09-22): applied only while
+ * `creative.auto_ad.job_id` is THIS job's id (or unset). Returns false — and
+ * logs what was refused — when another job has taken the row over (a
+ * re-approval with a new caption enqueued a superseding job after this one
+ * stopped being live): the older job's writes must never land on top of the
+ * newer job's. The enqueue RPC refuses a superseding job while this one is
+ * queued/running, so the read-then-write window here is never raced by a
+ * legitimate takeover.
+ */
+async function patchAdRowOwned(
+  sb: SupabaseClient, adRowId: string, jobId: string,
+  patch: Record<string, unknown>, autoAd: Record<string, unknown>,
+): Promise<boolean> {
+  const prev = await sb.from('mos_execution_ads').select('creative').eq('id', adRowId).maybeSingle();
+  if (prev.error) throw new Error(`ad row read: ${prev.error.message}`);
+  const cr = ((prev.data as { creative?: Record<string, unknown> } | null)?.creative ?? {}) as Record<string, unknown>;
+  const prevAuto = (cr.auto_ad && typeof cr.auto_ad === 'object' ? cr.auto_ad : {}) as Record<string, unknown>;
+  const owner = str(prevAuto.job_id);
+  if (owner && owner !== jobId) {
+    console.error(`[meta-ad] ad row ${adRowId} is owned by job ${owner}, not ${jobId} — write refused:`, Object.keys(autoAd).join(','));
+    return false;
+  }
+  const upd = await sb.from('mos_execution_ads')
+    .update({ ...patch, creative: { ...cr, ...(patch.creative as Record<string, unknown> | undefined ?? {}), auto_ad: { ...prevAuto, ...autoAd, job_id: jobId } }, updated_at: new Date().toISOString() })
+    .eq('id', adRowId);
+  if (upd.error) throw new Error(`ad row update: ${upd.error.message}`);
+  return true;
+}
+
+/** Returns whether the emission was accepted (a refused emission is logged). */
 async function notify(sb: SupabaseClient, args: {
-  event: 'ad_created' | 'ad_failed' | 'ad_caption_ready'; users: string[]; titleAr: string; titleEn: string; bodyAr: string; bodyEn: string; url: string;
-}): Promise<void> {
+  event: 'ad_created' | 'ad_failed'; users: string[]; titleAr: string; titleEn: string; bodyAr: string; bodyEn: string; url: string;
+  dedupeKey?: string | null;
+}): Promise<boolean> {
   const { error } = await sb.rpc('notify_emit', {
     p_workspace: 'marketing',
     p_event: args.event,
@@ -899,87 +754,13 @@ async function notify(sb: SupabaseClient, args: {
     p_body_ar: args.bodyAr,
     p_body_en: args.bodyEn,
     p_url: args.url,
+    ...(args.dedupeKey ? { p_dedupe_key: args.dedupeKey } : {}),
   });
-  if (error) console.error('[meta-ad] notify_emit failed', args.event, error.code, error.message);
-}
-
-/**
- * The caption task in «مهامي» (2026-09-13). A parked caption is a TASK for
- * the approver — it appears in their task list like every other task and
- * opens the review popup. One open task per ad row (a rewrite refreshes it);
- * the approval (API) or the ad's creation (below) closes it.
- */
-async function openCaptionTask(sb: SupabaseClient, args: {
-  adRowId: string; contentId: string; campaignId: string | null; projectId: string | null;
-  assigneeUserId: string | null; title: string; adSetName: string | null;
-}): Promise<void> {
-  if (!args.assigneeUserId) {
-    console.error('[meta-ad] caption task NOT opened — no approver user id on the job (the notification still went out)');
-    return;
+  if (error) {
+    console.error('[meta-ad] notify_emit failed', args.event, error.code, error.message);
+    return false;
   }
-  const now = new Date().toISOString();
-  const title = `اعتماد كابشن إعلان ميتا: ${args.title}`.slice(0, 200);
-  const details = args.adSetName ? `المجموعة الإعلانية: ${args.adSetName}` : null;
-  const open = await sb.from('mos_manual_tasks').select('id')
-    .eq('kind', 'caption_review').eq('ref_id', args.adRowId).eq('status', 'open').maybeSingle();
-  if (open.error) { console.error('[meta-ad] caption task read failed:', open.error.message); return; }
-  if (open.data) {
-    const upd = await sb.from('mos_manual_tasks').update({ title, details, updated_at: now }).eq('id', (open.data as { id: string }).id);
-    if (upd.error) console.error('[meta-ad] caption task refresh failed:', upd.error.message);
-    return;
-  }
-  const ins = await sb.from('mos_manual_tasks').insert({
-    kind: 'caption_review',
-    ref_id: args.adRowId,
-    title,
-    details,
-    assignee_user_id: args.assigneeUserId,
-    created_by_user_id: args.assigneeUserId,
-    content_id: args.contentId,
-    campaign_id: args.campaignId,
-    project_id: args.projectId,
-    status: 'open',
-    due_at: new Date(Date.now() + 24 * 3600_000).toISOString(),
-  });
-  if (ins.error) console.error('[meta-ad] caption task insert failed:', ins.error.message);
-}
-
-/** Phase-2 failure → the caption task returns to the approver's list with the
- *  reason as its details (the popup shows the failed card + retry). */
-async function reopenCaptionTaskOnFailure(sb: SupabaseClient, args: {
-  adRowId: string; contentId: string; assigneeUserId: string | null; error: string;
-}): Promise<void> {
-  const now = new Date().toISOString();
-  const c = await sb.from('mos_content').select('title').eq('id', args.contentId).maybeSingle();
-  const title = `تعذّر إنشاء إعلان ميتا: ${(c.data as { title?: string } | null)?.title ?? ''}`.slice(0, 200);
-  const details = args.error.slice(0, 600);
-  const last = await sb.from('mos_manual_tasks').select('id, status')
-    .eq('kind', 'caption_review').eq('ref_id', args.adRowId)
-    .order('created_at', { ascending: false }).limit(1).maybeSingle();
-  if (last.error) { console.error('[meta-ad] caption task read failed:', last.error.message); return; }
-  const prev = last.data as { id: string; status: string } | null;
-  if (prev) {
-    const upd = await sb.from('mos_manual_tasks')
-      .update({ status: 'open', title, details, closed_at: null, closed_by_user_id: null, done_note: null, due_at: new Date(Date.now() + 24 * 3600_000).toISOString(), updated_at: now })
-      .eq('id', prev.id);
-    if (upd.error) console.error('[meta-ad] caption task reopen failed:', upd.error.message);
-    return;
-  }
-  if (!args.assigneeUserId) { console.error('[meta-ad] failure task NOT opened — no approver user id on the job'); return; }
-  const ins = await sb.from('mos_manual_tasks').insert({
-    kind: 'caption_review', ref_id: args.adRowId, title, details,
-    assignee_user_id: args.assigneeUserId, created_by_user_id: args.assigneeUserId,
-    content_id: args.contentId, status: 'open', due_at: new Date(Date.now() + 24 * 3600_000).toISOString(),
-  });
-  if (ins.error) console.error('[meta-ad] failure task insert failed:', ins.error.message);
-}
-
-async function closeCaptionTask(sb: SupabaseClient, adRowId: string, note: string): Promise<void> {
-  const now = new Date().toISOString();
-  const upd = await sb.from('mos_manual_tasks')
-    .update({ status: 'done', done_note: note, closed_at: now, updated_at: now })
-    .eq('kind', 'caption_review').eq('ref_id', adRowId).eq('status', 'open');
-  if (upd.error) console.error('[meta-ad] caption task close failed:', upd.error.message);
+  return true;
 }
 
 /** How many times this job has already been requeued after exhausted retries. */
@@ -1036,22 +817,16 @@ export async function requeueMetaAdJob(
   return true;
 }
 
-/** Mark the ad row failed + notify. Called by the lane on ANY thrown error. */
+/** Mark the ad row failed (while this job owns it) + notify. Called by the lane on ANY thrown error. */
 export async function failMetaAdJob(sb: SupabaseClient, job: MetaAdJob, message: string): Promise<void> {
   const adRowId = str(job.params.ad_row_id);
   const approvedBy = str(job.params.approved_by_user_id);
   if (adRowId) {
     try {
-      await patchAdRow(sb, adRowId, {}, { state: 'failed', error: message, failed_at: new Date().toISOString() });
+      const owned = await patchAdRowOwned(sb, adRowId, job.id, {}, { state: 'failed', error: message, failed_at: new Date().toISOString() });
+      if (!owned) console.error(`[meta-ad] failure of job ${job.id} NOT recorded on ad row ${adRowId} — another job owns it now`);
     } catch (e) {
       console.error('[meta-ad] could not record the failure on the ad row:', e instanceof Error ? e.message : e);
-    }
-    // The failure is the approver's to act on → it goes back to «مهامي» as the
-    // same task (reopened with the reason), not only as a notification.
-    try {
-      await reopenCaptionTaskOnFailure(sb, { adRowId, contentId: job.recordId, assigneeUserId: approvedBy, error: message });
-    } catch (e) {
-      console.error('[meta-ad] could not reopen the caption task:', e instanceof Error ? e.message : e);
     }
   }
   await notify(sb, {
@@ -1062,10 +837,11 @@ export async function failMetaAdJob(sb: SupabaseClient, job: MetaAdJob, message:
     bodyAr: message,
     bodyEn: message,
     url: `/m/content/${job.recordId}?tab=placements`,
+    dedupeKey: `meta-ad:${job.id}:ad_failed`,
   });
 }
 
-export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promise<MetaAdJobResult> {
+export async function runMetaAdJob({ supabase: sb, job, log }: Deps): Promise<MetaAdJobResult> {
   const cfg = loadMetaConfig();
   if (!cfg) throw new Error('Meta credentials are not configured on the worker (META_SYSTEM_USER_TOKEN / META_AD_ACCOUNT_ID)');
   if (!cfg.pageId) throw new Error('META_PAGE_ID is not set — every creative runs from a page');
@@ -1076,10 +852,7 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
   const adSetId = str(job.params.ad_set_id);
   const platformAdSetId = str(job.params.platform_adset_id);
   const approvedBy = str(job.params.approved_by_user_id);
-  const phase: MetaAdPhase = job.params.phase === 'create' ? 'create' : 'caption';
   if (!adRowId || !adSetId || !platformAdSetId) throw new Error('meta-ad job is missing ad_row_id / ad_set_id / platform_adset_id');
-
-  await patchAdRow(sb, adRowId, {}, { state: 'creating', phase, started_at: new Date().toISOString(), error: null });
 
   // ── 1. content + campaign ────────────────────────────────────────────────
   const cRes = await sb.from('mos_content')
@@ -1109,79 +882,35 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     ?? str(content.project_id)
     ?? (Array.isArray(content.project_ids) ? str(content.project_ids[0]) : null);
 
-  // ── 2. facts ─────────────────────────────────────────────────────────────
+  // ── 2. the caption — bound at approval; verified by hash for a legacy job ─
+  const payload = approvedCaptionOf(job);
+  let caption: string;
+  let approvalHash: string | null;
+  const captionSource: MetaCaptionSource = 'writer';
+  if (payload) {
+    caption = payload.text;
+    approvalHash = payload.hash ?? await captionHashOf(sb, payload.text);
+    log(`caption: bound at approval (${caption.length} chars, hash ${approvalHash ?? '-'}, event ${str(job.params.event_id) ?? '-'})`);
+  } else {
+    const legacy = await loadApprovedWriterCaption(sb, contentId, content, log);
+    caption = legacy.caption;
+    approvalHash = legacy.hash;
+  }
+
+  // Take the row. Refused when a newer job owns it — then this job is the
+  // superseded one and must not touch anything (its failure is logged only).
+  const taken = await patchAdRowOwned(sb, adRowId, job.id, {
+    creative: { primary_text: caption, message: caption },
+  }, {
+    state: 'creating', phase: 'create', started_at: new Date().toISOString(), error: null,
+    caption_source: captionSource, approval_hash: approvalHash, approval_scope: 'caption',
+    ...(payload ? { caption_approved_at: payload.approved_at, caption_approved_by_user_id: payload.approved_by, event_id: str(job.params.event_id) } : {}),
+  });
+  if (!taken) throw new Error(`ad row ${adRowId} is owned by another job — this job is superseded and built nothing`);
+
+  // Project facts feed the welcome template's project name only.
   const facts = await loadProjectFacts(sb, projectId);
-  if (!facts) log(`no project facts (project=${projectId ?? 'none'}) — caption from the approved copy only`);
-
-  /* ════════════ PHASE 0 — is the caption already approved? ═════════════ */
-  // The writer writes the caption and the manager approves it at writing
-  // review, so for planned content there is nothing left for the AI phase to
-  // do: copy the approved text onto the ad row and build the ad now.
-  let writerCaption: string | null = null;
-  let effectivePhase: MetaAdPhase = phase;
-  if (phase === 'caption') {
-    const approved = await loadApprovedWriterCaption(sb, contentId, content, log);
-    if (approved) {
-      const tags = approved.hashtags;
-      writerCaption = tags && !approved.caption.includes(tags)
-        ? `${approved.caption}\n\n${tags}`
-        : approved.caption;
-      await patchAdRow(sb, adRowId, {
-        creative: { primary_text: writerCaption, message: writerCaption },
-      }, {
-        state: 'creating',
-        phase: 'create',
-        caption_source: 'writer',
-        caption_approved_step: approved.stepKey,
-        caption_approved_at: approved.approvedAt,
-        caption_confirmed_at: approved.confirmedAt,
-        error: null,
-      });
-      effectivePhase = 'create';
-      log(`caption path: WRITER-APPROVED (${writerCaption.length} chars, approved at step '${approved.stepKey}') — skipping the AI phase, the caption task and the ad_caption_ready notification`);
-    } else {
-      log('caption path: LEGACY two-phase (AI caption → manager approval)');
-    }
-  }
-
-  /* ════════════ PHASE 1 — caption for the manager's approval ═══════════ */
-  if (effectivePhase === 'caption') {
-    const { caption, source: captionSource } = await writeCaption(sb, env, content, facts, { name: camp?.name ?? null, offer: camp?.offer ?? null }, log);
-    log(`caption ready (${captionSource}, ${caption.length} chars) — parked for approval`);
-    await patchAdRow(sb, adRowId, {
-      status: 'waiting',
-      creative: { primary_text: caption, message: caption },
-    }, {
-      state: 'caption_review',
-      phase: 'caption',
-      caption_source: captionSource,
-      caption_ready_at: new Date().toISOString(),
-      error: null,
-    });
-    await openCaptionTask(sb, {
-      adRowId, contentId, campaignId: exec?.campaign_id ?? null, projectId, assigneeUserId: approvedBy,
-      title: content.title, adSetName: str(job.params.ad_set_name),
-    });
-    await notify(sb, {
-      event: 'ad_caption_ready',
-      users: approvedBy ? [approvedBy] : [],
-      titleAr: 'كابشن الإعلان جاهز لاعتمادك',
-      titleEn: 'The ad caption is ready for your approval',
-      bodyAr: `«${content.title}» — راجع الكابشن واعتمده ليُنشأ الإعلان في ميتا.`,
-      bodyEn: `“${content.title}” — review the caption and approve it to create the Meta ad.`,
-      url: `/m/content/${contentId}?tab=placements`,
-    });
-    return { phase: 'caption', caption_source: captionSource, caption_chars: caption.length };
-  }
-
-  /* ════════════ PHASE 2 — build the ad with the APPROVED caption ═══════ */
-  const cr = adRow.creative ?? {};
-  const caption = writerCaption ?? str(cr.primary_text) ?? str(cr.message);
-  if (!caption) throw new Error('no approved caption on the ad row — approve the caption on the Placements tab first');
-  const storedSource = (cr.auto_ad as { caption_source?: unknown } | undefined)?.caption_source;
-  const captionSource: MetaCaptionSource = writerCaption ? 'writer'
-    : storedSource === 'fallback' ? 'fallback'
-      : storedSource === 'writer' ? 'writer' : 'deepseek';
+  if (!facts) log(`no project facts (project=${projectId ?? 'none'}) — the welcome template keeps its own project name`);
 
   // ── 3. designs → Meta (BOTH slots required) ──────────────────────────────
   const slots = await resolveSlots(sb, content);
@@ -1369,7 +1098,10 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
   const shadow = built.find((b) => b.variant === 'story') ?? null;
   const rowStatus = adStatus === 'ACTIVE' ? 'running' : 'paused';
   const copy = { primary_text: caption, message: caption, headline, cta: ctaType, destination_url: linkUrl };
-  await patchAdRow(sb, adRowId, {
+  // The hash of what was actually sent — equal to approval_hash by
+  // construction; recorded so an audit can prove it without trusting the code.
+  const builtTextHash = await captionHashOf(sb, caption);
+  const recorded = await patchAdRowOwned(sb, adRowId, job.id, {
     platform_ad_id: primary.adId,
     label: primary.name,
     status: rowStatus,
@@ -1385,11 +1117,17 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     image_hashes: imageHashes,
     video_ids: Object.fromEntries(Object.entries(videoIds).map(([k, v]) => [k, v.id])),
     caption_source: captionSource,
+    approval_hash: approvalHash,
+    approval_scope: 'caption',
+    built_text_hash: builtTextHash,
     welcome_template: welcome ? 'duplicated' : null,
     ad_status: adStatus,
     created_at: new Date().toISOString(),
     error: null,
   });
+  if (!recorded) {
+    throw new Error(`Meta ads ${built.map((b) => b.adId).join(', ')} were created but ad row ${adRowId} is owned by another job — sync from Meta to record them`);
+  }
   if (shadow) {
     // The stories ad lives on a SHADOW row (variant 'story', pair_id = the
     // primary row) so the execution's Ads tab and the Meta sync see it by its
@@ -1424,7 +1162,6 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     }
   }
 
-  await closeCaptionTask(sb, adRowId, `ads created on Meta (${built.map((b) => b.adId).join(', ')})`);
   await notify(sb, {
     event: 'ad_created',
     users: approvedBy ? [approvedBy] : [],
@@ -1433,6 +1170,7 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     bodyAr: `«${content.title}» — ${shadow ? 'إعلانان: فيد + ستوري' : adSet.name}`,
     bodyEn: `“${content.title}” — ${shadow ? 'two ads: feed + stories' : adSet.name}`,
     url: `/m/content/${contentId}?tab=placements`,
+    dedupeKey: `meta-ad:${job.id}:ad_created`,
   });
 
   return {
@@ -1443,5 +1181,7 @@ export async function runMetaAdJob({ supabase: sb, env, job, log }: Deps): Promi
     format,
     ad_status: adStatus,
     slot_id: slotId,
+    approval_hash: approvalHash,
+    built_text_hash: builtTextHash,
   };
 }

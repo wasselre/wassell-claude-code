@@ -28,6 +28,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { jsonOk, jsonError } from '../../auth.js';
 import { llmText } from '../../textLlm.js';
 import type { PlanCtx } from './actions.js';
+import { completionEventOf, requestHashOf } from '../completionEvent.js';
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
 const asRecord = (v: unknown): Record<string, unknown> =>
@@ -307,15 +308,25 @@ export async function contentRevise(ctx: PlanCtx): Promise<Response> {
     ? (ctx.body.scope as unknown[]).map(String).filter((s) => ['writing', 'caption', 'design'].includes(s))
     : [];
 
+  // Bound to an event (2026-09-22): a retried click replays the revision the
+  // first click opened instead of opening a second round.
+  const evRef = completionEventOf(ctx.body, null);
+  if ('error' in evRef) return jsonError(400, evRef.error);
+  const request = { action: 'content_revise', content_id: contentId, note, scope };
   const { data, error } = await ctx.sb.rpc('content_revise', {
     p_content_id: contentId,
     p_scope: scope,
     p_note: note,
+    p_event_id: evRef.ref.id,
+    p_request_hash: await requestHashOf(request),
+    p_request_snapshot: request,
   });
   if (error) {
     const msg = error.message ?? '';
     if (/MOS:NOT_APPROVED/.test(msg)) return jsonError(409, 'this item has no approved package to revise');
     if (/MOS:NOT_ALLOWED/.test(msg)) return jsonError(403, 'revise_approved_content capability required');
+    if (/MOS:EVENT_MISMATCH/.test(msg)) return jsonError(409, 'this request was already recorded with different details — refresh and try again');
+    if (/MOS:EVENT_OWNER_MISMATCH/.test(msg)) return jsonError(403, 'this request belongs to another user');
     return fail('content_revise', error);
   }
   return jsonOk({ revision: data });

@@ -8,9 +8,17 @@
  *      dump twenty tasks into the queue today. Paid replacement slots get their
  *      content shells created here too, at each cycle's `production_start_on`.
  *   2. `mos_plan_repair()` — marks reservations whose window has passed but
- *      whose step never opened as `stale`, re-dates them forward, moves
- *      production plans to `at_risk` / `late`, and lets each publishing batch
- *      take the rollup view's verdict.
+ *      whose step never opened as `stale` (it no longer re-dates anything —
+ *      plan-driven assignment, 2026-09-22: a wrong plan is re-planned, not
+ *      nudged), moves production plans to `at_risk` / `late`, lets each
+ *      publishing batch take the rollup view's verdict, and runs the
+ *      publication-risk sweep over open tasks.
+ *
+ *   2b. Completion side effects a crashed API response left `pending` on a
+ *      completion event (the approved asset's promote, the Meta ad hand-off)
+ *      are re-run (`mos_completion_pending_effects`, ≥ 2 minutes old). Every
+ *      element is idempotent — the Meta job id is derived from the event —
+ *      so a re-run can never enqueue a second ad.
  *
  *      **It raises no task.** This header said until 2026-09-15 that "a batch
  *      at risk raises ONE `plan_conflict` task for the manager with the
@@ -44,8 +52,19 @@ import { ensureMonthMetaCampaigns } from '../_lib/marketing/planning/monthMeta.j
 import {
   loadPlanningSettings, loadWorkCalendar, riyadhToday,
 } from '../_lib/marketing/planning/snapshot.js';
+import { recoverPendingEffects } from '../_lib/marketing/completionEffects.js';
 
 export const config = { runtime: 'edge' };
+
+/** Fire-and-forget /wake ping to the Fly worker so a recovered Meta job skips
+ *  the poll latency (same posture as /api/marketing-os). */
+function wakeWorker(): void {
+  const base = process.env.WASSEL_DECK_WORKER_URL;
+  if (!base) return;
+  void fetch(`${base.replace(/\/$/, '')}/wake`, { method: 'POST' }).catch(() => {
+    /* best-effort by design */
+  });
+}
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -254,6 +273,15 @@ export default async function handler(req: Request): Promise<Response> {
     out.repair = { error: repaired.error.message };
   } else {
     out.repair = repaired.data;
+  }
+
+  // 2b — completion side effects left pending (asset promote, Meta ad). A
+  //      failure here is reported and does not stop the sweep.
+  try {
+    out.pending_effects = await recoverPendingEffects(sb, { wake: wakeWorker });
+  } catch (e) {
+    console.error('[planning-sweep] pending completion effects threw', e);
+    out.pending_effects = { error: e instanceof Error ? e.message : String(e) };
   }
 
   // 3 — the next-month reminder. A failure here is reported and does not stop

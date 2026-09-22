@@ -38,13 +38,15 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
+  MosApiError,
   MosContentRow,
   MosManualTask,
+  MosPlannedStep,
   MosRole,
-  MosUpcoming,
   ROLE_LABELS,
   completeManualTask,
   isOverdue,
+  startTaskEarly,
   statusLabel,
 } from '@/lib/marketingOS/client';
 import {
@@ -238,7 +240,7 @@ type QueueItem =
  */
 function RowCardRows({
   facts, task, members, open, overdue, isMine, faded, tone, isAr, projectLabel,
-  onToggle, onChanged,
+  onToggle, onChanged, offered, starting, onStartEarly,
 }: {
   facts: MosRowFacts;
   task: MosSubjectTask;
@@ -252,6 +254,10 @@ function RowCardRows({
   projectLabel: string;
   onToggle: () => void;
   onChanged: () => void;
+  /** Band B: offered to me, not started — the action is «ابدأ الآن». */
+  offered?: boolean;
+  starting?: boolean;
+  onStartEarly?: () => void;
 }) {
   const day = facts.batch_day;
   const general = facts.kind === 'general_row' || !facts.project_id;
@@ -288,7 +294,13 @@ function RowCardRows({
           </div>
         </td>
         <td style={{ width: 190 }}>
-          {task.waiting_since ? (
+          {offered ? (
+            <Pill tone="wait">
+              {isAr
+                ? `متاح مبكرًا · مخطط ${task.planned_day ? shortDate(task.planned_day, true) : '—'}`
+                : `available early · planned ${task.planned_day ? shortDate(task.planned_day, false) : '—'}`}
+            </Pill>
+          ) : task.waiting_since ? (
             <Pill tone="wait">{waitingLabel(task, isAr)}</Pill>
           ) : overdue ? (
             <Pill tone="late">
@@ -305,13 +317,24 @@ function RowCardRows({
           )}
         </td>
         <td style={{ width: 130, textAlign: 'end' }}>
-          <span className={`btn btn-sm${isMine && !faded ? ' btn-p' : ' btn-d'}`}>
-            {open
-              ? (isAr ? 'طيّ' : 'Collapse')
-              : isMine
-                ? rowActionLabel(task.step_id, isAr)
-                : (isAr ? 'عرض الدفعة' : 'View the batch')}
-          </span>
+          {offered && onStartEarly ? (
+            <button
+              type="button"
+              className="btn btn-p btn-sm"
+              disabled={starting}
+              onClick={(e) => { e.stopPropagation(); onStartEarly(); }}
+            >
+              {starting ? '…' : (isAr ? 'ابدأ الآن' : 'Start now')}
+            </button>
+          ) : (
+            <span className={`btn btn-sm${isMine && !faded ? ' btn-p' : ' btn-d'}`}>
+              {open
+                ? (isAr ? 'طيّ' : 'Collapse')
+                : isMine
+                  ? rowActionLabel(task.step_id, isAr)
+                  : (isAr ? 'عرض الدفعة' : 'View the batch')}
+            </span>
+          )}
         </td>
       </tr>
       {open && (
@@ -343,6 +366,10 @@ interface GroupCtx {
   itemMine: (it: QueueItem) => boolean;
   reload: () => void;
   navigate: (href: string) => void;
+  /** Band B (2026-09-22): is this item OFFERED to me, and the early start. */
+  isOffered: (it: QueueItem) => boolean;
+  starting: string | null;
+  startEarly: (taskId: string) => void;
 }
 
 /**
@@ -369,6 +396,7 @@ function QueueGroup({
   const {
     isAr, myRole, typeLabel, projectName, openRowId, openPostId,
     expandRow, expandPost, taskFor, itemLate, itemMine, reload,
+    isOffered, starting, startEarly,
   } = ctx;
   if (groupItems.length === 0) return null;
   return (
@@ -411,6 +439,9 @@ function QueueGroup({
                       projectLabel={projectName(facts.project_id)}
                       onToggle={() => expandRow(open ? null : facts.row_id)}
                       onChanged={reload}
+                      offered={isOffered(it)}
+                      starting={starting === task.id}
+                      onStartEarly={() => startEarly(task.id)}
                     />
                   );
                 }
@@ -447,6 +478,12 @@ function QueueGroup({
                               ? `آخر موعد للتسليم ${dateTimeShort(r.current_task_due_at ?? r.due_at, true)} · متأخر ${daysAgo(r.current_task_due_at ?? r.due_at, true)}`
                               : `due ${dateTimeShort(r.current_task_due_at ?? r.due_at, false)} · ${daysAgo(r.current_task_due_at ?? r.due_at, false)} late`}
                           </Pill>
+                        ) : task && isOffered(it) ? (
+                          <Pill tone="wait">
+                            {isAr
+                              ? `متاح مبكرًا · مخطط ${task.planned_day ? shortDate(task.planned_day, true) : '—'}`
+                              : `available early · planned ${task.planned_day ? shortDate(task.planned_day, false) : '—'}`}
+                          </Pill>
                         ) : rowWaitText(r, isAr) ? (
                           <Pill tone="wait">{rowWaitText(r, isAr)}</Pill>
                         ) : (
@@ -460,7 +497,16 @@ function QueueGroup({
                         )}
                       </td>
                       <td style={{ width: 130, textAlign: 'end' }}>
-                        {isMine ? (
+                        {task && isOffered(it) ? (
+                          <button
+                            type="button"
+                            className="btn btn-p btn-sm"
+                            disabled={starting === task.id}
+                            onClick={(e) => { e.stopPropagation(); startEarly(task.id); }}
+                          >
+                            {starting === task.id ? '…' : (isAr ? 'ابدأ الآن' : 'Start now')}
+                          </button>
+                        ) : isMine ? (
                           <span className={`btn btn-sm${faded ? ' btn-d' : ' btn-p'}`}>
                             {open ? (isAr ? 'طيّ' : 'Collapse') : actionLabel(r, isAr)}
                           </span>
@@ -507,7 +553,33 @@ export default function WorkPage() {
   const [tasks, setTasks] = useState<MosSubjectTask[]>([]);
   const [rowFacts, setRowFacts] = useState<MosRowFacts[]>([]);
   const [manual, setManual] = useState<MosManualTask[]>([]);
-  const [upcoming, setUpcoming] = useState<MosUpcoming[]>([]);
+  // Band C (2026-09-22) — the plan's future steps for me. Hidden by default
+  // (decision D7); the toggle is remembered per browser.
+  const [planned, setPlanned] = useState<MosPlannedStep[]>([]);
+  const [showPlanned, setShowPlanned] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('mos_work_planned_open') === '1';
+    } catch (e) {
+      // Blocked storage (a private window) — the band simply starts closed.
+      console.error('[work] planned toggle could not be read', e);
+      return false;
+    }
+  });
+  const togglePlanned = (): void => {
+    setShowPlanned((v) => {
+      try {
+        window.localStorage.setItem('mos_work_planned_open', v ? '0' : '1');
+      } catch (e) {
+        // Blocked storage only loses the remembered position, never the toggle.
+        console.error('[work] planned toggle could not be remembered', e);
+      }
+      return !v;
+    });
+  };
+  // Band B — my app-user id, to tell an OFFERED task (start it early) from an
+  // assigned one; and the task whose early start is in flight.
+  const [meUserId, setMeUserId] = useState<string | null>(null);
+  const [starting, setStarting] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<MosRole>('viewer');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -569,7 +641,8 @@ export default function WorkPage() {
       setTasks(res.tasks ?? []);
       setRowFacts(res.rows ?? []);
       setManual(res.manual_tasks ?? []);
-      setUpcoming(res.upcoming ?? []);
+      setPlanned(res.planned ?? []);
+      setMeUserId(res.me_user_id ?? null);
       setMyRole(res.role);
       // The rail badge counts EVERYTHING open for me. A ROW is ONE item, not
       // three: counting its members would tell the reader they have three times
@@ -707,10 +780,6 @@ export default function WorkPage() {
     </>
   ) : null;
 
-  const late = filtered.filter((it) => itemLate(it));
-  const mine = filtered.filter((it) => !itemLate(it) && itemMine(it));
-  const others = filtered.filter((it) => !itemLate(it) && !itemMine(it));
-
   const taskFor = (contentId: string): MosSubjectTask | undefined =>
     tasks.find((t) => t.subject_table !== 'mos_content_rows' && t.subject_id === contentId);
 
@@ -718,13 +787,117 @@ export default function WorkPage() {
   const contentRow = (contentId: string): MosContentRow | undefined =>
     rows.find((r) => r.id === contentId);
 
-  /**
-   * «القادم إليك» rows carry the step KEY the path will reach, so the link can
-   * point at the exact area rather than at the top of the page. This page has
-   * no pinned step list of its own; the resolver's keyword fallback handles it.
-   */
-  const upcomingHref = (u: MosUpcoming): string =>
-    contentHref({ id: u.content_id, current_step_key: u.step_key });
+  /* ── band B: offered early (2026-09-22) ─────────────────────────────── */
+
+  /** An open task OFFERED to me — unassigned, startable now, nothing due yet. */
+  const isOfferedTask = (t: MosSubjectTask | undefined): boolean =>
+    Boolean(t && !t.assignee_user_id && t.offered_to_user_id && meUserId && t.offered_to_user_id === meUserId);
+  const itemOffered = (it: QueueItem): boolean =>
+    isOfferedTask(it.kind === 'row' ? it.task : taskFor(it.row.id));
+
+  const offered = filtered.filter((it) => itemOffered(it));
+  const late = filtered.filter((it) => !itemOffered(it) && itemLate(it));
+  const mine = filtered.filter((it) => !itemOffered(it) && !itemLate(it) && itemMine(it));
+  const others = filtered.filter((it) => !itemOffered(it) && !itemLate(it) && !itemMine(it));
+
+  const startEarly = async (taskId: string): Promise<void> => {
+    setStarting(taskId);
+    try {
+      const res = await startTaskEarly(taskId);
+      addToast(res.due_at
+        ? (isAr
+          ? `بدأت مبكرًا — آخر موعد للتسليم ${dateTimeShort(res.due_at, true)}`
+          : `Started early — due ${dateTimeShort(res.due_at, false)}`)
+        : (isAr ? 'بدأت مبكرًا.' : 'Started early.'), 'success');
+    } catch (e) {
+      // 409 = the offer was withdrawn meanwhile (the day filled up, the item
+      // was blocked, someone else took it). The list is refreshed, not retried.
+      const withdrawn = e instanceof MosApiError && e.status === 409;
+      addToast(withdrawn
+        ? (isAr
+          ? 'لم يعد هذا العمل متاحًا للبدء المبكر — حُدِّثت القائمة.'
+          : 'This work is no longer available to start early — the list was refreshed.')
+        : e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setStarting(null);
+      await load();
+    }
+  };
+
+  /* ── band C: planned for me (2026-09-22, hidden by default — D7) ──────── */
+
+  /** «مخطط ٢٧ سبتمبر · بعد خطوة سابقة» — when a planned step comes, and why it waits. */
+  const plannedWhen = (p: MosPlannedStep): string => {
+    const day = p.planned_day ? shortDate(p.planned_day, isAr) : (isAr ? 'بلا يوم' : 'no day');
+    const r = p.readiness;
+    const why = r === 'blocked' ? (isAr ? 'متوقف' : 'blocked')
+      : r === 'inactive' ? (isAr ? 'غير نشط' : 'inactive')
+        : r.startsWith('awaiting:') ? (isAr ? 'بعد خطوة سابقة' : 'after a prior step')
+          : null;
+    return isAr ? `مخطط ${day}${why ? ` · ${why}` : ''}` : `planned ${day}${why ? ` · ${why}` : ''}`;
+  };
+  const plannedTitle = (p: MosPlannedStep): string => {
+    if (p.row_id) {
+      const day = p.batch_day ? shortDate(p.batch_day, isAr) : (isAr ? 'بلا يوم' : 'no day');
+      return isAr
+        ? `دفعة سوشيال ميديا ${day} — ${p.project_id ? projectName(p.project_id) : 'عام'}`
+        : `Social media batch · ${day} — ${p.project_id ? projectName(p.project_id) : 'general'}`;
+    }
+    return `${p.ref ?? ''}${p.ref && p.title ? ' · ' : ''}${p.title ?? ''}`;
+  };
+
+  /* Rendered as an ELEMENT (same reason as `linkedRow` above). Shown on both
+     layouts; closed until the reader opens it. A content step links to the
+     item's page at that step; a batch step is informational (the row has no
+     task of its own yet, so there is nothing to open). */
+  const plannedBlock = planned.length > 0 ? (
+    <div style={{ marginBottom: 22 }}>
+      <button type="button" className="btn btn-d btn-sm" onClick={togglePlanned}>
+        {showPlanned
+          ? (isAr ? 'إخفاء المخطط لي' : 'Hide what is planned for me')
+          : (isAr
+            ? `المخطط لي في الأيام القادمة (${num(planned.length, true)})`
+            : `Planned for me in the coming days (${planned.length})`)}
+      </button>
+      {showPlanned && (
+        <div className="card" style={{ marginTop: 9 }}>
+          <div className="card-b" style={{ padding: '10px 14px 12px' }}>
+            <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 8, lineHeight: 1.7 }}>
+              {isAr
+                ? 'ليست مهامًا بعد — تُسلَّم لك في يومها المخطط، أو تُعرض عليك مبكرًا حين تفرغ.'
+                : 'Not tasks yet — handed to you on their planned day, or offered early when you are free.'}
+            </div>
+            {planned.map((p) => {
+              const key = p.task_id ?? p.reservation_id ?? `${p.subject_id}:${p.step_key}`;
+              const main = (
+                <span className="up-row-main">
+                  {plannedTitle(p)}
+                  {' · '}
+                  <span style={{ color: 'var(--ink-2)' }}>{isAr ? p.step_label_ar : p.step_label_en}</span>
+                </span>
+              );
+              return p.content_id ? (
+                <button
+                  key={key}
+                  type="button"
+                  className="up-row"
+                  onClick={() => navigate(contentHref({ id: p.content_id as string, current_step_key: p.step_key }))}
+                >
+                  {main}
+                  <Pill tone="idle">{plannedWhen(p)}</Pill>
+                </button>
+              ) : (
+                <div key={key} className="up-row" style={{ cursor: 'default' }}>
+                  {main}
+                  <Pill tone="idle">{plannedWhen(p)}</Pill>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null;
 
   /* ── hand-assigned tasks ─────────────────────────────────────────────── */
 
@@ -1003,6 +1176,9 @@ export default function WorkPage() {
     itemMine,
     reload: () => { void load(); },
     navigate: (href) => navigate(href),
+    isOffered: itemOffered,
+    starting,
+    startEarly: (id) => { void startEarly(id); },
   };
 
   // s28's phone header: «اليوم» + «الخميس ٣٠ يوليو · ٤ مفتوحة، ١ متأخرة».
@@ -1063,7 +1239,7 @@ export default function WorkPage() {
           )}
 
           {!loading && !error && mobileRows.length === 0 && mobileRowItems.length === 0
-            && upcoming.length === 0 && manualSorted.length === 0 && (
+            && manualSorted.length === 0 && (
             <Empty
               title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
             />
@@ -1103,17 +1279,28 @@ export default function WorkPage() {
                       ? (isAr ? `آخر موعد للتسليم ${dateTimeShort(it.task.due_at, true)}` : `due ${dateTimeShort(it.task.due_at, false)}`)
                       : (isAr ? 'بلا موعد' : 'no due date')}
                 </div>
-                <button
-                  type="button"
-                  className="m1-btn p sm"
-                  onClick={() => expandRow(open ? null : it.facts.row_id)}
-                >
-                  {open
-                    ? (isAr ? 'طيّ' : 'Collapse')
-                    : itemMine(it)
-                      ? rowActionLabel(it.task.step_id, isAr)
-                      : (isAr ? 'عرض الدفعة' : 'View the batch')}
-                </button>
+                {itemOffered(it) && !open ? (
+                  <button
+                    type="button"
+                    className="m1-btn p sm"
+                    disabled={starting === it.task.id}
+                    onClick={() => void startEarly(it.task.id)}
+                  >
+                    {starting === it.task.id ? '…' : (isAr ? 'ابدأ الآن' : 'Start now')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="m1-btn p sm"
+                    onClick={() => expandRow(open ? null : it.facts.row_id)}
+                  >
+                    {open
+                      ? (isAr ? 'طيّ' : 'Collapse')
+                      : itemMine(it)
+                        ? rowActionLabel(it.task.step_id, isAr)
+                        : (isAr ? 'عرض الدفعة' : 'View the batch')}
+                  </button>
+                )}
                 {open && (
                   <div style={{ marginTop: 12 }}>
                     <RowPane rowId={it.facts.row_id} onChanged={() => void load()} />
@@ -1232,48 +1419,29 @@ export default function WorkPage() {
               <div className="m1-m">
                 <span className="ltr">{r.ref}</span> · {r.title} · {dueText(r)}
               </div>
-              <button
-                type="button"
-                className={`m1-btn sm${isScheduleStep(r) ? ' g' : ''}`}
-                onClick={(e) => { e.stopPropagation(); preview.open(r.id); }}
-              >
-                {actionLabel(r, isAr)}
-              </button>
+              {isOfferedTask(taskFor(r.id)) ? (
+                <button
+                  type="button"
+                  className="m1-btn p sm"
+                  disabled={starting === taskFor(r.id)?.id}
+                  onClick={(e) => { e.stopPropagation(); void startEarly(taskFor(r.id)?.id ?? ''); }}
+                >
+                  {starting === taskFor(r.id)?.id ? '…' : (isAr ? 'ابدأ الآن' : 'Start now')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={`m1-btn sm${isScheduleStep(r) ? ' g' : ''}`}
+                  onClick={(e) => { e.stopPropagation(); preview.open(r.id); }}
+                >
+                  {actionLabel(r, isAr)}
+                </button>
+              )}
             </div>
           ))}
 
-          {/* «القادم إليك» — visible preparation, explicitly NOT tasks. */}
-          {upcoming.length > 0 && (
-            <>
-              <div className="m1-lbl">
-                {isAr ? 'القادم إليك — ليست مهامًا بعد' : 'Coming to you — not tasks yet'}
-              </div>
-              {upcoming.map((u) => (
-                <div
-                  key={`${u.content_id}:${u.step_key}`}
-                  className="m1-card"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => navigate(upcomingHref(u))}
-                  onKeyDown={(e) => { if (e.key === 'Enter') navigate(upcomingHref(u)); }}
-                >
-                  <div className="m1-row">
-                    <span className="m1-t" style={{ fontSize: 14 }}>
-                      {isAr ? u.step_label_ar : u.step_label_en}
-                    </span>
-                    <Pill tone="idle">
-                      {u.steps_away <= 1
-                        ? isAr ? 'الخطوة التالية' : 'next step'
-                        : isAr ? `بعد ${num(u.steps_away, true)} خطوات` : `${u.steps_away} steps away`}
-                    </Pill>
-                  </div>
-                  <div className="m1-m">
-                    <span className="ltr">{u.ref ?? ''}</span> · {u.title}
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
+          {/* Band C — planned for me, closed by default (D7). */}
+          {plannedBlock}
 
           {mOthers.length > 0 && (
             <div className="m1-lbl">{isAr ? 'بانتظار شخص آخر' : 'Waiting on someone else'}</div>
@@ -1347,7 +1515,7 @@ export default function WorkPage() {
         {linkedRow}
           {linkedItem}
 
-        {!loading && filtered.length === 0 && upcoming.length === 0
+        {!loading && filtered.length === 0
           && manualSorted.length === 0 && !error && (
           <Empty
             title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
@@ -1368,41 +1536,16 @@ export default function WorkPage() {
           ctx={groupCtx}
         />
 
-        {/* «القادم إليك» — visible preparation, explicitly NOT tasks. */}
-        {upcoming.length > 0 && (
-          <>
-            <div className="lbl" style={{ marginBottom: 9 }}>
-              {isAr ? 'القادم إليك — ليست مهامًا بعد' : 'Coming to you — not tasks yet'}
-            </div>
-            <div className="card" style={{ marginBottom: 22 }}>
-              <div className="card-b" style={{ padding: '10px 14px 12px' }}>
-                {upcoming.map((u) => (
-                  <button
-                    key={`${u.content_id}:${u.step_key}`}
-                    type="button"
-                    className="up-row"
-                    onClick={() => navigate(upcomingHref(u))}
-                  >
-                    <span className="up-row-main">
-                      <b className="ltr">{u.ref ?? ''}</b>
-                      {' · '}
-                      {u.title}
-                      {' · '}
-                      <span style={{ color: 'var(--ink-2)' }}>
-                        {isAr ? u.step_label_ar : u.step_label_en}
-                      </span>
-                    </span>
-                    <Pill tone="idle">
-                      {u.steps_away <= 1
-                        ? isAr ? 'قادم إليك · الخطوة التالية' : 'next step'
-                        : isAr ? `قادم إليك · بعد ${num(u.steps_away, true)} خطوات` : `${u.steps_away} steps away`}
-                    </Pill>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+        {/* Band B — offered early from the coming days' plan (2026-09-22). */}
+        <QueueGroup
+          label={isAr ? 'متاح مبكرًا — من خطة الأيام القادمة' : 'Available early — from the coming days’ plan'}
+          tone="now"
+          items={offered}
+          ctx={groupCtx}
+        />
+
+        {/* Band C — planned for me, closed by default (D7). */}
+        {plannedBlock}
 
         <QueueGroup
           label={isAr ? 'بانتظار شخص آخر — لا إجراء منك' : 'Waiting on someone else — no action from you'}

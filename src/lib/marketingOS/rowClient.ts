@@ -16,8 +16,8 @@
  */
 import {
   MosApiError, MosAsset, MosAssetLink, MosContentRow, MosManualTask, MosPublication,
-  MosRole, MosStep, MosUpcoming, mosCall, completeTask,
-  type AutoAdOutcome,
+  MosRole, MosStep, MosUpcoming, mosCall, completeTask, newEventId,
+  type AutoAdOutcome, type MosPlannedStep, type MosRisk,
 } from './client';
 
 /**
@@ -93,6 +93,14 @@ export interface MosSubjectTask {
   revision_targets?: string[];
   is_approval?: boolean;
   approval_kind?: 'creative' | 'process' | 'budget' | null;
+  /** Plan-driven assignment (2026-09-22) — see the same fields on `MosTask`. */
+  offered_to_user_id?: string | null;
+  offered_at?: string | null;
+  planned_day?: string | null;
+  plan_handoff_at?: string | null;
+  plan_due_at?: string | null;
+  risk?: MosRisk | null;
+  risk_reason?: string | null;
 }
 
 /** One binding made at an approval — what was approved, and its fingerprints. */
@@ -169,7 +177,10 @@ export interface MosWorkQueue {
   /** The posts behind the queue's tasks — a row's three members included. */
   content: MosContentRow[];
   tasks: MosSubjectTask[];
+  /** Always empty since 2026-09-22 (see MosUpcoming); `planned` replaced it. */
   upcoming: MosUpcoming[];
+  /** Band C — the plan's future steps for me, hidden by default (D7). */
+  planned: MosPlannedStep[];
   manual_tasks: MosManualTask[];
   /** One entry per ROW task in the queue — a row card, not a post card. */
   rows: MosRowFacts[];
@@ -206,11 +217,14 @@ export const completeRowTask = (
     note?: string;
     targets?: string[];
     returnTo?: string | null;
+    /** The completion event (2026-09-22) — a re-send with the same id replays. */
+    eventId?: string | null;
   },
 ) => mosCall<RowAdvanceResult>('row_task_complete', {
   ...(args.rowId ? { row_id: args.rowId } : {}),
   ...(args.taskId ? { task_id: args.taskId } : {}),
   result: args.result,
+  event_id: args.eventId ?? newEventId(),
   ...(args.note ? { note: args.note } : {}),
   ...(args.targets && args.targets.length > 0 ? { targets: args.targets } : {}),
   ...(args.returnTo ? { return_to: args.returnTo } : {}),
@@ -441,12 +455,6 @@ export function headlinesOf(member: { data?: Record<string, unknown> }): string[
 
 export function designBriefOf(member: { data?: Record<string, unknown> }): string {
   return asString(member.data?.design_brief).trim();
-}
-
-export function hashtagsOf(member: { data?: Record<string, unknown> }): string[] {
-  const raw = member.data?.hashtags;
-  if (Array.isArray(raw)) return raw.map(asString).filter((s) => s.trim() !== '');
-  return asString(raw).split(/\s+/).filter((s) => s.trim() !== '');
 }
 
 /** Who wrote the caption: the AI (and merely accepted), or a person. */

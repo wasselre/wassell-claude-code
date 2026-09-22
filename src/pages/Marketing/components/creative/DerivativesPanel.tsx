@@ -3,8 +3,8 @@
  * px from PLACEMENT_SPECS, never invented), the FULL VisualAdaptation the
  * designer follows (crop/extend, text + logo reposition, layout changes,
  * scaling, slide mapping, asset substitutions, separate-design badge), and the
- * per-target copy (organic caption+hashtags with a live limit counter, or the
- * five paid fields).
+ * per-target copy (organic caption with a live limit counter, or the five paid
+ * fields; hashtags were removed 2026-09-22).
  *
  * Copy and the prose adaptation fields are editable; saving mints a new human
  * version server-side (the parent sends the whole derivative set).
@@ -24,11 +24,6 @@ function captionMax(d: CreativeDerivativeRow): number | null {
   const v = d.limits['caption_max'];
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
-function hashtagsMax(d: CreativeDerivativeRow): number | null {
-  const v = d.limits['hashtags_max'];
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
-}
-
 export default function DerivativesPanel({
   derivatives, canEdit, isAr, onChange,
 }: {
@@ -67,7 +62,6 @@ export default function DerivativesPanel({
         {derivatives.map((d, i) => {
           const open = openAdapt.has(i);
           const capMax = captionMax(d);
-          const tagMax = hashtagsMax(d);
           const organic = isOrganic(d);
           const oc = organic ? (d.copy as OrganicCopy) : null;
           const pc = !organic ? (d.copy as PaidCopy) : null;
@@ -125,27 +119,6 @@ export default function DerivativesPanel({
                       value={oc.caption ?? ''}
                       disabled={!canEdit}
                       onChange={(e) => patchCopy(i, { ...oc, caption: e.target.value, char_count: e.target.value.length })}
-                    />
-                  </label>
-                  <label>
-                    <span className="lbl">
-                      {isAr ? 'الوسوم (مفصولة بفاصلة)' : 'Hashtags (comma-separated)'}
-                      {tagMax !== null && (
-                        <span style={{ fontWeight: 400, color: (oc.hashtags?.length ?? 0) > tagMax ? 'var(--late)' : 'var(--mute)' }}>
-                          {' · '}{num(oc.hashtags?.length ?? 0, isAr)} / {num(tagMax, isAr)}
-                        </span>
-                      )}
-                    </span>
-                    <input
-                      className="inp"
-                      style={{ marginTop: 4 }}
-                      value={(oc.hashtags ?? []).join('، ')}
-                      disabled={!canEdit}
-                      onChange={(e) =>
-                        patchCopy(i, {
-                          ...oc,
-                          hashtags: e.target.value.split(/[،,]/).map((h) => h.trim()).filter(Boolean),
-                        })}
                     />
                   </label>
                 </div>

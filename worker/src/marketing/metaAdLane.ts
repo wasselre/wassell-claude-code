@@ -76,9 +76,7 @@ async function claimOne(deps: LaneDeps): Promise<boolean> {
       p_result: result as unknown as Record<string, unknown>,
     });
     if (doneErr) console.error(`[metaAdLane] generation_job_complete RPC failed: ${doneErr.message}`);
-    else log(result.phase === 'create'
-      ? `completed meta-ad job=${job.id} ad=${result.platform_ad_id}`
-      : `completed meta-ad job=${job.id} caption parked for approval (${result.caption_source}, ${result.caption_chars} chars)`);
+    else log(`completed meta-ad job=${job.id} ad=${result.platform_ad_id} (${result.ad_status}, caption ${result.approval_hash ?? '-'})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[metaAdLane] meta-ad job=${job.id} FAILED:`, msg);

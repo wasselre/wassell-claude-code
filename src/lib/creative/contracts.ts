@@ -228,7 +228,10 @@ export interface VisualAdaptation {
   asset_substitutions: Array<{ from_file_id: string; to_file_id: string | null; reason: string }>;
 }
 
-export interface OrganicCopy { caption: string; hashtags: string[]; char_count: number; fact_refs: string[] }
+/** Hashtags were removed from Wassel content on 2026-09-22 (no field, no
+ *  publish-time append). The director no longer produces them; the key stays
+ *  OPTIONAL so packages generated before that date still type-check. */
+export interface OrganicCopy { caption: string; hashtags?: string[]; char_count: number; fact_refs: string[] }
 export interface PaidCopy { primary_text: string; headline: string; description: string; cta: string; destination_url: string | null; fact_refs: string[] }
 
 export interface Derivative {

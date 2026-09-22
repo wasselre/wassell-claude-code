@@ -387,16 +387,17 @@ const VISUAL_ADAPTATION_SCHEMA = {
   ],
 } as const;
 
+// No hashtags since 2026-09-22: Wassel content carries none, so the director
+// is not asked for any and a model that volunteers them is rejected.
 const ORGANIC_COPY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
     caption: str,
-    hashtags: strArr,
     char_count: { type: 'integer' },
     fact_refs: strArr,
   },
-  required: ['caption', 'hashtags', 'char_count', 'fact_refs'],
+  required: ['caption', 'char_count', 'fact_refs'],
 } as const;
 
 const PAID_COPY_SCHEMA = {

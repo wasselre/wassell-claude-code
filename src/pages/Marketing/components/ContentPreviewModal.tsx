@@ -9,8 +9,8 @@
  *   the writing   → the writing fields (editable while the stage is a working
  *                   step and the caller can write; locked text otherwise) and
  *                   the scenes;
- *   the caption   → the canonical caption and hashtags plus any per-platform
- *                   override, and the paid ad copy;
+ *   the caption   → the canonical caption plus any per-platform override, and
+ *                   the paid ad copy (hashtags were removed 2026-09-22);
  *   the plan      → the publishing plan and every ad this creative runs on.
  * The open SECTION (from `contentRoute.sectionForStep`, never a hardcoded step
  * key) decides the ORDER, so a design review opens on the design and a
@@ -55,7 +55,7 @@ import {
   fetchPublications, fieldSchemaEntries, fieldSchemaKeys,
 } from '@/lib/marketingOS/client';
 import { AutoAdPanel, autoAdOutcomeText, useAutoAdPreview } from './AutoAdApproval';
-import CaptionReviewCard from './CaptionReviewCard';
+import AdFailedCard from './AdFailedCard';
 import { useWorkspace } from '../MarketingWorkspace';
 import { Modal, Pill, Skeleton, LoadError } from './kit';
 import Thumb from './Thumb';
@@ -195,8 +195,12 @@ export default function ContentPreview({
   useEffect(() => { void load(); }, [load]);
 
   const openTask = tasks.find((t) => t.status === 'open') ?? null;
-  const captionReviews = paid.filter((p) => p.creative?.auto_ad?.state === 'caption_review' || p.creative?.auto_ad?.state === 'failed');
-  const canReviewCaption = can('manage_paid_ads');
+  // A failed automatic Meta ad is shown first — it is the one thing the
+  // manager is here to fix. (The AI-caption review that used to sit here was
+  // retired 2026-09-22, D4: the final approval launches the ad with the
+  // writer's confirmed caption.)
+  const failedAds = paid.filter((p) => p.creative?.auto_ad?.state === 'failed');
+  const canRetryAd = can('manage_paid_ads');
   const currentStep = openTask ? steps.find((s) => s.id === openTask.step_id) ?? null : null;
   const sortedSteps = useMemo(() => [...steps].sort((a, b) => a.position - b.position), [steps]);
   // Auto Meta ad: when the step being approved creates the ad, the popup shows
@@ -638,17 +642,11 @@ export default function ContentPreview({
     }
     return rows;
   })();
-  const hashtags = (() => {
-    const v = item?.data?.hashtags;
-    if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string');
-    const s = str(v).trim();
-    return s ? [s] : [];
-  })();
   const adCopy = paid
     .map((p) => ({ p, text: (p.creative?.primary_text ?? '').trim() }))
     .filter((x) => x.text !== '');
 
-  const captionCard = item && (captions.length > 0 || hashtags.length > 0 || adCopy.length > 0) ? (
+  const captionCard = item && (captions.length > 0 || adCopy.length > 0) ? (
     <div className="card">
       <div className="card-h">
         <h4>{isAr ? 'الكابشن' : 'Caption'}</h4>
@@ -666,11 +664,6 @@ export default function ContentPreview({
             <div style={{ fontSize: 13, lineHeight: 1.9, whiteSpace: 'pre-wrap' }}>{c.text}</div>
           </div>
         ))}
-        {hashtags.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {hashtags.map((h) => <span key={h} className="tag">{h}</span>)}
-          </div>
-        )}
         {adCopy.map(({ p, text }) => (
           <div key={p.id}>
             <div className="lbl" style={{ marginBottom: 4 }}>
@@ -773,13 +766,12 @@ export default function ContentPreview({
     return (
       <div style={{ display: 'grid', gap: 16 }}>
         {header}
-        {/* The caption task comes FIRST: it is the one thing the manager is here to do. */}
-        {captionReviews.map((p) => (
-          <CaptionReviewCard
+        {failedAds.map((p) => (
+          <AdFailedCard
             key={p.id}
             contentId={contentId}
             placement={p}
-            canAct={canReviewCaption}
+            canAct={canRetryAd}
             isAr={isAr}
             onChanged={(pls) => { setPaid(pls); setChanged(true); }}
             addToast={addToast}
@@ -833,13 +825,11 @@ export default function ContentPreview({
         </span>
       )}
       {!openTask && item && (
-        <span style={{ fontSize: 12, color: captionReviews.length > 0 ? 'var(--copper)' : 'var(--mute)' }}>
-          {captionReviews.length > 0
-            ? (canReviewCaption
-              ? (captionReviews.some((p) => p.creative?.auto_ad?.state === 'failed')
-                ? (isAr ? 'إعلان ميتا يحتاج تدخلك — أعلاه.' : 'The Meta ad needs your attention — above.')
-                : (isAr ? 'كابشن الإعلان بانتظار اعتمادك — أعلاه.' : 'The ad caption awaits your approval — above.'))
-              : (isAr ? 'كابشن الإعلان بانتظار اعتماد مدير التسويق.' : 'The ad caption awaits the marketing manager’s approval.'))
+        <span style={{ fontSize: 12, color: failedAds.length > 0 ? 'var(--copper)' : 'var(--mute)' }}>
+          {failedAds.length > 0
+            ? (canRetryAd
+              ? (isAr ? 'إعلان ميتا يحتاج تدخلك — أعلاه.' : 'The Meta ad needs your attention — above.')
+              : (isAr ? 'إعلان ميتا متعثّر — بانتظار مدير التسويق.' : 'The Meta ad failed — waiting on the marketing manager.'))
             : item.status_key === 'done'
               ? (isAr ? 'انتهى مسار العمل.' : 'The workflow is finished.')
               : (isAr ? 'لا مهمة مفتوحة.' : 'No open task.')}

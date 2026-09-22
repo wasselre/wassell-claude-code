@@ -67,7 +67,6 @@ const ROW_FIELDS: MosFieldDef[] = [
   { key: 'headlines', label_ar: 'أسطر المنشور', label_en: 'The post lines', kind: 'long', required: true },
   { key: 'caption', label_ar: 'التعليق', label_en: 'The caption', kind: 'long', required: true },
   { key: 'design_brief', label_ar: 'موجز التصميم', label_en: 'The design brief', kind: 'long', required: false },
-  { key: 'hashtags', label_ar: 'الهاشتاقات', label_en: 'Hashtags', kind: 'short', required: false },
 ];
 
 export default function RowApproval({

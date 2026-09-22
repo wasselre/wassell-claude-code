@@ -10,7 +10,7 @@ import { ReactNode } from 'react';
 import type { MosAsset, MosAssetLink, MosStep } from '@/lib/marketingOS/client';
 import {
   MosRowDetail, MosRowMember, RowSlotRole,
-  captionSourceOf, captionStateOf, designBriefOf, hashtagsOf, headlinesOf,
+  captionSourceOf, captionStateOf, designBriefOf, headlinesOf,
   publishPosition, slotLink,
 } from '@/lib/marketingOS/rowClient';
 import { Pill } from './kit';
@@ -24,8 +24,8 @@ export const SLOT_META: Record<RowSlotRole, {
 }> = {
   final_square: {
     ar: 'مربّع ١:١ · منشور الفيد', en: 'Square 1:1 · the feed post',
-    ratio: '1:1', hintAr: 'وهو وحده الذي يحمل التعليق والهاشتاقات',
-    hintEn: 'the only one that carries the caption and hashtags', vertical: false,
+    ratio: '1:1', hintAr: 'وهو وحده الذي يحمل التعليق',
+    hintEn: 'the only one that carries the caption', vertical: false,
   },
   final_vertical: {
     ar: 'عمودي ٩:١٦ · الستوري', en: 'Vertical 9:16 · the story',
@@ -158,7 +158,6 @@ export function CaptionBlock({
 }) {
   const { text, confirmed } = captionStateOf(member);
   const source = captionSourceOf(member);
-  const tags = hashtagsOf(member);
   const dim = tone === 'context';
   return (
     <div style={{ opacity: dim ? 0.82 : 1 }}>
@@ -183,11 +182,6 @@ export function CaptionBlock({
       <div style={{ fontSize: 13, lineHeight: 1.95, whiteSpace: 'pre-wrap' }}>
         {text || (isAr ? '—' : '—')}
       </div>
-      {tags.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
-          {tags.map((t) => <span key={t} className="tag ltr">{t}</span>)}
-        </div>
-      )}
     </div>
   );
 }

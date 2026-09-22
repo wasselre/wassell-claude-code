@@ -54,7 +54,6 @@ const FIELD_CHECK: Record<string, { ar: string; en: string }> = {
   headlines: { ar: 'العناوين المقترحة مكتوبة', en: 'Draft headlines written' },
   approved_headline: { ar: 'العنوان المعتمد محدد', en: 'Headline chosen' },
   caption: { ar: 'الكابشن مكتوب', en: 'Caption written' },
-  hashtags: { ar: 'الوسوم محددة', en: 'Hashtags set' },
   design_brief: { ar: 'موجز التصميم مكتوب', en: 'Design brief written' },
   slides: { ar: 'الشرائح محددة', en: 'Slides listed' },
 };

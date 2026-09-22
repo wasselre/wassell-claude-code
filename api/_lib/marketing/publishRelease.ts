@@ -120,9 +120,6 @@ export async function publishPublication(
   const slotIds = material.mode === 'managed' ? material.assetIds : null;
   const approvedCaption = material.mode === 'managed' ? material.caption : null;
   const captionRequired = material.mode === 'managed' ? material.captionRequired : false;
-  // Shared hashtags live once on the CONTENT (data.hashtags) so a single edit
-  // updates every platform. A story gets none, because it gets no caption.
-  const tags = (material.mode === 'managed' ? material.hashtags : material.copy.hashtags) ?? '';
 
   // The ORDERED file set. MANAGED: the one design slot the destination names.
   // LEGACY: asset_ids (carousel) or the single asset_id off the row.
@@ -137,13 +134,9 @@ export async function publishPublication(
   // MANAGED: the approved writing — '' for a story, which carries no text.
   // LEGACY: whatever the row holds, exactly as before.
   const caption = approvedCaption ?? (typeof pub.caption === 'string' ? pub.caption : '');
-  // The hashtags are folded into the placement caption HERE at publish,
-  // leaving the authored caption clean copy. Idempotent on re-publish (the
-  // caption is rebuilt from its source each time).
-  let finalCaption = caption;
-  if (tags && !finalCaption.includes(tags)) {
-    finalCaption = finalCaption ? `${finalCaption}\n\n${tags}` : tags;
-  }
+  // The caption goes out exactly as approved. (Until 2026-09-22 the content's
+  // hashtags were appended here; hashtags were removed altogether.)
+  const finalCaption = caption;
 
   // Resolve every approved asset, PRESERVING the carousel order (the
   // .in() result order is arbitrary — re-order by effectiveIds).

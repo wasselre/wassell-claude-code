@@ -328,12 +328,28 @@ export interface MosTask {
   /** From the PINNED version's step — drives screen 35's approvals split. */
   is_approval?: boolean;
   approval_kind?: 'creative' | 'process' | 'budget' | null;
+  /**
+   * Plan-driven assignment (2026-09-22). An open UNASSIGNED task offered to me
+   * (band B, «متاح مبكرًا»): startable now with `startTaskEarly`; nothing is
+   * due until I do. `planned_day` / `plan_handoff_at` / `plan_due_at` are the
+   * plan's own dates for the step; `risk` is the cached publication verdict.
+   */
+  offered_to_user_id?: string | null;
+  offered_at?: string | null;
+  planned_day?: string | null;
+  plan_handoff_at?: string | null;
+  plan_due_at?: string | null;
+  risk?: MosRisk | null;
+  risk_reason?: string | null;
 }
 
+/** The publication-risk verdict cached on an open task (`mos_publication_risk`). */
+export type MosRisk = 'blocked' | 'on_track' | 'at_risk' | 'late' | 'unscheduled' | 'published' | 'active' | string;
+
 /**
- * Screen 02's «القادم إليك» band — NOT a task: an in-flight item whose pinned
- * path reaches MY role at a future step. Shown so the role can prepare; it
- * becomes a real task only when the path advances to that step.
+ * Screen 02's old «القادم إليك» band — RETIRED 2026-09-22 (the server now
+ * always returns an empty list). Kept as a type so older readers of
+ * `fetchWork` keep compiling; the plan's own answer is `MosPlannedStep`.
  */
 export interface MosUpcoming {
   content_id: string;
@@ -344,6 +360,40 @@ export interface MosUpcoming {
   step_label_en: string;
   /** How many steps stand between the current one and mine («بعد خطوتين»). */
   steps_away: number;
+}
+
+/**
+ * Band C — «المخطط لي» (2026-09-22): one future step the PLAN holds for me
+ * inside the horizon (default 14 days). Either an open task planned to me that
+ * nobody has been offered (`kind: 'task'`) or a reservation with no task yet
+ * (`kind: 'reservation'`). NOT claimable — the plan hands it out on its day,
+ * or the refill offers it early (then it shows in `tasks` as offered).
+ * Hidden by default in the Work page (decision D7).
+ */
+export interface MosPlannedStep {
+  band: 'planned' | string;
+  kind: 'task' | 'reservation' | string;
+  task_id: string | null;
+  reservation_id: string | null;
+  subject_table: 'mos_content' | 'mos_content_rows' | string;
+  subject_id: string;
+  content_id: string | null;
+  row_id: string | null;
+  step_key: string;
+  role: string;
+  step_label_ar: string;
+  step_label_en: string;
+  planned_day: string | null;
+  plan_due_at: string | null;
+  /** blocked | inactive | awaiting:<predecessor step> | reserved_future | ready */
+  readiness: string;
+  executable: boolean;
+  ref: string | null;
+  title: string | null;
+  purpose: 'organic' | 'paid' | 'both' | string | null;
+  project_id: string | null;
+  batch_day: string | null;
+  member_count: number | null;
 }
 
 export interface MosStep {
@@ -456,34 +506,51 @@ const CALL_TIMEOUT_MS = 23_000;
 
 async function call<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
   const isAr = (): boolean => useAppStore.getState().language === 'ar';
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CALL_TIMEOUT_MS);
+  const send = async (): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CALL_TIMEOUT_MS);
+    try {
+      return await fetch('/api/marketing-os', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(await authHeader()),
+          ...activeRoleHeader(),
+          ...previewRoleHeader(),
+        },
+        body: JSON.stringify({ action, ...payload }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  // AbortError (our timeout) or a network drop — both read to the user as
+  // "the server is busy, try again", not a stack trace.
+  const transportError = (e: unknown): MosApiError => new MosApiError(
+    isAr()
+      ? 'الخادم مشغول مؤقتًا. أعد المحاولة بعد لحظات.'
+      : 'The server is busy right now. Give it a moment and try again.',
+    e instanceof DOMException && e.name === 'AbortError' ? 504 : 0,
+    { error: 'unavailable' },
+  );
+  // A request bound to a completion event (`event_id`) is safe to re-send
+  // after a transport failure: the server replays the stored outcome instead
+  // of acting twice (2026-09-22). Anything else is sent exactly once — a
+  // second send could be a second write.
+  const replayable = typeof payload.event_id === 'string' && payload.event_id !== '';
   let res: Response;
   try {
-    res = await fetch('/api/marketing-os', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(await authHeader()),
-        ...activeRoleHeader(),
-        ...previewRoleHeader(),
-      },
-      body: JSON.stringify({ action, ...payload }),
-      signal: controller.signal,
-    });
+    res = await send();
   } catch (e) {
-    // AbortError (our timeout) or a network drop — both read to the user as
-    // "the server is busy, try again", not a stack trace.
-    const aborted = e instanceof DOMException && e.name === 'AbortError';
-    throw new MosApiError(
-      isAr()
-        ? 'الخادم مشغول مؤقتًا. أعد المحاولة بعد لحظات.'
-        : 'The server is busy right now. Give it a moment and try again.',
-      aborted ? 504 : 0,
-      { error: 'unavailable' },
-    );
-  } finally {
-    clearTimeout(timer);
+    if (!replayable) throw transportError(e);
+    console.error(`[marketing-os] ${action} transport failure — replaying event ${String(payload.event_id)}`, e);
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      res = await send();
+    } catch (e2) {
+      throw transportError(e2);
+    }
   }
   if (!res.ok) {
     const b = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
@@ -555,7 +622,7 @@ export const deleteContent = (ids: string[]) =>
 
 /** What an auto-ad approval did (task_complete → `auto_ad`). */
 export type AutoAdOutcome =
-  | { status: 'queued'; job_id: string; ad_row_id: string; ad_set_name: string; campaign_name: string | null; finished: boolean }
+  | { status: 'queued'; job_id: string | null; ad_row_id: string | null; ad_set_name: string; campaign_name: string | null; finished: boolean }
   | { status: 'skipped'; reason: string; text_ar: string; text_en: string };
 
 export interface TaskAdvanceResult {
@@ -569,17 +636,27 @@ export interface TaskAdvanceResult {
   auto_ad?: AutoAdOutcome | null;
 }
 
+/**
+ * The event id a state-changing task action is bound to (2026-09-22). The
+ * server records the outcome under it: the SAME body re-sent with the same id
+ * is a REPLAY (the stored outcome comes back, nothing moves twice), and the
+ * transport retry in `call()` relies on exactly that. A caller that must
+ * retry a user-visible failure with the same intent passes its own id.
+ */
+export const newEventId = (): string => crypto.randomUUID();
+
 export const completeTask = (
   taskId: string,
   result: 'submitted' | 'approved' | 'changes_requested',
   note?: string,
   targets?: string[],
-  opts?: { adSetId?: string | null; returnTo?: string | null },
+  opts?: { adSetId?: string | null; returnTo?: string | null; eventId?: string | null },
 ) => call<TaskAdvanceResult>('task_complete', {
   task_id: taskId,
   result,
   note,
   targets,
+  event_id: opts?.eventId ?? newEventId(),
   ...(opts?.adSetId ? { ad_set_id: opts.adSetId } : {}),
   // `return_to` is a STEP KEY, validated server-side against the pinned step
   // list (it must be a prior step that creates a revision). Omitted = the
@@ -627,8 +704,19 @@ export function adSetRequiredChoices(e: unknown): AutoAdChoice[] | null {
   return Array.isArray(sets) ? (sets as AutoAdChoice[]) : [];
 }
 
-export const transferTask = (taskId: string, toUserId: string) =>
-  call<{ ok: true }>('task_transfer', { task_id: taskId, to_user_id: toUserId });
+export const transferTask = (taskId: string, toUserId: string, eventId?: string | null) =>
+  call<{ ok: true }>('task_transfer', { task_id: taskId, to_user_id: toUserId, event_id: eventId ?? newEventId() });
+
+/**
+ * Start an OFFERED task early (band B, 2026-09-22). Assigns it to me now with
+ * the plan's own deadline; the planned date never moves. A withdrawn offer
+ * answers 409 (`MosApiError`, payload.code === 'MOS:OFFER_WITHDRAWN',
+ * payload.details.reason) — refresh the queue, do not retry.
+ */
+export const startTaskEarly = (taskId: string) =>
+  call<{ task_id: string; result: 'started_early' | 'already_assigned'; due_at?: string | null; task: MosTask | null }>(
+    'task_start_early', { task_id: taskId },
+  );
 
 export const fetchContentVersions = (contentId: string) =>
   call<{ versions: MosContentVersion[] }>('content_versions', { content_id: contentId });
@@ -1172,12 +1260,20 @@ export const saveContentCaption = (contentId: string, platform: string, caption:
 /** The five standardized ad-copy fields a paid placement carries. */
 /** The automation's trail on a paid placement (`creative.auto_ad`). */
 export interface AutoAdState {
-  /** queued/creating = the worker is on it (phase says which half);
-   *  caption_review = the AI caption is parked for the manager's approval;
-   *  created = the ad exists on Meta; failed = see `error`, retry offered. */
+  /** queued/creating = the worker is on it; created = the ad exists on Meta;
+   *  failed = see `error`, retry offered. `caption_review` is a LEGACY value
+   *  (the AI caption phase was retired 2026-09-22, D4) that older rows may
+   *  still carry. */
   state: 'queued' | 'creating' | 'caption_review' | 'created' | 'failed';
-  /** 'caption' = writing the caption; 'create' = building the ad on Meta. */
+  /** Always 'create' since 2026-09-22; 'caption' only on legacy rows. */
   phase?: 'caption' | 'create';
+  /** The `mos_caption_hash` of the caption the approval bound (2026-09-22)
+   *  and of the text actually built into the ad — equal unless tampered. */
+  approval_hash?: string | null;
+  approval_scope?: 'caption' | string;
+  built_text_hash?: string | null;
+  /** The completion event the ad was launched by, when it was. */
+  event_id?: string | null;
   job_id?: string;
   error?: string | null;
   queued_at?: string;
@@ -1193,7 +1289,9 @@ export interface AutoAdState {
   platform_ad_ids?: Partial<Record<'feed' | 'story' | 'single', string>>;
   placement_fallback?: string;
   format?: 'image' | 'video';
-  caption_source?: 'deepseek' | 'fallback';
+  /** 'writer' = the writer's confirmed caption (the only source since
+   *  2026-09-22); 'deepseek' / 'fallback' only on rows the retired AI phase made. */
+  caption_source?: 'deepseek' | 'fallback' | 'writer';
   welcome_template?: 'duplicated' | null;
   ad_status?: 'ACTIVE' | 'PAUSED';
 }
@@ -1247,18 +1345,13 @@ export interface PaidPlacementTarget {
 export const fetchPaidAds = (contentId: string) =>
   call<PaidPlacementsResult>('content_paid_ads', { content_id: contentId });
 
-/** Re-queue the automatic Meta ad for a creative whose job failed (manager) —
- *  restarts at the caption phase (a fresh AI caption for approval). */
+/** Re-queue the automatic Meta ad for a creative whose job failed (manager).
+ *  The ad is built from the caption the WRITER confirmed — 409 when none is
+ *  confirmed, when the ad already exists, or when it was built with another
+ *  caption. Caption approval as a separate step was retired 2026-09-22 (D4). */
 export const retryAutoAd = (contentId: string, adSetId?: string | null) =>
-  call<PaidPlacementsResult & { job_id: string; ad_row_id: string }>('meta_auto_ad_retry', {
+  call<PaidPlacementsResult & { job_id: string | null; ad_row_id: string | null; reason: string }>('meta_auto_ad_retry', {
     content_id: contentId, ...(adSetId ? { ad_set_id: adSetId } : {}),
-  });
-
-/** The manager approved the AI caption (as shown, possibly edited) → the
- *  worker builds the ad on Meta (manage_paid_ads). */
-export const approveAutoAdCaption = (contentId: string, adId: string, caption: string) =>
-  call<PaidPlacementsResult & { job_id: string; ad_row_id: string }>('meta_auto_ad_approve_caption', {
-    content_id: contentId, ad_id: adId, caption,
   });
 
 /** The paid campaigns / executions / ad sets available to attach a new paid
@@ -1941,8 +2034,12 @@ export const fetchWork = (scope: 'mine' | 'team') =>
     role: MosRole;
     content: MosContentRow[];
     tasks: MosTask[];
+    /** Always empty since 2026-09-22 — see MosUpcoming. */
     upcoming: MosUpcoming[];
+    /** Band C — the plan's future steps for me (see MosPlannedStep). */
+    planned: MosPlannedStep[];
     manual_tasks: MosManualTask[];
+    me_user_id: string | null;
   }>('work_list', { scope });
 
 /* ------------------------------------------------------------------ */
@@ -3587,9 +3684,9 @@ export const generateContentCaption = (
   });
 
 export const reviseContent = (
-  contentId: string, note: string, scope?: Array<'writing' | 'caption' | 'design'>,
+  contentId: string, note: string, scope?: Array<'writing' | 'caption' | 'design'>, eventId?: string | null,
 ): Promise<{ revision: Record<string, unknown> }> =>
-  call('content_revise', { content_id: contentId, note, scope: scope ?? [] });
+  call('content_revise', { content_id: contentId, note, scope: scope ?? [], event_id: eventId ?? newEventId() });
 
 export interface MosRefreshCycle {
   id: string; execution_id: string; round: number;

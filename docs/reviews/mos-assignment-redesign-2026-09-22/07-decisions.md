@@ -36,3 +36,15 @@ Technical parameters (§10B) stand as proposed: recovery cron every 1–2 min; 4
 3. **S3 — API + worker**: completion contract and runner; Meta enqueue RPC (create-only) and worker build from the approved payload with the approval-hash check and ownership guard; refill, bands, start-early endpoints; commit result consumer.
 4. **S4 — SPA**: event ids per action; three bands (C hidden by default); start-early; plan dates and risk chips.
 5. **S5 — W1 workflow fix + W2 hashtag removal + transition**: remove the two steps and re-pin; strip hashtags; migrate open tasks (17 assigned stamped, the three launch designs reset per A); then the operator re-plans September in the app.
+
+## Implementation status — 2026-09-22 (evening)
+
+| Slice | State | Proof |
+|---|---|---|
+| S1 scheduler comparator | done | `successorCap.test.ts` fails before / passes after; suite green |
+| S2 database layer | done, **applied to production** (migrations `2026-09-22_01..06`, one transaction, dry-run with assertions first) | smoke report: conformance 0, refill idempotent, launch creatives not `on_track`, versions `post_std` v10 / `video_std` v8 without publishing steps |
+| S3 API + worker | done (committed locally, not pushed) | `tsc` clean for api / src / worker; `npm test` 2728 passed |
+| S4 SPA | done (bands A/B/C, event ids per action, transport replay, `AdFailedCard`) | same |
+| S5 W1 workflow fix (in 06) + W2 hashtags (`2026-09-22_07`, **applied**: 15 records + `post` type stripped) + PRDs | done | `SELECT count(*) … data ? 'hashtags'` = 0 for content and versions |
+
+Not yet done, by the operator's instruction: **push / deploy** (Vercel + `fly deploy` of the worker for the Meta-ad changes), then **the September re-plan in the app** (D3/D8/D16 — the existing bookings are corrected by that re-plan, never in place).

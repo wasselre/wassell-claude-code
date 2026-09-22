@@ -110,7 +110,8 @@ describe('the cutover boundary (D1 / D6b)', () => {
     const { r } = await run({ content: content({ workflow_version_id: null }) });
     expect(r.mode).toBe('legacy');
     if (r.mode !== 'legacy') return;
-    expect(r.copy).toEqual({ caption: 'نص معتمد', hashtags: '#وصل #الرياض' });
+    // A legacy record may still carry `hashtags`; the copy ignores it (removed 2026-09-22).
+    expect(r.copy).toEqual({ caption: 'نص معتمد' });
   });
 
   it('a pre-cutover version — no material_rule marker — takes the legacy path', async () => {
@@ -139,13 +140,13 @@ describe('files by destination (D1)', () => {
     if (r.mode !== 'managed') return;
     expect(r.assetIds).toEqual([SQUARE]);
     expect(r.caption).toBe('نص معتمد');
-    expect(r.hashtags).toBe('#وصل #الرياض');
+    expect('hashtags' in r).toBe(false);
     expect(r.captionRequired).toBe(true);
     const roleFilter = calls.filters.find((c) => c.table === 'mos_asset_links' && c.op === 'eq' && c.args[0] === 'role');
     expect(roleFilter?.args[1]).toBe(SLOT_BY_VARIANT.feed);
   });
 
-  it('a story resolves the vertical slot and carries NO caption and no hashtags', async () => {
+  it('a story resolves the vertical slot and carries NO caption', async () => {
     const { r, calls } = await run({
       content: content(), version: managedVersion(), placementVariant: 'story',
       links: [{ asset_id: VERTICAL, role: 'final_vertical' }],
@@ -154,7 +155,6 @@ describe('files by destination (D1)', () => {
     if (r.mode !== 'managed') return;
     expect(r.assetIds).toEqual([VERTICAL]);
     expect(r.caption).toBe('');
-    expect(r.hashtags).toBeNull();
     expect(r.captionRequired).toBe(false);
     const roleFilter = calls.filters.find((c) => c.table === 'mos_asset_links' && c.op === 'eq' && c.args[0] === 'role');
     expect(roleFilter?.args[1]).toBe(SLOT_BY_VARIANT.story);

@@ -68,10 +68,11 @@ const GENERIC_FIELDS: Record<string, FieldDef> = {
 
 /**
  * Keys the composed cards consume — everything else falls to the generic grid.
- * `approved_headline` and `slides` are legacy keys: headlines are no longer
- * picked from, and "on-design copy" is now the headlines' own job. They stay
- * listed here so any historical data on those keys is quietly ignored rather
- * than leaking into the generic field grid.
+ * `approved_headline`, `slides` and `hashtags` are legacy keys: headlines are
+ * no longer picked from, "on-design copy" is now the headlines' own job, and
+ * hashtags were removed altogether (2026-09-22 — no field, no publish-time
+ * append). They stay listed here so any historical data on those keys is
+ * quietly ignored rather than leaking into the generic field grid.
  */
 const COMPOSED = new Set([
   'idea', 'hook', 'core_message', 'voiceover',
@@ -705,10 +706,8 @@ export default function WritingFields({
     return isAr ? `${num(written, true)} سطر` : `${written} line${written === 1 ? '' : 's'}`;
   };
 
-  const hashtagList = str('hashtags').split(/\s+/).filter(Boolean);
-
   const nothingComposed = !has('idea') && !has('voiceover') && !has('headlines')
-    && !has('design_brief') && !has('hashtags') && leftovers.length === 0;
+    && !has('design_brief') && leftovers.length === 0;
 
   if (nothingComposed) {
     return (
@@ -883,21 +882,6 @@ export default function WritingFields({
               isAr={isAr}
               onChange={() => {}}
             />
-          </div>
-        )}
-
-        {/* 5 — الهاشتاقات */}
-        {has('hashtags') && (
-          <div className="write">
-            <div className="doc-lbl">
-              {isAr ? 'الهاشتاقات — تُضاف عند النشر' : 'Hashtags — appended at publish'}
-            </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {hashtagList.map((t) => <span key={t} className="tag">{t}</span>)}
-              {hashtagList.length === 0 && (
-                <span style={{ color: 'var(--mute)', fontSize: 13 }}>—</span>
-              )}
-            </div>
           </div>
         )}
 
@@ -1176,32 +1160,6 @@ export default function WritingFields({
         </div>
       )}
 
-      {/* ── 5 · الهاشتاقات ─────────────────────────────────────────── */}
-      {has('hashtags') && (
-        <div className="write">
-          <div className="doc-lbl">
-            {isAr ? 'الهاشتاقات — تُضاف لكل المنصات عند النشر' : 'Hashtags — added to every platform at publish'}
-          </div>
-          <div style={{ fontSize: 11.5, color: 'var(--mute)', marginBottom: 8 }}>
-            {isAr
-              ? 'وسوم مشتركة تُلحَق بتعليق الفيد وحده — الستوري بلا تعليق.'
-              : 'Shared tags appended to the feed caption only — the story carries no text.'}
-          </div>
-          <input
-            className="inp"
-            dir="rtl"
-            style={{ fontSize: 12.5 }}
-            value={str('hashtags')}
-            placeholder={isAr ? '#الوسوم مفصولة بمسافة' : '#hashtags separated by spaces'}
-            onChange={(e) => set('hashtags', e.target.value)}
-          />
-          {hashtagList.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-              {hashtagList.map((t) => <span key={t} className="tag">{t}</span>)}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── ما تبقى من المخطط ──────────────────────────────────────── */}
       {leftovers.length > 0 && (

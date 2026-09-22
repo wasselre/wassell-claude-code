@@ -455,14 +455,17 @@ function validateDerivative(d: Derivative, i: number, ctx: GroundingCtx, s: Scan
         detail: `caption is ${copy.caption.length} chars — ${spec.platform}:${spec.placement_type} allows ${spec.caption_max}`,
       });
     }
-    if (spec?.hashtags_max !== undefined && copy.hashtags.length > spec.hashtags_max) {
+    // Hashtags are no longer produced (2026-09-22); a legacy package may still
+    // carry some, and those are still held to the platform cap + the blocklist.
+    const tags = copy.hashtags ?? [];
+    if (spec?.hashtags_max !== undefined && tags.length > spec.hashtags_max) {
       s.errors.push({
         path: `${path}.copy.hashtags`,
         rule: 'hashtags_max',
-        detail: `${copy.hashtags.length} hashtags — ${spec.platform}:${spec.placement_type} allows ${spec.hashtags_max}`,
+        detail: `${tags.length} hashtags — ${spec.platform}:${spec.placement_type} allows ${spec.hashtags_max}`,
       });
     }
-    for (const tag of copy.hashtags) {
+    for (const tag of tags) {
       const norm = normAr(tag.startsWith('#') ? tag : `#${tag}`);
       const blocked = ctx.blocklist.find((b) => (b.kind === 'hashtag' || b.kind === 'org') && norm.includes(b.term));
       if (blocked) {
@@ -473,7 +476,7 @@ function validateDerivative(d: Derivative, i: number, ctx: GroundingCtx, s: Scan
         });
       }
     }
-    checkCopy([copy.caption, ...copy.hashtags].join('\n'), copy.fact_refs, `${path}.copy`, s);
+    checkCopy([copy.caption, ...tags].join('\n'), copy.fact_refs, `${path}.copy`, s);
     checkFactRefs(copy.fact_refs, `${path}.copy.fact_refs`, s);
   } else {
     if (isOrganicCopy(d.copy)) {

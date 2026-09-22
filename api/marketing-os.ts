@@ -30,7 +30,12 @@ import { runMetaSync } from './_lib/marketing/metaSync.js';
 import { loadMetaConfig, MetaMarketingClient, MetaApiError } from './_lib/marketing/metaMarketingApi.js';
 import { ensureMetaSkeleton } from './_lib/marketing/metaSkeleton.js';
 import { campaignInPeriod, undatedCampaigns } from './_lib/marketing/periodScope.js';
-import { resolveAutoAdTarget, enqueueMetaAdJob, approveMetaAdCaption, autoAdSkipText } from './_lib/marketing/metaAutoAd.js';
+import {
+  resolveAutoAdTarget, enqueueMetaAdJob, autoAdSkipText, loadConfirmedCaption, enqueueOutcomeText,
+  type AutoAdTarget,
+} from './_lib/marketing/metaAutoAd.js';
+import { runCompletionEffects, type EffectResult, type ManifestElement } from './_lib/marketing/completionEffects.js';
+import { completionEventOf, requestHashOf } from './_lib/marketing/completionEvent.js';
 import {
   loadBundleConfig, getPost, getTeam, extractPermalink, mapBundleStatus,
   BundleApiError, BUNDLE_PLATFORM_TYPE, type BundlePost,
@@ -141,6 +146,84 @@ function wakeWorker(): void {
   });
 }
 
+
+/**
+ * What the approval did about the Meta ad, for the SPA's approval dialog —
+ * read off the completion event's manifest (fresh or replayed) plus what the
+ * effect runner did just now.
+ */
+type AutoAdOutcome =
+  | { status: 'queued'; job_id: string | null; ad_row_id: string | null; ad_set_name: string; campaign_name: string | null; finished: boolean }
+  | { status: 'skipped'; reason: string; text_ar: string; text_en: string };
+
+function autoAdOutcomeOf(
+  effects: EffectResult[],
+  manifest: ManifestElement[],
+  metaTarget: { kind: 'target'; target: AutoAdTarget } | { kind: 'skip'; reason: string } | null,
+  finished: boolean,
+): AutoAdOutcome | null {
+  const el = manifest.find((e) => e.kind === 'meta_ad');
+  if (!el) {
+    if (metaTarget?.kind === 'skip') {
+      const t = autoAdSkipText(metaTarget.reason as Parameters<typeof autoAdSkipText>[0]);
+      return { status: 'skipped', reason: metaTarget.reason, text_ar: t.ar, text_en: t.en };
+    }
+    return null;
+  }
+  const target = el.target?.kind === 'target' ? (el.target.target ?? null) : null;
+  const queued = (jobId: string | null, adRowId: string | null): AutoAdOutcome => ({
+    status: 'queued', job_id: jobId, ad_row_id: adRowId,
+    ad_set_name: target?.ad_set_name ?? '', campaign_name: target?.campaign_name ?? null, finished,
+  });
+  const fx = effects.find((e): e is Extract<EffectResult, { kind: 'meta_ad' }> => e.kind === 'meta_ad');
+  if (fx) {
+    if (fx.outcome === 'done') return queued(fx.enqueue?.job_id ?? null, fx.enqueue?.ad_row_id ?? null);
+    if (fx.outcome === 'superseded' && fx.enqueue) {
+      const t = enqueueOutcomeText(fx.enqueue);
+      return { status: 'skipped', reason: 'superseded', text_ar: t.ar, text_en: t.en };
+    }
+    if (fx.outcome === 'pending') {
+      const t = enqueueOutcomeText({ enqueued: false, reason: 'retry_later', job_id: null, ad_row_id: null, ad_state: null, detail: null });
+      return { status: 'skipped', reason: 'retry_later', text_ar: t.ar, text_en: t.en };
+    }
+    const msg = fx.error ?? fx.enqueue?.detail ?? 'unknown';
+    return {
+      status: 'skipped', reason: 'enqueue_failed',
+      text_ar: `تعذّر إرسال الإعلان للإنشاء: ${msg}`, text_en: `Could not queue the ad: ${msg}`,
+    };
+  }
+  // Nothing ran this time (a replay whose element already settled).
+  const detail = (el.detail ?? null) as { job_id?: unknown; ad_row_id?: unknown } | null;
+  if (el.status === 'done') {
+    return queued(typeof detail?.job_id === 'string' ? detail.job_id : null,
+      typeof detail?.ad_row_id === 'string' ? detail.ad_row_id : null);
+  }
+  if (el.status === 'superseded') {
+    const t = enqueueOutcomeText({ enqueued: false, reason: 'superseded', job_id: null, ad_row_id: null, ad_state: null, detail: null });
+    return { status: 'skipped', reason: 'superseded', text_ar: t.ar, text_en: t.en };
+  }
+  if (el.status === 'failed') {
+    const msg = el.last_error ?? 'unknown';
+    return {
+      status: 'skipped', reason: 'enqueue_failed',
+      text_ar: `تعذّر إرسال الإعلان للإنشاء: ${msg}`, text_en: `Could not queue the ad: ${msg}`,
+    };
+  }
+  const t = enqueueOutcomeText({ enqueued: false, reason: 'retry_later', job_id: null, ad_row_id: null, ad_state: null, detail: null });
+  return { status: 'skipped', reason: 'retry_later', text_ar: t.ar, text_en: t.en };
+}
+
+/** The refusal sentence for a SINGLE item's missing requirements (the row
+ *  wording in rowTasks.ts says «هذا الصف»; an item is not a row). */
+function itemRequirementsText(missing: ReturnType<typeof parseRequirementsMissing>): { ar: string; en: string } {
+  const list = missing ?? [];
+  const ar = list.map((m) => m.label_ar).join('، ');
+  const en = list.map((m) => m.label_en).join(', ');
+  return {
+    ar: `لا يمكن إكمال هذه الخطوة — ينقصها ${ar}.`,
+    en: `This step cannot be completed — it is missing ${en}.`,
+  };
+}
 /** The shared context every campaign-planning handler takes. */
 function planCtx(sb: SupabaseClient, body: Record<string, unknown>, userId: string | null): PlanCtx {
   return { sb, svc: makeServiceClient('api:marketing-os:planning'), body, userId };
@@ -201,6 +284,37 @@ const DB_MESSAGES: Record<string, { en: string; ar: string }> = {
   'MOS:NO_OPEN_TASK': {
     en: 'This item has no open task.',
     ar: 'لا توجد مهمة مفتوحة لهذا العنصر.',
+  },
+  // Plan-driven assignment (2026-09-22) — the completion contract and the
+  // early-start offer. Conflicts answer 409 (see translateDbError), and the
+  // database's DETAIL (the reason) travels with them.
+  'MOS:TASK_ALREADY_CLOSED': {
+    en: 'This step is already done — the work has moved on. Refresh to see where it is now.',
+    ar: 'هذه المرحلة أُنجزت بالفعل وانتقل العمل إلى ما بعدها — حدّث الصفحة لترى مكانه الآن.',
+  },
+  'MOS:TASK_NOT_FOUND': {
+    en: 'This task no longer exists.',
+    ar: 'هذه المهمة لم تعد موجودة.',
+  },
+  'MOS:TASK_NOT_OPEN': {
+    en: 'This task is not open any more.',
+    ar: 'هذه المهمة لم تعد مفتوحة.',
+  },
+  'MOS:OFFER_WITHDRAWN': {
+    en: 'This work is no longer available to start early.',
+    ar: 'لم يعد هذا العمل متاحًا للبدء المبكر.',
+  },
+  'MOS:EVENT_MISMATCH': {
+    en: 'This request was already recorded with different details — refresh and try again.',
+    ar: 'سُجِّل هذا الطلب سابقًا بتفاصيل مختلفة — حدّث الصفحة وأعد المحاولة.',
+  },
+  'MOS:EVENT_OWNER_MISMATCH': {
+    en: 'This request belongs to another user.',
+    ar: 'هذا الطلب يخص مستخدمًا آخر.',
+  },
+  'MOS:NO_APPROVED_PAYLOAD': {
+    en: 'Confirm the caption first — the ad launches with the confirmed caption.',
+    ar: 'ثبّت الكابشن أولًا — يُطلق الإعلان بالكابشن المثبّت.',
   },
   'MOS:NOT_YOUR_TASK': {
     en: 'This task sits with another role.',
@@ -386,36 +500,67 @@ function platformSettingsError(platform: string | null, raw: unknown): { en: str
   return null;
 }
 
-function translateDbError(error: PostgrestError): { status: number; en: string; ar: string } {
+/** The `MOS:` token an error message carries, when any. */
+function mosTokenOf(message: string): string | null {
+  const m = /MOS:[A-Z_]+/.exec(message);
+  return m ? m[0] : null;
+}
+
+/** DETAIL as JSON when the database sent one (`{"reason":…}`), else null. */
+function dbDetailOf(error: PostgrestError): Record<string, unknown> | null {
+  const d = typeof error.details === 'string' ? error.details.trim() : '';
+  if (!d.startsWith('{')) return null;
+  try {
+    const parsed: unknown = JSON.parse(d);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch (e) {
+    // A DETAIL that is not JSON is still a fact worth keeping in the logs.
+    console.error('[marketing-os] db error DETAIL was not JSON', d, e);
+    return null;
+  }
+}
+
+function translateDbError(error: PostgrestError): {
+  status: number; en: string; ar: string; code: string | null; details: Record<string, unknown> | null;
+} {
   console.error('[marketing-os] db error', error.code, error.message, error.details, error.hint);
+  const code = mosTokenOf(error.message);
+  const details = dbDetailOf(error);
 
   // A locked post raises 42501 too, but its reason is the lock, not the role.
   // Saying "your role does not allow this" sent people hunting for a
   // permission problem that did not exist (2026-09-17, design uploads).
   if (error.message.includes('MOS:LOCKED')) {
     return {
-      status: 409,
+      status: 409, code, details,
       en: 'This post is approved and locked — open a revision to change it.',
       ar: 'هذا المنشور معتمد ومقفل — يلزم فتح تعديل لتغييره.',
     };
   }
+  // An optimistic-concurrency refusal (SQLSTATE WS409 — never 40001, see
+  // CLAUDE.md) is a CONFLICT the SPA must react to (reload, withdraw a
+  // button), not a bad request. The reason rides in DETAIL.
+  const conflict = error.code === 'WS409';
   if (error.code === '42501' || /row-level security/i.test(error.message)) {
-    return {
-      status: 403,
-      en: 'Your marketing role does not allow this action.',
-      ar: 'دورك في التسويق لا يسمح بهذا الإجراء.',
-    };
+    const mapped = code ? DB_MESSAGES[code] : undefined;
+    return mapped
+      ? { status: 403, code, details, en: mapped.en, ar: mapped.ar }
+      : {
+        status: 403, code, details,
+        en: 'Your marketing role does not allow this action.',
+        ar: 'دورك في التسويق لا يسمح بهذا الإجراء.',
+      };
   }
   for (const token of Object.keys(DB_MESSAGES)) {
     const mapped = DB_MESSAGES[token];
     if (mapped && error.message.includes(token)) {
-      return { status: 400, en: mapped.en, ar: mapped.ar };
+      return { status: conflict ? 409 : 400, code: token, details, en: mapped.en, ar: mapped.ar };
     }
   }
   return {
-    status: 400,
-    en: 'The database rejected this change.',
-    ar: 'رفضت قاعدة البيانات هذا التغيير.',
+    status: conflict ? 409 : 400, code, details,
+    en: conflict ? 'This change conflicts with a newer one — refresh and try again.' : 'The database rejected this change.',
+    ar: conflict ? 'يتعارض هذا التغيير مع تغيير أحدث — حدّث الصفحة وأعد المحاولة.' : 'رفضت قاعدة البيانات هذا التغيير.',
   };
 }
 
@@ -423,7 +568,11 @@ function translateDbError(error: PostgrestError): { status: number; en: string; 
 function dbFail(error: PostgrestError | null): Response | null {
   if (!error) return null;
   const t = translateDbError(error);
-  return new Response(JSON.stringify({ error: t.en, error_ar: t.ar }), {
+  return new Response(JSON.stringify({
+    error: t.en, error_ar: t.ar,
+    ...(t.code ? { code: t.code } : {}),
+    ...(t.details ? { details: t.details } : {}),
+  }), {
     status: t.status,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -924,6 +1073,18 @@ function mapRoleTask(t: Record<string, unknown>): Record<string, unknown> {
     // meta line and screen 38's revision chips both read these.
     closed_by_user_id: t.closed_by_user_id ?? null,
     revision_targets: Array.isArray(t.revision_targets) ? t.revision_targets : [],
+    // Plan-driven assignment (2026-09-22). An open UNASSIGNED task that is
+    // `offered_to` me is band B («available early»): I may start it now with
+    // `task_start_early`; nothing is due until I do. `plan_handoff_at` /
+    // `plan_due_at` are the plan's own dates for this step; `risk` is the
+    // cached publication verdict (blocked / on_track / at_risk / late / …).
+    offered_to_user_id: t.offered_to_user_id ?? null,
+    offered_at: t.offered_at ?? null,
+    planned_day: t.scheduled_start ?? null,
+    plan_handoff_at: t.plan_handoff_at ?? null,
+    plan_due_at: t.plan_due_at ?? null,
+    risk: t.risk ?? null,
+    risk_reason: t.risk_reason ?? null,
   };
 }
 
@@ -1213,7 +1374,8 @@ async function listManualTasks(
 interface QueueSelector {
   /** The app-users id whose queue this is. Null under an admin role preview. */
   userId: string | null;
-  /** Roles whose unassigned work also counts as mine. */
+  /** The roles a PREVIEW shows the whole queue of. (Unassigned work is no
+   *  longer claimable by role — the plan hands it out; 2026-09-22.) */
   roles: readonly string[];
   /** The whole team's board, not one person's. */
   team: boolean;
@@ -1239,6 +1401,7 @@ const QUEUE_TASK_COLUMNS = [
   'blocked', 'blocked_reason', 'late_flag',
   'scheduled_start', 'scheduled_end', 'effort_days', 'progress_days', 'reservation_id',
   'assigned_at', 'units', 'waiting_since', 'waiting_reason',
+  'offered_to_user_id', 'offered_at', 'plan_handoff_at', 'plan_due_at', 'risk', 'risk_reason',
 ].join(', ');
 
 /** The row facts the queue needs to render a row card (kind, batch day, members). */
@@ -1274,13 +1437,16 @@ async function readOpenQueueTasks(
     const clauses: string[] = [];
     if (sel.preview) {
       if (roles.length > 0) clauses.push(`role_key.in.(${roles.join(',')})`);
-    } else {
-      if (sel.userId) clauses.push(`assignee_user_id.eq.${sel.userId}`);
-      if (roles.length > 0) {
-        // Waiting work (open, not handed out for lack of room) is nobody's to
-        // claim: taking it would bypass the capacity limit it is waiting on.
-        clauses.push(`and(assignee_user_id.is.null,waiting_since.is.null,role_key.in.(${roles.join(',')}))`);
-      }
+    } else if (sel.userId) {
+      // Mine = assigned to me (band A) + OFFERED to me (band B: open,
+      // unassigned, `offered_to_user_id` = me — the refill's early batch of a
+      // future day, startable now with `task_start_early`). Nothing else is
+      // claimable from the queue: an open unassigned task that is not offered
+      // is the plan's, and the plan hands it out on its day (2026-09-22).
+      clauses.push(
+        `assignee_user_id.eq.${sel.userId}`,
+        `and(assignee_user_id.is.null,offered_to_user_id.eq.${sel.userId})`,
+      );
     }
     // No person AND no queue-bearing role → an empty queue, never everyone's.
     if (clauses.length === 0) return { tasks: [] };
@@ -1441,6 +1607,9 @@ const numOrNull = (v: unknown): number | null =>
 
 interface NotifyArgs {
   event: string;
+  /** Exactly-once per (event, kind, recipient): a replayed completion, or a
+   *  retried sweep, must never notify twice (`notifications.dedupe_key`). */
+  dedupeKey?: string | null;
   /** UNPREFIXED role keys ('writer'); the helper adds the mos_ prefix. */
   roles?: string[];
   users?: string[];
@@ -1476,6 +1645,7 @@ async function emitNotify(sb: SupabaseClient, args: NotifyArgs): Promise<void> {
     // either notify_emit signature, so they never depend on this feature's
     // migration having landed first; the mask itself needs the 10-arg version.
     if (args.channels) params.p_channels = args.channels;
+    if (args.dedupeKey) params.p_dedupe_key = args.dedupeKey;
     const { error } = await sb.rpc('notify_emit', params);
     // A failed emission is logged, never thrown: the content advance, the
     // shoot delivery or the campaign save that triggered it already committed,
@@ -2388,11 +2558,20 @@ export default async function handler(req: Request): Promise<Response> {
       /* -------------------------------------------------------- */
       case 'task_complete': {
         // The SPA hands the open task's id; the engine advances by subject.
-        // Both are accepted and resolved to the same open row.
+        // Both are accepted and resolved to the same row.
+        //
+        // Plan-driven assignment (2026-09-22): every completion is bound to an
+        // EVENT — `event_id` + a hash of the sanitized request. A retried click
+        // after a dropped response REPLAYS the stored outcome instead of moving
+        // the item twice; the submission snapshot and the reject note are
+        // written INSIDE the transition; what must happen after the commit
+        // (asset promote, the Meta ad) is a manifest the effect runner
+        // executes now and the planning sweep recovers later.
         const taskId = str(body.task_id);
         let contentId = str(body.content_id);
         const result = str(body.result);
         const note = str(body.note);
+        const returnTo = str(body.return_to);
         const targets = Array.isArray(body.targets)
           ? (body.targets as unknown[]).filter((t): t is string => typeof t === 'string')
           : [];
@@ -2410,30 +2589,54 @@ export default async function handler(req: Request): Promise<Response> {
             { status: 400, headers: { 'Content-Type': 'application/json' } },
           );
         }
+        const evRef = completionEventOf(body, req);
+        if ('error' in evRef) return jsonError(400, evRef.error);
+        const eventId = evRef.ref.id;
+        const request = {
+          action: 'task_complete', task_id: taskId, content_id: contentId, result, note, targets,
+          ad_set_id: str(body.ad_set_id), return_to: returnTo,
+        };
+        const requestHash = await requestHashOf(request);
 
+        // The task — by id in ANY status (a second click on a closed task must
+        // read «already done», not «no open task»); by subject → its open task.
         let tq = sb.from('workflow_role_tasks')
-          .select('id, subject_id, round, step_key, workflow_version_id')
-          .eq('subject_table', 'mos_content')
-          .eq('status', 'open');
-        tq = taskId ? tq.eq('id', taskId) : tq.eq('subject_id', contentId ?? '');
+          .select('id, subject_id, round, step_key, workflow_version_id, status')
+          .eq('subject_table', 'mos_content');
+        tq = taskId ? tq.eq('id', taskId) : tq.eq('subject_id', contentId ?? '').eq('status', 'open');
         const cur = await tq.maybeSingle();
         const curFail = dbFail(cur.error);
         if (curFail) return curFail;
-        if (!cur.data) return jsonError(404, 'no open task found');
+        if (!cur.data) return jsonError(404, taskId ? 'task not found' : 'no open task found');
         const openTask = cur.data as unknown as {
-          id: string; subject_id: string; round: number; step_key: string | null; workflow_version_id: string | null;
+          id: string; subject_id: string; round: number; step_key: string | null;
+          workflow_version_id: string | null; status: string;
         };
         contentId = openTask.subject_id;
+
+        // A replay is answered by the database from the event; the expensive
+        // pre-work (target resolution, the snapshot) is skipped on the way.
+        const peek = await sb.rpc('mos_completion_event_peek', { p_event_id: eventId });
+        const peekFail = dbFail(peek.error);
+        if (peekFail) return peekFail;
+        const replaying = peek.data != null;
+        if (!replaying && openTask.status !== 'open') {
+          const m = DB_MESSAGES['MOS:TASK_ALREADY_CLOSED']!;
+          return new Response(JSON.stringify({ error: m.en, error_ar: m.ar, code: 'MOS:TASK_ALREADY_CLOSED' }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } });
+        }
 
         // 2026-09-10 — auto Meta ad. If the step being APPROVED carries
         // `auto_meta_ad` on the pinned path, resolve the Meta ad set BEFORE the
         // engine moves: a choice the caller must still make (several linked ad
         // sets, none picked) returns 409 with the options and changes NOTHING;
-        // a target enqueues the worker job after the advance; a skip (not a paid
-        // item / campaign never pushed to Meta) continues the normal path and is
-        // reported so the UI can say why no ad was created.
+        // a target is SNAPSHOTTED onto the completion event's manifest (with
+        // the writer's confirmed caption) and handed to the worker after the
+        // commit; a skip (not a paid item / campaign never pushed to Meta)
+        // continues the normal path and is reported so the UI can say why no
+        // ad was created.
         let autoAdStep = false;
-        if (result === 'approved' && openTask.workflow_version_id && openTask.step_key) {
+        if (!replaying && result === 'approved' && openTask.workflow_version_id && openTask.step_key) {
           const verRes = await sb.from('workflow_versions')
             .select('definition').eq('id', openTask.workflow_version_id).maybeSingle();
           const verFail = dbFail(verRes.error);
@@ -2442,16 +2645,13 @@ export default async function handler(req: Request): Promise<Response> {
           const stepDef = stepsOf(def?.metadata ?? null).find((st) => st.key === openTask.step_key);
           autoAdStep = stepDef?.auto_meta_ad === true;
         }
-        type AutoAdOutcome =
-          | { status: 'queued'; job_id: string; ad_row_id: string; ad_set_name: string; campaign_name: string | null; finished: boolean }
-          | { status: 'skipped'; reason: string; text_ar: string; text_en: string };
-        let autoAdPlan: Awaited<ReturnType<typeof resolveAutoAdTarget>> | null = null;
-        let autoAdOutcome: AutoAdOutcome | null = null;
+        let metaTarget: { kind: 'target'; target: AutoAdTarget } | { kind: 'skip'; reason: string } | null = null;
         let finishPath = false;
         let contentMeta: { title: string; organic_platforms: string[] } | null = null;
         if (autoAdStep) {
           const svcPre = makeServiceClient('api:marketing-os');
           if (!svcPre) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
+          let autoAdPlan: Awaited<ReturnType<typeof resolveAutoAdTarget>>;
           try {
             autoAdPlan = await resolveAutoAdTarget(svcPre, contentId, str(body.ad_set_id));
           } catch (e) {
@@ -2465,40 +2665,37 @@ export default async function handler(req: Request): Promise<Response> {
               ad_sets: autoAdPlan.choices,
             }), { status: 409, headers: { 'Content-Type': 'application/json' } });
           }
+          metaTarget = autoAdPlan.kind === 'target'
+            ? { kind: 'target', target: autoAdPlan.target }
+            : { kind: 'skip', reason: autoAdPlan.reason };
           const metaRes = await sb.from('mos_content')
             .select('title, organic_platforms').eq('id', contentId).maybeSingle();
           const metaFail = dbFail(metaRes.error);
           if (metaFail) return metaFail;
           const metaRow = metaRes.data as { title: string; organic_platforms: string[] | null } | null;
           contentMeta = { title: metaRow?.title ?? '', organic_platforms: metaRow?.organic_platforms ?? [] };
-          // A paid-only item finishes its path here (no scheduling / publish
-          // check); one that ALSO publishes organically still needs those steps.
+          // A paid-only item finishes its path here; one that ALSO publishes
+          // organically keeps whatever steps follow on its pinned path.
           finishPath = autoAdPlan.kind === 'target' && contentMeta.organic_platforms.length === 0;
         }
 
-        // Submitted work gets a frozen snapshot of the round BEFORE the engine
-        // moves on — a resubmit of the same round overwrites its own snapshot.
-        if (result === 'submitted') {
-          const [contentRes, scenesRes, appUserId] = await Promise.all([
+        // Submitted work gets a frozen snapshot of the round. It travels INTO
+        // the transition and is written only if the transition commits — a
+        // resubmit of the same round overwrites its own snapshot.
+        let submissionSnapshot: Array<Record<string, unknown>> | null = null;
+        if (!replaying && result === 'submitted') {
+          const [contentRes, scenesRes] = await Promise.all([
             sb.from('mos_content').select('data').eq('id', contentId).maybeSingle(),
             sb.from('mos_scenes').select('*').eq('content_id', contentId)
               .order('position', { ascending: true }),
-            resolveAppUserId(sb, user.userId),
           ]);
           const snapReadFail = dbFail(contentRes.error) ?? dbFail(scenesRes.error);
           if (snapReadFail) return snapReadFail;
-          const snap = await sb.from('mos_content_versions').upsert(
-            {
-              content_id: contentId,
-              round: openTask.round,
-              data: ((contentRes.data as { data?: unknown } | null)?.data ?? {}) as Record<string, unknown>,
-              scenes: scenesRes.data ?? [],
-              submitted_by_user_id: appUserId,
-            },
-            { onConflict: 'content_id,round' },
-          );
-          const snapFail = dbFail(snap.error);
-          if (snapFail) return snapFail;
+          submissionSnapshot = [{
+            content_id: contentId,
+            data: ((contentRes.data as { data?: unknown } | null)?.data ?? {}) as Record<string, unknown>,
+            scenes: scenesRes.data ?? [],
+          }];
         }
 
         const adv = await sb.rpc('workflow_advance_role_path', {
@@ -2508,78 +2705,72 @@ export default async function handler(req: Request): Promise<Response> {
           p_note: note,
           p_targets: targets,
           p_finish: finishPath,
+          ...(returnTo ? { p_return_to: returnTo } : {}),
+          p_task_id: openTask.id,
+          p_event_id: eventId,
+          p_operation: 'content.complete',
+          p_request_hash: requestHash,
+          p_request_snapshot: request,
+          p_meta_target: metaTarget,
+          p_submission_snapshot: submissionSnapshot,
         });
-        const advFail = dbFail(adv.error);
-        if (advFail) return advFail;
+        if (adv.error) {
+          // The engine names what is missing («caption_confirmed» at the launch
+          // of a paid creative, a required file…) — parsed into structure so the
+          // refusal is fixable without the manager.
+          const missing = parseRequirementsMissing(adv.error);
+          if (missing) {
+            const text = itemRequirementsText(missing);
+            console.error('[marketing-os] item refused — requirements missing',
+              contentId, adv.error.message, adv.error.details);
+            return new Response(JSON.stringify({
+              error: text.en, error_ar: text.ar,
+              code: 'requirements_missing', missing,
+            }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+          }
+          const advFail = dbFail(adv.error);
+          if (advFail) return advFail;
+        }
         const payload = (adv.data ?? {}) as {
           closed_task_id: string;
           opened_task_id: string | null;
           next_step_key: string | null;
           round: number;
           done: boolean;
+          event_id?: string | null;
+          replayed?: boolean;
+          side_effects?: ManifestElement[];
         };
+        const manifest = Array.isArray(payload.side_effects) ? payload.side_effects : [];
+        const meUserId = await resolveAppUserId(sb, user.userId);
 
-        // A rejection's reason lives on the version it rejected. The engine has
-        // already incremented the round, so the rejected version is round - 1.
-        if (result === 'changes_requested' && payload.round - 1 >= 1) {
-          const rn = await sb.from('mos_content_versions')
-            .update({ rejected_note: note })
-            .eq('content_id', contentId)
-            .eq('round', payload.round - 1);
-          const rnFail = dbFail(rn.error);
-          if (rnFail) return rnFail;
+        // The manifest — run now (fresh OR replayed: an element still pending
+        // gets its attempt). A missing service client is loud, not fatal: the
+        // approval stands and the planning sweep recovers the element.
+        let effects: EffectResult[] = [];
+        if (manifest.some((e) => e.status === 'pending')) {
+          const svcFx = makeServiceClient('api:marketing-os');
+          if (!svcFx) {
+            console.error('[marketing-os] completion effects NOT run — service client unavailable; the planning sweep will recover', eventId);
+          } else {
+            effects = await runCompletionEffects(svcFx, {
+              event_id: eventId, subject_table: 'mos_content', subject_id: contentId,
+              actor_user_id: meUserId, actor_auth_uid: user.userId, side_effects: manifest,
+            }, { wake: wakeWorker, contentTitle: contentMeta?.title ?? null });
+          }
         }
-
-        // Approval is the bridge to a publishable file: the material the item's
-        // owner submitted for approval (mos_content.approval_asset_id) becomes an
-        // approved ('final') link, which is what the Publishing tab reads. The RPC
-        // is SECURITY DEFINER (the approver may not hold asset-write RLS) and
-        // promotes the EXPLICIT selection only — a no-op when nothing was marked.
-        if (result === 'approved') {
-          // The approval has ALREADY committed above. A failure here must not
-          // end the request: returning it skipped the auto-Meta-ad block below
-          // and left an approved paid creative with no ad (P-306, 2026-09-17).
+        // An approval that carries no manifest (a step before the final one,
+        // or a legacy path) still promotes the submitted material — the
+        // Publishing tab reads the approved link. A no-op when nothing was
+        // marked; a failure is logged, never returned (the approval committed).
+        if (result === 'approved' && !payload.replayed && !manifest.some((e) => e.kind === 'promote_asset')) {
           const promo = await sb.rpc('mos_promote_approval_asset', { p_content_id: contentId });
           if (promo.error) {
             console.error('[marketing-os] approval asset promote failed after approval', contentId,
               promo.error.code, promo.error.message);
           }
         }
-
-        // The approval committed — now hand the ad to the worker. A failure to
-        // ENQUEUE is reported loudly (the approval itself stands; the manager
-        // can retry from the Placements tab via meta_auto_ad_retry).
-        if (autoAdPlan && contentMeta) {
-          if (autoAdPlan.kind === 'target') {
-            const svcQ = makeServiceClient('api:marketing-os');
-            if (!svcQ) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
-            try {
-              const q = await enqueueMetaAdJob(svcQ, {
-                contentId,
-                contentTitle: contentMeta.title,
-                target: autoAdPlan.target,
-                approvedByAuthUid: user.userId,
-                approvedByUserId: await resolveAppUserId(sb, user.userId),
-              });
-              wakeWorker();
-              autoAdOutcome = {
-                status: 'queued', job_id: q.job_id, ad_row_id: q.ad_row_id,
-                ad_set_name: autoAdPlan.target.ad_set_name, campaign_name: autoAdPlan.target.campaign_name,
-                finished: finishPath,
-              };
-            } catch (e) {
-              console.error('[marketing-os] auto-ad enqueue failed', e);
-              const msg = e instanceof Error ? e.message : String(e);
-              autoAdOutcome = {
-                status: 'skipped', reason: 'enqueue_failed',
-                text_ar: `تعذّر إرسال الإعلان للإنشاء: ${msg}`, text_en: `Could not queue the ad: ${msg}`,
-              };
-            }
-          } else if (autoAdPlan.kind === 'skip') {
-            const t = autoAdSkipText(autoAdPlan.reason);
-            autoAdOutcome = { status: 'skipped', reason: autoAdPlan.reason, text_ar: t.ar, text_en: t.en };
-          }
-        }
+        const autoAdOutcome = autoAdOutcomeOf(effects, manifest, metaTarget, finishPath);
 
         const full = await sb.from('mos_content_v')
           .select(CONTENT_LIST_COLUMNS).eq('id', contentId).maybeSingle();
@@ -2589,7 +2780,8 @@ export default async function handler(req: Request): Promise<Response> {
         // Notifications: the engine has opened the NEXT task — its role is who
         // gets interrupted. A rejection reopens the revision step (the writer),
         // a submit/approval opens the following step. done=true opens nothing.
-        if (payload.opened_task_id) {
+        // Deduped on the event so a replay can never notify twice.
+        if (payload.opened_task_id && !payload.replayed) {
           const nt = await sb.from('workflow_role_tasks')
             .select('role_key, assignee_user_id, workflow_version_id, step_key')
             .eq('id', payload.opened_task_id).maybeSingle();
@@ -2609,8 +2801,8 @@ export default async function handler(req: Request): Promise<Response> {
             // permitted channels are AND-ed with the recipient's role grid.
             const notifyCfg = await resolveStepNotify(sb, next.workflow_version_id, next.step_key);
             // Only the person who RECEIVED the step is interrupted. A step that
-            // opened waiting (no one has room yet) notifies nobody now — the
-            // dispatcher tells its owner at the moment it is handed out.
+            // opened unassigned (the plan hands it out on its day, or offers it
+            // early) notifies nobody now.
             if (notifyCfg.notify && next.assignee_user_id) {
               const itemTitle = ((full.data as { title?: string } | null)?.title) ?? '';
               await emitNotify(sb, result === 'changes_requested'
@@ -2624,6 +2816,7 @@ export default async function handler(req: Request): Promise<Response> {
                     bodyEn: itemTitle,
                     url: `/m/content/${contentId}`,
                     channels: notifyCfg.channels,
+                    dedupeKey: `${eventId}:changes_requested:${next.assignee_user_id}`,
                   }
                 : {
                     event: 'task_assigned',
@@ -2635,12 +2828,13 @@ export default async function handler(req: Request): Promise<Response> {
                     bodyEn: itemTitle,
                     url: `/m/content/${contentId}`,
                     channels: notifyCfg.channels,
+                    dedupeKey: `${eventId}:task_assigned:${next.assignee_user_id}`,
                   });
             }
           }
         }
 
-        return jsonOk({ item: full.data, ...payload, auto_ad: autoAdOutcome });
+        return jsonOk({ item: full.data, ...payload, event_id: eventId, auto_ad: autoAdOutcome });
       }
 
       /* -------------------------------------------------------- */
@@ -2696,44 +2890,74 @@ export default async function handler(req: Request): Promise<Response> {
             return new Response(JSON.stringify({ error: t.en, error_ar: t.ar, reason: plan.reason }),
               { status: 409, headers: { 'Content-Type': 'application/json' } });
           }
+          // D4 (2026-09-22): the ad is built from the caption the WRITER confirmed
+          // — never from an AI draft. No confirmed caption → nothing to build.
+          const confirmed = await loadConfirmedCaption(svc, contentId);
+          if (!confirmed) {
+            const m = DB_MESSAGES['MOS:NO_APPROVED_PAYLOAD']!;
+            return new Response(JSON.stringify({ error: m.en, error_ar: m.ar, code: 'MOS:NO_APPROVED_PAYLOAD' }),
+              { status: 409, headers: { 'Content-Type': 'application/json' } });
+          }
+          const approverId = await resolveAppUserId(sb, user.userId);
           const q = await enqueueMetaAdJob(svc, {
+            jobId: crypto.randomUUID(),
+            eventId: null,
             contentId,
             contentTitle: ownRow.title,
             target: plan.target,
             approvedByAuthUid: user.userId,
-            approvedByUserId: await resolveAppUserId(sb, user.userId),
+            approvedByUserId: approverId,
+            approvedCaption: {
+              text: confirmed.text, source: 'writer',
+              approved_at: new Date().toISOString(), approved_by: approverId,
+            },
           });
-          wakeWorker();
-          return jsonOk({ ...(await loadPaidAdsPayload(sb, contentId)), job_id: q.job_id, ad_row_id: q.ad_row_id });
+          if (q.reason === 'enqueued') wakeWorker();
+          if (q.reason === 'superseded' || q.reason === 'retry_later' || q.reason === 'already_done') {
+            const t = enqueueOutcomeText(q);
+            return new Response(JSON.stringify({ error: t.en, error_ar: t.ar, reason: q.reason, detail: q.detail }),
+              { status: 409, headers: { 'Content-Type': 'application/json' } });
+          }
+          return jsonOk({ ...(await loadPaidAdsPayload(sb, contentId)), job_id: q.job_id, ad_row_id: q.ad_row_id, reason: q.reason });
         } catch (e) {
           return dbFail(e as PostgrestError) ?? jsonError(500, e instanceof Error ? e.message : String(e));
         }
       }
 
-      /* The manager approved the AI caption → phase 2: build the ad on Meta. */
+      /* Caption approval is RETIRED (D4, 2026-09-22): the final approval launches
+       * the ad with the writer's confirmed caption, so there is nothing to
+       * approve afterwards. Kept as an explicit refusal so a stale bundle gets a
+       * sentence rather than a generic 400. */
       case 'meta_auto_ad_approve_caption': {
-        const gate = await requireCap(sb, 'manage_paid_ads'); if (gate) return gate;
-        const contentId = str(body.content_id);
-        const adId = str(body.ad_id);
-        const caption = typeof body.caption === 'string' ? body.caption : '';
-        if (!contentId || !adId) return jsonError(400, 'content_id and ad_id are required');
-        if (!caption.trim()) return jsonError(400, 'caption is required');
-        const own = await sb.from('mos_content_v').select('id').eq('id', contentId).maybeSingle();
-        const of = dbFail(own.error); if (of) return of;
-        if (!own.data) return jsonError(404, 'content item not found');
-        const svc = makeServiceClient('api:marketing-os');
-        if (!svc) return jsonError(500, 'service client unavailable (SUPABASE_SERVICE_ROLE_KEY missing)');
-        try {
-          const q = await approveMetaAdCaption(svc, {
-            contentId, adRowId: adId, caption,
-            approvedByAuthUid: user.userId,
-            approvedByUserId: await resolveAppUserId(sb, user.userId),
-          });
-          wakeWorker();
-          return jsonOk({ ...(await loadPaidAdsPayload(sb, contentId)), job_id: q.job_id, ad_row_id: q.ad_row_id });
-        } catch (e) {
-          return dbFail(e as PostgrestError) ?? jsonError(409, e instanceof Error ? e.message : String(e));
-        }
+        return new Response(JSON.stringify({
+          error: 'Caption approval is no longer a separate step — the final approval launches the ad with the writer’s confirmed caption.',
+          error_ar: 'لم تعد الموافقة على الكابشن خطوة مستقلة — يُطلق الاعتماد النهائي الإعلان بالكابشن الذي ثبّته الكاتب.',
+          code: 'MOS:CAPTION_APPROVAL_RETIRED',
+        }), { status: 410, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      /* -------------------------------------------------------- */
+      /* Start an OFFERED task early (band B, 2026-09-22)           */
+      /*                                                          */
+      /* The refill offers ONE future day's work to an idle person */
+      /* (`offered_to_user_id`). Starting it assigns it now, with  */
+      /* the plan's own deadline — the planned date never moves   */
+      /* (D3). A withdrawn offer (the day filled, the item was     */
+      /* blocked, someone else took it) answers 409                */
+      /* MOS:OFFER_WITHDRAWN with `details.reason`; the SPA        */
+      /* refreshes the queue instead of retrying.                  */
+      /* -------------------------------------------------------- */
+      case 'task_start_early': {
+        const taskId = str(body.task_id);
+        if (!taskId) return jsonError(400, 'task_id is required');
+        const res = await sb.rpc('mos_task_start_early', { p_task_id: taskId });
+        const f = dbFail(res.error);
+        if (f) return f;
+        const out = (res.data ?? {}) as { task_id: string; result: 'started_early' | 'already_assigned'; due_at?: string | null };
+        const t = await sb.from('workflow_role_tasks').select(QUEUE_TASK_COLUMNS).eq('id', taskId).maybeSingle();
+        const tf = dbFail(t.error);
+        if (tf) return tf;
+        return jsonOk({ ...out, task: t.data ? mapRoleTask(t.data as unknown as Record<string, unknown>) : null });
       }
 
       /* -------------------------------------------------------- */
@@ -2743,13 +2967,17 @@ export default async function handler(req: Request): Promise<Response> {
         const taskId = str(body.task_id);
         const toUserId = str(body.to_user_id);
         if (!taskId || !toUserId) return jsonError(400, 'task_id and to_user_id are required');
+        const evRef = completionEventOf(body, req);
+        if ('error' in evRef) return jsonError(400, evRef.error);
         const res = await sb.rpc('workflow_role_task_transfer', {
           p_task_id: taskId,
           p_to_user_id: toUserId,
+          p_event_id: evRef.ref.id,
+          p_request_hash: await requestHashOf({ action: 'task_transfer', task_id: taskId, to_user_id: toUserId }),
         });
         const f = dbFail(res.error);
         if (f) return f;
-        return jsonOk({ ok: true });
+        return jsonOk({ ok: true, ...((res.data ?? {}) as Record<string, unknown>) });
       }
 
       /* -------------------------------------------------------- */
@@ -5362,50 +5590,74 @@ export default async function handler(req: Request): Promise<Response> {
           };
         });
 
-        // «القادم إليك» (s02) — NOT tasks: in-flight items whose pinned path
-        // reaches my role at a FUTURE step, so I can prepare without my queue
-        // filling with work I cannot start yet.
-        let upcoming: unknown[] = [];
-        if (scope === 'mine' && (MOS_ROLE_KEYS as readonly string[]).includes(myRole)) {
-          const cand = await sb.from('mos_content_v')
-            .select('id, ref, title')
-            .is('archived_at', null).not('status_key', 'in', '("draft","done")')
-            .neq('owner_role', myRole).limit(200);
-          const cf = dbFail(cand.error);
-          if (cf) return cf;
-          const candIds = (cand.data ?? []).map((r) => (r as unknown as Row).id as string);
-          if (candIds.length > 0) {
-            const meta = await loadPinnedStepMeta(sb, candIds);
-            if ('fail' in meta) return meta.fail;
-            const titleBy = new Map((cand.data ?? []).map(
-              (r): [string, { id: string; ref: string | null; title: string }] => {
-                const row = r as unknown as { id: string; ref: string | null; title: string };
-                return [row.id, row];
-              },
-            ));
-            for (const [subjectId, m] of meta.bySubject) {
-              if (!m.currentStepKey) continue;
-              const idx = m.steps.findIndex((s) => s.key === m.currentStepKey);
-              if (idx < 0) continue;
-              for (let j = idx + 1; j < m.steps.length; j += 1) {
-                const s = m.steps[j];
-                if (!s || s.role_key !== myRole) continue;
-                const c = titleBy.get(subjectId);
-                if (!c) break;
-                upcoming.push({
-                  content_id: subjectId,
-                  ref: c.ref,
-                  title: c.title,
-                  step_key: s.key,
-                  step_label_ar: s.label_ar,
-                  step_label_en: s.label_en,
-                  steps_away: j - idx,
-                });
-                break;
-              }
+        // Band C — «المخطط لي» (2026-09-22; hidden by default in the SPA, D7):
+        // the plan's own future steps for ME inside the horizon — open tasks
+        // planned to me that nobody has been offered, and my reservations that
+        // have no task yet. NOT claimable: the plan hands them out on their
+        // day, or the refill offers ONE future day early (those arrive in
+        // `tasks` with `offered_to_user_id` = me, band B). `upcoming` — the old
+        // pinned-path guess — is retired and stays an empty list for readers
+        // that still expect the key.
+        const upcoming: unknown[] = [];
+        let planned: unknown[] = [];
+        if (scope === 'mine' && !eff.previewRole && meUserId) {
+          const ps = await sb.rpc('mos_planned_steps', { p_user_id: meUserId, p_horizon_days: null });
+          const pf = dbFail(ps.error);
+          if (pf) return pf;
+          type PlannedRow = {
+            band: string; kind: string; task_id: string | null; reservation_id: string | null;
+            subject_table: string; subject_id: string; step_key: string; role_key: string;
+            planned_day: string | null; plan_due_at: string | null; readiness: string; executable: boolean;
+          };
+          const rowsP = ((ps.data ?? []) as PlannedRow[]).filter((r) => r.band === 'planned');
+          if (rowsP.length > 0) {
+            const cIds = Array.from(new Set(rowsP.filter((r) => r.subject_table === 'mos_content').map((r) => r.subject_id)));
+            const rIds = Array.from(new Set(rowsP.filter((r) => r.subject_table === 'mos_content_rows').map((r) => r.subject_id)));
+            type PlannedContent = { id: string; ref: string | null; title: string; purpose: string | null; project_id: string | null };
+            const titleBy = new Map<string, PlannedContent>();
+            if (cIds.length > 0) {
+              const cr = await sb.from('mos_content_v').select('id, ref, title, purpose, project_id').in('id', cIds);
+              const cf = dbFail(cr.error);
+              if (cf) return cf;
+              for (const c of (cr.data ?? []) as unknown as PlannedContent[]) titleBy.set(c.id, c);
             }
-            upcoming = (upcoming as Array<{ steps_away: number }>)
-              .sort((a, b) => a.steps_away - b.steps_away).slice(0, 12);
+            const rowBy = new Map<string, RowSummary>();
+            if (rIds.length > 0) {
+              const rs = await readRowSummaries(sb, rIds);
+              if ('fail' in rs) return rs.fail;
+              for (const r of rs.rows) rowBy.set(r.row_id, r);
+            }
+            const stepMetaP = await loadPinnedStepMeta(sb, [...cIds, ...rIds]);
+            if ('fail' in stepMetaP) return stepMetaP.fail;
+            planned = rowsP.map((r) => {
+              const step = stepMetaP.bySubject.get(r.subject_id)?.steps.find((s) => s.key === r.step_key);
+              const c = r.subject_table === 'mos_content' ? titleBy.get(r.subject_id) : undefined;
+              const row = r.subject_table === 'mos_content_rows' ? rowBy.get(r.subject_id) : undefined;
+              return {
+                band: r.band,
+                kind: r.kind,
+                task_id: r.task_id,
+                reservation_id: r.reservation_id,
+                subject_table: r.subject_table,
+                subject_id: r.subject_id,
+                content_id: r.subject_table === 'mos_content' ? r.subject_id : null,
+                row_id: r.subject_table === 'mos_content_rows' ? r.subject_id : null,
+                step_key: r.step_key,
+                role: r.role_key,
+                step_label_ar: step?.label_ar ?? r.step_key,
+                step_label_en: step?.label_en ?? r.step_key,
+                planned_day: r.planned_day,
+                plan_due_at: r.plan_due_at,
+                readiness: r.readiness,
+                executable: r.executable,
+                ref: c?.ref ?? null,
+                title: c?.title ?? null,
+                purpose: c?.purpose ?? null,
+                project_id: c?.project_id ?? row?.project_id ?? null,
+                batch_day: row?.batch_day ?? null,
+                member_count: row?.member_count ?? null,
+              };
+            });
           }
         }
         // Hand-assigned work rides the SAME queue. Generation runs first so a
@@ -5430,6 +5682,9 @@ export default async function handler(req: Request): Promise<Response> {
           content: await withContentPreviews(sb, contentRows),
           tasks,
           upcoming,
+          // Band C (2026-09-22): the plan's future steps for me, inside the
+          // horizon. `upcoming` above is always empty now (kept for readers).
+          planned,
           manual_tasks: manual.rows,
           // Added 2026-09-15 (C8). Purely additive — every key above keeps its
           // meaning, so no existing reader changes.
@@ -5797,12 +6052,21 @@ export default async function handler(req: Request): Promise<Response> {
             error_ar: 'طلب التعديلات يستلزم ملاحظة توضّح المطلوب.',
           }), { status: 400, headers: { 'Content-Type': 'application/json' } });
         }
+        // Bound to an event exactly like `task_complete` (2026-09-22): a retried
+        // click replays; the per-member snapshots and the reject note are
+        // written inside the transition.
+        const evRef = completionEventOf(body, req);
+        if ('error' in evRef) return jsonError(400, evRef.error);
+        const eventId = evRef.ref.id;
+        const request = {
+          action: 'row_task_complete', row_id: rowIdIn, task_id: taskIdIn, result, note, targets, return_to: returnTo,
+        };
+        const requestHash = await requestHashOf(request);
 
         let tq = sb.from('workflow_role_tasks')
-          .select('id, subject_id, round, step_key, workflow_version_id')
-          .eq('subject_table', 'mos_content_rows')
-          .eq('status', 'open');
-        tq = taskIdIn ? tq.eq('id', taskIdIn) : tq.eq('subject_id', rowIdIn ?? '');
+          .select('id, subject_id, round, step_key, workflow_version_id, status')
+          .eq('subject_table', 'mos_content_rows');
+        tq = taskIdIn ? tq.eq('id', taskIdIn) : tq.eq('subject_id', rowIdIn ?? '').eq('status', 'open');
         const cur = await tq.maybeSingle();
         const curFail = dbFail(cur.error);
         if (curFail) return curFail;
@@ -5817,9 +6081,21 @@ export default async function handler(req: Request): Promise<Response> {
         }
         const openTask = cur.data as unknown as {
           id: string; subject_id: string; round: number;
-          step_key: string | null; workflow_version_id: string | null;
+          step_key: string | null; workflow_version_id: string | null; status: string;
         };
         const rowId = openTask.subject_id;
+
+        const peek = await sb.rpc('mos_completion_event_peek', { p_event_id: eventId });
+        const peekFail = dbFail(peek.error);
+        if (peekFail) return peekFail;
+        const replaying = peek.data != null;
+        if (!replaying && openTask.status !== 'open') {
+          return new Response(JSON.stringify({
+            error: 'This step is already done — the batch has moved on. Refresh to see where it is now.',
+            error_ar: 'هذه المرحلة أُنجزت بالفعل وانتقلت الدفعة إلى ما بعدها — حدّث الصفحة لترى مكانها الآن.',
+            code: 'MOS:STEP_ALREADY_CLOSED',
+          }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+        }
 
         const summary = await readRowSummaries(sb, [rowId]);
         if ('fail' in summary) return summary.fail;
@@ -5828,12 +6104,13 @@ export default async function handler(req: Request): Promise<Response> {
 
         // A submit freezes what was submitted — one snapshot PER MEMBER, so a
         // send-back three rounds later still has the exact text it objected to.
-        if (result === 'submitted' && memberIds.length > 0) {
-          const [contentRes, scenesRes, appUserId] = await Promise.all([
+        // Written by the transition itself, only if it commits.
+        let submissionSnapshot: Array<Record<string, unknown>> | null = null;
+        if (!replaying && result === 'submitted' && memberIds.length > 0) {
+          const [contentRes, scenesRes] = await Promise.all([
             sb.from('mos_content').select('id, data').in('id', memberIds),
             sb.from('mos_scenes').select('*').in('content_id', memberIds)
               .order('position', { ascending: true }),
-            resolveAppUserId(sb, user.userId),
           ]);
           const snapReadFail = dbFail(contentRes.error) ?? dbFail(scenesRes.error);
           if (snapReadFail) return snapReadFail;
@@ -5843,18 +6120,11 @@ export default async function handler(req: Request): Promise<Response> {
             list.push(s);
             scenesBy.set(s.content_id, list);
           }
-          const snap = await sb.from('mos_content_versions').upsert(
-            ((contentRes.data ?? []) as Array<{ id: string; data: unknown }>).map((c) => ({
-              content_id: c.id,
-              round: openTask.round,
-              data: (c.data ?? {}) as Record<string, unknown>,
-              scenes: scenesBy.get(c.id) ?? [],
-              submitted_by_user_id: appUserId,
-            })),
-            { onConflict: 'content_id,round' },
-          );
-          const snapFail = dbFail(snap.error);
-          if (snapFail) return snapFail;
+          submissionSnapshot = ((contentRes.data ?? []) as Array<{ id: string; data: unknown }>).map((c) => ({
+            content_id: c.id,
+            data: (c.data ?? {}) as Record<string, unknown>,
+            scenes: scenesBy.get(c.id) ?? [],
+          }));
         }
 
         const adv = await sb.rpc('workflow_advance_role_path', {
@@ -5865,6 +6135,13 @@ export default async function handler(req: Request): Promise<Response> {
           p_targets: targets,
           p_finish: false,
           ...(returnTo ? { p_return_to: returnTo } : {}),
+          p_task_id: openTask.id,
+          p_event_id: eventId,
+          p_operation: 'row.complete',
+          p_request_hash: requestHash,
+          p_request_snapshot: request,
+          p_meta_target: null,
+          p_submission_snapshot: submissionSnapshot,
         });
         if (adv.error) {
           const missing = parseRequirementsMissing(adv.error);
@@ -5886,25 +6163,16 @@ export default async function handler(req: Request): Promise<Response> {
           next_step_key: string | null;
           round: number;
           done: boolean;
+          event_id?: string | null;
+          replayed?: boolean;
         };
-
-        // The reason lives on the versions it rejected — one per member, the
-        // round the engine has just left behind.
-        if (result === 'changes_requested' && payload.round - 1 >= 1 && memberIds.length > 0) {
-          const rn = await sb.from('mos_content_versions')
-            .update({ rejected_note: note })
-            .in('content_id', memberIds)
-            .eq('round', payload.round - 1);
-          const rnFail = dbFail(rn.error);
-          if (rnFail) return rnFail;
-        }
 
         // The approval bridge, per member: the submitted material becomes an
         // approved link. A no-op when nothing was marked (the by-destination
         // resolver reads the two slots directly, this keeps legacy readers fed).
-        if (result === 'approved') {
+        // The approval already committed — a failure here is logged, not returned.
+        if (result === 'approved' && !payload.replayed) {
           for (const id of memberIds) {
-            // Same rule as task_complete: the approval already committed.
             const promo = await sb.rpc('mos_promote_approval_asset', { p_content_id: id });
             if (promo.error) {
               console.error('[marketing-os] row member promote failed after approval', id,
@@ -5913,7 +6181,7 @@ export default async function handler(req: Request): Promise<Response> {
           }
         }
 
-        if (payload.opened_task_id) {
+        if (payload.opened_task_id && !payload.replayed) {
           const nt = await sb.from('workflow_role_tasks')
             .select('role_key, assignee_user_id, workflow_version_id, step_key')
             .eq('id', payload.opened_task_id).maybeSingle();
@@ -5927,8 +6195,8 @@ export default async function handler(req: Request): Promise<Response> {
             };
             const notifyCfg = await resolveStepNotify(sb, next.workflow_version_id, next.step_key);
             // Only the person who RECEIVED the step is interrupted. A step that
-            // opened waiting (no one has room yet) notifies nobody now — the
-            // dispatcher tells its owner at the moment it is handed out.
+            // opened unassigned (the plan hands it out on its day, or offers it
+            // early) notifies nobody now.
             if (notifyCfg.notify && next.assignee_user_id) {
               const when = facts?.batch_day ?? '';
               const url = `/m/my-work?row=${rowId}`;
@@ -5943,6 +6211,7 @@ export default async function handler(req: Request): Promise<Response> {
                     bodyEn: `Batch ${when}`,
                     url,
                     channels: notifyCfg.channels,
+                    dedupeKey: `${eventId}:changes_requested:${next.assignee_user_id}`,
                   }
                 : {
                     event: 'task_assigned',
@@ -5954,12 +6223,13 @@ export default async function handler(req: Request): Promise<Response> {
                     bodyEn: `Batch ${when} — waiting on your step.`,
                     url,
                     channels: notifyCfg.channels,
+                    dedupeKey: `${eventId}:task_assigned:${next.assignee_user_id}`,
                   });
             }
           }
         }
 
-        return jsonOk({ ...payload, row_id: rowId });
+        return jsonOk({ ...payload, row_id: rowId, event_id: eventId });
       }
 
       /* -------------------------------------------------------- */
@@ -7310,13 +7580,13 @@ export default async function handler(req: Request): Promise<Response> {
         //      campaign back and links nothing. Every ad set carries the
         //      account's Meta SAVED AUDIENCE + Instagram/WhatsApp-only
         //      placements (metaPush.ts house rules) — never a broad audience;
-        //   2) the ADS — NOT built here any more (2026-09-13). Each planned ad
-        //      is handed to the Fly worker's meta-ad lane in its 'caption'
-        //      phase: AI writes the caption from the project facts, the
-        //      manager approves it on the creative's Placements tab, and only
-        //      THEN the worker uploads the square + vertical designs and
-        //      creates the creative + ad. One ad-creation path for both the
-        //      manual push and the approval automation.
+        //   2) the ADS — NOT built here (2026-09-13). Each planned ad is handed
+        //      to the Fly worker's meta-ad lane with the caption the WRITER
+        //      CONFIRMED on the creative (D4, 2026-09-22 — no AI caption, no
+        //      caption approval): the worker uploads the square + vertical
+        //      designs and creates the creative + ad. One ad-creation path for
+        //      both the manual push and the approval automation, through the
+        //      same admission RPC (`mos_meta_ad_enqueue`).
         // Re-running on a LINKED execution is the resume path: what is already
         // linked is skipped and only the missing ad sets / un-queued ads are
         // added.
@@ -7342,10 +7612,12 @@ export default async function handler(req: Request): Promise<Response> {
         const savedAudienceName = skeleton.audience.name;
         const audienceSource = skeleton.audience.source;
 
-        // ---- 2) Ads: hand every planned ad to the worker (caption phase) ------
+        // ---- 2) Ads: hand every planned ad to the worker with the writer's
+        //         confirmed caption ---------------------------------------
         // A planned ad = mos_execution_ads row with no platform_ad_id. Rows the
-        // automation is already handling (queued / creating / caption_review)
-        // are left alone; rows whose job failed are re-queued (fresh caption).
+        // automation is already handling (queued / creating) are left alone;
+        // rows whose job failed are re-queued. A creative whose caption the
+        // writer has not confirmed is REPORTED, never guessed at.
         const adsQueued: Array<{ wassell_ad_id: string; name: string; job_id: string }> = [];
         const adErrors: Array<{ wassell_ad_id: string; ad: string; error: string }> = [];
         let adsWaiting = 0;
@@ -7368,11 +7640,12 @@ export default async function handler(req: Request): Promise<Response> {
               for (const c of (cr.data ?? []) as Array<{ id: string; title: string | null }>) titleOf.set(c.id, c.title ?? '');
             }
             const approverId = await resolveAppUserId(sb, user.userId);
+            const nowIso = new Date().toISOString();
             for (const ad of planned) {
               const name = ad.label ?? (ad.content_id ? titleOf.get(ad.content_id) : null) ?? ad.id.slice(0, 8);
               const auto = (ad.creative?.auto_ad ?? null) as { state?: unknown } | null;
               const state = typeof auto?.state === 'string' ? auto.state : null;
-              if (state === 'queued' || state === 'creating' || state === 'caption_review') { adsWaiting += 1; continue; }
+              if (state === 'queued' || state === 'creating') { adsWaiting += 1; continue; }
               if (!ad.content_id) { adErrors.push({ wassell_ad_id: ad.id, ad: name, error: 'no content record (creative) attached' }); continue; }
               const target = ad.ad_set_id
                 ? linkedSets.find((s) => s.id === ad.ad_set_id) ?? null
@@ -7380,7 +7653,14 @@ export default async function handler(req: Request): Promise<Response> {
               if (!target) { adErrors.push({ wassell_ad_id: ad.id, ad: name, error: linkedSets.length > 1 ? 'the ad is not assigned to an ad set' : 'ad set not found' }); continue; }
               if (!target.id || !target.platform_adset_id) { adErrors.push({ wassell_ad_id: ad.id, ad: name, error: `ad set "${target.name ?? ''}" is not linked to Meta` }); continue; }
               try {
+                const confirmed = await loadConfirmedCaption(svc, ad.content_id);
+                if (!confirmed) {
+                  adErrors.push({ wassell_ad_id: ad.id, ad: name, error: 'the writer has not confirmed the caption — confirm it on the creative first / لم يثبّت الكاتب الكابشن بعد' });
+                  continue;
+                }
                 const q = await enqueueMetaAdJob(svc, {
+                  jobId: crypto.randomUUID(),
+                  eventId: null,
                   contentId: ad.content_id,
                   contentTitle: titleOf.get(ad.content_id) ?? name,
                   target: {
@@ -7390,9 +7670,11 @@ export default async function handler(req: Request): Promise<Response> {
                   },
                   approvedByAuthUid: user.userId,
                   approvedByUserId: approverId,
-                  phase: 'caption',
+                  approvedCaption: { text: confirmed.text, source: 'writer', approved_at: nowIso, approved_by: approverId },
                 });
-                adsQueued.push({ wassell_ad_id: ad.id, name, job_id: q.job_id });
+                if (q.reason === 'enqueued') adsQueued.push({ wassell_ad_id: ad.id, name, job_id: q.job_id ?? '' });
+                else if (q.reason === 'satisfied_by' || q.reason === 'replay' || q.reason === 'already_done') adsWaiting += 1;
+                else adErrors.push({ wassell_ad_id: ad.id, ad: name, error: `${enqueueOutcomeText(q).en}${q.detail ? ` (${q.detail})` : ''}` });
               } catch (e) {
                 adErrors.push({ wassell_ad_id: ad.id, ad: name, error: e instanceof Error ? e.message : String(e) });
               }

@@ -1,22 +1,30 @@
 /**
- * Auto Meta ad on manager approval — the API-side half (2026-09-10).
+ * Auto Meta ad on final approval — the API-side half (2026-09-10; rewritten
+ * for plan-driven assignment 2026-09-22, decision D4).
  *
- * When the marketing manager approves a step flagged `auto_meta_ad`, the app
- * resolves WHERE the ad should be created (which Meta ad set) and enqueues a
- * `generation_jobs` row of kind 'meta-ad'. The Fly worker
- * (worker/src/runMetaAdJob.ts) does the long part in TWO PHASES (2026-09-13):
- *   phase 'caption' — writes the ad caption with AI from the project facts and
- *                     parks it on the ad row (`auto_ad.state='caption_review'`)
- *                     for the manager to read, edit and approve;
- *   phase 'create'  — after `meta_auto_ad_approve_caption`: uploads the square
- *                     + vertical designs, builds the creative + ad on Meta with
- *                     the APPROVED caption, records the result on the row.
- * No ad reaches Meta with a caption a human has not approved. The manual
- * «Create in Meta» push enqueues the same 'caption' job per planned ad, so
- * there is exactly one ad-creation path.
+ * The final approval of a paid creative LAUNCHES its ad with the caption the
+ * writer confirmed — there is no separate caption approval any more. The
+ * approval RPC (`workflow_advance_role_path`) snapshots that caption (text +
+ * the hash the database computed) onto the completion event's side-effects
+ * manifest; the runner (completionEffects.ts) then calls
+ * `mos_meta_ad_enqueue`, which is the ONE writer of the ad row + the
+ * `generation_jobs` row for a Meta ad:
  *
- * This module is PURE resolution + enqueue — no Graph calls, no LLM. It never
- * holds the approval request open for anything slower than a few DB reads.
+ *   • replay-first: a job id that already exists changes nothing;
+ *   • admission by STATE, not by caller: an ad already built with the same
+ *     caption is `already_done`; one built with another caption is
+ *     `superseded`; a live job with the same payload `satisfied_by`; a row
+ *     mid-transition `retry_later` (the sweep tries again);
+ *   • the approved caption travels IN the job (`params.approved_caption`) and
+ *     is stamped on the row as `approval_hash` — the worker builds exactly
+ *     that text and never re-reads a caption that may have changed since.
+ *
+ * The Fly worker (worker/src/runMetaAdJob.ts) does the long part: uploads the
+ * square + vertical designs, builds the creative + ad, records the result.
+ *
+ * This module is PURE resolution + one RPC call — no Graph calls, no LLM. It
+ * never holds the approval request open for anything slower than a few DB
+ * reads.
  *
  * Resolution order for the target ad set (first hit wins):
  *   1. an existing mos_execution_ads row for this creative that is NOT yet on
@@ -183,188 +191,117 @@ export async function resolveAutoAdTarget(
   return { kind: 'choose', choices };
 }
 
-export type MetaAdPhase = 'caption' | 'create';
+/* ------------------------------------------------------------------ */
+/* the approved caption                                                */
+/* ------------------------------------------------------------------ */
+
+/** The caption an ad is built from, as bound at approval time. */
+export interface ApprovedCaption {
+  /** RAW text, untrimmed — the database hashes `btrim(text)` itself. */
+  text: string;
+  /** `mos_caption_hash(text)` when known; the enqueue RPC recomputes it anyway. */
+  hash?: string | null;
+  source: 'writer' | string;
+  approved_at: string;
+  /** public.users id of the approver. */
+  approved_by: string | null;
+}
+
+/**
+ * The writer's CONFIRMED caption of a creative, or null when there is none.
+ * The rule is the database's own (`data->>'caption_confirmed_text' =
+ * data->>'caption'`, exact and untrimmed) — the same test the advance RPC
+ * applies when it refuses a paid approval with `caption_confirmed`.
+ */
+export async function loadConfirmedCaption(
+  svc: SupabaseClient,
+  contentId: string,
+): Promise<{ text: string; confirmed_at: string | null } | null> {
+  const res = await svc.from('mos_content').select('data').eq('id', contentId).maybeSingle();
+  if (res.error) throw res.error;
+  const d = ((res.data as { data?: Record<string, unknown> } | null)?.data ?? {}) as Record<string, unknown>;
+  const caption = typeof d.caption === 'string' ? d.caption : '';
+  const confirmed = typeof d.caption_confirmed_text === 'string' ? d.caption_confirmed_text : null;
+  if (!caption.trim() || confirmed === null || confirmed !== caption) return null;
+  return {
+    text: caption,
+    confirmed_at: typeof d.caption_confirmed_at === 'string' ? d.caption_confirmed_at : null,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* enqueue — a thin wrapper over mos_meta_ad_enqueue                    */
+/* ------------------------------------------------------------------ */
 
 export interface EnqueueMetaAdInput {
+  /** The job id. Derived from the event (`mos_meta_job_id`) on the approval
+   *  path so a re-run cannot enqueue twice; a fresh uuid for a manual retry. */
+  jobId: string;
+  /** The completion event this ad belongs to, when there is one. */
+  eventId: string | null;
   contentId: string;
   contentTitle: string;
   target: AutoAdTarget;
   /** auth.users id of the approver — stamped on the job (generation_jobs.user_id). */
-  approvedByAuthUid: string;
+  approvedByAuthUid: string | null;
   /** public.users id of the approver — who gets the result notification. */
   approvedByUserId: string | null;
-  /** 'caption' (default) writes the caption for review; 'create' builds the ad
-   *  from the caption already approved on the row. */
-  phase?: MetaAdPhase;
+  approvedCaption: ApprovedCaption;
+}
+
+export type EnqueueMetaAdReason =
+  | 'enqueued' | 'replay' | 'already_done' | 'satisfied_by' | 'superseded' | 'retry_later';
+
+export interface EnqueueMetaAdOutcome {
+  enqueued: boolean;
+  reason: EnqueueMetaAdReason;
+  job_id: string | null;
+  ad_row_id: string | null;
+  ad_state: string | null;
+  detail: string | null;
 }
 
 /**
- * Ensure the mos_execution_ads row exists (status 'waiting', creative.auto_ad
- * queued) and insert the 'meta-ad' job. Returns the ad row + job ids.
+ * Hand the ad to the worker through the admission RPC. Never throws on a
+ * refused admission — the outcome says why; throws only when the RPC itself
+ * fails (a real error the caller must surface).
  */
 export async function enqueueMetaAdJob(
   svc: SupabaseClient,
   input: EnqueueMetaAdInput,
-): Promise<{ ad_row_id: string; job_id: string }> {
-  const now = new Date().toISOString();
-  const jobId = crypto.randomUUID();
-  const phase: MetaAdPhase = input.phase ?? 'caption';
-  let adRowId = input.target.ad_row_id;
-
-  const autoAd = {
-    state: 'queued',
-    phase,
-    job_id: jobId,
-    queued_at: now,
-    approved_by_user_id: input.approvedByUserId,
-    error: null,
+): Promise<EnqueueMetaAdOutcome> {
+  const res = await svc.rpc('mos_meta_ad_enqueue', {
+    p_job_id: input.jobId,
+    p_phase: 'create',
+    p_event_id: input.eventId,
+    p_content_id: input.contentId,
+    p_content_title: input.contentTitle,
+    p_ad_row_id: input.target.ad_row_id,
+    p_execution_id: input.target.execution_id,
+    p_ad_set_id: input.target.ad_set_id,
+    p_platform_adset_id: input.target.platform_adset_id,
+    p_ad_set_name: input.target.ad_set_name,
+    p_approved_by_auth_uid: input.approvedByAuthUid,
+    p_approved_by_user_id: input.approvedByUserId,
+    p_approved_caption: {
+      text: input.approvedCaption.text,
+      source: input.approvedCaption.source,
+      approved_at: input.approvedCaption.approved_at,
+      approved_by: input.approvedCaption.approved_by,
+    },
+  });
+  if (res.error) throw res.error;
+  const d = (res.data ?? {}) as Record<string, unknown>;
+  const reason = typeof d.reason === 'string' ? d.reason : 'retry_later';
+  const known: EnqueueMetaAdReason[] = ['enqueued', 'replay', 'already_done', 'satisfied_by', 'superseded', 'retry_later'];
+  return {
+    enqueued: d.enqueued === true,
+    reason: (known as string[]).includes(reason) ? (reason as EnqueueMetaAdReason) : 'retry_later',
+    job_id: typeof d.job_id === 'string' ? d.job_id : null,
+    ad_row_id: typeof d.ad_row_id === 'string' ? d.ad_row_id : null,
+    ad_state: typeof d.ad_state === 'string' ? d.ad_state : null,
+    detail: typeof d.detail === 'string' ? d.detail : null,
   };
-
-  if (adRowId) {
-    const prevRes = await svc.from('mos_execution_ads').select('creative').eq('id', adRowId).maybeSingle();
-    if (prevRes.error) throw prevRes.error;
-    const prev = ((prevRes.data as { creative?: Record<string, unknown> } | null)?.creative ?? {}) as Record<string, unknown>;
-    const upd = await svc.from('mos_execution_ads')
-      .update({
-        content_id: input.contentId,
-        ad_set_id: input.target.ad_set_id,
-        status: 'waiting',
-        creative: { ...prev, auto_ad: autoAd },
-        updated_at: now,
-      })
-      .eq('id', adRowId).select('id').maybeSingle();
-    if (upd.error) throw upd.error;
-  } else {
-    const ins = await svc.from('mos_execution_ads').insert({
-      execution_id: input.target.execution_id,
-      ad_set_id: input.target.ad_set_id,
-      content_id: input.contentId,
-      label: input.contentTitle,
-      status: 'waiting',
-      creative: { auto_ad: autoAd },
-    }).select('id').maybeSingle();
-    if (ins.error) throw ins.error;
-    adRowId = (ins.data as { id: string } | null)?.id ?? null;
-    if (!adRowId) throw new Error('mos_execution_ads insert returned no row');
-  }
-
-  const job = await svc.from('generation_jobs').insert({
-    id: jobId,
-    record_id: input.contentId,
-    message_id: adRowId,
-    generation_id: null,
-    user_id: input.approvedByAuthUid,
-    kind: 'meta-ad',
-    status: 'queued',
-    prompt: null,
-    params: {
-      content_id: input.contentId,
-      ad_row_id: adRowId,
-      execution_id: input.target.execution_id,
-      ad_set_id: input.target.ad_set_id,
-      platform_adset_id: input.target.platform_adset_id,
-      ad_set_name: input.target.ad_set_name,
-      approved_by_user_id: input.approvedByUserId,
-      phase,
-    },
-  });
-  if (job.error) throw job.error;
-
-  return { ad_row_id: adRowId, job_id: jobId };
-}
-
-export interface ApproveCaptionInput {
-  contentId: string;
-  adRowId: string;
-  /** The caption as the manager approved it (possibly edited). */
-  caption: string;
-  approvedByAuthUid: string;
-  approvedByUserId: string | null;
-}
-
-/**
- * The manager approved the AI caption (phase 1 output) → save the approved
- * text on the ad row and enqueue phase 2 ('create'). Refuses rows that are
- * already on Meta or still being written. Returns the job id.
- */
-export async function approveMetaAdCaption(
-  svc: SupabaseClient,
-  input: ApproveCaptionInput,
-): Promise<{ ad_row_id: string; job_id: string }> {
-  const caption = input.caption.trim();
-  if (!caption) throw new Error('caption is empty');
-  const rowRes = await svc.from('mos_execution_ads')
-    .select('id, execution_id, ad_set_id, content_id, platform_ad_id, creative, archived_at')
-    .eq('id', input.adRowId).maybeSingle();
-  if (rowRes.error) throw rowRes.error;
-  const row = rowRes.data as {
-    id: string; execution_id: string; ad_set_id: string | null; content_id: string | null;
-    platform_ad_id: string | null; creative: Record<string, unknown> | null; archived_at: string | null;
-  } | null;
-  if (!row || row.archived_at) throw new Error('ad row not found');
-  if (row.content_id !== input.contentId) throw new Error('ad row does not belong to this creative');
-  if (row.platform_ad_id) throw new Error(`this creative already has Meta ad ${row.platform_ad_id}`);
-  if (!row.ad_set_id) throw new Error('the ad row has no ad set');
-  const auto = ((row.creative?.auto_ad ?? {}) as Record<string, unknown>);
-  const state = typeof auto.state === 'string' ? auto.state : null;
-  if (state === 'queued' || state === 'creating') throw new Error('the automation is still working on this ad — wait for it');
-
-  const setRes = await svc.from('mos_ad_sets').select('id, execution_id, name, platform_adset_id').eq('id', row.ad_set_id).maybeSingle();
-  if (setRes.error) throw setRes.error;
-  const set = setRes.data as { id: string; execution_id: string; name: string | null; platform_adset_id: string | null } | null;
-  if (!set?.platform_adset_id) throw new Error('the ad set is not linked to Meta — run «Create in Meta» on the campaign first');
-
-  const now = new Date().toISOString();
-  const jobId = crypto.randomUUID();
-  const upd = await svc.from('mos_execution_ads').update({
-    creative: {
-      ...(row.creative ?? {}),
-      primary_text: caption,
-      message: caption,
-      auto_ad: {
-        ...auto,
-        state: 'queued',
-        phase: 'create',
-        job_id: jobId,
-        queued_at: now,
-        caption_approved_at: now,
-        caption_approved_by_user_id: input.approvedByUserId,
-        error: null,
-      },
-    },
-    updated_at: now,
-  }).eq('id', row.id);
-  if (upd.error) throw upd.error;
-
-  const job = await svc.from('generation_jobs').insert({
-    id: jobId,
-    record_id: input.contentId,
-    message_id: row.id,
-    generation_id: null,
-    user_id: input.approvedByAuthUid,
-    kind: 'meta-ad',
-    status: 'queued',
-    prompt: null,
-    params: {
-      content_id: input.contentId,
-      ad_row_id: row.id,
-      execution_id: set.execution_id,
-      ad_set_id: set.id,
-      platform_adset_id: set.platform_adset_id,
-      ad_set_name: set.name,
-      approved_by_user_id: input.approvedByUserId,
-      phase: 'create',
-    },
-  });
-  if (job.error) throw job.error;
-
-  // The «مهامي» caption task is done — the approval IS its completion.
-  const closed = await svc.from('mos_manual_tasks')
-    .update({ status: 'done', done_note: 'caption approved', closed_at: now, closed_by_user_id: input.approvedByUserId, updated_at: now })
-    .eq('kind', 'caption_review').eq('ref_id', row.id).eq('status', 'open');
-  if (closed.error) console.error('[metaAutoAd] caption task close failed:', closed.error.message);
-
-  return { ad_row_id: row.id, job_id: jobId };
 }
 
 /** Bilingual sentence for a skip reason — shown in the approval dialog / toast. */
@@ -378,5 +315,21 @@ export function autoAdSkipText(reason: AutoAdSkipReason): { ar: string; en: stri
       return { ar: 'الحملة غير مرتبطة بميتا بعد (لم تُنشأ في ميتا) — لن يُنشأ إعلان تلقائيًا.', en: 'The campaign is not linked to Meta yet (never pushed) — no ad will be created automatically.' };
     case 'already_created':
       return { ar: 'يوجد إعلان في ميتا لهذا المحتوى بالفعل.', en: 'This creative already has an ad on Meta.' };
+  }
+}
+
+/** What a refused/deferred enqueue means to the manager, in one sentence. */
+export function enqueueOutcomeText(o: EnqueueMetaAdOutcome): { ar: string; en: string } {
+  switch (o.reason) {
+    case 'enqueued':
+    case 'replay':
+    case 'satisfied_by':
+      return { ar: 'أُرسل الإعلان إلى ميتا للإنشاء.', en: 'The ad was handed to Meta for creation.' };
+    case 'already_done':
+      return { ar: 'يوجد إعلان في ميتا لهذا المحتوى بالفعل.', en: 'This creative already has an ad on Meta.' };
+    case 'superseded':
+      return { ar: 'أُنشئ هذا الإعلان بكابشن مختلف — راجع تبويب المواضع.', en: 'This ad was built with a different caption — see the Placements tab.' };
+    case 'retry_later':
+      return { ar: 'صف الإعلان مشغول الآن — سيُعاد الإرسال تلقائيًا خلال دقائق.', en: 'The ad row is busy — the hand-off will be retried automatically in a few minutes.' };
   }
 }

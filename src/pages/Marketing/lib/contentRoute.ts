@@ -278,7 +278,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export type TaskAction =
   | 'work'
   | 'review'
-  | 'caption_review'
   | 'refresh_decision'
   | 'plan_conflict'
   | 'ad_failed'
@@ -290,7 +289,6 @@ export type TaskAction =
 export const TASK_ACTION_LABELS: Record<TaskAction, { ar: string; en: string }> = {
   work:             { ar: 'بدء',               en: 'Start' },
   review:           { ar: 'مراجعة',            en: 'Review' },
-  caption_review:   { ar: 'مراجعة الكابشن',    en: 'Review caption' },
   refresh_decision: { ar: 'قرار التجديد',      en: 'Refresh decision' },
   plan_conflict:    { ar: 'تعارض في الخطة',    en: 'Plan conflict' },
   ad_failed:        { ar: 'إعلان متعثّر',      en: 'Ad failed' },
@@ -314,7 +312,10 @@ export interface RouteTask {
   step_key?: string | null;
   /** `MosTask.step_id` — a UUID; resolved against `steps` when one is passed. */
   step_id?: string | null;
-  /** 'manual' | 'caption_review' | 'refresh_decision' | 'plan_conflict' | 'ad_failed'. */
+  /** 'manual' | 'refresh_decision' | 'plan_conflict' | 'ad_failed' | 'publish'.
+   *  (`caption_review` was retired 2026-09-22 — the final approval launches
+   *  the ad with the writer's confirmed caption; a leftover row of that kind
+   *  routes like a plain manual task.) */
   kind?: string | null;
   /** New columns (added in parallel) — 'content' | 'campaign' | 'refresh_cycle' | … */
   entity_kind?: string | null;
@@ -328,7 +329,7 @@ export interface RouteTask {
 }
 
 const KNOWN_ACTIONS: ReadonlySet<string> = new Set<TaskAction>([
-  'work', 'review', 'caption_review', 'refresh_decision', 'plan_conflict',
+  'work', 'review', 'refresh_decision', 'plan_conflict',
   'ad_failed', 'publish', 'complete', 'view',
 ]);
 
@@ -359,7 +360,6 @@ export function actionOfTask(
   if (stamped && KNOWN_ACTIONS.has(stamped)) return stamped as TaskAction;
 
   const kind = (task.kind ?? '').trim();
-  if (kind === 'caption_review') return 'caption_review';
   if (kind === 'refresh_decision') return 'refresh_decision';
   if (kind === 'plan_conflict') return 'plan_conflict';
   if (kind === 'ad_failed') return 'ad_failed';
@@ -396,7 +396,6 @@ export function previewTargetOfTask(
     return { contentId, section: DONE_SECTION };
   }
   const kind = (task.kind ?? '').trim();
-  if (kind === 'caption_review') return { contentId, section: 'caption' };
   if (kind === 'ad_failed') return { contentId, section: 'publish_check' };
   // A publication task is about material that is already finished, so its
   // preview shows what is going out, not the step that produced it.

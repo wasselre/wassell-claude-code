@@ -35,7 +35,6 @@ interface ApplySnapshot {
   content_data: {
     headlines: PriorValue;
     design_brief: PriorValue;
-    hashtags: PriorValue;
     design_reference_file_ids: PriorValue;
   };
   publications: Array<{ id: string; platform: string; caption: string | null; existed: boolean }>;
@@ -79,7 +78,7 @@ async function restoreFromSnapshot(
       console.error('[creative] restore: content update failed', upd.error.code, upd.error.message);
       failed.push('content.data (update failed)');
     } else {
-      restored.push('content.data (headlines, design_brief, hashtags, design_reference_file_ids)');
+      restored.push('content.data (headlines, design_brief, design_reference_file_ids)');
     }
   }
 
@@ -271,7 +270,6 @@ export async function creativePackageApply(ctx: CreativeCtx): Promise<Response> 
     content_data: {
       headlines: prior(content.data, 'headlines'),
       design_brief: prior(content.data, 'design_brief'),
-      hashtags: prior(content.data, 'hashtags'),
       design_reference_file_ids: prior(content.data, 'design_reference_file_ids'),
     },
     publications: [],
@@ -296,14 +294,8 @@ export async function creativePackageApply(ctx: CreativeCtx): Promise<Response> 
     if (overwrite.design_brief || briefEmpty) {
       data.design_brief = renderDesignBrief(base, pkg.language);
     }
-    const organicCopies = derivs
-      .filter((d) => d.target_kind === 'organic')
-      .map((d) => d.copy as OrganicCopy);
-    const firstHashtags = organicCopies.map((c) => asStringList(c?.hashtags)).find((h) => h.length > 0) ?? [];
-    const hashtagsEmpty = typeof data.hashtags !== 'string' || (data.hashtags as string).trim() === '';
-    if (firstHashtags.length > 0 && (overwrite.headlines || hashtagsEmpty)) {
-      data.hashtags = firstHashtags.join(' ');
-    }
+    // (Hashtags were removed 2026-09-22: the director no longer produces them
+    // and content carries no such field, so nothing is copied over here.)
     const ourFileRefIds = ((base.references ?? []) as Array<{ ref_kind: string; ref_id: string }>)
       .filter((r) => r.ref_kind === 'wassel_file' || r.ref_kind === 'file')
       .map((r) => r.ref_id);

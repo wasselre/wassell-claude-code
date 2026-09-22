@@ -220,7 +220,9 @@ describe('tasks', () => {
   it('names the action from the step, the kind, or an explicit stamp', () => {
     expect(actionOfTask({ content_id: 'c', step_key: 'write_copy', status: 'open' }, POST_STEPS)).toBe('work');
     expect(actionOfTask({ content_id: 'c', step_key: 'review_copy', status: 'open' }, POST_STEPS)).toBe('review');
-    expect(actionOfTask({ content_id: 'c', kind: 'caption_review', status: 'open' })).toBe('caption_review');
+    // `caption_review` was retired (2026-09-22): a leftover row of that kind
+    // hangs off content, so it routes as plain work rather than a dead verb.
+    expect(actionOfTask({ content_id: 'c', kind: 'caption_review', status: 'open' })).toBe('work');
     expect(actionOfTask({ kind: 'manual', status: 'open' })).toBe('complete');
     expect(actionOfTask({ content_id: 'c', kind: 'manual', action: 'review', status: 'open' })).toBe('review');
   });

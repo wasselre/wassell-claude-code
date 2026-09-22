@@ -96,7 +96,7 @@ const HARD_RULES_AR: readonly string[] = [
 const HARD_RULES_EN =
   'Binding summary: project name leads the design; 1–4 headline lines only (nothing else on the image); ' +
   'numbers only from claimable facts, each cited in the field\'s fact_refs; readiness stated both ways; ' +
-  'only Wassel + the developer are named and every CTA is Wassel; hashtags are ours, never competitor tags; ' +
+  'only Wassel + the developer are named and every CTA is Wassel; no hashtags anywhere (Wassel content carries none); ' +
   'Saudi dialect; Arabic-Indic numerals on the design; never «بدون سعي»; keep the record\'s language; ' +
   'organic copy only for selected organic targets, paid copy only for selected paid targets; ' +
   'competitor content is inspiration, never a fact source; every derivative carries a full VisualAdaptation; ' +
@@ -184,7 +184,7 @@ const DERIVATIVES_CONTRACT_AR = [
   'مهمتك في هذه المرحلة: أنتج مشتقًا (derivative) واحدًا لكل هدف مختار — لا أكثر ولا أقل.',
   'لكل مشتق: target مطابق حرفيًا للهدف (target_kind/platform/placement_type/target_ref) + dimensions من المواصفة + adaptation كاملة.',
   'الحقول الهندسية للـ adaptation محسومة في الهياكل المعروضة (aspect/px/safe_zones/requires_separate_design/image_change/slide_mapping) — انسخها كما هي؛ أنت تؤلّف الحقول النصية فقط (image_instructions/text_reposition/logo_reposition/layout_changes/element_scaling)، وإن لم يتغير شيء اكتب «لا تغيير — …» صراحة.',
-  'النص: للأهداف العضوية كابشن (ضمن caption_max) + هاشتاقاتنا (ضمن hashtags_max) + char_count + fact_refs. للأهداف المدفوعة primary_text + headline + description + cta + destination_url (أو null) + fact_refs.',
+  'النص: للأهداف العضوية كابشن (ضمن caption_max) بلا أي هاشتاقات + char_count + fact_refs. للأهداف المدفوعة primary_text + headline + description + cta + destination_url (أو null) + fact_refs.',
   'كل رقم في أي نص يستشهد بمعرّف حقيقة claimable في fact_refs ذلك النص.',
 ].join('\n');
 
@@ -268,7 +268,6 @@ function renderTargets(targets: DerivativeTarget[], specs: PlacementSpec[]): str
     if (spec.safe_zones) parts.push(`مناطق أمان: ${JSON.stringify(spec.safe_zones)}`);
     if (spec.max_slides !== undefined) parts.push(`حد الشرائح: ${spec.max_slides}`);
     if (spec.caption_max !== undefined) parts.push(`حد الكابشن: ${spec.caption_max}`);
-    if (spec.hashtags_max !== undefined) parts.push(`حد الهاشتاق: ${spec.hashtags_max}`);
     if (spec.manual_publish) parts.push('نشر يدوي');
     if (spec.notes) parts.push(`ملاحظة: ${spec.notes}`);
     lines.push(parts.join(' — '));
