@@ -84,6 +84,10 @@
     {
       "path": "/api/cron/ai-balance-probe",
       "schedule": "47 * * * *"
+    },
+    {
+      "path": "/api/cron/portal-auto-register",
+      "schedule": "*/5 * * * *"
     }
   ],
   "functions": {

@@ -458,11 +458,16 @@ export default function RegisterLeadPortalModal({
                     </summary>
                     <ul className="mt-2 space-y-1">
                       {history.map((h) => (
-                        <li key={h.id} className="flex items-center gap-2">
+                        <li key={h.id} className="flex items-center gap-2" title={h.error_message ?? undefined}>
                           <span className={`rounded-full px-2 py-0.5 text-[10px] ${h.status === 'done' ? 'bg-green-100 text-green-800' : h.status === 'failed' ? 'bg-red-100 text-red-800' : 'bg-charcoal/10 text-charcoal/70'}`}>
                             {statusLabel(h.status)}
                           </span>
                           <span className="font-medium">{h.portal_name}</span>
+                          {h.origin === 'auto' && (
+                            <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[10px] text-chocolate">
+                              {isAr ? 'تلقائي من الإعلان' : 'Auto from ad'}
+                            </span>
+                          )}
                           <span className="text-charcoal/50">{fmtDate(h.finished_at ?? h.created_at)}</span>
                         </li>
                       ))}

@@ -53,6 +53,8 @@ export interface PortalHistoryItem {
   created_at: string;
   finished_at: string | null;
   mine: boolean;
+  /** 'auto' = registered by the ad-lead sweep, not a rep's button press. */
+  origin: 'manual' | 'auto';
 }
 
 export interface PortalInputRequest {

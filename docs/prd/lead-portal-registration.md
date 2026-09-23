@@ -1,6 +1,6 @@
 # Lead-portal registration
 
-**Last updated:** 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **three real portals configured**. **Riva** (`riva.sa/broker`, email + password, no OTP) → marketer «ريفا». **Al Ramz** (`brokerportal.alramzre.com`, phone + 6-box SMS OTP) → developer «الرمز», OTP handshake verified end-to-end through the real engine. **Safa / Kasb** (`broker.safainv.sa`, phone + 4-box SMS OTP, a Select2 "create opportunity" modal) → developer «صفا للاستثمار», every step verified live in a real session. Field specs gained `hidden`, `map`, `default`; targets gained `exact`; filters `ksa_short`; steps `fill_otp` (segmented OTP) and `screenshot.full`.)
+**Last updated:** 2026-09-23 (**automatic registration of ad leads**: a portal with `auto_register` on — Riva today — gets every client whose ad was for a project it covers, with no button press; see "Automatic registration" below). Earlier: 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **three real portals configured**. **Riva** (`riva.sa/broker`, email + password, no OTP) → marketer «ريفا». **Al Ramz** (`brokerportal.alramzre.com`, phone + 6-box SMS OTP) → developer «الرمز», OTP handshake verified end-to-end through the real engine. **Safa / Kasb** (`broker.safainv.sa`, phone + 4-box SMS OTP, a Select2 "create opportunity" modal) → developer «صفا للاستثمار», every step verified live in a real session. Field specs gained `hidden`, `map`, `default`; targets gained `exact`; filters `ksa_short`; steps `fill_otp` (segmented OTP) and `screenshot.full`.)
 
 ## What it is
 
@@ -25,7 +25,40 @@ the required customer fields, and the JSON recipe. Adding a portal is an edit in
 the app, not a deploy. The recipe language is documented in
 `docs/lead-portal-recipes.md`.
 
+**Automatic registration (2026-09-23).** A portal that signs in without a code
+can also run with nobody pressing the button. When its **Auto-register ad leads**
+switch («تسجيل عملاء الإعلانات تلقائياً») is on, every client who arrives from an
+ad whose campaign is for a project that portal covers is registered in it within
+~5 minutes. "Which ad, which project" is the same information the client
+profile's acquisition panel shows. Riva is switched on: leads from the يمام 17 and
+أكنان 25 campaigns go straight into the Riva broker portal.
+
 ## Key behaviors
+
+- **Automatic registration of ad leads.** `/api/cron/portal-auto-register` runs
+  every 5 minutes. It reads `portal_auto_register_candidates(since)`: ad touches
+  (`client_attributions_effective`) created in the last 3 hours, each with the
+  project resolved through ad → execution → campaign → project, the same chain as
+  `mos_client_acquisition`. For each, it resolves the covering portals with the
+  button's own coverage rule and field prefill (`api/_lib/leadPortals.ts`) and
+  enqueues one job (`origin='auto'`, `attribution_id` set) for each portal whose
+  `auto_register` is on. Rules:
+  - **One attempt per (client, portal), ever.** Any existing job for the pair
+    (manual or auto, any status) means the sweep leaves it alone. A failed auto
+    run shows in the client's history, and a rep retries it from the button.
+  - **Never a portal that needs a code.** A portal with `otp_channel` other than
+    `none` is skipped even if switched on (nobody is there to type the code), and
+    the skip is logged.
+  - **A missing required field is a visible failure, not a silent skip.** It
+    writes a `failed` job naming the fields, e.g. a client with no phone.
+  - **Owner** = the client's `client_owner`, as if they had pressed the button.
+    If the client has no owner yet, the CRM user whose email is the portal's
+    `login_email` owns the run.
+  - **No back-fill.** Only touches from the last 3 hours are read, so switching a
+    portal on does not register its whole back-catalogue of old leads.
+  - Fields are sent exactly as the modal prefills them with no rep edits
+    (e.g. Riva's property type = the project's first unit type).
+  - The modal's history marks these runs «تلقائي من الإعلان» / "Auto from ad".
 
 - **Entry point.** `ChatDetail` → CRM actions → «تسجيل في البوابة». Shown only when
   the chat is linked to a client (the button is in the linked-client branch,
@@ -116,7 +149,12 @@ the app, not a deploy. The recipe language is documented in
    login URL, developer/marketer/officers/projects, sign-in phone, OTP channel,
    `required_fields` JSON, `recipe` JSON → Active. Test from a real chat; the
    failure screenshot names the step that broke.
-3. **Fix a broken run.** Open the failed run's screenshots in the modal (or the
+3. **Turn on automatic registration for a portal (admin).** Open the portal record
+   → tick **Auto-register ad leads**. It only applies to portals with OTP channel
+   «بدون رمز» (None). From then on, new ad leads for covered projects are
+   registered within ~5 minutes. Check the client's portal history in the chat
+   modal to see each run.
+4. **Fix a broken run.** Open the failed run's screenshots in the modal (or the
    `portal_registration_jobs` row), adjust the recipe on the portal record, «حاول
    مرة أخرى».
 
@@ -127,13 +165,16 @@ the app, not a deploy. The recipe language is documented in
   `marketer` (lookup), `officers` (multi lookup → project_officers), `projects`
   (multi lookup → all_projects), `is_active`, `notes`, `login_phone`,
   `login_email`, `login_password`, `otp_channel`, `required_fields` (JSON text),
-  `recipe` (JSON text).
+  `recipe` (JSON text), `auto_register` (checkbox, 2026-09-23).
 - `portal_registration_jobs` — queue + live state (status, phase_ar/en, lead_data,
   login_phone, input_request/input_value, browserbase_session_id, live_view_url,
   screenshots[], result, error_message, heartbeat_at). Realtime-published; RLS
   owner SELECT; all writes via service-role RPCs (`portal_registration_job_*`:
   enqueue, claim_next, progress, session, heartbeat, request_input,
   submit_input, resume, cancel, complete, fail, `portal_registration_jobs_watchdog`).
+- `portal_auto_register_candidates(p_since)` — service-role-only SQL function
+  that lists recent ad touches with their project. Reads `client_attributions_effective`,
+  `mos_execution_ads`, `mos_campaign_executions`, `mos_campaigns`.
 - Storage bucket `portal-registrations` (private; signed URLs from the API).
 - `activity_log` — `portal_lead_registered` on success (category `record`,
   target = the client).
@@ -144,6 +185,8 @@ the app, not a deploy. The recipe language is documented in
 |---|---|
 | Migration | `supabase/migrations/2026-09-14_06_lead_portals.sql` |
 | API | `api/portal-registration.ts` (GET options/history/job, POST start/input/cancel) |
+| Shared portal logic | `api/_lib/leadPortals.ts` — coverage, field parse/prefill, recipe check, worker wake (used by the button API AND the auto sweep) |
+| Auto sweep | `api/cron/portal-auto-register.ts` (Vercel cron, every 5 min) + `supabase/migrations/2026-09-23_01_portal_auto_register.sql` |
 | Worker lane | `worker/src/runPortalRegistrationJob.ts` (+ `portalPollLoop` in `worker/src/index.ts`) |
 | Recipe engine | `worker/src/portals/recipe.ts` — step vocabulary, templating, filters |
 | Browser client | `src/lib/portalRegistration/client.ts` |
