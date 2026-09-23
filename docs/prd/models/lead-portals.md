@@ -5,7 +5,7 @@
 # Model: Lead portals / بوابات تسجيل العملاء  `lead_portals`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-14
+**Last updated (from DB):** 2026-09-23
 **Model id:** `1ead0000-0000-4000-8000-000000000001`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **2** (2 base, 0 non-base)
-- Fields: **14**
+- Fields: **15**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -69,6 +69,7 @@
 | `otp_channel` | OTP channel / قناة رمز التحقق | Dropdown | no | half | no | 4 options |
 | `required_fields` | Customer fields the portal needs (JSON) / حقول العميل المطلوبة (JSON) | Text area | no | full | no |  |
 | `recipe` | Automation recipe (JSON steps) / خطوات الأتمتة (JSON) | Text area | no | full | no |  |
+| `auto_register` | Auto-register ad leads / تسجيل عملاء الإعلانات تلقائياً | Checkbox | no | half | yes |  |
 
 **Field details:**
 
