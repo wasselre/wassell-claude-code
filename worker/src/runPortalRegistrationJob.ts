@@ -14,6 +14,15 @@
  *      watchdog knows it is alive and waiting), sees the value, clears it,
  *      flips back to `running` and continues the recipe.
  *
+ * WhatsApp code relay (auto runs of a portal with `otp_whatsapp_relay` on):
+ *   nobody is watching the modal, so on `request_input` the operations number
+ *   WhatsApps the portal's relay phone asking for the code; the reply comes
+ *   back through /api/webhook/waha → portal_otp_relay_inbound → input_value,
+ *   the same row the modal would write. If no code arrives within the step's
+ *   wait the run is PARKED (browser closed, job queued with parked_at) instead
+ *   of failed, and the next WhatsApp from that phone restarts it with a fresh
+ *   code. See supabase/migrations/2026-09-24_01_portal_otp_whatsapp_relay.sql.
+ *
  * Evidence trail: a JPEG screenshot per `screenshot` step plus one on success
  * and one on failure, uploaded to the PRIVATE `portal-registrations` bucket
  * under <job id>/…; the API signs them for the modal. The Browserbase live-view
@@ -43,6 +52,8 @@ export interface PortalRegistrationJob {
   leadData: Record<string, unknown>;
   loginPhone: string | null;
   attempts: number;
+  /** 'manual' (a rep pressed the button) or 'auto' (the ad-lead sweep). */
+  origin: string;
 }
 
 interface RunArgs {
@@ -55,6 +66,13 @@ const BUCKET = 'portal-registrations';
 const INPUT_POLL_MS = 1_500;
 const HEARTBEAT_EVERY_POLLS = 4; // ≈ every 6 s while waiting
 const DEFAULT_INPUT_TIMEOUT_S = 300;
+/** The code wait ran out on a WhatsApp-relay run → park it, don't fail it. */
+class OtpRelayTimeoutError extends Error {
+  constructor() {
+    super('otp relay wait timed out');
+  }
+}
+
 /** Browserbase session lifetime (seconds). Generous: sign-in + OTP wait + form. */
 const SESSION_TIMEOUT_S = 20 * 60;
 
@@ -143,6 +161,8 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
     login_password: str(pd.login_password),
     otp_channel: str(pd.otp_channel),
   };
+  // Codes for this run are asked for on the ops WhatsApp (see header).
+  const relay = job.origin === 'auto' && pd.otp_whatsapp_relay === true;
   const lead: Record<string, unknown> = { ...job.leadData };
   if (lead.project_name == null && project) lead.project_name = str(project.data?.project_name);
   if (lead.name == null) lead.name = str(client.data?.client_name);
@@ -169,6 +189,17 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
     if (error) throw new Error(`job row read failed: ${error.message}`);
     return (data ?? null) as { status: string; input_value: string | null; input_request: Record<string, unknown> | null } | null;
   };
+  // Queue a WhatsApp from the ops line to the relay phone. Never throws: a
+  // missed message must not fail a registration, but it must be visible.
+  const relayNotify = async (body: string): Promise<void> => {
+    if (!relay) return;
+    const { data, error } = await supabase.rpc('portal_otp_relay_notify', { p_job_id: job.id, p_body: body });
+    if (error) console.error(`${tag} relay WhatsApp failed: ${error.message}`);
+    else if (data !== true) console.error(`${tag} relay WhatsApp NOT queued — no active ops number or no relay phone on the portal`);
+  };
+  const clientName = str(lead.name) || 'العميل';
+  const projectLabel = str(lead.project_name) ? ` — مشروع «${str(lead.project_name)}»` : '';
+
   const assertLive = async () => {
     const row = await readRow();
     if (!row || row.status === 'cancelled' || row.status === 'failed') throw new RecipeCancelledError();
@@ -218,6 +249,12 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       });
       if (!ok) throw new RecipeCancelledError();
       log(`awaiting input "${step.key}"`);
+      const waitMin = Math.round((step.timeout_s ?? DEFAULT_INPUT_TIMEOUT_S) / 60);
+      await relayNotify(
+        `🔐 وصلك الآن رمز تحقق من «${portalScope.name}» لتسجيل العميل «${clientName}»${projectLabel}.
+` +
+        `أرسل لي الرمز هنا${step.length ? ` (${step.length} أرقام)` : ''} خلال ${waitMin} دقائق.`,
+      );
       const deadline = Date.now() + (step.timeout_s ?? DEFAULT_INPUT_TIMEOUT_S) * 1000;
       let polls = 0;
       while (Date.now() < deadline) {
@@ -234,6 +271,7 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
           await rpc('portal_registration_job_heartbeat', { p_job_id: job.id });
         }
       }
+      if (relay) throw new OtpRelayTimeoutError();
       throw new RecipeError(
         'انتهت مهلة انتظار الرمز — لم يُدخل خلال الوقت المحدد.',
         'Timed out waiting for the code — it was not entered in time.',
@@ -287,6 +325,7 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       status: 'success',
     });
     if (logErr) console.error(`${tag} activity_log insert failed: ${logErr.message}`);
+    await relayNotify(`✅ تم تسجيل العميل «${clientName}» في «${portalScope.name}»${projectLabel}.`);
 
     return result;
   } catch (err) {
@@ -294,6 +333,27 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       cancelled = true;
       log('cancelled by the rep (or swept) — closing the browser');
       return { outcome: 'cancelled' };
+    }
+    if (err instanceof OtpRelayTimeoutError) {
+      // Nobody answered: close the browser (finally) and wait for a reply
+      // instead of burning the one attempt this client gets.
+      const { data: parked, error: parkErr } = await supabase.rpc('portal_registration_job_park', { p_job_id: job.id });
+      if (parkErr) throw new Error(`portal_registration_job_park failed: ${parkErr.message}`);
+      log(`code never arrived → ${String(parked)}`);
+      if (parked === 'parked') {
+        await relayNotify(
+          `⏳ انتهت صلاحية الرمز ولم يُسجَّل العميل «${clientName}» في «${portalScope.name}» بعد.
+` +
+          'متى ما كنت متاحاً أرسل لي أي رسالة هنا، وسأطلب رمزاً جديداً فوراً.',
+        );
+      } else if (parked === 'failed') {
+        await relayNotify(`❌ أوقفت محاولات تسجيل العميل «${clientName}» في «${portalScope.name}» — لم يصل الرمز بعد عدة محاولات. سجّله يدوياً من زر «التسجيل في البوابة».`);
+      }
+      return { outcome: 'parked', park_result: parked };
+    }
+    if (relay) {
+      const reason = err instanceof RecipeError ? err.ar : (err as Error).message;
+      await relayNotify(`❌ تعذّر تسجيل العميل «${clientName}» في «${portalScope.name}»: ${reason}`);
     }
     // Capture what the portal showed when it went wrong, then rethrow so the
     // loop marks the job failed with the bilingual message.

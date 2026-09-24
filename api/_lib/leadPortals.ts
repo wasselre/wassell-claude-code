@@ -49,6 +49,9 @@ export interface PortalOption {
   /** The portal's `auto_register` switch: ad leads for a covered project are
    *  registered by /api/cron/portal-auto-register without a rep clicking. */
   auto_register: boolean;
+  /** Codes for this portal are asked for (and answered) on the operations
+   *  WhatsApp line, so an OTP portal can still auto-register. */
+  otp_whatsapp_relay: boolean;
 }
 
 /** Default customer fields when a portal declares none. */
@@ -270,6 +273,7 @@ export async function resolvePortals(
       recipe_ok: recipe.ok && !fieldsErr,
       recipe_error: recipe.error ?? fieldsErr,
       auto_register: d.auto_register === true,
+      otp_whatsapp_relay: d.otp_whatsapp_relay === true,
     });
   }
   out.sort((a, b) => rank[a.coverage] - rank[b.coverage] || a.name.localeCompare(b.name));

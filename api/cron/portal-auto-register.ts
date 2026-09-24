@@ -17,9 +17,14 @@
  *     pair — manual or auto, done or failed — the sweep leaves it alone. A
  *     failed auto run is visible in the client's portal history and a rep can
  *     retry it from the button; the sweep never loops on a broken portal.
- *   - A portal that needs a code (otp_channel ≠ none) is NEVER run
- *     automatically, even if switched on: nobody is there to type the code and
- *     the run would sit waiting. Reported in the response + console.error.
+ *   - A portal that needs a code (otp_channel ≠ none) runs automatically ONLY
+ *     when its `otp_whatsapp_relay` switch is on: the worker then asks for the
+ *     code on the operations WhatsApp and the reply is fed back by the WAHA
+ *     webhook (see 2026-09-24_01_portal_otp_whatsapp_relay.sql). Without the
+ *     relay nobody is there to type the code — skipped + console.error.
+ *   - While a relay portal has a PARKED run (the phone owner has not answered
+ *     yet), new runs for it are parked on arrival: the owner's next reply
+ *     restarts them all, instead of each lead pinging them again.
  *   - A lead missing a required field (e.g. no phone) gets a FAILED job row
  *     naming the field, so the gap shows in the client's history instead of
  *     the lead silently never reaching the portal.
@@ -144,8 +149,8 @@ export default async function handler(req: Request): Promise<Response> {
         if (exErr) throw new Error(`existing-job check failed: ${exErr.message}`);
         if ((existing ?? []).length > 0) continue;
 
-        if (portal.otp_channel && portal.otp_channel !== 'none') {
-          const reason = `portal "${portal.name}" needs a ${portal.otp_channel} code — it cannot run unattended; turn auto_register off for it`;
+        if (portal.otp_channel && portal.otp_channel !== 'none' && !portal.otp_whatsapp_relay) {
+          const reason = `portal "${portal.name}" needs a ${portal.otp_channel} code and has no WhatsApp code relay — it cannot run unattended; turn otp_whatsapp_relay on or auto_register off`;
           console.error(`[portal-auto-register] ${reason}`);
           results.push({ ...base, outcome: { status: 'skipped', reason } });
           continue;
@@ -216,16 +221,39 @@ export default async function handler(req: Request): Promise<Response> {
           p_login_phone: portal.login_phone,
         });
         if (enqErr || !jobId) throw new Error(`enqueue failed: ${enqErr?.message ?? 'no job id'}`);
+        // The phone owner has not answered an earlier code request for this
+        // portal → wait with the others; their next reply restarts every one.
+        let parkedAt: string | null = null;
+        if (portal.otp_whatsapp_relay) {
+          const { data: parked, error: parkErr } = await svc
+            .from('portal_registration_jobs')
+            .select('id')
+            .eq('portal_record_id', portal.id)
+            .not('parked_at', 'is', null)
+            .eq('status', 'queued')
+            .limit(1);
+          if (parkErr) console.error(`[portal-auto-register] parked check failed: ${parkErr.message}`);
+          if ((parked ?? []).length > 0) parkedAt = new Date().toISOString();
+        }
         const { error: tagErr } = await svc
           .from('portal_registration_jobs')
-          .update({ origin: 'auto', attribution_id: c.attribution_id })
+          .update({
+            origin: 'auto',
+            attribution_id: c.attribution_id,
+            ...(parkedAt ? {
+              parked_at: parkedAt,
+              phase: 'parked',
+              phase_ar: 'بانتظار الرد على واتساب العمليات لطلب رمز جديد',
+              phase_en: 'Waiting for a reply on the ops WhatsApp to request a new code',
+            } : {}),
+          })
           .eq('id', jobId as string);
         if (tagErr) console.error(`[portal-auto-register] tagging job=${jobId} as auto failed: ${tagErr.message}`);
 
-        console.log(`[portal-auto-register] queued job=${jobId} portal=${portal.id} client=${c.client_record_id} project=${c.project_record_id}`);
+        console.log(`[portal-auto-register] ${parkedAt ? 'parked' : 'queued'} job=${jobId} portal=${portal.id} client=${c.client_record_id} project=${c.project_record_id}`);
         results.push({ ...base, outcome: { status: 'queued', job_id: jobId as string } });
         enqueued += 1;
-        void wakeWorker(jobId as string);
+        if (!parkedAt) void wakeWorker(jobId as string);
       }
     }
 

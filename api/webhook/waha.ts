@@ -32,6 +32,7 @@ import {
   uuidV5FromWidSync,
   type ChatMessageRow,
 } from '../_lib/chatIngest.js';
+import { wakeWorker } from '../_lib/leadPortals.js';
 import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, mirrorWahaHostedMedia, type WahaMessageRaw } from '../_lib/waha.js';
 
 export const config = {
@@ -310,6 +311,42 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     // Operations-line threads skip client-linking + the sales-funnel reconcile.
     isOperations: isOps,
   });
+
+  // Portal code relay (2026-09-24): a lead portal that signs in with an SMS
+  // code asks for it on the OPERATIONS line; the phone owner's reply lands
+  // here. portal_otp_relay_inbound decides what it means — the code for a run
+  // that is waiting, or "I'm back" for runs parked while nobody answered (they
+  // restart and a NEW code is texted). Only inbound, new, ops-line messages
+  // from a known phone; a phone that relays no portal is a no-op in SQL.
+  // Fire-safe: the message is already stored above.
+  if (flow === 'in' && isNew && counterpartyPhone && isOps) {
+    try {
+      const svc = getServiceSupabase();
+      const { data, error } = await svc.rpc('portal_otp_relay_inbound', {
+        p_phone: counterpartyPhone,
+        p_body: row.body ?? '',
+      });
+      if (error) {
+        console.error('[waha-webhook] portal_otp_relay_inbound failed:', error.message);
+      } else {
+        const r = (data ?? {}) as { action?: string; job_id?: string; count?: number };
+        if (r.action && r.action !== 'none') {
+          console.log(`[waha-webhook] portal code relay: ${r.action} job=${r.job_id ?? '-'} count=${r.count ?? '-'}`);
+        }
+        if (r.action === 'restarted' && r.job_id) {
+          void wakeWorker(r.job_id);
+        } else if (r.action === 'no_code' && r.job_id) {
+          const { error: nErr } = await svc.rpc('portal_otp_relay_notify', {
+            p_job_id: r.job_id,
+            p_body: 'لم أجد رمزاً في رسالتك — أرسل أرقام رمز التحقق فقط.',
+          });
+          if (nErr) console.error('[waha-webhook] relay hint failed:', nErr.message);
+        }
+      }
+    } catch (err) {
+      console.error('[waha-webhook] portal code relay threw:', err instanceof Error ? err.message : String(err));
+    }
+  }
 
   // AI auto-reply (outside working hours only). The RPC is the single gate —
   // it decides enabled / working-hours / human-active / reply-cap and debounces

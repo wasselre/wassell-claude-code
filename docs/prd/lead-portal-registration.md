@@ -1,6 +1,6 @@
 # Lead-portal registration
 
-**Last updated:** 2026-09-23 (**automatic registration of ad leads**: a portal with `auto_register` on — Riva today — gets every client whose ad was for a project it covers, with no button press; see "Automatic registration" below). Earlier: 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **three real portals configured**. **Riva** (`riva.sa/broker`, email + password, no OTP) → marketer «ريفا». **Al Ramz** (`brokerportal.alramzre.com`, phone + 6-box SMS OTP) → developer «الرمز», OTP handshake verified end-to-end through the real engine. **Safa / Kasb** (`broker.safainv.sa`, phone + 4-box SMS OTP, a Select2 "create opportunity" modal) → developer «صفا للاستثمار», every step verified live in a real session. Field specs gained `hidden`, `map`, `default`; targets gained `exact`; filters `ksa_short`; steps `fill_otp` (segmented OTP) and `screenshot.full`.)
+**Last updated:** 2026-09-24 (**WhatsApp code relay**: a portal that signs in with an SMS code can now auto-register too — the ops WhatsApp asks the sign-in phone's owner for the code, their reply finishes the run, and a late reply (hours later) restarts it with a fresh code; Al Ramz switched on. See "WhatsApp code relay" below). 2026-09-23 (**automatic registration of ad leads**: a portal with `auto_register` on — Riva today — gets every client whose ad was for a project it covers, with no button press; see "Automatic registration" below). Earlier: 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **three real portals configured**. **Riva** (`riva.sa/broker`, email + password, no OTP) → marketer «ريفا». **Al Ramz** (`brokerportal.alramzre.com`, phone + 6-box SMS OTP) → developer «الرمز», OTP handshake verified end-to-end through the real engine. **Safa / Kasb** (`broker.safainv.sa`, phone + 4-box SMS OTP, a Select2 "create opportunity" modal) → developer «صفا للاستثمار», every step verified live in a real session. Field specs gained `hidden`, `map`, `default`; targets gained `exact`; filters `ksa_short`; steps `fill_otp` (segmented OTP) and `screenshot.full`.)
 
 ## What it is
 
@@ -46,9 +46,11 @@ profile's acquisition panel shows. Riva is switched on: leads from the يمام 
   - **One attempt per (client, portal), ever.** Any existing job for the pair
     (manual or auto, any status) means the sweep leaves it alone. A failed auto
     run shows in the client's history, and a rep retries it from the button.
-  - **Never a portal that needs a code.** A portal with `otp_channel` other than
-    `none` is skipped even if switched on (nobody is there to type the code), and
-    the skip is logged.
+  - **A portal that needs a code runs only with the WhatsApp code relay on**
+    (`otp_whatsapp_relay`). Without it, a portal whose `otp_channel` is not
+    `none` is skipped even if switched on, and the skip is logged.
+  - **While a relay portal has a parked run**, new auto runs for it are parked
+    on arrival, so an absent phone owner is not pinged once per lead.
   - **A missing required field is a visible failure, not a silent skip.** It
     writes a `failed` job naming the fields, e.g. a client with no phone.
   - **Owner** = the client's `client_owner`, as if they had pressed the button.
@@ -138,6 +140,33 @@ profile's acquisition panel shows. Riva is switched on: leads from the يمام 
   referenced (`{{portal.login_password}}`), never pasted into steps. Every run is
   started by a person for one client and can be stopped by that person.
 
+- **WhatsApp code relay (2026-09-24).** For auto runs of a portal with
+  **Ask for the code on the ops WhatsApp** (`otp_whatsapp_relay`) ticked:
+  1. At the `request_input` step, the operations number (`whatsapp_numbers.is_operations`)
+     WhatsApps the relay phone (`otp_relay_phone`, default the sign-in phone):
+     «وصلك الآن رمز تحقق من … لتسجيل العميل … أرسل لي الرمز هنا».
+  2. The owner replies with the code (a bare code, Arabic digits, or the whole
+     forwarded SMS all work). `/api/webhook/waha` → `portal_otp_relay_inbound`
+     writes it onto the waiting job, and the worker types it in. A reply with no
+     digits gets «أرسل أرقام رمز التحقق فقط».
+  3. **No code within the step's wait (5 min, the code expires anyway):** the run
+     is **parked**, not failed. The browser closes, the job goes back to `queued`
+     with `parked_at` set, and the ops number says «انتهت صلاحية الرمز … أرسل لي
+     أي رسالة متى ما كنت متاحاً».
+  4. **Any later message from that phone** (1 hour, 8 hours later) un-parks every
+     parked run of that portal. The worker signs in again, so a **new** code is
+     texted, and the owner is told «طلبت الآن رمزاً جديداً». Back to step 2.
+  5. The outcome is WhatsApped too: «✅ تم تسجيل العميل …» or «❌ تعذّر … : reason».
+  - **One live run per portal** (`claim_next`): the sign-in phone only ever has
+    one code outstanding, so an inbound code can never go to the wrong client.
+    Queued runs for the same portal wait their turn.
+  - Parked runs are skipped by `claim_next` and by the 30-minute "nobody claimed
+    it" watchdog. They fail after **7 days** without a reply, or after **8**
+    sign-in attempts.
+  - A rep pressing «التسجيل في البوابة» for a client whose auto run is parked
+    un-parks it (the rep can type the code in the modal as usual).
+  - Manual runs never use the relay; the modal is the only code path for them.
+
 ## User flows
 
 1. **Register a lead.** Chat with a linked client → «تسجيل في البوابة» → pick the
@@ -150,7 +179,9 @@ profile's acquisition panel shows. Riva is switched on: leads from the يمام 
    `required_fields` JSON, `recipe` JSON → Active. Test from a real chat; the
    failure screenshot names the step that broke.
 3. **Turn on automatic registration for a portal (admin).** Open the portal record
-   → tick **Auto-register ad leads**. It only applies to portals with OTP channel
+   → tick **Auto-register ad leads**. For a portal with an SMS code, also tick
+   **Ask for the code on the ops WhatsApp** (and optionally set the WhatsApp that
+   receives the codes); otherwise it only applies to portals with OTP channel
    «بدون رمز» (None). From then on, new ad leads for covered projects are
    registered within ~5 minutes. Check the client's portal history in the chat
    modal to see each run.
@@ -187,6 +218,7 @@ profile's acquisition panel shows. Riva is switched on: leads from the يمام 
 | API | `api/portal-registration.ts` (GET options/history/job, POST start/input/cancel) |
 | Shared portal logic | `api/_lib/leadPortals.ts` — coverage, field parse/prefill, recipe check, worker wake (used by the button API AND the auto sweep) |
 | Auto sweep | `api/cron/portal-auto-register.ts` (Vercel cron, every 5 min) + `supabase/migrations/2026-09-23_01_portal_auto_register.sql` |
+| WhatsApp code relay | `supabase/migrations/2026-09-24_01_portal_otp_whatsapp_relay.sql` (park / inbound / notify RPCs, one-live-run claim), relay in `worker/src/runPortalRegistrationJob.ts`, inbound hook in `api/webhook/waha.ts` |
 | Worker lane | `worker/src/runPortalRegistrationJob.ts` (+ `portalPollLoop` in `worker/src/index.ts`) |
 | Recipe engine | `worker/src/portals/recipe.ts` — step vocabulary, templating, filters |
 | Browser client | `src/lib/portalRegistration/client.ts` |

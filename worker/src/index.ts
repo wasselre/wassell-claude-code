@@ -2338,6 +2338,7 @@ async function claimAndRunOnePortal(): Promise<boolean> {
     lead_data: Record<string, unknown> | null;
     login_phone: string | null;
     attempts: number;
+    origin: string | null;
   }>;
   if (rows.length === 0) return false;
   const row = rows[0]!;
@@ -2350,6 +2351,7 @@ async function claimAndRunOnePortal(): Promise<boolean> {
     leadData: row.lead_data ?? {},
     loginPhone: row.login_phone,
     attempts: row.attempts,
+    origin: row.origin ?? 'manual',
   };
   console.log(
     `[worker] claimed portal job=${job.id} portal=${job.portalRecordId} client=${job.clientRecordId} attempts=${job.attempts}`,
@@ -2357,6 +2359,11 @@ async function claimAndRunOnePortal(): Promise<boolean> {
 
   try {
     const result = await runPortalRegistrationJob({ supabase, env, job });
+    if ((result as { outcome?: string }).outcome === 'parked') {
+      // Already re-queued with parked_at (or failed) by portal_registration_job_park.
+      console.log(`[worker] portal job=${job.id} parked → ${String((result as { park_result?: unknown }).park_result)}`);
+      return true;
+    }
     const { error: doneErr } = await supabase.rpc('portal_registration_job_complete', {
       p_job_id: job.id,
       p_result: result ?? {},
