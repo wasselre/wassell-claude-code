@@ -29,6 +29,12 @@ export interface PortalFieldSpec {
   map?: Record<string, string>;
   /** Prefill fallback when the source resolves to nothing. */
   default?: string;
+  /** The portal rejects a value with fewer letters/digits than this (Riva: a
+   *  name needs 3). A shorter prefill is replaced by `fallback_source`. */
+  min_length?: number;
+  /** Where to take the value from when the source is shorter than
+   *  `min_length` — e.g. `client.phone_number` for a WhatsApp name like "A". */
+  fallback_source?: string;
   /** Not shown in the modal — sent with its prefilled/default value. A hidden
    *  REQUIRED field that resolves to nothing still blocks the run (the modal
    *  names it so the rep can fix the client record). */
@@ -117,6 +123,8 @@ export function parseFields(raw: unknown): { fields: PortalFieldSpec[]; error: s
           ? Object.fromEntries(Object.entries(o.map as Record<string, unknown>).map(([k, v]) => [k, str(v)]))
           : undefined,
       default: str(o.default) || undefined,
+      min_length: typeof o.min_length === 'number' && o.min_length > 0 ? o.min_length : undefined,
+      fallback_source: str(o.fallback_source) || undefined,
       hidden: o.hidden === true,
     });
   }
@@ -145,12 +153,28 @@ export function valueToText(v: unknown): string {
   return str(v);
 }
 
-/** Prefill one field: source → map → (select) option match → default. */
+/** Letters and digits only — "B.A.k" counts 3, "-" counts 0. */
+function meaningfulLength(v: string): number {
+  return (v.match(/[\p{L}\p{N}]/gu) ?? []).length;
+}
+
+/** A KSA mobile in E.164 (+9665XXXXXXXX) → the local 05XXXXXXXX a person
+ *  would write; anything else unchanged. */
+function localKsaPhone(v: string): string {
+  const m = /^\+?966(5\d{8})$/.exec(v.replace(/\s+/g, ''));
+  return m ? `0${m[1]}` : v;
+}
+
+/** Prefill one field: source → (too short → fallback_source) → map →
+ *  (select) option match → default. */
 export function prefillField(
   f: PortalFieldSpec,
   ctx: { client: Record<string, unknown>; project: Record<string, unknown>; user: { email: string; name: string; phone: string } },
 ): string {
   let v = resolveSource(f.source, ctx);
+  if (f.min_length && meaningfulLength(v) < f.min_length && f.fallback_source) {
+    v = localKsaPhone(resolveSource(f.fallback_source, ctx).trim());
+  }
   if (v && f.map && f.map[v] != null) v = f.map[v]!;
   if (f.type === 'select' && f.options?.length) {
     if (v && !f.options.some((o) => o.value === v)) {

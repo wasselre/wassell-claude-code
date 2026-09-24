@@ -1,6 +1,6 @@
 # Lead-portal registration
 
-**Last updated:** 2026-09-24 (**WhatsApp code relay**: a portal that signs in with an SMS code can now auto-register too — the ops WhatsApp asks the sign-in phone's owner for the code, their reply finishes the run, and a late reply (hours later) restarts it with a fresh code; Al Ramz switched on. See "WhatsApp code relay" below). 2026-09-23 (**automatic registration of ad leads**: a portal with `auto_register` on — Riva today — gets every client whose ad was for a project it covers, with no button press; see "Automatic registration" below). Earlier: 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **three real portals configured**. **Riva** (`riva.sa/broker`, email + password, no OTP) → marketer «ريفا». **Al Ramz** (`brokerportal.alramzre.com`, phone + 6-box SMS OTP) → developer «الرمز», OTP handshake verified end-to-end through the real engine. **Safa / Kasb** (`broker.safainv.sa`, phone + 4-box SMS OTP, a Select2 "create opportunity" modal) → developer «صفا للاستثمار», every step verified live in a real session. Field specs gained `hidden`, `map`, `default`; targets gained `exact`; filters `ksa_short`; steps `fill_otp` (segmented OTP) and `screenshot.full`.)
+**Last updated:** 2026-09-24 (**short-name fallback**: a field can declare `min_length` + `fallback_source`; Riva's name uses the client's phone number when the saved name is under 3 characters, because Riva rejects it — «The name field must be at least 3 characters.». Same day: **WhatsApp code relay**: a portal that signs in with an SMS code can now auto-register too — the ops WhatsApp asks the sign-in phone's owner for the code, their reply finishes the run, and a late reply (hours later) restarts it with a fresh code; Al Ramz switched on. See "WhatsApp code relay" below). 2026-09-23 (**automatic registration of ad leads**: a portal with `auto_register` on — Riva today — gets every client whose ad was for a project it covers, with no button press; see "Automatic registration" below). Earlier: 2026-09-14 (initial — model, queue, worker lane, API, in-chat modal, recipe language. Same day: **three real portals configured**. **Riva** (`riva.sa/broker`, email + password, no OTP) → marketer «ريفا». **Al Ramz** (`brokerportal.alramzre.com`, phone + 6-box SMS OTP) → developer «الرمز», OTP handshake verified end-to-end through the real engine. **Safa / Kasb** (`broker.safainv.sa`, phone + 4-box SMS OTP, a Select2 "create opportunity" modal) → developer «صفا للاستثمار», every step verified live in a real session. Field specs gained `hidden`, `map`, `default`; targets gained `exact`; filters `ksa_short`; steps `fill_otp` (segmented OTP) and `screenshot.full`.)
 
 ## What it is
 
@@ -75,7 +75,9 @@ profile's acquisition panel shows. Riva is switched on: leads from the يمام 
   name + phone). Values prefill from `client.<slug>` / `project.<slug>` /
   `user.name|email|phone` / `literal:` (multiselects → first value, ranges →
   "min - max"), then `map` translates them into the portal's wording and
-  `default` fills gaps. `hidden` fields are sent without being shown (a grey
+  `default` fills gaps. A field with `min_length` + `fallback_source` swaps in
+  the fallback when the value is too short (Riva: a name under 3 characters
+  → the client's phone as 05XXXXXXXX). `hidden` fields are sent without being shown (a grey
   line lists them); a hidden required field with no value blocks Start with
   "missing on the client record". The sign-in phone (`login_phone`) is shown
   only for portals that sign in by phone.

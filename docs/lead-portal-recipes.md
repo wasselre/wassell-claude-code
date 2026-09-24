@@ -44,6 +44,12 @@ then available to the recipe as `{{lead.<key>}}`.
   `{"apartment": "شقة", "villa": "فيلا"}`, or a CRM project name → the portal's
   spelling. `default` is used when nothing resolves. For a `select`, a value
   that matches no option (by value or label) is dropped, then `default` applies.
+- `min_length` + `fallback_source`: when the prefilled value has fewer letters /
+  digits than `min_length` (punctuation ignored, so "B.A.k" counts 3 and "-"
+  counts 0), the value comes from `fallback_source` instead. A Saudi mobile in
+  `+9665…` form is written as the local `05…`. Riva's name field uses
+  `{"min_length":3,"fallback_source":"client.phone_number"}` because Riva
+  rejects names under 3 characters and WhatsApp names are often "A" or "-".
 - `hidden: true` keeps a field out of the modal — it is sent with its prefilled /
   `default` value. A hidden required field that resolves to nothing still blocks
   the run and the modal names it ("missing on the client record").
