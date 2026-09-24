@@ -5,7 +5,11 @@
 # Model: Lead portals / بوابات تسجيل العملاء  `lead_portals`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
+<<<<<<< Updated upstream
 **Last updated (from DB):** 2026-09-23
+=======
+**Last updated (from DB):** 2026-09-24
+>>>>>>> Stashed changes
 **Model id:** `1ead0000-0000-4000-8000-000000000001`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -14,7 +18,11 @@
 
 ## Overview
 - Sections: **2** (2 base, 0 non-base)
+<<<<<<< Updated upstream
 - Fields: **15**
+=======
+- Fields: **17**
+>>>>>>> Stashed changes
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -70,6 +78,11 @@
 | `required_fields` | Customer fields the portal needs (JSON) / حقول العميل المطلوبة (JSON) | Text area | no | full | no |  |
 | `recipe` | Automation recipe (JSON steps) / خطوات الأتمتة (JSON) | Text area | no | full | no |  |
 | `auto_register` | Auto-register ad leads / تسجيل عملاء الإعلانات تلقائياً | Checkbox | no | half | yes |  |
+<<<<<<< Updated upstream
+=======
+| `otp_whatsapp_relay` | Ask for the code on the ops WhatsApp / طلب رمز التحقق عبر واتساب العمليات | Checkbox | no | half | yes |  |
+| `otp_relay_phone` | WhatsApp to ask for the code (default: sign-in phone) / رقم واتساب مستلم الرمز (افتراضياً رقم الدخول) | Phone | no | half | no |  |
+>>>>>>> Stashed changes
 
 **Field details:**
 
