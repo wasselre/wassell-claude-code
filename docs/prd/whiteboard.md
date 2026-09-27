@@ -1,6 +1,13 @@
-# PRD: Whiteboard
+# PRD: Whiteboard — DELETED
 
-**Status:** Live
+**Status:** DELETED 2026-09-27 (D43). The tldraw pages (`src/pages/Whiteboard/*`),
+the hardcoded Sidebar NavLink, the store slice (`whiteboards`/`whiteboardFolders`
+state + actions + boot-load + localStorage keys), the types, the `/whiteboard`
+routes, and the two tables (`whiteboards` = 8 boards, `whiteboard_folders` = 3)
+were all removed (`supabase/migrations/2026-09-27_delete_whiteboard_d43.sql`;
+backups `_backup_whiteboards_20260927` / `_backup_whiteboard_folders_20260927`).
+Restore = recreate the tables from the backups + restore the code from git. The
+rest of this PRD describes the retired feature.
 **Last updated:** 2026-04-25 (**Multi-board + folders:** `/whiteboard` is now a hub page listing every board organized into flat folders instead of a single canvas. Clicking a board opens `/whiteboard/:boardId` with its own tldraw canvas. Boards auto-save to Supabase via `editor.store.listen({ source: 'user', scope: 'document' })` with a 1.5 s debounce, mirrored through localStorage per the CRM's standard pattern. Folders are flat (Miro-style spaces, no nesting), all boards are shared across every authenticated user in the workspace. Storage lives in two new Supabase tables — `whiteboard_folders` and `whiteboards(snapshot JSONB)`. 3-dot menu on each board card for rename / move-to-folder / delete; inline rename/delete on folders.) | 2026-04-24 (**Quick-connect handles:** hovering a geo shape surfaces four copper "+" buttons; clicking one creates a same-type shape 80 px away with both arrow ends bound.) | 2026-04-24 (**License wired:** `<Tldraw licenseKey>` reads `VITE_TLDRAW_LICENSE_KEY` at build time. Trial key expires **2026-08-02**.)
 **Related PRDs:** navigation-layout.md, internationalization.md, data-storage.md
 

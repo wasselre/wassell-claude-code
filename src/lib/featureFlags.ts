@@ -27,7 +27,7 @@ export const PROJECT_FINDER_ONLY = true;
 
 /** System models whose custom AI-chat UI is retired under PROJECT_FINDER_ONLY.
  *  (The models + their records remain in the DB — this only hides the surfaces.) */
-export const RETIRED_ASSISTANT_MODELS = ['ai_chats', 'copywriter_chats', 'matching_chats'] as const;
+export const RETIRED_ASSISTANT_MODELS = ['ai_chats', 'matching_chats'] as const;
 
 /**
  * ARCHIVED MODULES (2026-07-22): dormant product areas removed from the UI on
@@ -44,7 +44,6 @@ export const ARCHIVED_MODULE_MODELS = [
   'decks',
   'image_chats',
   'design_templates',
-  'marketing_operations',
   'image_presets',
   'competitors',
   'reel_scripts',

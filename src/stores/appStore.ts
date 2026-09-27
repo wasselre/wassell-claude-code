@@ -78,8 +78,6 @@ import type {
   WebhookPayload,
   WhatsAppNumber,
   ChatMessage,
-  Whiteboard,
-  WhiteboardFolder,
   ActivityLogEntry,
   FreezeCoercionFailure,
   FreezeResult,
@@ -163,7 +161,6 @@ const localStorageOversizeWarned = new Set<string>();
 // localStorageOversizeWarned below.)
 const NEVER_MIRROR_KEYS: ReadonlySet<string> = new Set([
   'wassell_workflow_runs',
-  'wassell_whiteboards',
 ]);
 
 // Audit fix M9: keys we'll evict (in this order) when we hit a quota error,
@@ -173,8 +170,6 @@ const NEVER_MIRROR_KEYS: ReadonlySet<string> = new Set([
 const EVICTION_ORDER: readonly string[] = [
   'wassell_workflow_runs',
   'wassell_activity_log',
-  'wassell_whiteboards',
-  'wassell_whiteboard_folders',
   'wassell_webhook_payloads',
   'wassell_chat_messages',
 ];
@@ -1739,8 +1734,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   chatMessages: {},
   webhookSlugs: [],
   webhookPayloads: [],
-  whiteboards: [],
-  whiteboardFolders: [],
   currentUserId: loadLocal<string>('wassell_current_user_id') ?? null,
   // Profile-preview override ("view app as"). Persisted so a reload keeps
   // the preview; the permission layer ignores it unless the current user
@@ -1888,8 +1881,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     const salesProcessVersionsP = supabaseLoad<SalesProcessVersion>('sales_process_versions');
     const salesExperimentsP = supabaseLoad<SalesExperiment>('sales_experiments');
     const clientSalesProcessAssignmentsP = supabaseLoad<ClientSalesProcessAssignment>('client_sales_process_assignments');
-    const whiteboardFoldersP = supabaseLoad<WhiteboardFolder>('whiteboard_folders');
-    const whiteboardsP       = supabaseLoad<Whiteboard>('whiteboards');
     const viewsP             = supabaseLoad<ModelView>('model_views');
     const profilesP          = supabaseLoad<Profile>('profiles');
     const rolesP             = supabaseLoad<Role>('roles');
@@ -1982,8 +1973,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     let records: Record<string, AppRecord[]> = {};
     let workflowRuns: WorkflowRun[] = [];
     let activityLog: ActivityLogEntry[] = [];
-    let whiteboardFolders: WhiteboardFolder[] = [];
-    let whiteboards: Whiteboard[] = [];
 
     // Load workflows (chrome-critical: needed by the seed marketing
     // workflows block below + by the workflow-list page in the sidebar).
@@ -2432,13 +2421,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     saveLocal('wassell_activity_log', activityLog.slice(0, 200));
 
-    const loadedWhiteboardFolders = await whiteboardFoldersP;
-    whiteboardFolders = loadedWhiteboardFolders ?? loadLocal<WhiteboardFolder[]>('wassell_whiteboard_folders') ?? [];
-    saveLocal('wassell_whiteboard_folders', whiteboardFolders);
-    const loadedWhiteboards = await whiteboardsP;
-    whiteboards = loadedWhiteboards ?? loadLocal<Whiteboard[]>('wassell_whiteboards') ?? [];
-    saveLocal('wassell_whiteboards', whiteboards);
-
     // ── Schema maintenance (migrations + heals + seed refresh + prune) — OFFLINE ONLY ──
     //
     // (2026-08-20) This entire chain used to run on every boot and derives its
@@ -2652,8 +2634,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       users,
       fieldTemplates,
       webhookSlugs,
-      whiteboardFolders,
-      whiteboards,
       currentUserId,
       initialized: true,
       // Deferred models (units) are NOT in `migratedRecords` yet — they load in
@@ -4442,113 +4422,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   // --- App-level WhatsApp composer ---
   openChatComposer: (target) => set({ chatComposerTarget: target }),
   closeChatComposer: () => set({ chatComposerTarget: null }),
-
-  // --- Whiteboards ---
-  createWhiteboardFolder: (name: string) => {
-    const folder: WhiteboardFolder = {
-      id: uuid(),
-      name: name.trim(),
-      order: get().whiteboardFolders.length,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    set((s) => {
-      const whiteboardFolders = [...s.whiteboardFolders, folder];
-      saveLocal('wassell_whiteboard_folders', whiteboardFolders);
-      supabaseUpsert('whiteboard_folders', folder);
-      return { whiteboardFolders };
-    });
-    return folder;
-  },
-  renameWhiteboardFolder: (folderId: string, name: string) => {
-    set((s) => {
-      const whiteboardFolders = s.whiteboardFolders.map((f) =>
-        f.id === folderId
-          ? { ...f, name: name.trim(), updated_at: new Date().toISOString() }
-          : f,
-      );
-      saveLocal('wassell_whiteboard_folders', whiteboardFolders);
-      const updated = whiteboardFolders.find((f) => f.id === folderId);
-      if (updated) supabaseUpsert('whiteboard_folders', updated);
-      return { whiteboardFolders };
-    });
-  },
-  deleteWhiteboardFolder: (folderId: string) => {
-    set((s) => {
-      // DB has ON DELETE SET NULL on whiteboards.folder_id, so boards survive
-      // — mirror that locally by clearing folder_id on affected boards.
-      const whiteboards = s.whiteboards.map((b) =>
-        b.folder_id === folderId
-          ? { ...b, folder_id: null, updated_at: new Date().toISOString() }
-          : b,
-      );
-      const whiteboardFolders = s.whiteboardFolders.filter((f) => f.id !== folderId);
-      saveLocal('wassell_whiteboard_folders', whiteboardFolders);
-      saveLocal('wassell_whiteboards', whiteboards);
-      supabaseDelete('whiteboard_folders', folderId);
-      return { whiteboardFolders, whiteboards };
-    });
-  },
-
-  createWhiteboard: (name: string, folderId: string | null) => {
-    const board: Whiteboard = {
-      id: uuid(),
-      folder_id: folderId,
-      name: name.trim(),
-      snapshot: null,
-      order: get().whiteboards.filter((b) => b.folder_id === folderId).length,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    set((s) => {
-      const whiteboards = [...s.whiteboards, board];
-      saveLocal('wassell_whiteboards', whiteboards);
-      supabaseUpsert('whiteboards', board);
-      return { whiteboards };
-    });
-    return board;
-  },
-  renameWhiteboard: (boardId: string, name: string) => {
-    set((s) => {
-      const whiteboards = s.whiteboards.map((b) =>
-        b.id === boardId ? { ...b, name: name.trim(), updated_at: new Date().toISOString() } : b,
-      );
-      saveLocal('wassell_whiteboards', whiteboards);
-      const updated = whiteboards.find((b) => b.id === boardId);
-      if (updated) supabaseUpsert('whiteboards', updated);
-      return { whiteboards };
-    });
-  },
-  deleteWhiteboard: (boardId: string) => {
-    set((s) => {
-      const whiteboards = s.whiteboards.filter((b) => b.id !== boardId);
-      saveLocal('wassell_whiteboards', whiteboards);
-      supabaseDelete('whiteboards', boardId);
-      return { whiteboards };
-    });
-  },
-  moveWhiteboard: (boardId: string, folderId: string | null) => {
-    set((s) => {
-      const whiteboards = s.whiteboards.map((b) =>
-        b.id === boardId ? { ...b, folder_id: folderId, updated_at: new Date().toISOString() } : b,
-      );
-      saveLocal('wassell_whiteboards', whiteboards);
-      const updated = whiteboards.find((b) => b.id === boardId);
-      if (updated) supabaseUpsert('whiteboards', updated);
-      return { whiteboards };
-    });
-  },
-  saveWhiteboardSnapshot: (boardId: string, snapshot: unknown) => {
-    set((s) => {
-      const whiteboards = s.whiteboards.map((b) =>
-        b.id === boardId ? { ...b, snapshot, updated_at: new Date().toISOString() } : b,
-      );
-      saveLocal('wassell_whiteboards', whiteboards);
-      const updated = whiteboards.find((b) => b.id === boardId);
-      if (updated) supabaseUpsert('whiteboards', updated);
-      return { whiteboards };
-    });
-  },
 
   // --- Views (saved table configurations, per-model, per-user, optionally shared) ---
   saveView: (view: ModelView) => {

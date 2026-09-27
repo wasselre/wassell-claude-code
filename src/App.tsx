@@ -133,11 +133,6 @@ import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
 import MfaSetup from '@/pages/auth/MfaSetup';
 
-// Lazy-loaded so tldraw's bundle + stylesheet are only fetched when the
-// whiteboard route is visited. Keeps the main app bundle lean.
-const WhiteboardListPage = lazy(() => import('@/pages/Whiteboard/WhiteboardListPage'));
-const WhiteboardEditorPage = lazy(() => import('@/pages/Whiteboard/WhiteboardEditorPage'));
-
 /**
  * Auth gate. Renders children only when:
  *   - the initial auth check has finished (`authReady`), AND
@@ -480,22 +475,6 @@ export default function App() {
           <Route path="/dashboards" element={<RequireAdmin><DashboardListPage /></RequireAdmin>} />
           <Route path="/dashboards/:dashboardId" element={<RequireAdmin><DashboardEditorPage /></RequireAdmin>} />
           <Route path="/scheduled-reports" element={<RequireAdmin><ScheduledReportsPage /></RequireAdmin>} />
-          <Route
-            path="/whiteboard"
-            element={
-              <Suspense fallback={null}>
-                <WhiteboardListPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/whiteboard/:boardId"
-            element={
-              <Suspense fallback={null}>
-                <WhiteboardEditorPage />
-              </Suspense>
-            }
-          />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/translations" element={<RequireAdmin><TranslationSettingsPage /></RequireAdmin>} />
           <Route path="/settings/profiles" element={<RequireAdmin><ProfilesPage /></RequireAdmin>} />

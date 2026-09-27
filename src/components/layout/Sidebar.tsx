@@ -42,7 +42,6 @@ import {
   Settings,
   MessageCircle,
   MessageSquare,
-  SquarePen,
   Sparkles,
   ScrollText,
 } from 'lucide-react';
@@ -285,16 +284,6 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           >
             <Home size={20} />
             {!railCollapsed && <span>{t('nav.home')}</span>}
-          </NavLink>
-
-          {/* Whiteboard (tldraw freeform canvas — annotations, planning) */}
-          <NavLink
-            to="/whiteboard"
-            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-            title={railCollapsed ? t('nav.whiteboard') : undefined}
-          >
-            <SquarePen size={20} />
-            {!railCollapsed && <span>{t('nav.whiteboard')}</span>}
           </NavLink>
 
           {/* Files (Drive-style library — uploads, folders, share links) */}

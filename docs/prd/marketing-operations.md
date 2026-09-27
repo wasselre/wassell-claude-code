@@ -1,6 +1,6 @@
 # PRD: Marketing Operations (Template-Driven Design Generator)
 
-**Status:** ⛔ ARCHIVED (2026-07-22) — hidden from the UI in the dormant-module cleanup; data preserved
+**Status:** 🗑️ DELETED 2026-09-27 (D48) — the legacy-Higgsfield `marketing_operations` model + 3 records were deleted (`supabase/migrations/2026-09-27_delete_marketing_operations_copywriter_chats_d48_d04.sql`; backup `_backup_dead_models_20260927` / `_backup_dead_model_records_20260927`) and the name removed from `ARCHIVED_MODULE_MODELS`. Was ARCHIVED (2026-07-22).
 **Last updated:** 2026-07-22
 **Related PRDs:** [templates-library.md](templates-library.md) (the design templates this module consumes — archived together), [record-management.md](record-management.md) (project lookup, section_mirror), [data-storage.md](data-storage.md) (Supabase + storage bucket)
 
