@@ -88,9 +88,11 @@ function selectMedia(files: FileRow[]): Selection {
     .slice(0, PHOTO_COUNT)
     .map((f) => f.id);
 
-  // Video: sendable (in the picker), NOT competitor-origin, longest by duration.
+  // Video: ONE per project — the LONGEST sendable video, ANY origin (competitor
+  // videos ARE allowed; operator 2026-09-27). Only the rights guard (isSendable,
+  // via buildPickerItems) still applies.
   const videos = rows
-    .filter((f) => f.kind === 'video' && sendable.has(f.id) && f.acquisition_source !== 'competitor'
+    .filter((f) => f.kind === 'video' && sendable.has(f.id)
       && typeof f.duration_seconds === 'number' && f.duration_seconds > 0)
     .sort((a, b) => (b.duration_seconds ?? 0) - (a.duration_seconds ?? 0));
   const video = videos[0] ?? null;
