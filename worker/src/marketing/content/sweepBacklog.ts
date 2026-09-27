@@ -41,8 +41,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { repairMediaDimensions } from '../../repairMediaDimensions.js';
 import { sweepApifyStorage } from '../apifyStorageSweep.js';
 import { repairFileMediaMeta } from '../../repairFileMediaMeta.js';
+import { backfillContentEtags } from '../../backfillContentEtags.js';
 
-export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
 /** Stage 5 ceilings. A cv_process job is a multi-minute GPU run on Modal, so
  *  the re-enqueue is deliberately small per tick; anything it does not reach
@@ -194,7 +195,7 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, etags_filled: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
 
@@ -495,20 +496,36 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
     console.error(`[sweep] apify storage sweep threw: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  // ── stage 9: files video metadata repair (2026-09-21) ───────────────────
-  // Duration + geometry are container header reads (ffprobe, no AI), but only
-  // the social-intake scraper probes at ingest — the 2026-08-20 marketing bulk
-  // import and older user uploads did not, leaving 207 `files` videos with no
-  // duration_seconds. "Send the longest video" cannot rank a video with no
-  // length, so this fills them one signed-fetch + ffprobe at a time, from OUR
-  // bucket. Idempotent (only touches videos still missing duration OR width);
-  // goes quiet once the backlog is drained and covers any future un-probed path.
+  // ── stage 9: files media metadata repair (2026-09-21; images added 09-27) ─
+  // Dimensions + duration are header reads (ffprobe for video, sharp for image,
+  // no AI), but only the social-intake scraper probes at ingest — the marketing
+  // bulk import, older user uploads and every server creator did not, leaving
+  // ~8,200 images with no width/height and ~200 videos with no duration. The
+  // Library ratio filter is blind to un-sized images and "send the longest
+  // video" cannot rank a length-less video. This fills both, one signed-fetch +
+  // header read at a time, from OUR bucket. Idempotent (only touches rows still
+  // missing the metadata); goes quiet once drained, catches any future path.
   try {
     const r = await repairFileMediaMeta(sb, { limit: 25 });
     stats.file_media_repaired = r.fixed;
     if (r.errors.length > 0) console.error(`[sweep] file media repair: ${r.errors.length} failed, first: ${r.errors[0]}`);
   } catch (e) {
     console.error(`[sweep] file media repair threw: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // ── stage 10: files content_etag backfill (2026-09-27) ──────────────────
+  // The duplicate-detection key is `content_etag` (Storage's own MD5), read via
+  // one indexed storage.list lookup — NO byte download. Every server-side file
+  // creator (compressed PDFs, generated docs, social-intake bridge, worker
+  // outputs) left it NULL, so ~1,750 files are invisible to the duplicate check.
+  // This fills them from Storage metadata. Idempotent; skips multipart eTags
+  // (a `-<n>` hash-of-hashes is not a usable dedup key), same as the upload path.
+  try {
+    const r = await backfillContentEtags(sb, { limit: 100 });
+    stats.etags_filled = r.filled;
+    if (r.errors.length > 0) console.error(`[sweep] etag backfill: ${r.errors.length} failed, first: ${r.errors[0]}`);
+  } catch (e) {
+    console.error(`[sweep] etag backfill threw: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return stats;
