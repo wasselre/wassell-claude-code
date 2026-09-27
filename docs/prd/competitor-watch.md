@@ -1,7 +1,7 @@
 # PRD: Competitor Watch (مرصد المنافسين)
 
 **Status:** Live (all five surfaces: Content Library + Agents & runs, Content pipeline, Storage, Companies)
-**Last updated:** 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
+**Last updated:** 2026-09-27 (**Companies surface rebuilt around the marketing read** — type, channels, cadence, format mix, dominant message, offers, projects and districts per competitor; «آخر نشاط» was our scrape time and is now «آخر نشر», theirs.) Previously 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
 
 > A NEW, from-scratch workspace that succeeds the **Marketing Intelligence**
 > page (`marketing-intelligence.md`), built because the operator found that page
@@ -121,6 +121,31 @@ that study the corpus (how competitors write posts, script reels, price offers).
   its real count; the full spoken-transcript TEXT is not yet inlined (only a
   "transcript exists" flag) — flagged in-UI as a coming update.
 - Bilingual AR/EN, RTL-correct; its own scoped design system (`.cw-root`).
+- **Companies = who they are and what they market (rebuilt 2026-09-27).** The
+  surface leads with the competitor, their **type** (مطوّر / مسوّق, filterable,
+  with counts), and then their marketing behaviour, all of it read from posts the
+  pipeline had already enriched but never gathered per company:
+  - **Publishing, not collecting.** Columns are posts in the last 90 days, posts
+    per week, and **«آخر نشر» — when THEY last published**. The old «آخر نشاط»
+    column showed when WE last scraped, which says nothing about a competitor;
+    pull time now sits inside each account row where it belongs.
+  - **Channels** as compact platform chips (IG · TT · YT), dimmed when collection
+    for that account is off, with handle and post count on hover.
+  - **Format mix** as one proportional bar (video / image / carousel) and the
+    **dominant message** as a pill with its share — the top of the 7 content
+    types the enrichment already stamps (إطلاق مشروع · عرض · جولة · علامة ·
+    تشويق · فعالية · شهادة).
+  - **Offers** counted per company, with the latest offer line quoted verbatim
+    and dated in the expanded view.
+  - **Expanding a row** gives three cards: what they publish (all 7 purposes as
+    bars), what they talk about (top projects + top districts, district names
+    folded so «حي النرجس» and «النرجس» are one), and performance + channels
+    (average views/likes, posts 30d, totals collected, website, and each account with
+    its cadence and last post).
+  - **Search + sort** across company, handle and project name; sort by most
+    active (90d), most posts, most recent post, or name.
+  - Empty stays empty: a company with no read posts says so, a missing follower
+    count shows «—», never a fake zero.
 - **How collection runs, and what it costs (rebuilt 2026-09-21).** Instagram and
   TikTok posts are fetched through Apify (paid per post, $29/month plan limit);
   YouTube through the free YouTube API. Measured before the rebuild: 9,961 posts
@@ -209,6 +234,8 @@ Reads, plus two admin writes (`attribution_set`, `attribution_rerun`).
 | `.claude/skills/content-enrichment/SKILL.md` | Runner skill: candidates-only + `evidence_quote` + `mentioned_projects` |
 | `scripts/lib/mkt-enrichment-validate.mjs` | Mechanical proof check (`attributionRejection`) — a pick without a valid quote becomes «no project» |
 | `src/pages/CompetitorWatch/components/PipelineSurface.tsx` | «صحة ربط المشاريع» panel |
+| `supabase/migrations/2026-09-27_01_company_marketing_profile.sql` | `mkt_company_roster` rebuilt: cadence, format/purpose mix, offers, top projects + districts, engagement, per-account last post; `mkt_district_norm` folds the «حي» prefix |
+| `src/pages/CompetitorWatch/components/CompaniesSurface.tsx` | The Companies surface: type filter, search, sort, mix bars, message pill, expandable marketing profile |
 | `supabase/migrations/2026-09-21_01_apify_efficient_collection.sql` | Calendar-day + dormancy scheduler (`mkt_incremental_due`, `mkt_enqueue_due_accounts`), provider budget pause (`mkt_provider_pause_for_budget`, `mkt_provider_resume_expired`, `mkt_job_cancel_paused`) |
 | `worker/src/marketing/apifyLifecycle.ts` | `incrementalWindow`, date-filtered inputs, TikTok two-pass download, inline storage delete, `classifyApifyError`, pause guard |
 | `worker/src/marketing/apifyStorageSweep.ts` | Deletes leftover Apify run storage once media is safe (sweep stage 8) |

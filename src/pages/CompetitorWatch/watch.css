@@ -352,3 +352,48 @@
   .cw-root .cw-vl-health{grid-template-columns:1fr}
   .cw-root .cw-vl-hcell{border-inline-end:0; border-bottom:1px solid var(--cw-line2); padding-bottom:8px}
 }
+
+/* ── Companies surface: the marketing read (2026-09-27) ──────────────────── */
+.cw-root .cw-select{border:1px solid var(--cw-line); background:var(--cw-card); color:var(--cw-ink2); border-radius:10px; padding:9px 11px; font-size:12.5px; font-family:inherit}
+.cw-root .cw-select:focus{outline:none; border-color:var(--cw-copper)}
+.cw-root .cw-coname{font-weight:600}
+.cw-root .cw-cotable td{vertical-align:middle}
+.cw-root .cw-plats{display:inline-flex; gap:4px; flex-wrap:wrap}
+.cw-root .cw-plat{
+  font-family:'IBM Plex Mono',monospace; font-size:10.5px; font-weight:500; letter-spacing:.03em;
+  border:1px solid var(--cw-line); border-radius:6px; padding:2px 6px; color:var(--cw-ink2); background:var(--cw-card2);
+  margin-inline-end:6px;
+}
+.cw-root .cw-plat.off{opacity:.45}
+/* proportional mix bar (format split) */
+.cw-root .cw-mixbar{display:flex; height:8px; width:100%; min-width:80px; border-radius:20px; overflow:hidden; background:var(--cw-line2)}
+.cw-root .cw-mixseg{height:100%}
+.cw-root .cw-mixseg.f-video{background:var(--cw-copper)}
+.cw-root .cw-mixseg.f-image{background:var(--cw-gold)}
+.cw-root .cw-mixseg.f-carousel{background:var(--cw-info)}
+/* dominant message pill */
+.cw-root .cw-purp{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; border-radius:20px; padding:3px 9px; white-space:nowrap; background:var(--cw-line2); color:var(--cw-ink2)}
+.cw-root .cw-purp.p1{color:var(--cw-copper2); background:color-mix(in srgb, var(--cw-copper) 15%, transparent)}
+.cw-root .cw-purp.p2{color:var(--cw-ok); background:color-mix(in srgb, var(--cw-ok) 15%, transparent)}
+.cw-root .cw-purp.p3{color:var(--cw-info); background:color-mix(in srgb, var(--cw-info) 14%, transparent)}
+.cw-root .cw-purp.p4{color:var(--cw-ink2); background:var(--cw-line2)}
+.cw-root .cw-purp.p5{color:var(--cw-plum); background:color-mix(in srgb, var(--cw-plum) 14%, transparent)}
+.cw-root .cw-purp.p6{color:var(--cw-warn); background:var(--cw-warn-bg)}
+.cw-root .cw-purp.p7{color:var(--cw-gold); background:color-mix(in srgb, var(--cw-gold) 16%, transparent)}
+/* expanded profile */
+.cw-root .cw-cogrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; padding:6px 2px 10px}
+.cw-root .cw-cocard{background:var(--cw-card); border:1px solid var(--cw-line); border-radius:12px; padding:12px 14px}
+.cw-root .cw-purpwrap{display:flex; flex-direction:column; gap:7px}
+.cw-root .cw-purprow{display:grid; grid-template-columns:78px 1fr 38px; align-items:center; gap:8px; font-size:12px}
+.cw-root .cw-purplab{color:var(--cw-ink2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.cw-root .cw-purpbar{height:7px; border-radius:20px; background:var(--cw-line2); overflow:hidden}
+.cw-root .cw-purpfill{display:block; height:100%; background:var(--cw-copper)}
+.cw-root .cw-purpfill.p2{background:var(--cw-ok)} .cw-root .cw-purpfill.p3{background:var(--cw-info)}
+.cw-root .cw-purpfill.p4{background:var(--cw-ink3)} .cw-root .cw-purpfill.p5{background:var(--cw-plum)}
+.cw-root .cw-purpfill.p6{background:var(--cw-warn)} .cw-root .cw-purpfill.p7{background:var(--cw-gold)}
+.cw-root .cw-offerbox{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px solid var(--cw-line2); font-size:12.5px}
+.cw-root .cw-kv{font-size:11px; color:var(--cw-ink3); margin-bottom:6px}
+.cw-root .cw-chips{display:flex; gap:6px; flex-wrap:wrap}
+.cw-root .cw-softchip{display:inline-flex; align-items:center; gap:6px; font-size:12px; border:1px solid var(--cw-line); background:var(--cw-card2); border-radius:20px; padding:3px 10px; color:var(--cw-ink2)}
+.cw-root .cw-statline{display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:12.5px; padding:5px 0; border-bottom:1px solid var(--cw-line2)}
+.cw-root .cw-statline:last-of-type{border-bottom:0}

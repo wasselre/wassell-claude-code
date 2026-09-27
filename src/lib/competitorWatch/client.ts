@@ -129,10 +129,26 @@ export interface StorageUsage {
 export interface CompanyAccount {
   platform: string | null; handle: string | null; followers: number | null;
   enabled: boolean; last_pull: string | null; posts: number | null;
+  /** When THEY last published on this channel (not when we last pulled it). */
+  last_post: string | null;
+  /** How often we check it: daily | weekly. */
+  cadence: string | null;
 }
+/** One of the 7 content purposes the enrichment already stamps on every post. */
+export type PurposeKey = 'brand' | 'project_launch' | 'offer' | 'teaser' | 'walkthrough' | 'event' | 'testimonial';
 export interface CompanyRow {
-  id: string; name: string | null; org_type: string | null; facts: number;
-  accounts: number; posts: number; followers: number; last_pull: string | null;
+  id: string; name: string | null; name_en: string | null; org_type: string | null; website: string | null;
+  facts: number; accounts: number;
+  posts: number; posts_90d: number; posts_30d: number;
+  /** Their publishing, not our collecting. */
+  last_post: string | null; posts_per_week: number | null;
+  followers: number; last_pull: string | null;
+  formats: { image: number; carousel: number; video: number };
+  purposes: Record<PurposeKey, number>;
+  offer_posts: number; offer_text: string | null; offer_at: string | null;
+  avg_likes: number | null; avg_views: number | null;
+  top_projects: Array<{ name: string; posts: number }>;
+  top_districts: Array<{ name: string; posts: number }>;
   account_list: CompanyAccount[];
 }
 export interface CompanyRoster { companies: CompanyRow[]; }
