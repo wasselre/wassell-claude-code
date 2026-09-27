@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench, Briefcase } from 'lucide-react';
 import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 
 /**
@@ -28,6 +28,14 @@ import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
  */
 export type CustomPageId =
   | 'project_finder'
+  // Sales Workspace (one visible sidebar row) + its access-only section ids.
+  // Same pattern as projects_inventory below — the sw_* ids gate the section
+  // TABS inside the workspace and appear in Settings → Profiles.
+  | 'sales_workspace'
+  | 'sw_overview'
+  | 'sw_clients'
+  | 'sw_work_queue'
+  | 'sw_whatsapp'
   | 'my_clients'
   | 'my_tasks'
   | 'sales_tasks'
@@ -92,6 +100,58 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     // every non-admin profile unless explicitly revoked in Settings → Profiles.
     default_access: 'all',
   },
+  // ── Sales Workspace (D13) — one visible sidebar row + section access ids ──
+  {
+    id: 'sales_workspace',
+    route: '/sales-workspace',
+    label_ar: 'المبيعات',
+    label_en: 'Sales',
+    icon: Briefcase,
+    // The sales team's home. Visible to every non-admin profile unless revoked;
+    // per-section access is layered on top via the sw_* ids below.
+    default_access: 'all',
+  },
+  {
+    id: 'sw_overview',
+    route: '/sales-workspace/overview',
+    label_ar: 'نظرة عامة — المبيعات',
+    label_en: 'Overview (Sales)',
+    icon: BarChart3,
+    // Manager health view — admin-gated (grant to leads that need it).
+    default_access: 'admin',
+    hidden_from_sidebar: true,
+  },
+  {
+    id: 'sw_clients',
+    route: '/sales-workspace/clients',
+    label_ar: 'العملاء — المبيعات',
+    label_en: 'Clients (Sales)',
+    icon: UserCheck,
+    default_access: 'all',
+    hidden_from_sidebar: true,
+  },
+  {
+    id: 'sw_work_queue',
+    route: '/sales-workspace/work-queue',
+    label_ar: 'قائمة العمل — المبيعات',
+    label_en: 'Work Queue (Sales)',
+    icon: ListChecks,
+    default_access: 'all',
+    hidden_from_sidebar: true,
+  },
+  {
+    id: 'sw_whatsapp',
+    route: '/sales-workspace/whatsapp',
+    label_ar: 'واتساب — المبيعات',
+    label_en: 'WhatsApp (Sales)',
+    icon: MessageSquareText,
+    default_access: 'all',
+    hidden_from_sidebar: true,
+  },
+  // The three surfaces below now live INSIDE the Sales Workspace (Clients tab,
+  // Work Queue tab, and the queue folded into Work Queue). Their sidebar rows
+  // are hidden; the routes stay live so bookmarks/deep links still work and the
+  // separate delete pass (D15/D16) can retire them cleanly.
   {
     id: 'my_clients',
     route: '/sales/my-clients',
@@ -100,6 +160,7 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     icon: UserCheck,
     // Opt-in: hidden until an admin assigns it to a sales profile.
     default_access: 'admin',
+    hidden_from_sidebar: true,
   },
   {
     id: 'my_tasks',
@@ -108,6 +169,7 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'My Tasks',
     icon: ListChecks,
     default_access: 'admin',
+    hidden_from_sidebar: true,
   },
   {
     id: 'follow_up_queue',
@@ -118,6 +180,7 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     // Claude-suggested WhatsApp follow-ups awaiting a human's read + confirm.
     // Opt-in: an admin grants it to the profiles that work the queue.
     default_access: 'admin',
+    hidden_from_sidebar: true,
   },
   {
     id: 'sales_tasks',

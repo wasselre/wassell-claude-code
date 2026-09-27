@@ -59,6 +59,7 @@ const ClientsListPage = lazy(() => import('@/pages/Clients/ClientsListPage'));
 const ClientDetailPage = lazy(() => import('@/pages/Clients/ClientDetailPage'));
 const OurProjectsPortfolioPage = lazy(() => import('@/pages/Projects/OurProjectsPortfolioPage'));
 const ProjectsInventoryWorkspace = lazy(() => import('@/pages/ProjectsInventory/ProjectsInventoryWorkspace'));
+const SalesWorkspace = lazy(() => import('@/pages/Sales/SalesWorkspace'));
 const SalesValuationReviewPage = lazy(() => import('@/pages/SalesValuation/ReviewDetailPage'));
 const SalesValuationQueuePage = lazy(() => import('@/pages/SalesValuation/QueuePage'));
 const SalesValuationBoardPage = lazy(() => import('@/pages/SalesValuation/CorrectionBoardPage'));
@@ -466,6 +467,11 @@ export default function App() {
               the pi_* access-only page ids (managed in Settings → Profiles). */}
           <Route path="/projects-inventory" element={<RequirePageAccess pageId="projects_inventory"><ProjectsInventoryWorkspace /></RequirePageAccess>} />
           <Route path="/projects-inventory/:section" element={<RequirePageAccess pageId="projects_inventory"><ProjectsInventoryWorkspace /></RequirePageAccess>} />
+          {/* Sales Workspace — one entry, section tabs gated by the sw_* access-only
+              page ids (managed in Settings → Profiles). The old /sales/* pages stay
+              routable underneath (their sidebar rows are hidden). */}
+          <Route path="/sales-workspace" element={<RequirePageAccess pageId="sales_workspace"><SalesWorkspace /></RequirePageAccess>} />
+          <Route path="/sales-workspace/:section" element={<RequirePageAccess pageId="sales_workspace"><SalesWorkspace /></RequirePageAccess>} />
           {/* The old in-Sales marketing page is gone. Anyone with a bookmark
               (or a profile whose sidebar still points here) lands in the new
               workspace instead of on a blank route. */}

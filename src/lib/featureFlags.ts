@@ -127,6 +127,9 @@ export const WORKSPACE_HIDDEN_MODEL_NAMES = [
   'client_property_options',
   // D24 — reachable inside Chats as a Templates tab (powers every send flow).
   'chat_templates',
+  // D25 — sales-lifecycle models surfaced THROUGH the Sales Workspace (Clients /
+  // Work Queue tabs + the guided Follow-up Workspace). Routes + triggers stay.
+  'followups', 'sales_tasks', 'appointments',
   // D41 — geography lookups feeding Project Finder.
   'countries', 'regions', 'cities', 'districts',
   // D46 — hidden now; activated later with the unanswered-requests feature (D38).

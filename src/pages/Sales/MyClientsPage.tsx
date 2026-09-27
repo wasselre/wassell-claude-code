@@ -75,18 +75,21 @@ export default function MyClientsPage() {
 
   const [tab, setTab] = useState<SalesClientTab>('all');
   const [filters, setFilters] = useState<ClientFilters>(EMPTY_FILTERS);
+  // Scope toggle (D14): reps always see their own book; managers can switch
+  // between their own clients and everyone's.
+  const [scope, setScope] = useState<'mine' | 'all'>(isManager ? 'all' : 'mine');
 
   const now = Date.now();
 
-  // Scope the raw client records: managers see all, reps see only their own.
-  // Retired clients are excluded everywhere here (list, tab counts, header) —
-  // they reappear only if they message us again (auto-un-retire).
+  // Scope the raw client records. Retired clients are excluded everywhere here
+  // (list, tab counts, header) — they reappear only if they message us again.
   const scopedRecords = useMemo(() => {
     if (!clientsModel) return [];
     const all = (records[clientsModel.id] ?? []).filter((r) => !isRetiredClient(r));
-    if (isManager) return all;
-    return all.filter((r) => ownerIdOf((r.data as Record<string, unknown>).client_owner) === currentUserId);
-  }, [clientsModel, records, isManager, currentUserId]);
+    const mineOnly = all.filter((r) => ownerIdOf((r.data as Record<string, unknown>).client_owner) === currentUserId);
+    if (!isManager) return mineOnly; // reps: always their own book
+    return scope === 'all' ? all : mineOnly; // managers can switch
+  }, [clientsModel, records, isManager, currentUserId, scope]);
 
   // Resolve + enrich into SalesClients (views + related counts + follow-up summary).
   const sales: SalesClient[] = useMemo(() => {
@@ -173,9 +176,18 @@ export default function MyClientsPage() {
           <span className="text-sm font-semibold text-charcoal/40">({sales.length})</span>
         </h1>
         {isManager && (
-          <span className="text-xs font-semibold text-charcoal/50">
-            {isAr ? 'عرض المدير — كل العملاء' : 'Manager view — all clients'}
-          </span>
+          <div className="inline-flex rounded-lg border border-sand/50 p-0.5 text-xs font-bold">
+            {(['mine', 'all'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setScope(s)}
+                className={`rounded-md px-2.5 py-1 transition ${scope === s ? 'bg-copper text-white' : 'text-charcoal/55 hover:text-charcoal'}`}
+              >
+                {s === 'mine' ? (isAr ? 'عملائي' : 'Mine') : (isAr ? 'كل العملاء' : 'All clients')}
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
@@ -235,7 +247,7 @@ export default function MyClientsPage() {
               sc={sc}
               isAr={isAr}
               now={now}
-              returnTo="/sales/my-clients"
+              returnTo="/sales-workspace/clients"
               onOpen={(id) => navigate(`/model/clients/${id}`)}
               onWhatsApp={openWhatsApp}
             />
