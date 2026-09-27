@@ -5,8 +5,16 @@ import { Loader2, Check, X, HelpCircle, ChevronRight, ChevronLeft, MapPin, Party
 import GeoPrefMap from './GeoPrefMap';
 import {
   authHeader, reading, Bold, Transcript,
-  type Item, type Verdict, type ConversationView, type DistrictInfo, type Placement, type LocationItemDTO,
+  type Item, type Verdict, type ConversationView, type DistrictInfo, type Placement, type LocationItemDTO, type VerifierVerdict,
 } from '../lib/shared';
+
+/** Short label for a verifier verdict other than 'right'. */
+const VERIFIER_VERDICT_AR: Record<Exclude<VerifierVerdict, 'right'>, string> = {
+  wrong_place: 'مكان خاطئ', not_a_preference: 'ليس تفضيلًا', not_a_place: 'ليس مكانًا', wrong_polarity: 'الاتجاه معكوس', unsure: 'غير متأكد',
+};
+const VERIFIER_VERDICT_EN: Record<Exclude<VerifierVerdict, 'right'>, string> = {
+  wrong_place: 'wrong place', not_a_preference: 'not a preference', not_a_place: 'not a place', wrong_polarity: 'polarity flipped', unsure: 'unsure',
+};
 
 /**
  * The CONVERSATION grader (`/geo-grade?batch=…&view=chat`): one screen per
@@ -76,6 +84,12 @@ export default function ConversationGrader({ batchId }: Props) {
   const mentions = useMemo(() => (conv ? items.filter((i) => i.conversation_id === conv.conversation_id) : []), [conv, items]);
   const transcript = conv ? (transcripts[conv.conversation_id] ?? transcripts[conv.client_id] ?? '') : '';
   const focused = mentions.find((m) => m.id === focus) ?? null;
+  // The advisory verifier's second opinion (null = this proposal was never verified).
+  const verifier = conv?.proposal?.verifier ?? null;
+  const verifierByEvidence = useMemo(
+    () => new Map((verifier?.mentions ?? []).map((m) => [m.evidence_id, m])),
+    [verifier],
+  );
 
   const gradeMention = useCallback(async (it: Item, verdict: Verdict) => {
     if (saving) return;
@@ -186,6 +200,18 @@ export default function ConversationGrader({ batchId }: Props) {
             {conv.channel === 'call'
               ? (isAr ? `مكالمة هاتفية${conv.client ? `: ${conv.client}` : ''}` : `Phone call${conv.client ? `: ${conv.client}` : ''}`)
               : (isAr ? `محادثة واتساب${conv.client ? `: ${conv.client}` : ''}` : `WhatsApp chat${conv.client ? `: ${conv.client}` : ''}`)}
+            {verifier && (
+              <span
+                title={verifier.status === 'error' ? (verifier.error ?? '') : (verifier.model ?? '')}
+                className={`ms-auto rounded-full px-2 py-0.5 text-[11px] font-bold ${verifier.overall === 'agree' ? 'bg-emerald-50 text-emerald-700' : verifier.overall === 'doubt' ? 'bg-amber-50 text-amber-700' : 'bg-sand/30 text-charcoal/60'}`}
+              >
+                {verifier.overall === 'agree'
+                  ? (isAr ? '✓ المراجع يوافق' : '✓ reviewer agrees')
+                  : verifier.overall === 'doubt'
+                    ? (isAr ? '⚠ المراجع يشكّ' : '⚠ reviewer doubts')
+                    : (isAr ? 'المراجع لم يعمل' : 'reviewer did not run')}
+              </span>
+            )}
           </p>
           <p className="mb-1 text-xs text-charcoal/50">{isAr ? '١. المحادثة (اقرأها بنفسك):' : '1. The conversation (read it yourself):'}</p>
           <div className="mb-5 max-h-80 overflow-auto rounded-xl border border-sand/40 bg-cream/20 px-4 py-3" dir="rtl">
@@ -209,6 +235,19 @@ export default function ConversationGrader({ batchId }: Props) {
                   <p className={`mt-0.5 text-xs ${pl.tone === 'ok' ? 'text-emerald-700' : pl.tone === 'warn' ? 'text-amber-700' : 'text-charcoal/40'}`}>
                     <MapIcon className="inline" size={11} /> {pl.text}
                   </p>
+                  {(() => {
+                    const v = verifierByEvidence.get(it.id);
+                    if (!v) return null;
+                    if (v.verdict === 'right') {
+                      return <p className="mt-0.5 text-[11px] text-emerald-700">{isAr ? '✓ المراجع يوافق' : '✓ reviewer agrees'}</p>;
+                    }
+                    const kind = isAr ? VERIFIER_VERDICT_AR[v.verdict] : VERIFIER_VERDICT_EN[v.verdict];
+                    return (
+                      <p className="mt-0.5 text-[11px] text-amber-700" dir={isAr ? 'rtl' : 'ltr'}>
+                        {isAr ? `⚠ المراجع يشكّ (${kind})` : `⚠ reviewer doubts (${kind})`}{v.reason ? `: ${v.reason}` : ''}
+                      </p>
+                    );
+                  })()}
                   <div className="mt-2 grid grid-cols-3 gap-1.5">
                     <VerdictBtn active={it.my_verdict === 'right'} tone="ok" disabled={saving} onClick={() => void gradeMention(it, 'right')} icon={<Check size={14} />} label={isAr ? 'صحيح' : 'Right'} />
                     <VerdictBtn active={it.my_verdict === 'wrong'} tone="bad" disabled={saving} onClick={() => void gradeMention(it, 'wrong')} icon={<X size={14} />} label={isAr ? 'خطأ' : 'Wrong'} />
@@ -221,6 +260,12 @@ export default function ConversationGrader({ batchId }: Props) {
 
           {/* 3. The map */}
           <p className="mb-1 text-xs text-charcoal/50">{isAr ? '٣. ما وضعه الذكاء الاصطناعي على الخريطة الفعلية:' : '3. What the AI selected on the actual map:'}</p>
+          {verifier && verifier.missed.length > 0 && (
+            <p className="mb-1 text-xs text-amber-700">
+              {isAr ? '⚠ قد يكون فاته: ' : '⚠ may have missed: '}
+              {verifier.missed.map((m) => `«${m.span}»${m.reason ? ` (${m.reason})` : ''}`).join(isAr ? '، ' : ', ')}
+            </p>
+          )}
           <GeoPrefMap items={conv.proposal?.items ?? []} isAr={isAr} />
           {conv.proposal && conv.proposal.items.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">

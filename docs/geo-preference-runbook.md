@@ -145,6 +145,30 @@ fallback for calls with no diarized words. Calls are HATIF — not Retell.
    ids (e.g. `calib-001`) shows nothing — rebuild the batch from the new evidence.
 3. `auto_write_enabled` stays `false` throughout.
 
+## 2c. Running the VERIFIER on a batch (added 2026-09-27)
+
+The verifier (`api/_lib/geoPreference/verifier.ts`) is a second AI that re-reads
+each conversation next to its finished map and stores a per-mention opinion on
+the proposal (`geo_pref_proposals.verifier`). It is ADVISORY: it never changes
+the proposal, the gate, or a client record. The backfill runs it automatically
+after every proposal; to run it on an already-graded batch and measure how often
+it agrees with the human grades:
+
+1. Make sure the batch has REAL pending proposals (not `geo_data_version='stub'`
+   everywhere). If not, re-mint them WITHOUT re-extracting: delete the batch's
+   clients' `pending` proposals, then
+   `RUN_REREVIEW=1 CALIB_BATCH_ID=<batch> vitest run api/_lib/geoPreference/__tests__/runReReview.e2e.test.ts`.
+   **Never** use `runCalibration.e2e.test.ts` for this — re-extraction deletes the
+   graded evidence.
+2. `RUN_VERIFY=1 CALIB_BATCH_ID=<batch> vitest run api/_lib/geoPreference/__tests__/runVerify.e2e.test.ts --disableConsoleIntercept`
+   (the flag is what makes vitest print the table). One LLM call per
+   conversation; a conversation with no pending proposal is logged and skipped,
+   never given a new one.
+3. Read the printed table (human right/wrong × verifier right/not-right), the
+   disagreement lines, and `verifier status=error` — an error row is a check that
+   did NOT run (`overall='unknown'`), never an agreement. The results also show
+   in the conversation grader (`/geo-grade?batch=<id>&view=chat`).
+
 ## 2b. Curating a city zone (added 2026-09-21)
 
 1. Go to **Settings → City Zones** (`/settings/geo-zones`, admin only), pick the city, then the direction on the 3×3 compass — the badge says whether that zone is already «محدَّد» (curated) or «افتراضي» (coordinate default).

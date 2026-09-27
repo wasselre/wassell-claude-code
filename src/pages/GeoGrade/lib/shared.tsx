@@ -39,6 +39,18 @@ export interface LocationItemDTO {
   coordinates?: [number, number][];
 }
 
+/** The advisory verifier's second opinion on a proposal (api/_lib/geoPreference/verifier.ts). */
+export type VerifierVerdict = 'right' | 'wrong_place' | 'not_a_preference' | 'not_a_place' | 'wrong_polarity' | 'unsure';
+export interface VerifierResultDTO {
+  status: 'ok' | 'error';
+  /** 'unknown' = the check did not run (status 'error') — never read it as agreement. */
+  overall: 'agree' | 'doubt' | 'unknown';
+  mentions: Array<{ evidence_id: string; verdict: VerifierVerdict; reason: string }>;
+  missed: Array<{ span: string; reason: string }>;
+  error?: string;
+  model?: string;
+}
+
 export interface ConversationView {
   conversation_id: string;
   client_id: string;
@@ -52,6 +64,9 @@ export interface ConversationView {
     action: string;
     items: LocationItemDTO[];
     by_evidence: Record<string, Placement>;
+    /** null = never verified. */
+    verifier: VerifierResultDTO | null;
+    verifier_version: string | null;
   };
   map_verdict: Verdict | null;
 }

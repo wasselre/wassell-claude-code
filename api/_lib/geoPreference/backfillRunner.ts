@@ -12,7 +12,10 @@
  *      geo_pref_proposals. So a client with a call and a chat gets TWO proposals,
  *      each reviewable against its own transcript (by design — a chat review is
  *      separate from a call review).
- *   3. marks the job done, or failed (attempts already ++ by claim) on error.
+ *   3. when a proposal was produced, runs the optional ADVISORY verifier
+ *      (`deps.verify`), which stores a second AI's opinion on the proposal row
+ *      and never changes the proposal itself.
+ *   4. marks the job done, or failed (attempts already ++ by claim) on error.
  *
  * SAFETY BOUNDARY (why this is safe to run over real clients):
  *   - It NEVER contacts a customer. It only READS history and writes a
@@ -111,6 +114,13 @@ export interface BackfillDeps {
     evidence: Evidence[],
     relations: EvidenceRelation[],
   ): Promise<{ checkpointId: string; evidenceIds: string[]; idMap?: Record<string, string> }>;
+  /** ADVISORY verifier (verifier.ts): re-read the conversation next to the
+   *  finished proposal and store its per-mention opinion on the proposal row.
+   *  Never changes the proposal. A verifier that could not run must be STORED
+   *  as `{status:'error'}` by the port (and not thrown); only a failure to WRITE
+   *  that row may throw — it then fails the job, because a lost write is the
+   *  silent failure we refuse. Optional — a fake without it skips verification. */
+  verify?(conversation: Conversation, evidence: Evidence[], proposalId: string): Promise<void>;
   /** Optional structured logger. */
   log?(msg: string): void;
 }
@@ -164,7 +174,11 @@ export async function processBackfillJob(
       const result = await deps.runReviewFirst(evidence, relations, ctx, {
         proposals: deps.proposals,
       });
-      if (result.proposal !== null) hadProposal = true;
+      if (result.proposal !== null) {
+        hadProposal = true;
+        // Advisory second opinion on the map; see BackfillDeps.verify for the error contract.
+        if (deps.verify) await deps.verify(conversation, evidence, result.proposal.id);
+      }
       log(
         `[geo-backfill] client=${job.clientId} ${conversation.channel}=${conversation.id ?? '?'} ` +
           `decision=${result.decision} evidence=${evidence.length} proposal=${result.proposal ? result.proposal.id : 'none'}`,

@@ -22,35 +22,7 @@ import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { geoPreferenceToLocationItems } from './review.js';
 import type { GeoPreference } from '../_lib/geoPreference/ontology.js';
-
-const isUuid = (v: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-
-/** Per-mention placement from a compiled expression: `geo:<evidence id>` refs → recipe. */
-interface Placement { polarity: 'include' | 'exclude'; operation: string; element_ids: string[]; resolved: boolean; label: string; side?: string | null; clip_parts?: Array<{ name: string; kept: boolean; crossed: boolean; kept_km2: number | null; total_km2: number | null }> | null }
-function placementsByEvidence(expr: GeoPreference | null | undefined): Record<string, Placement> {
-  const out: Record<string, Placement> = {};
-  if (!expr || !Array.isArray(expr.groups)) return out;
-  for (const g of expr.groups) {
-    for (const c of g.clauses ?? []) {
-      for (const ref of c.anyOf ?? []) {
-        const eid = typeof ref.geometry_id === 'string' && ref.geometry_id.startsWith('geo:') ? ref.geometry_id.slice(4) : '';
-        const r = ref.recipe;
-        if (!eid || !r) continue;
-        const ids = Array.isArray(r.resolved_element_ids) ? r.resolved_element_ids.map(String) : [];
-        out[eid] = {
-          polarity: c.op === 'exclude' ? 'exclude' : 'include',
-          operation: String(r.operation ?? ''),
-          element_ids: ids,
-          resolved: r.geo_data_version !== 'stub' && ids.length > 0,
-          label: (Array.isArray(r.source_anchors) ? r.source_anchors : []).map((a) => a.span).filter(Boolean).join(' / '),
-          side: r.side ?? null,
-          clip_parts: r.clip_parts ? r.clip_parts.map((p) => ({ name: p.name, kept: p.kept, crossed: p.crossed, kept_km2: p.kept_km2, total_km2: p.total_km2 })) : null,
-        };
-      }
-    }
-  }
-  return out;
-}
+import { placementsByEvidence, isUuid, type Placement } from '../_lib/geoPreference/placementText.js';
 
 export const config = { runtime: 'edge' };
 
@@ -138,17 +110,17 @@ export default async function handler(req: Request): Promise<Response> {
         if (cpErr) return jsonError(500, `checkpoints read failed: ${cpErr.message}`);
         for (const c of cps ?? []) cpByConv.set(c.conversation_id as string, c.id as string);
       }
-      const propByCp = new Map<string, { id: string; proposed_action: string; expression: GeoPreference }>();
+      const propByCp = new Map<string, { id: string; proposed_action: string; expression: GeoPreference; verifier: unknown; verifier_version: string | null }>();
       const cpIds = [...cpByConv.values()];
       if (cpIds.length) {
         const { data: props, error: pErr } = await sb.from('geo_pref_proposals')
-          .select('id, checkpoint_id, proposed_action, proposed_expression, final_expression, status, created_at')
+          .select('id, checkpoint_id, proposed_action, proposed_expression, final_expression, status, created_at, verifier, verifier_version')
           .in('checkpoint_id', cpIds).order('created_at', { ascending: false });
         if (pErr) return jsonError(500, `proposals read failed: ${pErr.message}`);
         for (const p of props ?? []) {
           const cp = p.checkpoint_id as string;
           if (propByCp.has(cp)) continue; // newest wins
-          propByCp.set(cp, { id: p.id as string, proposed_action: p.proposed_action as string, expression: ((p.final_expression ?? p.proposed_expression) as GeoPreference) });
+          propByCp.set(cp, { id: p.id as string, proposed_action: p.proposed_action as string, expression: ((p.final_expression ?? p.proposed_expression) as GeoPreference), verifier: p.verifier ?? null, verifier_version: (p.verifier_version as string | null) ?? null });
         }
       }
       const districtIds = new Set<string>();
@@ -158,13 +130,14 @@ export default async function handler(req: Request): Promise<Response> {
         const first = rows[0]!;
         const cpId = cpByConv.get(cid) ?? null;
         const prop = cpId ? propByCp.get(cpId) : undefined;
-        let proposal: null | { id: string; action: string; items: ReturnType<typeof geoPreferenceToLocationItems>; by_evidence: Record<string, Placement> } = null;
+        let proposal: null | { id: string; action: string; items: ReturnType<typeof geoPreferenceToLocationItems>; by_evidence: Record<string, Placement>; verifier: unknown; verifier_version: string | null } = null;
         if (prop) {
           const items = geoPreferenceToLocationItems(prop.expression).filter((li) => li.kind !== 'district' || isUuid(li.district_id));
           const by_evidence = placementsByEvidence(prop.expression);
           for (const li of items) if (li.kind === 'district') districtIds.add(li.district_id);
           for (const pl of Object.values(by_evidence)) for (const id of pl.element_ids) { if (isUuid(id)) districtIds.add(id); else elementIds.add(id); }
-          proposal = { id: prop.id, action: prop.proposed_action, items, by_evidence };
+          // The advisory verifier's read of this map (null = never verified).
+          proposal = { id: prop.id, action: prop.proposed_action, items, by_evidence, verifier: prop.verifier, verifier_version: prop.verifier_version };
         }
         return {
           conversation_id: cid,

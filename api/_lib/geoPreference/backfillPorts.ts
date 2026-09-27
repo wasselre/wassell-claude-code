@@ -28,6 +28,8 @@ import type { GateConfig, WriteAction } from './gate.js';
 import type { SatUniverse } from './satisfiability.js';
 import type { Speaker, Evidence, EvidenceRelation, RelationMemberRef, GeoPreference, GeometryRecipe } from './ontology.js';
 import type { BackfillDeps, BackfillJob } from './backfillRunner.js';
+import { placementsByEvidence, placementElementIds, verifierMentionsFor, type PlaceName } from './placementText.js';
+import { verifyConversationMap, VERIFIER_VERSION, type VerifierResult } from './verifier.js';
 
 const randomUuid = (): string => globalThis.crypto.randomUUID();
 
@@ -407,7 +409,80 @@ export function createSupabaseProposalStore(supabase: SupabaseClient): ProposalS
   };
 }
 
-/** Assemble the full {@link BackfillDeps} against a service-role Supabase client. */
+/**
+ * Arabic names for a placement's element ids — the SAME lookups the grader does
+ * (simple-grade.ts): uuids → `districts` (name + city), anything else →
+ * `geo_elements.external_id` (roads, landmarks). A read failure throws.
+ */
+export async function loadPlaceNames(
+  supabase: SupabaseClient, districtIds: readonly string[], elementIds: readonly string[],
+): Promise<Record<string, PlaceName>> {
+  const names: Record<string, PlaceName> = {};
+  if (districtIds.length) {
+    const { data, error } = await supabase.from('districts').select('id, name_ar, city_name_ar').in('id', [...districtIds]);
+    if (error) throw new Error(`districts read failed: ${error.message}`);
+    for (const d of (data ?? []) as Array<{ id: string; name_ar: string | null; city_name_ar: string | null }>) {
+      names[d.id] = { name_ar: String(d.name_ar ?? ''), city: String(d.city_name_ar ?? '') };
+    }
+  }
+  if (elementIds.length) {
+    const { data, error } = await supabase.from('geo_elements').select('external_id, name_ar').in('external_id', [...elementIds]);
+    if (error) throw new Error(`geo_elements read failed: ${error.message}`);
+    for (const e of (data ?? []) as Array<{ external_id: string; name_ar: string | null }>) {
+      names[e.external_id] = { name_ar: String(e.name_ar ?? '') };
+    }
+  }
+  return names;
+}
+
+/**
+ * ADVISORY verifier port: read the proposal's map, render each mention as an
+ * Arabic sentence, ask the verifier (verifier.ts) and store its opinion on the
+ * proposal row (`verifier`, `verifier_version`, `verified_at`). Never touches
+ * `proposed_expression`, the status, or any client record.
+ *
+ * Error contract: anything that stops the CHECK (proposal read, name lookup,
+ * every LLM provider failing) is stored as `{status:'error', overall:'unknown'}`
+ * and logged — the job does not fail over an advisory opinion. A failure to
+ * WRITE the row throws: a result that silently never lands is the one failure
+ * we refuse.
+ */
+export async function verifyProposal(
+  supabase: SupabaseClient,
+  conversation: Conversation,
+  evidence: ReadonlyArray<Pick<Evidence, 'id' | 'mention_span' | 'preference_role'>>,
+  proposalId: string,
+  opts: { projectNames?: () => Promise<string[]>; log?: (msg: string) => void } = {},
+): Promise<VerifierResult> {
+  let result: VerifierResult;
+  try {
+    const { data: prop, error } = await supabase.from('geo_pref_proposals').select('proposed_expression').eq('id', proposalId).maybeSingle();
+    if (error) throw new Error(`proposal read failed: ${error.message}`);
+    if (!prop) throw new Error(`proposal ${proposalId} not found`);
+    const expr = prop.proposed_expression as GeoPreference;
+    const { districtIds, elementIds } = placementElementIds(placementsByEvidence(expr));
+    const names = await loadPlaceNames(supabase, districtIds, elementIds);
+    const mentions = verifierMentionsFor(evidence, expr, names);
+    const projectNames = opts.projectNames ? await opts.projectNames() : [];
+    result = await verifyConversationMap({ conversation, mentions, projectNames });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    result = { status: 'error', overall: 'unknown', mentions: [], missed: [], error: msg };
+  }
+  if (result.status === 'error') {
+    opts.log?.(`[geo-verify] proposal=${proposalId} verifier could not run: ${result.error ?? 'unknown error'}`);
+    console.error(`[geo-verify] proposal=${proposalId} verifier could not run:`, result.error);
+  }
+  const { data: written, error: wErr } = await supabase
+    .from('geo_pref_proposals')
+    .update({ verifier: result, verifier_version: VERIFIER_VERSION, verified_at: new Date().toISOString() })
+    .eq('id', proposalId)
+    .select('id');
+  if (wErr) throw new Error(`geo_pref_proposals verifier write failed: ${wErr.message}`);
+  if (!written || written.length === 0) throw new Error(`geo_pref_proposals verifier write matched no row (id=${proposalId})`);
+  return result;
+}
+
 /**
  * OUR project names, reduced to guard "heads" (projectGuard.ts): every
  * all_projects name, paged in full (never a silent cap), minus any head that is
@@ -439,6 +514,7 @@ export async function loadProjectHeads(supabase: SupabaseClient): Promise<string
   return deriveProjectHeads(names, districts);
 }
 
+/** Assemble the full {@link BackfillDeps} against a service-role Supabase client. */
 export function makeSupabaseBackfillDeps(
   supabase: SupabaseClient,
   workerId: string,
@@ -507,6 +583,10 @@ export function makeSupabaseBackfillDeps(
     proposals,
     persistExtraction: (clientId, conversation, evidence, relations) =>
       persistExtraction(supabase, clientId, conversation, evidence, relations),
+    async verify(conversation, evidence, proposalId): Promise<void> {
+      const r = await verifyProposal(supabase, conversation, evidence, proposalId, { projectNames: projectHeads, log: opts.log });
+      opts.log?.(`[geo-verify] proposal=${proposalId} status=${r.status} overall=${r.overall} doubts=${r.mentions.filter((m) => m.verdict !== 'right').length} missed=${r.missed.length}`);
+    },
     log: opts.log,
   };
 }

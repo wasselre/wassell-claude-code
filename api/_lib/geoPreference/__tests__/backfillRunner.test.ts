@@ -271,6 +271,71 @@ describe('geo backfill — processing', () => {
     }
   });
 
+  it('verify: called once per proposal with that conversation + its evidence', async () => {
+    const queue = new FakeQueue();
+    const store = new FakeProposalStore();
+    const calls: Array<{ conv: string | undefined; evidence: number; proposalId: string }> = [];
+    const chat2: Conversation = { channel: 'chat', id: 'wid-2', turns: [{ speaker: 'client', text: 'عندكم فلل بالنرجس؟', timestamp: '2026-09-04T10:00:00Z', ref: 'm-2' }] };
+    const deps: BackfillDeps = {
+      ...wireDeps({ queue, store, history: { two: [...goodHistory('two'), chat2] } }),
+      persistExtraction: async (_c, conversation, evidence) => ({ checkpointId: `cp-${conversation.id}`, evidenceIds: evidence.map((e) => e.id) }),
+      verify: async (conversation, evidence, proposalId) => { calls.push({ conv: conversation.id, evidence: evidence.length, proposalId }); },
+    };
+    queue.enqueue('run-v', ['two']);
+    const result = await runBackfillBatch(deps, { runId: 'run-v' });
+    expect(result).toMatchObject({ done: 1, failed: 0, proposals: 1 });
+    expect(store.rows).toHaveLength(2);
+    expect(calls).toEqual([
+      { conv: '9665two@c.us', evidence: 1, proposalId: store.rows[0]!.id },
+      { conv: 'wid-2', evidence: 1, proposalId: store.rows[1]!.id },
+    ]);
+  });
+
+  it('verify: skipped when the conversation produced no proposal', async () => {
+    const queue = new FakeQueue();
+    const store = new FakeProposalStore();
+    let verifyCalls = 0;
+    const deps: BackfillDeps = {
+      // No stub token in the text ⇒ no evidence ⇒ gate ignore ⇒ no proposal.
+      ...wireDeps({ queue, store, history: { quiet: [{ channel: 'chat', id: 'wid-q', turns: [{ speaker: 'client', text: 'السلام عليكم', ref: 'q1' }] }] } }),
+      verify: async () => { verifyCalls += 1; },
+    };
+    queue.enqueue('run-vq', ['quiet']);
+    const result = await runBackfillBatch(deps, { runId: 'run-vq' });
+    expect(result).toMatchObject({ done: 1, failed: 0, proposals: 0 });
+    expect(verifyCalls).toBe(0);
+  });
+
+  it('verify: a verifier that could not run (status error, stored by the port) does NOT fail the job', async () => {
+    const queue = new FakeQueue();
+    const store = new FakeProposalStore();
+    const stored: Array<{ proposalId: string; status: string; overall: string }> = [];
+    const deps: BackfillDeps = {
+      ...wireDeps({ queue, store }),
+      // The port's contract: every provider failed → store {status:'error', overall:'unknown'} and return.
+      verify: async (_conv, _ev, proposalId) => { stored.push({ proposalId, status: 'error', overall: 'unknown' }); },
+    };
+    queue.enqueue('run-ve', ['c1']);
+    const result = await runBackfillBatch(deps, { runId: 'run-ve' });
+    expect(result).toMatchObject({ done: 1, failed: 0, proposals: 1 });
+    expect(stored).toEqual([{ proposalId: store.rows[0]!.id, status: 'error', overall: 'unknown' }]);
+    expect(queue.byStatus().done).toBe(1);
+  });
+
+  it('verify: a failure to WRITE the verifier result fails the job (no silent loss)', async () => {
+    const queue = new FakeQueue();
+    const store = new FakeProposalStore();
+    const deps: BackfillDeps = {
+      ...wireDeps({ queue, store }),
+      verify: async () => { throw new Error('geo_pref_proposals verifier write failed: permission denied'); },
+    };
+    queue.enqueue('run-vw', ['c1']);
+    const job = queue.claimNext('run-vw')!;
+    const outcome = await processBackfillJob(deps, job);
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error).toContain('verifier write failed');
+  });
+
   it('a client with no history completes without a proposal', async () => {
     const queue = new FakeQueue();
     const store = new FakeProposalStore();
