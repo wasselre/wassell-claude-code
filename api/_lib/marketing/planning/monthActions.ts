@@ -375,43 +375,165 @@ export function monthGrid(compiled: CompiledMonth, projects: MonthProject[]): Mo
   }));
 }
 
+/** One of the month's own live bookings, as the re-plan needs to see it. */
+export interface OwnBooking {
+  id: string;
+  content_id: string | null;
+  row_id: string | null;
+  /** The item key (a creative) or row key (a row) the plan names it by. */
+  content_key: string | null;
+}
+
 /**
- * The month's OWN unstarted bookings — reservations of its live plans that no
- * task has consumed yet. A re-plan of a confirmed month must not count them as
- * occupied capacity: the commit retires them or re-dates them (carry-forward,
- * `mos_plan_resolve_carry` / `mos_retire_superseded`), so the preview has to
- * compile against STARTED work only — exactly what the commit's own capacity
- * check sees after the retire. Without this, the second compile of a month
- * found every day already full with the bookings it was about to replace
- * (2026-09-22). Assigned tasks stay in the ledger: they keep their dates.
+ * The month's OWN not-yet-assigned bookings — reservations of its live plans
+ * in `reserved` / `stale` / `bound`. A re-plan must not count most of them
+ * as occupied capacity: the commit retires them or re-dates them
+ * (`mos_retire_superseded` 1a / `mos_plan_resolve_carry`), so counting them
+ * made the second compile of a month find every day already full with the
+ * bookings it was about to replace (2026-09-22). The exception — bookings the
+ * commit KEEPS where they are — is decided in `compile` (2026-09-27).
+ * Assigned (consumed) bookings are not listed: their tasks stay in the ledger
+ * and keep their dates.
  */
-async function ownUnstartedReservationIds(
+async function ownLiveBookings(
   ctx: PlanCtx, month: string,
-): Promise<{ ids: Set<string> } | { error: Response }> {
+): Promise<{ rows: OwnBooking[] } | { error: Response }> {
   const svc = ctx.svc ?? ctx.sb;
   const camps = await loadMonthCampaigns(svc, month);
   if (camps.error) return { error: fail('mos_campaigns', { message: camps.error }) };
-  if (camps.campaigns.length === 0) return { ids: new Set() };
+  if (camps.campaigns.length === 0) return { rows: [] };
   const plans = await svc.from('mos_campaign_plans').select('id')
     .in('campaign_id', camps.campaigns.map((c) => c.id)).in('status', ['proposed', 'approved']);
   if (plans.error) return { error: fail('mos_campaign_plans', plans.error) };
   const planIds = ((plans.data ?? []) as Array<{ id: string }>).map((p) => p.id);
-  if (planIds.length === 0) return { ids: new Set() };
-  const res = await svc.from('mos_task_reservations').select('id')
+  if (planIds.length === 0) return { rows: [] };
+  const res = await svc.from('mos_task_reservations').select('id, content_id, row_id, content_key', { count: 'exact' })
     .in('plan_id', planIds).in('status', ['reserved', 'stale', 'bound']);
   if (res.error) return { error: fail('mos_task_reservations', res.error) };
-  return { ids: new Set(((res.data ?? []) as Array<{ id: string }>).map((r) => r.id)) };
+  const rows = (res.data ?? []) as OwnBooking[];
+  // A short page would put real bookings back into "free" capacity. Refuse.
+  if ((res.count ?? rows.length) !== rows.length) {
+    return { error: fail('mos_task_reservations', { message: `read ${rows.length} of ${res.count} bookings` }) };
+  }
+  return { rows };
 }
 
 /**
- * The month's paid batches whose production is ALREADY UNDERWAY, per project
- * (2026-09-22): every refresh cycle of the month's paid campaigns whose batch
- * day is on or before `startFrom` — nothing can be produced for it any more,
- * and its creatives exist with their own bookings (the launch designs due
- * today). The planner keeps the round but plans nothing new for it; a later
- * batch that has merely STARTED (its writing handed out) is still planned in
- * full — the commit keeps the started steps' dates and re-dates the rest.
+ * Which of these subjects (content items or rows) somebody has STARTED — the
+ * same test as SQL `mos_subject_started`: a task done, or open in someone's
+ * hands. Keep the two identical; the commit decides what to keep with the SQL
+ * one, and a re-plan that disagrees with it counts the wrong capacity.
  */
+async function startedSubjectIds(
+  ctx: PlanCtx, ids: readonly string[],
+): Promise<{ ids: Set<string> } | { error: Response }> {
+  const started = new Set<string>();
+  const uniq = Array.from(new Set(ids.filter(Boolean)));
+  if (uniq.length === 0) return { ids: started };
+  const svc = ctx.svc ?? ctx.sb;
+  // Batched: a month holds a few hundred subjects, and one long `in` list is a long URL.
+  for (let i = 0; i < uniq.length; i += 100) {
+    const chunk = uniq.slice(i, i + 100);
+    const tasks = await svc.from('workflow_role_tasks').select('subject_id', { count: 'exact' })
+      .in('subject_id', chunk)
+      .or('status.eq.done,and(status.eq.open,assignee_user_id.not.is.null)');
+    if (tasks.error) return { error: fail('workflow_role_tasks', tasks.error) };
+    const rows = (tasks.data ?? []) as Array<{ subject_id: string }>;
+    if ((tasks.count ?? rows.length) !== rows.length) {
+      return { error: fail('workflow_role_tasks', { message: `read ${rows.length} of ${tasks.count} tasks` }) };
+    }
+    for (const r of rows) started.add(r.subject_id);
+  }
+  return { ids: started };
+}
+
+/**
+ * The subject keys a compiled month NAMES — what `mos_plan_resolve_carry`
+ * matches existing bookings against: a row by its row key, a creative (or any
+ * loose item) by its item key. A started subject missing from this set keeps
+ * its bookings where they are (`mos_retire_superseded` 1a').
+ */
+export function namedSubjectKeys(compiled: CompiledMonth): Set<string> {
+  const keys = new Set<string>();
+  for (const plan of compiled.plans) {
+    for (const row of plan.rows) keys.add(row.rowKey);
+    for (const it of plan.items) if (!it.rowKey) keys.add(it.key);
+  }
+  return keys;
+}
+
+/**
+ * The own bookings a re-plan's commit KEEPS where they are: a STARTED subject
+ * (`startedIds`, the `mos_subject_started` test) that the new plan does not
+ * name. They stay in the ledger the planner reads — see `compile`. Pure;
+ * exported for its test.
+ */
+export function keptBookingIds(
+  own: readonly OwnBooking[], startedIds: ReadonlySet<string>, named: ReadonlySet<string>,
+): Set<string> {
+  return new Set(own
+    .filter((r) => startedIds.has(r.content_id ?? r.row_id ?? '') && !named.has(r.content_key ?? ''))
+    .map((r) => r.id));
+}
+
+/**
+ * Which of a month's paid batches are ALREADY UNDERWAY, per project — the
+ * batches a re-plan FREEZES (round kept so numbering stays stable, nothing new
+ * produced). Pure; `frozenPaidBatchDays` does the reads. Exported for its test.
+ *
+ * A batch is underway when either holds:
+ *
+ *   • its batch day is on or before `startFrom` (2026-09-22) — nothing can be
+ *     produced for it any more (the launch designs due that day);
+ *   • EVERY live slot of it holds a creative somebody has STARTED (2026-09-27)
+ *     — "started" is `mos_subject_started`: a task done, or open in someone's
+ *     hands. Found re-planning September on the 27th: the 29 Sep batch had all
+ *     fifteen creatives written and in design, but its day was still ahead, so
+ *     the planner produced it a SECOND time from scratch, found no designer
+ *     time left before the 28th for work that was already on سارة's desk
+ *     (capacity_bound), and refused all 75 ad creatives of the month.
+ *
+ * Freezing is safe exactly because every creative is started: the commit's
+ * `mos_retire_superseded` (1a') adopts a started subject's bookings with their
+ * dates untouched, and the batch's cycle row and slots are reused as they are.
+ * A batch only PARTLY started is deliberately NOT frozen — freezing it would
+ * retire its unstarted creatives' bookings (1a) and skip their open tasks (1b),
+ * leaving content with no production plan. It is still planned in full, as
+ * before; a batch that is partly started AND due within days can still make a
+ * re-plan refuse, and says so loudly (`month_unscheduled_work`).
+ */
+export function underwayPaidBatchDays(args: {
+  startFrom: string;
+  cycles: ReadonlyArray<{ id: string; execution_id: string; refresh_on: string | null }>;
+  projectByExec: ReadonlyMap<string, string | null>;
+  /** Live slots only (`retired_at IS NULL`). */
+  slots: ReadonlyArray<{ cycle_id: string | null; content_id: string | null }>;
+  startedContentIds: ReadonlySet<string>;
+}): Record<string, string[]> {
+  const byCycle = new Map<string, Array<string | null>>();
+  for (const s of args.slots) {
+    if (!s.cycle_id) continue;
+    const list = byCycle.get(s.cycle_id) ?? [];
+    list.push(s.content_id);
+    byCycle.set(s.cycle_id, list);
+  }
+  const frozen: Record<string, string[]> = {};
+  for (const cy of args.cycles) {
+    const projectId = args.projectByExec.get(cy.execution_id);
+    if (!projectId || !cy.refresh_on) continue;
+    const dayPassed = cy.refresh_on <= args.startFrom;
+    const contents = byCycle.get(cy.id) ?? [];
+    const allStarted = contents.length > 0
+      && contents.every((c) => c !== null && args.startedContentIds.has(c));
+    if (!dayPassed && !allStarted) continue;
+    const list = frozen[projectId] ?? [];
+    if (!list.includes(cy.refresh_on)) list.push(cy.refresh_on);
+    frozen[projectId] = list;
+  }
+  return frozen;
+}
+
+/** The reads behind `underwayPaidBatchDays` — see there for the rule. */
 async function frozenPaidBatchDays(
   ctx: PlanCtx, month: string, startFrom: string | null,
 ): Promise<{ frozen: Record<string, string[]> } | { error: Response }> {
@@ -426,19 +548,38 @@ async function frozenPaidBatchDays(
   if (execs.error) return { error: fail('mos_campaign_executions', execs.error) };
   const execRows = (execs.data ?? []) as Array<{ id: string; campaign_id: string }>;
   if (execRows.length === 0) return { frozen: {} };
-  const cycles = await svc.from('mos_refresh_cycles').select('execution_id, refresh_on')
-    .in('execution_id', execRows.map((e) => e.id)).lte('refresh_on', startFrom);
+  // Every round: a batch still ahead can be underway too (see the rule).
+  const cycles = await svc.from('mos_refresh_cycles').select('id, execution_id, refresh_on')
+    .in('execution_id', execRows.map((e) => e.id));
   if (cycles.error) return { error: fail('mos_refresh_cycles', cycles.error) };
-  const projectByExec = new Map(execRows.map((e) => [e.id, paid.find((c) => c.id === e.campaign_id)?.project_id ?? null]));
-  const frozen: Record<string, string[]> = {};
-  for (const cy of (cycles.data ?? []) as Array<{ execution_id: string; refresh_on: string | null }>) {
-    const projectId = projectByExec.get(cy.execution_id);
-    if (!projectId || !cy.refresh_on) continue;
-    const list = frozen[projectId] ?? [];
-    if (!list.includes(cy.refresh_on)) list.push(cy.refresh_on);
-    frozen[projectId] = list;
+  const cycleRows = (cycles.data ?? []) as Array<{ id: string; execution_id: string; refresh_on: string | null }>;
+
+  // Slots and started-ness are only needed for batches whose day is still ahead.
+  const ahead = cycleRows.filter((c) => c.refresh_on !== null && c.refresh_on > startFrom).map((c) => c.id);
+  let slotRows: Array<{ cycle_id: string | null; content_id: string | null }> = [];
+  const started = new Set<string>();
+  if (ahead.length > 0) {
+    const slots = await svc.from('mos_creative_slots').select('cycle_id, content_id', { count: 'exact' })
+      .in('cycle_id', ahead).is('retired_at', null);
+    if (slots.error) return { error: fail('mos_creative_slots', slots.error) };
+    slotRows = (slots.data ?? []) as typeof slotRows;
+    // A short page would make a batch look less started than it is — and
+    // "not frozen" is the answer that plans work twice. Refuse instead.
+    if ((slots.count ?? slotRows.length) !== slotRows.length) {
+      return { error: fail('mos_creative_slots', { message: `read ${slotRows.length} of ${slots.count} slots` }) };
+    }
+    const contentIds = slotRows.map((s) => s.content_id).filter((c): c is string => Boolean(c));
+    const s = await startedSubjectIds(ctx, contentIds);
+    if ('error' in s) return { error: s.error };
+    for (const id of s.ids) started.add(id);
   }
-  return { frozen };
+
+  const projectByExec = new Map(execRows.map((e) => [e.id, paid.find((c) => c.id === e.campaign_id)?.project_id ?? null]));
+  return {
+    frozen: underwayPaidBatchDays({
+      startFrom, cycles: cycleRows, projectByExec, slots: slotRows, startedContentIds: started,
+    }),
+  };
 }
 
 /** Compile one month against the LIVE workload. Pure read — writes nothing. */
@@ -456,21 +597,52 @@ export async function compile(
   } catch (e) {
     return { error: fail('snapshot/rules', { message: e instanceof Error ? e.message : String(e) }) };
   }
-  const own = await ownUnstartedReservationIds(ctx, month);
+  const own = await ownLiveBookings(ctx, month);
   if ('error' in own) return { error: own.error };
-  if (own.ids.size > 0) {
-    snapshot = {
-      ...snapshot,
-      ledger: snapshot.ledger.filter((r) => !(r.source === 'reservation' && r.refId !== null && own.ids.has(r.refId))),
-    };
-  }
   const frozen = await frozenPaidBatchDays(ctx, month, startFrom);
   if ('error' in frozen) return { error: frozen.error };
+  const started = await startedSubjectIds(ctx, own.rows.map((r) => r.content_id ?? r.row_id ?? ''));
+  if ('error' in started) return { error: started.error };
   const base: RuleSet = rules ?? DEFAULT_RULES;
-  const compiled = compileMonth({
-    month, template, projects, snapshot, rules: base, startFrom,
-    frozenPaidBatchDays: frozen.frozen,
-  });
+
+  /*
+   * THE BOOKINGS THE COMMIT KEEPS STAY IN THE LEDGER (2026-09-27).
+   *
+   * Every own not-yet-assigned booking used to be dropped from the ledger,
+   * on the reasoning that the commit retires or re-dates it. Not all of them:
+   * a STARTED subject the new plan does not name — a creative of a frozen
+   * batch, a row whose posting day has passed — keeps every booking it holds,
+   * dates untouched (`mos_retire_superseded` 1a'). Dropping those told the
+   * planner that time was free when it was not; on the 27th the database's
+   * own capacity guard refused the re-plan for exactly that (the 29 Sep
+   * batch's design checks and final approvals, still booked on the 28th).
+   *
+   * Which subjects the plan names is only known after compiling, so: compile
+   * without them, keep the started ones the result does not name, compile
+   * again, until the kept set stops changing. Named subjects come from the
+   * geometry and the refresh forecast, not from capacity, so this settles on
+   * the second pass; a third that still moves is refused rather than guessed.
+   */
+  const ownIds = new Set(own.rows.map((r) => r.id));
+  let kept = new Set<string>();
+  let compiled: CompiledMonth | null = null;
+  for (let pass = 0; pass < 3; pass += 1) {
+    const ledger = snapshot.ledger.filter((r) => !(r.source === 'reservation' && r.refId !== null
+      && ownIds.has(r.refId) && !kept.has(r.refId)));
+    const out = compileMonth({
+      month, template, projects, snapshot: { ...snapshot, ledger }, rules: base, startFrom,
+      frozenPaidBatchDays: frozen.frozen,
+    });
+    const next = keptBookingIds(own.rows, started.ids, namedSubjectKeys(out));
+    if (next.size === kept.size && Array.from(next).every((id) => kept.has(id))) {
+      compiled = out;
+      break;
+    }
+    kept = next;
+  }
+  if (!compiled) {
+    return { error: fail('compile', { message: 'the bookings a re-plan keeps did not settle in three passes' }) };
+  }
   return { compiled, rules: base };
 }
 

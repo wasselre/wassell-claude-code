@@ -72,3 +72,28 @@ The operator's verdict on the table above: **«tasks should be booked as early a
 **What the September re-plan looks like now** (steps per day, 22 Sep → 19 Oct, then nothing): Tue 22: 6 · Wed 23: 15 · Thu 24: 15 · Sat 26: 31 · Sun 27: 33 · Mon 28: 24 · Tue 29: 21 · Wed 30: 21 · Thu 1: 25 · Sat 3: 37 · Sun 4: 23 · Mon 5: 17 · Tue 6: 11 · Wed 7: 21 · Thu 8: 31 · Sat 10: 37 · Sun 11: 17 · Mon 12: 5 · Tue 13: 5 · Thu 15: 31 · Sat 17: 37 · Sun 18: 17 · Mon 19: 5. The designer is at 7/7 every working day from the 22nd to 11 Oct and the writer at 10/10 on most of them; the month's production finishes **19 Oct instead of 29 Oct**, and 20–31 Oct carry only publishing. The gaps (Wed 14 Oct, the light Mon/Tue of weeks 4–5) are the lead window: nothing may start more than ten working days before it is needed. A longer `lead_time_working_days` in the month template starts work earlier still; that is the operator's knob, not a code change.
 
 **Rehearsed again on production** (rolled back): `ok`, 4 plans, `reservations_kept` 110 + 125 + 125 + 125, `adopted` 5 + 10 + 10 + 10, `retired` 0, `tasks_closed` 0, nothing created, open tasks 21 assigned + 3 unassigned before and after (the live state at that hour), `mos_assert_ledger_conformance()` = 0.
+
+
+## The September re-plan — 2026-09-27
+
+The operator asked to re-plan September. From that day the re-plan was refused twice, each time before anything was written:
+
+1. **The 29 Sep ad batch was planned a second time.** All fifteen of its creatives were written and in design, but a batch was frozen only when its day had passed. The planner produced it again from scratch, found no designer time before the 28th for work already on سارة's desk, and every ad creative of the month came back unscheduled. Fix: a batch whose every live slot holds a started creative is frozen too. A partly-started batch is not, since freezing it would retire its unstarted creatives' bookings and skip their open tasks.
+2. **The planner did not count what the commit keeps.** It dropped every own not-yet-assigned booking from the ledger, but the commit keeps a started item's bookings where they are when the new plan does not name it. The database's capacity guard caught the double booking on the 28th in a rolled-back rehearsal. Fix: those bookings stay in the ledger; the compile settles the kept set over at most three passes.
+
+Then the re-plan was rehearsed on production in a rolled-back transaction and committed for real through `monthConfirm` itself, with the operator as the actor (the month page has no re-plan button for a confirmed month):
+
+| | Result |
+|---|---|
+| Plans | 4 new approved, the 20 Sep ones superseded |
+| Live bookings | 520 before, 520 after; 367 re-dated, all earlier; 0 lost; 0 new |
+| Open tasks | 33; none closed; no assignee or assigned deadline changed; 14 unassigned planned deadlines moved earlier (the 6 Oct batch's writing) |
+| 29 Sep batch | 75 bookings kept with their dates; 15 slots still go live on 29 Sep |
+| Organic | 19 rows (57 posts) from 29 Sep; the rows for 22–27 Sep keep their bookings |
+| Ads | 60 new creatives (the 6, 13, 20 and 27 Oct batches) |
+| Ledger conformance | 0 |
+| Meta | campaigns already linked; nothing changed |
+
+From 28 Sep nobody is booked over capacity. The 27th itself is over for three people, but that is backlog already on their desks, and the plan adds nothing new that day.
+
+Known gap, not fixed: a batch that is only PARTLY started and due within a few days is still planned in full, so its started creatives are counted twice and a re-plan can be refused. It refuses loudly (`month_unscheduled_work`); it never writes a wrong plan.
