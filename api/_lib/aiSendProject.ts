@@ -41,7 +41,7 @@ const WA_TEMP_BUCKET = 'wassel-files';
  *  the queue drips text → brochure → photo1 → photo2… single-file. Kept above
  *  the worker's ~3s poll (same value the bulk rep flow uses). */
 const SPACING_MS = 4_000;
-const SEND_PROJECT_PHOTOS_AND_VIDEOS = false; // operator 2026-09-15: bot sends the brochure ONLY (no photos/videos) until turned back on
+const SEND_PROJECT_PHOTOS_AND_VIDEOS = true; // operator 2026-09-27: ON — bot sends the template's brochure + top-3 photos + longest video (any origin), all by reference; templates are auto-built by api/cron/build-project-templates
 
 export interface AiSendProjectResult {
   /** True when the text was accepted into the send queue. */
