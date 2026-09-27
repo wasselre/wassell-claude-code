@@ -247,24 +247,31 @@ async function readEvidenceRows(supabase: SupabaseClient, clientId: string, chat
   return [...rows].sort((a, b) => (pos.get(s(a.id)) ?? Number.MAX_SAFE_INTEGER) - (pos.get(s(b.id)) ?? Number.MAX_SAFE_INTEGER));
 }
 
-/** Number of INBOUND (customer) text messages in the chat. A read error throws. */
+/**
+ * PostgREST filter: a message with text — a non-empty body OR a voice note's
+ * transcript (chat_messages.transcript, filled by the inbound-media worker).
+ * A NULL column fails `neq`, so NULLs are excluded without a separate test.
+ */
+export const CUSTOMER_TEXT_FILTER = 'body.neq."",transcript.neq.""';
+
+/** Number of INBOUND (customer) text messages (incl. transcribed voice notes) in the chat. A read error throws. */
 async function readCustomerMessageCount(supabase: SupabaseClient, chatWid: string): Promise<number> {
   const { count, error } = await supabase
     .from('chat_messages')
     .select('id', { count: 'exact', head: true })
     .eq('chat_wid', chatWid).eq('flow', 'in')
-    .not('body', 'is', null).neq('body', '');
+    .or(CUSTOMER_TEXT_FILTER);
   if (error) throw new Error(`chat card: chat_messages count failed: ${error.message}`);
   return count ?? 0;
 }
 
-/** Date of the newest INBOUND (customer) message with text; null when none. */
+/** Date of the newest INBOUND (customer) message with text (or a transcribed voice note); null when none. */
 async function readNewestCustomerMessageAt(supabase: SupabaseClient, chatWid: string): Promise<string | null> {
   const { data, error } = await supabase
     .from('chat_messages')
     .select('date')
     .eq('chat_wid', chatWid).eq('flow', 'in')
-    .not('body', 'is', null).neq('body', '')
+    .or(CUSTOMER_TEXT_FILTER)
     .order('date', { ascending: false }).limit(1).maybeSingle();
   if (error) throw new Error(`chat card: chat_messages read failed: ${error.message}`);
   return (data?.date as string | null | undefined) ?? null;
@@ -361,7 +368,7 @@ async function restorePending(supabase: SupabaseClient, ids: string[]): Promise<
 }
 
 /** Is this chat (by wid) linked to this client? Distinguishes "not yours" from "nothing to read". */
-async function chatLinkedToClient(supabase: SupabaseClient, clientId: string, chatWid: string): Promise<boolean> {
+export async function chatLinkedToClient(supabase: SupabaseClient, clientId: string, chatWid: string): Promise<boolean> {
   const { data: model, error: mErr } = await supabase.from('models').select('id').eq('name', 'chats').maybeSingle();
   if (mErr) throw new Error(`chat card: models read failed: ${mErr.message}`);
   if (!model?.id) return false;
@@ -444,6 +451,8 @@ export async function loadChatCard(
 export interface AnalyzeOptions {
   /** Injected pipeline (tests); default = makeSupabaseBackfillDeps(supabase, …). */
   deps?: BackfillDeps;
+  /** The already-gathered conversation (the chat auto-read gathers it once for both agents). */
+  conversation?: Conversation | null;
   workerId?: string;
   log?: (msg: string) => void;
   now?: () => Date;
@@ -478,7 +487,8 @@ export async function analyzeChatConversation(
     return { ...current, mode: 'skipped_recent' };
   }
 
-  const conversation = (await deps.gatherConversations(clientId)).find((c) => c.id === chatWid && c.turns.length > 0);
+  const given = opts.conversation && opts.conversation.id === chatWid && opts.conversation.turns.length > 0 ? opts.conversation : null;
+  const conversation = given ?? (await deps.gatherConversations(clientId)).find((c) => c.id === chatWid && c.turns.length > 0);
   if (!conversation) {
     if (await chatLinkedToClient(supabase, clientId, chatWid)) {
       throw new ChatCardError(422, 'the customer has not written anything in this chat yet — there is nothing to read');

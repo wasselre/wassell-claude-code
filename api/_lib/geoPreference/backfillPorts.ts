@@ -205,6 +205,50 @@ function transcriptToTurns(text: string, timestamp: string, callRecordId: string
   return out;
 }
 
+/** The customer-line prefix for a transcribed inbound voice note (the prefs prompt names it too). */
+export const VOICE_NOTE_PREFIX = '(رسالة صوتية)';
+
+/**
+ * ONE WhatsApp thread → a chat {@link Conversation}, or null when the customer
+ * never wrote in it (agent-only broadcast — nothing to interpret).
+ *
+ * The NEWEST {@link MAX_MESSAGES_PER_CHAT} messages are read (ordered
+ * descending, limited, then put back in chronological order): an ascending
+ * `.limit()` keeps the OLDEST ones, so on a long chat the customer's latest
+ * messages — the ones a fresh reading exists for — were never seen.
+ *
+ * An inbound voice note with a transcript (chat_messages.transcript, filled by
+ * the inbound-media worker) is a customer text line «(رسالة صوتية) <text>».
+ * A read error THROWS — never "this chat is empty".
+ */
+export async function gatherChatConversation(supabase: SupabaseClient, wid: string): Promise<Conversation | null> {
+  const { data: msgs, error } = await supabase
+    .from('chat_messages')
+    .select('id, flow, kind, body, transcript, date')
+    .eq('chat_wid', wid)
+    .order('date', { ascending: false })
+    .limit(MAX_MESSAGES_PER_CHAT);
+  if (error) throw new Error(`gather: chat_messages read for ${wid} failed: ${error.message}`);
+  const rows = [...((msgs ?? []) as Array<{
+    id: string; flow: string | null; kind: string | null; body: string | null; transcript: string | null; date: string | null;
+  }>)].reverse();
+  const turns: ConversationTurn[] = [];
+  for (const m of rows) {
+    const speaker: Speaker = m.flow === 'in' ? 'client' : 'agent';
+    const body = asStr(m.body);
+    if (body) {
+      turns.push({ speaker, text: body, timestamp: asStr(m.date), ref: m.id });
+      continue;
+    }
+    const transcript = asStr(m.transcript);
+    if (m.flow === 'in' && m.kind === 'audio' && transcript) {
+      turns.push({ speaker: 'client', text: `${VOICE_NOTE_PREFIX} ${transcript}`, timestamp: asStr(m.date), ref: m.id });
+    }
+  }
+  if (!turns.some((t) => t.speaker === 'client')) return null; // agent-only thread — nothing to interpret
+  return { channel: 'chat', id: wid, turns: turns.slice(0, MAX_TURNS_PER_CONVERSATION) };
+}
+
 /**
  * Gather a client's history as SEPARATE conversations — one per phone call and
  * one per WhatsApp thread — each on its own channel with its real id, ordered
@@ -228,21 +272,8 @@ export async function gatherClientConversations(
   const chatRecs = await linkedRecords(supabase, 'chats', clientId);
   const wids = Array.from(new Set(chatRecs.map((r) => asStr(r.data.wid)).filter(Boolean)));
   for (const wid of wids) {
-    const { data: msgs, error } = await supabase
-      .from('chat_messages')
-      .select('id, flow, body, date')
-      .eq('chat_wid', wid)
-      .order('date', { ascending: true })
-      .limit(MAX_MESSAGES_PER_CHAT);
-    if (error) throw new Error(`gather: chat_messages read for ${wid} failed: ${error.message}`);
-    const turns: ConversationTurn[] = [];
-    for (const m of (msgs ?? []) as Array<{ id: string; flow: string | null; body: string | null; date: string | null }>) {
-      const body = asStr(m.body);
-      if (!body) continue;
-      turns.push({ speaker: m.flow === 'in' ? 'client' : 'agent', text: body, timestamp: asStr(m.date), ref: m.id });
-    }
-    if (!turns.some((t) => t.speaker === 'client')) continue; // agent-only thread — nothing to interpret
-    out.push({ channel: 'chat', id: wid, turns: turns.slice(0, MAX_TURNS_PER_CONVERSATION) });
+    const conversation = await gatherChatConversation(supabase, wid);
+    if (conversation) out.push(conversation);
   }
 
   // ── Calls: one conversation per phone_calls transcript ──

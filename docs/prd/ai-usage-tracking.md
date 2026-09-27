@@ -1,7 +1,7 @@
 # PRD: AI Usage, Cost & Credit Tracking
 
 **Status:** Live
-**Last updated:** 2026-09-27
+**Last updated:** 2026-09-27 (**Chat preference agent metered.** `api/_lib/prefExtract` now has a caller — the chat auto-read's preference agent (`/api/cron/chat-auto-read` every minute + the chat card). Rows carry `operation='extract_chat'` (or `extract_call`) and `entity_kind='client'` / `entity_id`; DeepSeek records one row per attempt INCLUDING transport failures (timeouts), and the Claude Haiku fallback records through `trackedAnthropic` with `is_fallback=true`, `fallback_from='deepseek'`. Spend is bounded by design: no AI classifier (a free keyword gate skips pleasantries), one read per settled burst, one reader per chat, and failing chats back off 2 → 60 min and stop after 8 in a row.)
 **Related PRDs:** [internationalization.md](internationalization.md) (translation is the highest-volume AI lane), [marketing-operations.md](marketing-operations.md), [chats.md](chats.md), [copywriter-intelligence.md](copywriter-intelligence.md)
 
 ## What it is (in plain English)
@@ -181,7 +181,7 @@ app — was invisible.
 | Sales | `api/_lib/projectFinderAI` | Haiku 4.5 |
 | Sales | `api/match` | Opus 4.7 (per loop iteration) |
 | Sales | `api/_lib/geoPreference/extractor` | DeepSeek → Haiku 4.5 |
-| Sales | `api/_lib/prefExtract` | DeepSeek (per attempt) |
+| Sales | `api/_lib/prefExtract` | DeepSeek (per attempt) → Haiku 4.5; `operation` = `extract_chat` / `extract_call`, entity = the client (chat auto-read preference agent, 2026-09-27) |
 | Sales | `worker/runCallAnalysisJob` | DeepSeek |
 | Translation | `worker/translateProvider` | DeepSeek → Haiku 4.5 (per batch) |
 | Translation | `api/translate`, `api/value-translate`, `api/transliterate-name`, `api/market-listing/translate` | DeepSeek → Haiku 4.5 |

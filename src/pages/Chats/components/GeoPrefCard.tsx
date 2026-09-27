@@ -1,14 +1,16 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MapPin, Loader2, ChevronUp, ChevronDown, RefreshCw, Check, AlertTriangle, Map as MapIcon } from 'lucide-react';
+import { MapPin, Loader2, ChevronUp, ChevronDown, RefreshCw, Check, AlertTriangle, Map as MapIcon, Mic } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import {
-  authHeader,
   type Placement, type LocationItemDTO, type VerifierResultDTO, type DistrictInfo,
 } from '@/pages/GeoGrade/lib/shared';
 import { placementLine, verifierMentionLine } from '@/pages/GeoGrade/lib/placementLine';
 import { pruneGeoExpression, type PrunableExpression } from '@/lib/geo/pruneGeoExpression';
 import { shouldAutoRead } from '@/lib/geo/geoCardAutoRead';
+import { callJson, HttpError } from '../lib/cardHttp';
+import PrefSuggestionsSection, { type PrefsCardDTO } from './PrefSuggestionsSection';
 
 const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
 
@@ -22,6 +24,12 @@ const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
  * POST /api/geo-preference/review (confirm = all lines, edit = the pruned
  * expression; dismiss = reject). Reading the chat goes through
  * /api/geo-preference/chat-card, which never writes a client record.
+ *
+ * The same reading also runs the PREFERENCE agent (budget, unit type, area,
+ * bedrooms, purpose, amenities); its proposal renders below the places
+ * (PrefSuggestionsSection) and saves through /api/client-prefs/review. The
+ * card reads on its own when the customer has written something unread
+ * (trigger 'open'); the per-minute cron reads the rest.
  */
 
 type CardStatus =
@@ -51,6 +59,13 @@ interface ChatCardDTO {
   graded: boolean;
   can_reanalyze: boolean;
   customer_messages: number;
+  prefs: PrefsCardDTO;
+}
+
+interface ReadResultDTO {
+  outcome: string;
+  geo: { ran: boolean; mode?: string; error?: string };
+  prefs: { ran: boolean; proposalId?: string | null; fields?: number; error?: string };
 }
 
 interface Row {
@@ -63,29 +78,14 @@ interface Row {
   doubt: string | null;
 }
 
-class HttpError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-  }
-}
-
-async function callJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-  });
-  const body = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!res.ok) throw new HttpError(res.status, body?.error ?? `HTTP ${res.status}`);
-  if (!body) throw new HttpError(res.status, 'empty response');
-  return body;
-}
-
 const SAVED = new Set(['confirmed', 'edited', 'applied']);
 const OPEN = new Set(['pending', 'must_confirm']);
 
 export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; chatWid: string }) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
+  const { t } = useTranslation();
+  const [prefsError, setPrefsError] = useState<string | null>(null);
 
   const [card, setCard] = useState<ChatCardDTO | null>(null);
   const [loading, setLoading] = useState(true);
@@ -114,6 +114,7 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
       const c = await callJson<ChatCardDTO>(`/api/geo-preference/chat-card?${q}`, { method: 'GET' });
       setCard(c);
       setUnticked(new Set());
+      setPrefsError(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[GeoPrefCard] load failed:', err);
@@ -125,15 +126,21 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
 
   useEffect(() => { void load(); }, [load]);
 
-  const analyze = async () => {
+  const analyze = async (trigger: 'open' | 'manual') => {
     setAnalyzing(true);
     try {
-      const c = await callJson<ChatCardDTO & { mode: string }>('/api/geo-preference/chat-card', {
-        method: 'POST', body: JSON.stringify({ action: 'analyze', clientId, chatWid }),
+      const c = await callJson<ChatCardDTO & { mode: string; read: ReadResultDTO }>('/api/geo-preference/chat-card', {
+        method: 'POST', body: JSON.stringify({ action: 'analyze', clientId, chatWid, trigger }),
       });
       setCard(c);
       setUnticked(new Set());
       setLoadError(null);
+      // An agent failure is not an HTTP error — the reading reports it per agent.
+      setPrefsError(c.read?.prefs?.error ?? null);
+      if (c.read?.geo?.error) {
+        console.error('[GeoPrefCard] geography agent failed:', c.read.geo.error);
+        addToast(isAr ? `تعذّرت قراءة المواقع: ${c.read.geo.error}` : `Could not read the locations: ${c.read.geo.error}`, 'error');
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[GeoPrefCard] analyze failed:', err);
@@ -148,9 +155,9 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
   const autoTried = useRef(false);
   useEffect(() => {
     if (!card || loading || analyzing || autoTried.current) return;
-    if (!shouldAutoRead(card)) return;
+    if (!shouldAutoRead({ ...card, unread_customer_messages: card.prefs?.unread_customer_messages ?? 0 })) return;
     autoTried.current = true;
-    void analyze();
+    void analyze('open');
     // analyze is recreated each render; the ref guard is what bounds this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card, loading, analyzing]);
@@ -252,7 +259,9 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
           <ChevronDown size={11} />
           <MapPin size={10} />
           {isAr ? 'مواقع العميل' : 'Client locations'}
-          {status && OPEN.has(status) && rows.length > 0 ? <span className="text-copper font-bold">•</span> : null}
+          {(status && OPEN.has(status) && rows.length > 0) || card?.prefs?.proposal?.status === 'pending'
+            ? <span className="text-copper font-bold">•</span>
+            : null}
         </button>
       </div>
     );
@@ -260,7 +269,7 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
 
   const reread = (label?: string) => (
     <button
-      onClick={() => void analyze()}
+      onClick={() => void analyze('manual')}
       disabled={analyzing || !card?.can_reanalyze}
       title={!card?.can_reanalyze ? (isAr ? 'قُرئت قبل لحظات — انتظر دقيقة' : 'Read a moment ago — wait a minute') : undefined}
       className="inline-flex items-center gap-1 rounded-full border border-copper/40 px-2.5 py-1 text-[11px] font-medium text-copper hover:bg-copper/10 transition-colors disabled:opacity-40"
@@ -322,6 +331,15 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
           <MapPin size={14} className="text-copper shrink-0" />
           <span className="text-[12px] font-bold text-chocolate">{isAr ? 'مواقع العميل' : 'Client locations'}</span>
           {statusLabel && <span className="text-[10.5px] text-charcoal/50">· {statusLabel}</span>}
+          {(card?.prefs?.unread_voice_notes ?? 0) > 0 && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
+              title={t('chats.prefs.voice_notes', { count: card?.prefs?.unread_voice_notes ?? 0 })}
+            >
+              <Mic size={10} />
+              {card?.prefs?.unread_voice_notes}
+            </span>
+          )}
           <button
             onClick={() => setCollapsedPersist(true)}
             className="ms-auto text-charcoal/30 hover:text-copper transition-colors"
@@ -354,6 +372,13 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
           </p>
         )}
 
+        {!loading && !loadError && card && !analyzing && (card.prefs?.pending_transcripts ?? 0) > 0 && (
+          <p className="mt-1 flex items-center gap-1.5 text-[10.5px] text-amber-700">
+            <Mic size={11} className="shrink-0" />
+            {t('chats.prefs.transcribing')}
+          </p>
+        )}
+
         {!loading && !loadError && card && !analyzing && (
           <>
             {/* Stale — on any state */}
@@ -371,7 +396,7 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
             {status === 'none' && (
               <div className="mt-1 flex items-center gap-2">
                 <span className="flex-1 text-[11px] text-charcoal/60">{isAr ? 'لم تُقرأ هذه المحادثة بعد' : 'This chat has not been read yet'}</span>
-                <Button className="!px-3 !py-1 !text-[11px] !rounded-full" onClick={() => void analyze()} disabled={analyzing}>
+                <Button className="!px-3 !py-1 !text-[11px] !rounded-full" onClick={() => void analyze('manual')} disabled={analyzing}>
                   <MapPin size={12} />
                   {isAr ? 'اقرأ المواقع' : 'Read locations'}
                 </Button>
@@ -456,6 +481,9 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
                 </Suspense>
               </div>
             )}
+
+            {/* Preferences read from the same conversation (budget, unit type, …) */}
+            {card.prefs && <PrefSuggestionsSection prefs={card.prefs} prefsError={prefsError} onReload={load} />}
           </>
         )}
       </div>

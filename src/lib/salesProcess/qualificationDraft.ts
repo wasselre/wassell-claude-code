@@ -20,6 +20,7 @@
 // `replace`/`remove` and this reducer already applies them — no state redesign.
 
 import { normalizeForSearch } from '@/lib/recordSearch';
+import { isEmptyValue, stableStringify, valueEqual } from './valueEqual';
 
 // ── config ───────────────────────────────────────────────────────────────────
 
@@ -99,34 +100,9 @@ export interface ExtractionInput {
 }
 
 // ── value helpers ────────────────────────────────────────────────────────────
-
-export function isEmptyValue(v: unknown): boolean {
-  if (v === null || v === undefined || v === '') return true;
-  if (Array.isArray(v)) return v.length === 0;
-  if (typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    if ('min' in o || 'max' in o) return o.min == null && o.max == null;
-    return Object.keys(o).length === 0;
-  }
-  return false;
-}
-
-/** Order-insensitive, key-stable stringify so array unions and range key order don't
- *  produce spurious "changes". */
-function stableStringify(v: unknown): string {
-  if (v === null || v === undefined) return 'null';
-  if (Array.isArray(v)) return '[' + v.map(stableStringify).sort().join(',') + ']';
-  if (typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    return '{' + Object.keys(o).sort().map((k) => JSON.stringify(k) + ':' + stableStringify(o[k])).join(',') + '}';
-  }
-  return JSON.stringify(v);
-}
-
-export function valueEqual(a: unknown, b: unknown): boolean {
-  if (isEmptyValue(a) && isEmptyValue(b)) return true;
-  return stableStringify(a) === stableStringify(b);
-}
+// Live in ./valueEqual (import-free) so the server-side chat preference review
+// can reuse them without bundling this module's `@/` imports.
+export { isEmptyValue, valueEqual };
 
 const asStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];

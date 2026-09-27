@@ -92,6 +92,10 @@
     {
       "path": "/api/cron/portal-auto-register",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/chat-auto-read",
+      "schedule": "* * * * *"
     }
   ],
   "functions": {

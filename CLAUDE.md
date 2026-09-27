@@ -589,6 +589,49 @@ the dormant machinery accurately; none of it runs while archived.
 5. **Secrets are referenced, never pasted into steps** (`{{portal.login_password}}`). Recipes and required_fields are stored in record data and rendered to reps in error messages.
 6. **Screenshots live in the PRIVATE `portal-registrations` bucket** and reach the SPA only as signed URLs from the API — they show customer PII on third-party portals.
 
+## Chat auto-read (WhatsApp → geography + preference proposals) (added 2026-09-27)
+
+Client-linked WhatsApp chats are read ON THEIR OWN: a per-minute cron
+(`api/cron/chat-auto-read.ts`, **nodejs, maxDuration 300, 240 s budget, 2 reads
+at a time**, `?dryRun=1` = selection only) and the rep opening the chat (the
+card's `trigger:'open'`). There is NO AI classifier: `chat_read_candidates`
+(SQL) lists unread chats, the pure `selectDueChats` waits 90 s for a burst to
+settle (cap 10 min, held for an in-flight voice transcript, failure backoff) and
+a free keyword gate (`keywordGate.ts`) skips pleasantries. Each due chat gets ONE
+whole-conversation read — `readChatForClient` (`api/_lib/clientPrefs/readChat.ts`)
+— running the geography agent (`analyzeChatConversation`, unchanged) and the
+preference agent (`extractChatPrefs` → `client_pref_proposals`) in parallel.
+Migrations: `2026-09-27_05_chat_read_state.sql`, `2026-09-27_06_client_pref_proposals.sql`.
+PRDs: `docs/prd/geo-preference-ability.md`, `docs/prd/chats.md`.
+
+**The lease / watermark contract — never violate:**
+1. **Two watermarks per (chat_wid, client_id)** in `chat_read_state`:
+   `geo_read_through` / `pref_read_through` = the `date` of the newest inbound
+   text-ish message that agent's last SUCCESSFUL read covered. "Unread" = after
+   the LOWER of the two (NULL = -infinity). An agent runs only when its own
+   watermark is behind (manual runs both).
+2. **A failure never advances.** A partial read advances only the agent that
+   succeeded; geo's `skipped_recent` (60 s cool-down) does not advance geo.
+   `partial` and `failed` both bump `consecutive_failures` (backoff 2 → 60 min,
+   cron stops at 8 — the translation-retry lesson: no uncapped retry of a paid call).
+3. **A gate-skipped batch DOES advance both** (`chat_read_mark_gate_skipped`,
+   `last_outcome='gate_skipped'`) — no model call; that is the point of the gate.
+   A read that found nothing also advances.
+4. **One reader per chat:** `chat_read_claim` (INSERT … ON CONFLICT DO UPDATE
+   WHERE the lease expired — exactly one winner, never 40001). Only the holder can
+   `chat_read_finish`; the reader ALWAYS releases when finish is not reached.
+   Every `chat_read_*` RPC is service-role only.
+5. **Transcribed voice notes are customer TEXT** everywhere (gate, watermark,
+   the rendered conversation as «(رسالة صوتية) …», the geo card's staleness).
+   A voice note still `pending` holds a read for at most 10 minutes.
+6. **Nothing auto-saves.** Both agents only mint PROPOSALS; the rep's tick + save
+   writes the client (`/api/geo-preference/review`, `/api/client-prefs/review`).
+   `auto_write_enabled` stays false. The pref review re-validates set values
+   against the LIVE clients schema at save time (unknown ⇒ dropped + console.error).
+7. The preference extractor (`api/_lib/prefExtract.ts`) mirrors the geo
+   extractor's routing exactly (stub → DeepSeek `deepseek-chat` → Claude Haiku via
+   `trackedAnthropic`), and THROWS when both providers fail — never a silent empty.
+
 ## Listing photo mirror (Aqar → our bucket) (added 2026-07-29)
 
 Market-listing photos are copied into a bucket we own **at scan/import time**, so nothing user-facing ever downloads from `images.aqar.fm`. Rides the existing `generation_jobs` queue as `kind='listing-mirror'` (the same shape as `video-convert`).

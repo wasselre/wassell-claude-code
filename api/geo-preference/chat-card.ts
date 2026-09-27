@@ -1,12 +1,17 @@
 /**
- * /api/geo-preference/chat-card — the geography confirm card inside a WhatsApp chat.
+ * /api/geo-preference/chat-card — the in-chat card (geography + preferences).
  *
- *   GET  ?clientId=<uuid>&chatWid=<wid>            → ChatCard (see chatCard.ts)
- *   POST { action:'analyze', clientId, chatWid }    → ChatCard + { mode }
- *        Reads the ONE conversation (full extraction, or a review-only rerun
- *        when nothing new was said / the evidence is graded), mints a pending
- *        proposal, supersedes this conversation's older pending ones, verifies.
- *        Can take up to a minute (one LLM extraction + one verifier call).
+ *   GET  ?clientId=<uuid>&chatWid=<wid>
+ *        → ChatCard (see chatCard.ts) + { prefs } (see clientPrefs/card.ts)
+ *   POST { action:'analyze', clientId, chatWid, trigger?: 'open'|'manual' }
+ *        → the fresh GET payload + { read, mode }
+ *        Runs THE unified chat read (clientPrefs/readChat.ts): the geography
+ *        agent (full extraction or a review-only rerun) and the preference
+ *        agent, in parallel, under the (chat, client) lease. `open` (the card
+ *        reading on its own when the rep opens the chat) applies the free
+ *        keyword gate and waits for an in-flight voice transcript; `manual`
+ *        (the «أعد القراءة» button, the default) bypasses both. Can take up
+ *        to a minute.
  *
  * REP-FACING, not admin-only: withAuth, then assertCanAccessRecord on the
  * CLIENT under the caller's own RLS — any rep who can see the client may read
@@ -15,14 +20,18 @@
  *
  * SAFETY BOUNDARY: this endpoint never writes a client record and never sends
  * a message. It writes only what the backfill writes (evidence / relations /
- * checkpoint / proposal / verifier opinion). Saving to the client goes through
- * POST /api/geo-preference/review (confirm | edit | reject) — nowhere else.
+ * checkpoint / proposal / verifier opinion), a pending client_pref_proposals
+ * row, and the chat_read_state watermarks. Saving to the client goes through
+ * POST /api/geo-preference/review (geography) and POST /api/client-prefs/review
+ * (preferences) — nowhere else.
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { withAuth, jsonError, jsonOk, assertCanAccessRecord } from '../_lib/auth.js';
 import { makeServiceClient } from '../_lib/serviceClient.js';
-import { loadChatCard, analyzeChatConversation, ChatCardError } from '../_lib/geoPreference/chatCard.js';
+import { loadChatCard, ChatCardError } from '../_lib/geoPreference/chatCard.js';
+import { loadPrefsCard } from '../_lib/clientPrefs/card.js';
+import { readChatForClient, type ReadTrigger } from '../_lib/clientPrefs/readChat.js';
 import {
   readNodeBodyLimited, PayloadTooLargeError, sendPayloadTooLarge, MAX_REQUEST_BODY_BYTES,
 } from '../_lib/httpBody.js';
@@ -83,11 +92,12 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   const resp = await withAuth(req, async (user) => {
     let input: { clientId: string; chatWid: string } | Response;
     let action = 'get';
+    let trigger: ReadTrigger = 'manual';
     if (req.method === 'GET') {
       const q = new URL(req.url).searchParams;
       input = validate(q.get('clientId'), q.get('chatWid'));
     } else if (req.method === 'POST') {
-      let body: { action?: unknown; clientId?: unknown; chatWid?: unknown };
+      let body: { action?: unknown; clientId?: unknown; chatWid?: unknown; trigger?: unknown };
       try {
         body = (await req.json()) as typeof body;
       } catch {
@@ -95,6 +105,10 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       }
       action = typeof body.action === 'string' ? body.action : '';
       if (action !== 'analyze') return jsonError(400, `unknown action '${action}' (expected 'analyze')`);
+      if (body.trigger !== undefined && body.trigger !== 'open' && body.trigger !== 'manual') {
+        return jsonError(400, "trigger must be 'open' or 'manual'");
+      }
+      trigger = body.trigger === 'open' ? 'open' : 'manual';
       input = validate(body.clientId, body.chatWid);
     } else {
       return jsonError(405, 'Method not allowed');
@@ -109,16 +123,22 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     const sb = makeServiceClient(SERVICE_NAME);
     if (!sb) return jsonError(500, 'server env missing: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
 
+    const loadAll = async () => {
+      const [card, prefs] = await Promise.all([loadChatCard(sb, clientId, chatWid), loadPrefsCard(sb, clientId, chatWid)]);
+      return { ...card, prefs };
+    };
+
     try {
       if (action === 'analyze') {
-        const out = await analyzeChatConversation(sb, clientId, chatWid, {
-          workerId: `chat-card:${user.userId.slice(0, 8)}`,
+        const read = await readChatForClient(sb, {
+          clientId, chatWid, trigger,
+          owner: `${trigger}:${user.userId.slice(0, 8)}:${globalThis.crypto.randomUUID().slice(0, 8)}`,
           log: (m) => console.log(m),
         });
-        console.log(`[geo-chat-card] analyze client=${clientId} chat=${chatWid} mode=${out.mode} status=${out.status} by=${user.userId}`);
-        return jsonOk(out);
+        console.log(`[geo-chat-card] analyze client=${clientId} chat=${chatWid} trigger=${trigger} outcome=${read.outcome} geo=${read.geo.mode ?? (read.geo.error ? 'error' : '-')} by=${user.userId}`);
+        return jsonOk({ ...(await loadAll()), read, mode: read.geo.mode ?? 'none' });
       }
-      return jsonOk(await loadChatCard(sb, clientId, chatWid));
+      return jsonOk(await loadAll());
     } catch (err) {
       if (err instanceof ChatCardError) return jsonError(err.status, err.message);
       const msg = err instanceof Error ? err.message : String(err);
