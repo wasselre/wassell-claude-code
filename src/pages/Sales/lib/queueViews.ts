@@ -5,6 +5,7 @@
 
 import type { AppRecord } from '@/types';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
+import { getSalesProcessConfig } from '@/lib/salesProcess/config';
 
 export type QueueViewId =
   | 'my_tasks'
@@ -48,7 +49,29 @@ const OPEN_STATES = new Set(['open', 'in_progress']);
 const WAITING_STATUSES = new Set(['بانتظار القرار', 'بانتظار دفعة الحجز', 'يحتاج معلومات تمويل', 'تم إرسال عرض السعر', 'نقاش عائلي']);
 
 /** Active = not a terminal/side-exit stage. */
-const TERMINAL_STAGES = new Set(['غير مؤهل', 'خاسر', 'مغلق ناجح']);
+/**
+ * Stages where NO follow-up is expected — the config marks them with
+ * `followup_types: []`: closed-won, unqualified, lost, «يريد إيجار» (wants a
+ * rental we don't sell) and «طلب غير مجاب» (its work lives in sales_tasks, not
+ * follow-ups). Derived, never hand-listed, so a new such stage drops out of the
+ * no-next-action audit by itself. Matches the server backstop
+ * `reconcile_stranded_clients`, whose stage list is the same five.
+ */
+function stagesWithoutFollowups(): Set<string> {
+  return new Set(
+    getSalesProcessConfig().stages
+      .filter((st) => (st.followup_types?.length ?? 0) === 0)
+      .map((st) => st.value),
+  );
+}
+
+/** An appointment that is itself the client's next action (server parity). */
+const UPCOMING_APPOINTMENT_STATES = new Set(['scheduled', 'confirmed', 'rescheduled']);
+
+/** Today's date in Asia/Riyadh as YYYY-MM-DD. */
+function riyadhToday(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' });
+}
 
 function startOfDay(ms: number): number {
   const d = new Date(ms);
@@ -161,25 +184,46 @@ export interface NoNextActionRow {
   status: string;
 }
 
+const clientIdOf = (r: AppRecord): string | undefined =>
+  (Array.isArray(r.data.client_id) ? r.data.client_id[0] : r.data.client_id) as string | undefined;
+
 /**
- * Active clients (stage not terminal) with NO open follow-up. The headline
- * health metric — this should be zero.
+ * Clients who SHOULD have a next action but don't — the headline health metric,
+ * which should be zero. Same rule as the server backstop
+ * `reconcile_stranded_clients` (pass only non-retired clients):
+ *   - the stage expects follow-ups (not closed / lost / unqualified / wants
+ *     rent / unanswered request — see `stagesWithoutFollowups`);
+ *   - no open or in-progress follow-up;
+ *   - no upcoming appointment (scheduled / confirmed / rescheduled, dated today
+ *     or later in Riyadh) — a booked visit IS the next action.
  */
 export function computeNoNextAction(
   clients: AppRecord[],
   followups: AppRecord[],
+  appointments: AppRecord[] = [],
+  today: string = riyadhToday(),
 ): NoNextActionRow[] {
+  const noWorkStages = stagesWithoutFollowups();
   const clientsWithOpenFollowup = new Set<string>();
   for (const f of followups) {
     if (!OPEN_STATES.has((f.data.followup_status as string) || 'open')) continue;
-    const cid = (Array.isArray(f.data.client_id) ? f.data.client_id[0] : f.data.client_id) as string | undefined;
+    const cid = clientIdOf(f);
     if (cid) clientsWithOpenFollowup.add(cid);
+  }
+  const clientsWithUpcomingAppointment = new Set<string>();
+  for (const a of appointments) {
+    if (!UPCOMING_APPOINTMENT_STATES.has(String(a.data.appointment_status ?? ''))) continue;
+    const date = String(a.data.appointment_date ?? '');
+    if (!/^\d{4}-\d{2}-\d{2}/.test(date) || date.slice(0, 10) < today) continue;
+    const cid = clientIdOf(a);
+    if (cid) clientsWithUpcomingAppointment.add(cid);
   }
   const rows: NoNextActionRow[] = [];
   for (const c of clients) {
     const stage = (c.data.client_stage as string) ?? '';
-    if (TERMINAL_STAGES.has(stage)) continue; // closed/lost/unqualified — fine
+    if (noWorkStages.has(stage)) continue; // no follow-up expected at this stage
     if (clientsWithOpenFollowup.has(c.id)) continue;
+    if (clientsWithUpcomingAppointment.has(c.id)) continue;
     rows.push({
       clientId: c.id,
       clientName: (c.data.client_name as string) ?? '',
