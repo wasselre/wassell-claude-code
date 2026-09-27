@@ -76,7 +76,7 @@ BEGIN
   FOR UPDATE SKIP LOCKED LIMIT 1;
   IF NOT FOUND THEN RETURN; END IF;
   UPDATE public.inbound_media_jobs
-     SET status='running', worker_id=p_worker, attempts=attempts+1,
+     SET status='running', worker_id=p_worker, attempts = r.attempts + 1,
          started_at=coalesce(started_at, now()), heartbeat_at=now()
    WHERE inbound_media_jobs.id = r.id;
   RETURN QUERY SELECT r.id, r.message_id, r.chat_wid, r.session, r.fname, r.mime, r.kind, r.attempts + 1;
