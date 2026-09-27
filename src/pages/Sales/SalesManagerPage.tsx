@@ -4,6 +4,7 @@ import { BarChart3, AlertTriangle, CheckCircle2, Clock, MessageSquareText, Chevr
 import { useAppStore } from '@/stores/appStore';
 import { getStageConfig, getOutcome, getSalesProcessConfig } from '@/lib/salesProcess';
 import type { FollowUpTypeConfig } from '@/lib/salesProcess';
+import { fieldBySlug } from '@/pages/Clients/lib/clientView';
 import type { AppRecord, SalesProcessOverride } from '@/types';
 import { computeManagerMetrics, type Distribution } from './lib/salesMetrics';
 import { activeClientsOnly, retiredClientIdSet } from '@/lib/clients/retirement';
@@ -40,6 +41,17 @@ export default function SalesManagerPage() {
   const stageLabel = (v: string) => { const s = getStageConfig(v); return s ? (isAr ? s.label_ar : s.label_en) : v; };
   const stageOrder = (v: string) => getStageConfig(v)?.order ?? 99;
   const outcomeLabel = (v: string) => { const o = getOutcome(v); return o ? (isAr ? o.label_ar : o.label_en) : v; };
+  // Lost-reason values are dropdown option slugs — resolve them to their AR/EN
+  // labels from the clients (or followups) model field, or keep the raw slug.
+  const lostReasonLabel = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const mdl of [clientsModel, followupsModel]) {
+      for (const o of fieldBySlug(mdl ?? null, 'lost_reason')?.options ?? []) {
+        map.set(o.value, (isAr ? o.label_ar : o.label_en) || o.value);
+      }
+    }
+    return (k: string) => map.get(k) ?? k;
+  }, [clientsModel, followupsModel, isAr]);
 
   const funnel = [...m.byStage].sort((a, b) => stageOrder(a.key) - stageOrder(b.key));
   const noData = isAr ? 'لا توجد بيانات كافية' : 'Not enough data';
@@ -100,7 +112,7 @@ export default function SalesManagerPage() {
       <div className="grid gap-4 md:grid-cols-2">
         <BarList title={isAr ? 'مسار العملاء حسب المرحلة' : 'Pipeline by Stage'} items={funnel} label={stageLabel} />
         <BarList title={isAr ? 'نتائج المتابعات المكتملة' : 'Completed Outcomes'} items={m.outcomes} label={outcomeLabel} />
-        <BarList title={isAr ? 'أسباب الخسارة' : 'Lost Reasons'} items={m.lostReasons} label={(k) => k} empty={isAr ? 'لا توجد خسائر مسجلة' : 'No losses recorded'} tone="terracotta" />
+        <BarList title={isAr ? 'أسباب الخسارة' : 'Lost Reasons'} items={m.lostReasons} label={lostReasonLabel} empty={isAr ? 'لا توجد خسائر مسجلة' : 'No losses recorded'} tone="terracotta" />
         <section className="card rounded-2xl p-5">
           <h2 className="mb-4 text-base font-bold text-chocolate">{isAr ? 'الأداء حسب المندوب' : 'Per Rep'}</h2>
           {m.perRep.length === 0 ? (
