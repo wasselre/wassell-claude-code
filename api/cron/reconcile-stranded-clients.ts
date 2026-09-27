@@ -1,7 +1,8 @@
 /**
  * GET / POST /api/cron/reconcile-stranded-clients — the Next-Action Backstop.
  *
- * Runs ONCE DAILY at 08:00 Asia/Riyadh (05:00 UTC; see vercel.json crons) to
+ * Runs HOURLY (vercel.json crons; was once daily at 08:00 Riyadh until
+ * 2026-09-27 — a client whose task was cancelled mid-morning waited ~23h) to
  * enforce the invariant NO other layer owns: "every active client has exactly
  * one open next-action". The sales-task lifecycle DESTROYS tasks deterministically
  * (the reconcile_/supersede/retire SQL bridges) but only CREATES the next task
@@ -11,12 +12,12 @@
  * CUSTOMER messages again. This backstop fills that gap on a clock instead.
  *
  * All the logic (predicate, 60-min grace, no-show-reopen vs whatsapp-fallback
- * branch, owner resolution → System Admin default queue, once-per-Riyadh-day
+ * branch, owner resolution → System Admin default queue, not-within-50-minutes
  * guard, creation_source='next_action_backstop' stamp) lives in the SQL RPC
  * `reconcile_stranded_clients(p_default_owner, p_grace_minutes, p_dry_run)`, so
  * this endpoint is a thin runner — same posture as api/sweep-appointment-noshows.ts.
  *
- * Idempotent: the RPC's own once-a-day state guard means extra ticks (a manual
+ * Idempotent: the RPC's own 50-minute state guard means extra ticks (a manual
  * smoke test, a Vercel retry) are no-ops; the "zero open tasks" predicate means a
  * client with a fresh task no longer qualifies.
  *
