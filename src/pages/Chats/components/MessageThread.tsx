@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { MessageCircle, Loader2, ChevronUp } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import MessageBubble from './MessageBubble';
+import MessageBubble, { type MessageProjectActions } from './MessageBubble';
 import type { ChatMessage } from '@/types';
 
 /**
@@ -12,10 +12,21 @@ import type { ChatMessage } from '@/types';
  * Day separators (Today / Yesterday / dd-MMM-yyyy) group bubbles into
  * chunks — cheap visual anchor when scrolling history.
  */
-export default function MessageThread({ chatWid }: { chatWid: string }) {
+export default function MessageThread({
+  chatWid,
+  renderProjectActions,
+}: {
+  chatWid: string;
+  /** Given a project message's all_projects id, return the finder-style actions
+   *  to show on that bubble (ChatDetail owns this — it knows the linked client).
+   *  Omitted → no project buttons. */
+  renderProjectActions?: (projectId: string) => MessageProjectActions | null;
+}) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const messages = useAppStore((s) => s.chatMessages[chatWid] ?? EMPTY);
   const loadMessagesForChat = useAppStore((s) => s.loadMessagesForChat);
+  const loadMessageProjects = useAppStore((s) => s.loadMessageProjects);
+  const messageProjects = useAppStore((s) => s.messageProjects);
   const retryChatMessage = useAppStore((s) => s.retryChatMessage);
 
   const [loading, setLoading] = useState(true);
@@ -48,6 +59,8 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
     pinnedRef.current = true;
     lastScrollTopRef.current = 0;
     setError(null);
+    // Load message→project links so project messages get their action buttons.
+    void loadMessageProjects(chatWid);
     const p = loadMessagesForChat(chatWid, { size: 50 });
     // The synchronous hydration inside the call above has already run.
     setLoading((useAppStore.getState().chatMessages[chatWid] ?? []).length === 0);
@@ -61,7 +74,7 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
         setLoading(false);
       }
     })();
-  }, [chatWid, loadMessagesForChat]);
+  }, [chatWid, loadMessagesForChat, loadMessageProjects]);
 
   // Scroll-to-bottom on fresh load / new messages while pinned. When we
   // append older history via "Load older", we instead preserve scroll
@@ -228,17 +241,26 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
         {grouped.map((group) => (
           <div key={group.key} className="space-y-2">
             <DaySeparator label={group.label} />
-            {group.messages.map((m) => (
-              <MessageBubble
-                key={m.id}
-                message={m}
-                isAr={isAr}
-                reactions={reactionsByTarget.get(m.id)}
-                // Bound to THIS conversation's wid, so a retry can never land
-                // in a chat the user has since switched to.
-                onRetry={m.flow === 'out' ? () => void retryChatMessage(chatWid, m.id) : undefined}
-              />
-            ))}
+            {group.messages.map((m) => {
+              // Project buttons ride on the TEXT bubble of a project message —
+              // project id from the optimistic send (m.project_id) or the
+              // chat_message_projects link (messageProjects[wid]).
+              const projectId = m.kind === 'text' ? (m.project_id ?? messageProjects[m.id] ?? null) : null;
+              const projectActions =
+                projectId && renderProjectActions ? renderProjectActions(projectId) : null;
+              return (
+                <MessageBubble
+                  key={m.id}
+                  message={m}
+                  isAr={isAr}
+                  reactions={reactionsByTarget.get(m.id)}
+                  // Bound to THIS conversation's wid, so a retry can never land
+                  // in a chat the user has since switched to.
+                  onRetry={m.flow === 'out' ? () => void retryChatMessage(chatWid, m.id) : undefined}
+                  projectActions={projectActions}
+                />
+              );
+            })}
           </div>
         ))}
         </div>

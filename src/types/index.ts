@@ -2267,6 +2267,11 @@ export interface ChatMessage {
   /** True once the media bytes are durably saved to our own bucket (survives the
    *  gateway evicting its transient copy). */
   media_saved?: boolean | null;
+  /** all_projects (master) id when this is a PROJECT message — drives the
+   *  finder-style action buttons on the bubble. Set optimistically on send and
+   *  overlaid from the chat_message_projects link table on thread load. Transient
+   *  (no chat_messages column); never persisted on the row itself. */
+  project_id?: string | null;
   /** Optimistic placeholder — true between send click and webhook ack. */
   pending?: boolean;
   /** Local correlation key used to match the optimistic placeholder to
@@ -2724,6 +2729,12 @@ export interface AppState {
    * ChatDetailPage mount and (Step 8) on webhook → Realtime push.
    */
   chatMessages: Record<string, ChatMessage[]>;
+  /** message wid → all_projects (master) id, from the chat_message_projects link
+   *  table. Populated per-conversation by loadMessageProjects; drives the
+   *  project action buttons in the thread. */
+  messageProjects: Record<string, string>;
+  /** Load the message→project links for one conversation into messageProjects. */
+  loadMessageProjects: (chatWid: string) => Promise<void>;
   /**
    * Load the latest page of messages for one conversation from Haberchat
    * (via the proxy). Writes to `chatMessages[chatWid]`. When `before` is
@@ -2767,6 +2778,10 @@ export interface AppState {
        *  going out. A caller that itself HOLDS the lane (the composer's
        *  multi-file fan-out) passes true so its own sends don't deadlock. */
       laneBypass?: boolean;
+      /** all_projects (master) record id, set when this message is a PROJECT
+       *  message. Persists a message→project link (chat_message_projects) so the
+       *  thread can show finder-style action buttons on that bubble. */
+      projectId?: string;
     },
   ) => Promise<void>;
   /**

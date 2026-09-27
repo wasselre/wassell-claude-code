@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X, CalendarPlus, MapPin, ChevronUp, ChevronDown } from 'lucide-react';
@@ -15,8 +15,13 @@ const ClientOptionsModal = lazy(() => import('@/components/clients/ClientOptions
 const ProjectsUnitsBrowser = lazy(() => import('./ProjectsUnitsBrowser'));
 const ClientDetailPage = lazy(() => import('@/pages/Clients/ClientDetailPage'));
 const RecordFormModal = lazy(() => import('@/pages/Records/components/RecordFormModal'));
+const ProjectUnitsModal = lazy(() => import('@/pages/Followups/components/ProjectUnitsModal'));
 import type { FinderSession } from '@/pages/Followups/components/SuggestedProjectsView';
+import { saveClientOption } from '@/lib/matching/clientOptions';
+import { chatPdfFromClient } from '@/lib/projects/sendPdfToChat';
+import type { FinderMatch } from '@/lib/matching/projectFinder';
 import MessageThread from './MessageThread';
+import type { MessageProjectActions } from './MessageBubble';
 import Composer from './Composer';
 import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
 import LeadIntakeModal from './LeadIntakeModal';
@@ -153,6 +158,60 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const preferredProjectIds = useMemo<string[]>(
     () => (clientLinkId ? clientActiveOptionRefs(models, records, clientLinkId, 'project').map((o) => o.sourceId) : []),
     [models, records, clientLinkId],
+  );
+
+  // ── Project-message action buttons (finder-style, in the thread) ──────
+  // A project message shows View-details / Add-to-options / Units on its bubble.
+  // ChatDetail owns the handlers because it knows the linked client; MessageThread
+  // just forwards them per message. Client-dependent buttons disable without a
+  // linked client (operator choice, 2026-09-27).
+  const addToast = useAppStore((s) => s.addToast);
+  const allProjectsModel = useMemo(() => models.find((m) => m.name === 'all_projects') ?? null, [models]);
+  const [unitsProject, setUnitsProject] = useState<{ id: string; name: string } | null>(null);
+  const [savingOptionId, setSavingOptionId] = useState<string | null>(null);
+  const chatPdf = useMemo(() => chatPdfFromClient(linkedClient), [linkedClient]);
+
+  const resolveProjectName = useCallback(
+    (projectId: string): string => {
+      const rec = allProjectsModel ? (records[allProjectsModel.id] ?? []).find((r) => r.id === projectId) : null;
+      const d = rec?.data as Record<string, unknown> | undefined;
+      return (d?.project_name as string) || (d?.name as string) || (isAr ? 'المشروع' : 'Project');
+    },
+    [allProjectsModel, records, isAr],
+  );
+
+  const renderProjectActions = useCallback(
+    (projectId: string): MessageProjectActions => ({
+      clientLinked: !!clientLinkId,
+      saved: preferredProjectIds.includes(projectId),
+      saving: savingOptionId === projectId,
+      onDetails: () => navigate(`/model/all_projects/${projectId}`),
+      onUnits: () => setUnitsProject({ id: projectId, name: resolveProjectName(projectId) }),
+      onAddOption: () => {
+        if (!clientLinkId) return;
+        setSavingOptionId(projectId);
+        void (async () => {
+          try {
+            const res = await saveClientOption({
+              clientId: clientLinkId,
+              sourceType: 'project',
+              sourceId: projectId,
+              sourceName: resolveProjectName(projectId),
+              addedFrom: 'manual',
+            });
+            addToast(
+              res.ok
+                ? (isAr ? 'أُضيف إلى خيارات العميل' : 'Added to client options')
+                : (isAr ? 'تعذّرت إضافة الخيار' : 'Could not add option'),
+              res.ok ? 'success' : 'error',
+            );
+          } finally {
+            setSavingOptionId(null);
+          }
+        })();
+      },
+    }),
+    [clientLinkId, preferredProjectIds, savingOptionId, navigate, resolveProjectName, addToast, isAr],
   );
 
 
@@ -611,7 +670,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       {/* Thread — full-bleed scroll area on mobile, framed card on desktop
           (MessageThread drops its own card chrome below md). */}
       <div className="flex-1 min-h-0 overflow-hidden px-0 pt-0 md:px-3 md:pt-3">
-        <MessageThread chatWid={chatWid ?? ''} />
+        <MessageThread chatWid={chatWid ?? ''} renderProjectActions={renderProjectActions} />
       </div>
 
       {/* Composer — mounted ONLY once the conversation identity is resolved.
@@ -673,6 +732,20 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       {showProjectsBrowser && (
         <Suspense fallback={<OverlayFallback />}>
           <ProjectsUnitsBrowser clientId={clientLinkId} chatWid={chatWid} onClose={() => setShowProjectsBrowser(false)} />
+        </Suspense>
+      )}
+
+      {/* Project-message "Units" button → the finder's units modal for that
+          project (browse + send unit PDFs into this chat when a client is linked). */}
+      {unitsProject && (
+        <Suspense fallback={<OverlayFallback />}>
+          <ProjectUnitsModal
+            item={{ source: 'all_projects', project_id: unitsProject.id, project_name: unitsProject.name } as unknown as FinderMatch}
+            isAr={isAr}
+            clientId={clientLinkId}
+            chatPdf={chatPdf}
+            onClose={() => setUnitsProject(null)}
+          />
         </Suspense>
       )}
 

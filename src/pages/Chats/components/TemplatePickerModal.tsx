@@ -69,6 +69,9 @@ export default function TemplatePickerModal({
      *  CRM file ids (project templates' gallery) and/or public URLs (listing
      *  templates' cleaned photos) — `sendProjectImageMessages` handles both. */
     imageFileIds: string[];
+    /** all_projects (master) id when this is a PROJECT template — carried so the
+     *  sent bubble gets finder-style action buttons. Null for non-project templates. */
+    projectId: string | null;
   }) => void;
   onClose: () => void;
   /** Current UI language — used to pick which body (ar/en) to insert. */
@@ -156,6 +159,7 @@ export default function TemplatePickerModal({
       mediaFilename: (d.media_filename as string | null) || null,
       mediaKind: (d.media_kind as string | null) || null,
       imageFileIds: templateImageSends(d),
+      projectId: (d.project_id as string | null) || null,
     });
   };
 

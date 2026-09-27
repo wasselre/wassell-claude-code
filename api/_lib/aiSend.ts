@@ -26,7 +26,7 @@ export interface EnqueueResult {
 
 export async function enqueueAiReply(
   supa: SupabaseClient,
-  opts: { chatWid: string; text: string; deviceId?: string | null; jobId?: string | null; force?: boolean },
+  opts: { chatWid: string; text: string; deviceId?: string | null; jobId?: string | null; force?: boolean; projectId?: string | null },
 ): Promise<EnqueueResult> {
   const chatWid = (opts.chatWid ?? '').trim();
   const text = (opts.text ?? '').trim();
@@ -65,6 +65,7 @@ export async function enqueueAiReply(
     p_reference: `ai:${opts.jobId ?? 'basic'}:${Date.now()}`,
     p_deliver_at: new Date().toISOString(),
     p_user_id: null,
+    p_project_id: opts.projectId ?? null,
   });
   if (schedErr) return { queued: false, sent: false, error: `enqueue failed: ${schedErr.message}` };
   const wid = `sched:${String(schedId)}`;

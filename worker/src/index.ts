@@ -3134,6 +3134,7 @@ interface ScheduledWaRow {
   media: unknown;
   reference: string | null;
   attempts: number;
+  project_id: string | null;
 }
 
 // Retry posture (added 2026-07-23 after the 10:00 batch died on one attempt):
@@ -3483,6 +3484,7 @@ async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
       media: Array.isArray(r.media) ? (r.media as ScheduledWhatsappJob['media']) : [],
       reference: r.reference,
       attempts: r.attempts,
+      projectId: r.project_id,
     };
     console.log(`[worker] sending scheduled WhatsApp job=${job.id} chat=${job.chatWid} attempts=${job.attempts}`);
     try {
@@ -3523,6 +3525,17 @@ async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
           .update({ message_wid: realWid })
           .eq('message_wid', `sched:${job.id}`);
         if (aiErr) console.error(`[worker] ai-reply wid reconcile failed: ${aiErr.message}`);
+
+        // A QUEUED project message (bot's aiSendProject text, or a scheduled rep
+        // project send) can only be linked to its project now — this is the first
+        // moment the real message wid exists. The thread then shows its action
+        // buttons. Best-effort: a link failure never fails the send.
+        if (job.projectId) {
+          const { error: linkErr } = await supabase.rpc('link_message_project', {
+            p_message_wid: realWid, p_chat_wid: job.chatWid, p_project_id: job.projectId,
+          });
+          if (linkErr) console.error(`[worker] link_message_project failed: ${linkErr.message}`);
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

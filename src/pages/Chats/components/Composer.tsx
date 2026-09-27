@@ -57,6 +57,8 @@ interface SendSnapshot {
   files: File[];
   tmpl: TemplateAttachment | null;
   projectImages: string[];
+  /** all_projects id for a project message — carried onto the sent text bubble. */
+  projectId: string | null;
 }
 
 /** One composed-but-unsent message parked for one-click restore. Only ever
@@ -69,6 +71,7 @@ interface UnsentDraft {
   files: File[];
   templateAtt: TemplateAttachment | null;
   projectImageFileIds: string[];
+  projectId: string | null;
   error: string;
 }
 
@@ -93,6 +96,9 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
   // ids) or a listing template's cleaned photos (public URLs). Set when such
   // a template is picked; cleared on send or when a local file replaces it.
   const [projectImageFileIds, setProjectImageFileIds] = useState<string[]>([]);
+  // all_projects id when a PROJECT template is picked — carried onto the sent
+  // text bubble so the thread shows its action buttons. Cleared on send/reset.
+  const [projectId, setProjectId] = useState<string | null>(null);
   // Composed messages that failed BEFORE reaching the thread. Never dropped —
   // the rep restores them into the box with one click.
   const [unsentDrafts, setUnsentDrafts] = useState<UnsentDraft[]>([]);
@@ -192,12 +198,14 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
       files: localFiles,
       tmpl: templateAtt,
       projectImages: projectImageFileIds,
+      projectId,
     };
     setShowSchedule(false);
     setText('');
     setLocalFiles([]);
     setTemplateAtt(null);
     setProjectImageFileIds([]);
+    setProjectId(null);
     // The message is on its way — drop the stored draft so it can't come back
     // on the next visit. (The state resets above race the persistence effects,
     // so clear the stores explicitly rather than relying on them.)
@@ -217,6 +225,7 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
         files: snapshot.files,
         templateAtt: snapshot.tmpl,
         projectImageFileIds: snapshot.projectImages,
+        projectId: snapshot.projectId,
         error,
       },
     ]);
@@ -234,6 +243,7 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
       setTemplateAtt(draft.templateAtt);
     }
     if (draft.projectImageFileIds.length > 0) setProjectImageFileIds(draft.projectImageFileIds);
+    if (draft.projectId) setProjectId(draft.projectId);
     textareaRef.current?.focus();
   };
 
@@ -249,7 +259,7 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
     deliverAt?: string,
   ) => {
     const wid = sendIdentity.chatWid;
-    const { body, files, tmpl, projectImages } = snapshot;
+    const { body, files, tmpl, projectImages, projectId: snapProjectId } = snapshot;
     // Did the primary message reach the thread as an optimistic bubble? If it
     // did, a failure is already visible there (red bubble + Retry) and parking
     // a second copy in the composer would just duplicate it. If it did NOT —
@@ -344,10 +354,11 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
           mediaMime: tmpl.mime,
           mediaSize: tmpl.size,
           deliverAt,
+          projectId: snapProjectId ?? undefined,
         });
       } else if (body) {
         reachedThread = !deliverAt;
-        await sendChatMessage(wid, { body, deliverAt });
+        await sendChatMessage(wid, { body, deliverAt, projectId: snapProjectId ?? undefined });
       }
       // Project gallery rides along as its own image messages after the text.
       // Scheduled sends stagger each image a few seconds after the text so
@@ -417,6 +428,7 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
     setLocalFiles((prev) => [...prev, ...ok]);
     setTemplateAtt(null);          // a local file replaces a template attachment
     setProjectImageFileIds([]);    // …and its ride-along gallery
+    setProjectId(null);            // …and the project link
     textareaRef.current?.focus();
   };
 
@@ -428,6 +440,7 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
     mediaFilename: string | null;
     mediaKind: string | null;
     imageFileIds: string[];
+    projectId: string | null;
   }) => {
     // Fill the textarea with the template body; user can edit before
     // sending. If the user already had text, replace — the picker is an
@@ -448,6 +461,7 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
     }
     // Project gallery (if any) sends as separate image messages on Send.
     setProjectImageFileIds(picked.imageFileIds ?? []);
+    setProjectId(picked.projectId ?? null);
     setShowPicker(false);
     textareaRef.current?.focus();
   };
@@ -531,7 +545,7 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
                 : `${projectImageFileIds.length} image${projectImageFileIds.length === 1 ? '' : 's'} will be sent after the message`}
             </div>
             <button
-              onClick={() => setProjectImageFileIds([])}
+              onClick={() => { setProjectImageFileIds([]); setProjectId(null); }}
               className="p-1 rounded text-charcoal/50 hover:text-red-600 hover:bg-red-50 transition-colors"
               aria-label={isAr ? 'إزالة الصور' : 'Remove images'}
               type="button"

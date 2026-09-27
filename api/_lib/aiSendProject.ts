@@ -321,6 +321,9 @@ export async function sendProjectViaAiFlow(
   //        human took over), send NOTHING further. ──
   const textRes = await enqueueAiReply(svc, {
     chatWid, text, deviceId, jobId: input.jobId, force: input.force,
+    // Link this project message to its project at delivery, so the chat thread
+    // shows the finder-style action buttons on the bot-sent bubble too.
+    projectId,
   });
   if (textRes.blocked) return { queued: false, blocked: true, reason: textRes.reason, message_source: source, project_id: projectId };
   if (textRes.error) return { queued: false, error: textRes.error, message_source: source, project_id: projectId };

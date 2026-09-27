@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle, MessageSquare, ListChecks, User, RotateCcw } from 'lucide-react';
+import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle, MessageSquare, ListChecks, User, RotateCcw, Building2, BookmarkPlus, Check, LayoutGrid } from 'lucide-react';
 import AckIndicator from './AckIndicator';
 import { fetchFileBlob } from '@/lib/haberchat/client';
 import { isLegacyHaberchatRef } from '@/lib/chat/legacyMedia';
@@ -16,11 +16,28 @@ import type { ChatMessage } from '@/types';
  * useMediaBlob). Download URLs never leave the server; <img src> would
  * bypass the auth header and can't access the Haberchat token anyway.
  */
+/** Finder-style actions for a PROJECT message, resolved by the thread's owner
+ *  (ChatDetail) which knows the linked client. Rendered as a button strip under
+ *  the project message so the rep can act on it right in the conversation. */
+export interface MessageProjectActions {
+  onDetails: () => void;
+  onAddOption: () => void;
+  onUnits: () => void;
+  /** Whether this chat is linked to a client — the client-dependent buttons
+   *  (add option / units) are disabled with a hint when false. */
+  clientLinked: boolean;
+  /** Already in the client's options — the add button shows a saved state. */
+  saved: boolean;
+  /** An add is in flight. */
+  saving: boolean;
+}
+
 export default function MessageBubble({
   message,
   isAr,
   reactions,
   onRetry,
+  projectActions,
 }: {
   message: ChatMessage;
   isAr: boolean;
@@ -29,6 +46,8 @@ export default function MessageBubble({
   /** Re-send THIS message. Supplied for outbound bubbles only; rendered as an
    *  explicit Retry action once the bubble has gone `ack: 'failed'`. */
   onRetry?: () => void;
+  /** When set, this is a PROJECT message — render the finder-style action strip. */
+  projectActions?: MessageProjectActions | null;
 }) {
   const isOut = message.flow === 'out';
   const failed = isOut && message.ack === 'failed';
@@ -76,6 +95,8 @@ export default function MessageBubble({
         )}
 
         <MessageBody message={message} isAr={isAr} />
+
+        {projectActions && <ProjectActionStrip actions={projectActions} isAr={isAr} />}
 
         {/* A failed send is stated in words, not just a tick colour, and stays
             one click from going out again. The text is never discarded — the
@@ -134,6 +155,58 @@ function ReactionBadge({ reactions, isAr }: { reactions: ChatMessage[]; isAr: bo
           {n > 1 && <span className="ms-0.5 text-[10px] align-middle text-charcoal/60">{n}</span>}
         </span>
       ))}
+    </div>
+  );
+}
+
+// ─── Project action strip ───────────────────────────────────────────
+
+/**
+ * Finder-style quick actions under a project message, so the rep can act on the
+ * project without leaving the chat: open its details, add it to the client's
+ * options, or browse/send its units. Add-option and Units need a linked client —
+ * disabled with a hint otherwise (per operator choice, 2026-09-27).
+ */
+function ProjectActionStrip({ actions, isAr }: { actions: MessageProjectActions; isAr: boolean }) {
+  const noClientHint = isAr ? 'اربط عميلاً بالمحادثة أولاً' : 'Link a client to this chat first';
+  const btn =
+    'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-45 disabled:cursor-not-allowed';
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5 border-t border-copper/15 pt-2">
+      <button
+        type="button"
+        onClick={actions.onDetails}
+        className={`${btn} border-copper/30 text-copper hover:bg-copper/10`}
+      >
+        <Building2 size={12} />
+        {isAr ? 'تفاصيل المشروع' : 'Project details'}
+      </button>
+      <button
+        type="button"
+        onClick={actions.onAddOption}
+        disabled={!actions.clientLinked || actions.saved || actions.saving}
+        title={!actions.clientLinked ? noClientHint : undefined}
+        className={`${btn} ${
+          actions.saved
+            ? 'border-emerald-300 text-emerald-700 bg-emerald-50'
+            : 'border-copper/30 text-copper hover:bg-copper/10'
+        }`}
+      >
+        {actions.saving ? <Loader2 size={12} className="animate-spin" /> : actions.saved ? <Check size={12} /> : <BookmarkPlus size={12} />}
+        {actions.saved
+          ? (isAr ? 'ضمن خيارات العميل' : 'In client options')
+          : (isAr ? 'إضافة لخيارات العميل' : 'Add to client options')}
+      </button>
+      <button
+        type="button"
+        onClick={actions.onUnits}
+        disabled={!actions.clientLinked}
+        title={!actions.clientLinked ? noClientHint : undefined}
+        className={`${btn} border-copper/30 text-copper hover:bg-copper/10`}
+      >
+        <LayoutGrid size={12} />
+        {isAr ? 'الوحدات' : 'Units'}
+      </button>
     </div>
   );
 }

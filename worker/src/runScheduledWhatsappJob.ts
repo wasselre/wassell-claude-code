@@ -22,6 +22,9 @@ export interface ScheduledWhatsappJob {
   media: ScheduledMediaItem[];
   reference: string | null;
   attempts: number;
+  /** all_projects id when this is a project message — linked to the real wid at
+   *  delivery so the thread shows the project action buttons. */
+  projectId: string | null;
 }
 
 /**

@@ -1736,6 +1736,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   waDevicesLive: [],
   waDevicesLoaded: false,
   chatMessages: {},
+  messageProjects: {},
+
+  loadMessageProjects: async (chatWid: string) => {
+    if (!supabase || !chatWid) return;
+    const { data, error } = await supabase
+      .from('chat_message_projects')
+      .select('message_wid, project_id')
+      .eq('chat_wid', chatWid)
+      .limit(2000);
+    if (error) {
+      // Non-fatal: the buttons are an enhancement; the thread still renders.
+      console.error('[loadMessageProjects] read failed:', error.message);
+      return;
+    }
+    const rows = (data ?? []) as Array<{ message_wid: string; project_id: string }>;
+    if (rows.length === 0) return;
+    set((s) => {
+      const next = { ...s.messageProjects };
+      for (const r of rows) next[r.message_wid] = r.project_id;
+      return { messageProjects: next };
+    });
+  },
   webhookSlugs: [],
   webhookPayloads: [],
   currentUserId: loadLocal<string>('wassell_current_user_id') ?? null,
@@ -4950,6 +4972,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       /** INTERNAL — skip the per-conversation send-lane wait (the caller
        *  holds the lane itself). See src/lib/chat/sendLane.ts. */
       laneBypass?: boolean;
+      /** all_projects id when this is a PROJECT message — persists a
+       *  message→project link so the bubble gets action buttons. */
+      projectId?: string;
     },
   ) => {
     const body = input.body?.trim() || undefined;
@@ -5103,6 +5128,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       media_caption: input.mediaCaption ?? null,
       reference: clientId,
       quoted: null,
+      // Project messages carry their all_projects id so the bubble's action
+      // buttons appear the instant the rep sends (before the server wid is known).
+      project_id: input.projectId ?? null,
       pending: true,
       client_id: clientId,
     };
@@ -5168,11 +5196,28 @@ export const useAppStore = create<AppState>((set, get) => ({
                 pending: false,
                 ack: 'sent' as const,
                 reference: result.reference ?? m.reference,
+                project_id: input.projectId ?? m.project_id ?? null,
               }
             : m,
         );
         return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
       });
+      // Durably link a PROJECT message to its project so the action buttons
+      // survive a reload (and so the bubble is found by wid after the swap).
+      // Best-effort: a link failure never fails the send — the message is sent.
+      // Only IMMEDIATE sends have a real message wid; a scheduled send returns a
+      // `scheduled:<id>` placeholder and is echoed later under a different wid the
+      // webhook doesn't tie to a project (bulk-scheduled buttons are a v1 gap).
+      if (input.projectId && supabase && result.wid && !result.wid.startsWith('scheduled:')) {
+        set((s) => ({ messageProjects: { ...s.messageProjects, [result.wid]: input.projectId! } }));
+        void supabase
+          .rpc('link_message_project', {
+            p_message_wid: result.wid, p_chat_wid: chatWid, p_project_id: input.projectId,
+          })
+          .then(({ error }) => {
+            if (error) console.error('[sendChatMessage] link_message_project failed:', error.message);
+          });
+      }
     } catch (err) {
       // Mark the placeholder as failed so the bubble shows the red warning
       // (and its Retry button).
