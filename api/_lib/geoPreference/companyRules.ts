@@ -21,6 +21,15 @@
  *   • a question that is not about the customer's own purchase (holder not a
  *     buyer / co-decision-maker / occupant),
  *   • counterfactual readings («لو كنت ساكن هناك…») — those are not interest.
+ *
+ * RULE 2 — a place only the SALESPERSON said is never the customer's
+ * preference (found live 2026-09-27: the rep offered «فيه فلل بالصحافة
+ * والنرجس» as the chat's last message, the customer never answered, and the
+ * card drew both districts as «يريد»; the verifier flagged it). The extractor
+ * is told not to emit agent-only places, and to attribute an accepted
+ * suggestion to the customer's own reply — but when it still emits one with
+ * `speaker='agent'`, nothing downstream checked the speaker. Such a mention is
+ * demoted to `preference_role='none'`: kept for the record, never on the map.
  */
 import type { Evidence } from './ontology.js';
 
@@ -37,9 +46,15 @@ export function isQuestionAsInterest(e: Evidence): boolean {
   );
 }
 
+/** True when RULE 2 demotes this mention: only the salesperson said it. */
+export function isAgentOnlyMention(e: Evidence): boolean {
+  return e.speaker === 'agent' && (e.preference_role === 'positive' || e.preference_role === 'negative');
+}
+
 /** Apply every company rule. Returns NEW objects for changed mentions; never mutates. */
 export function applyCompanyRules(evidence: readonly Evidence[]): Evidence[] {
   return evidence.map((e) => {
+    if (isAgentOnlyMention(e)) return { ...e, preference_role: 'none' };
     if (!isQuestionAsInterest(e)) return e;
     return {
       ...e,

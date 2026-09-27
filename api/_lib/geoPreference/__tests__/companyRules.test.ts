@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyCompanyRules, isQuestionAsInterest } from '../companyRules.js';
+import { applyCompanyRules, isQuestionAsInterest, isAgentOnlyMention } from '../companyRules.js';
 import { isActivePreference, type Evidence } from '../ontology.js';
 
 /** RULE 1 — a customer's question about a place is interest (operator, 2026-09-27). */
@@ -48,5 +48,20 @@ describe('applyCompanyRules — a customer question is interest', () => {
     const e = ev({});
     applyCompanyRules([e]);
     expect(e.preference_role).toBe('exploratory');
+  });
+});
+
+describe("applyCompanyRules — a place only the salesperson said is never the customer's", () => {
+  it('«فيه فلل بالصحافة والنرجس» from the rep, unanswered → off the map', () => {
+    const rep = ev({ mention_span: 'الصحافة والنرجس', speaker: 'agent', dialogue_act: 'answer', preference_role: 'positive', preference_applicability: 'active', commitment: 'acceptable' });
+    expect(isActivePreference(rep)).toBe(true); // before: it WOULD have been drawn
+    const [after] = applyCompanyRules([rep]);
+    expect(isAgentOnlyMention(rep)).toBe(true);
+    expect(after!.preference_role).toBe('none');
+    expect(isActivePreference(after!)).toBe(false);
+  });
+  it("the customer's own mention is untouched", () => {
+    const own = ev({ speaker: 'client', dialogue_act: 'statement', preference_role: 'positive', preference_applicability: 'active', commitment: 'preferred' });
+    expect(applyCompanyRules([own])[0]).toBe(own);
   });
 });
