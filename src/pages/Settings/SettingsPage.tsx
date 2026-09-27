@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { useIsAdmin } from '@/hooks/usePermission';
 import {
-  Hammer, Zap, LayoutDashboard, Languages,
+  Hammer, Zap, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
   Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot, ShieldCheck, Wallet, Compass,
@@ -84,18 +84,6 @@ const CARDS: SettingsCard[] = [
     color: '#0369A1',
     bg: '#0369A114',
     route: '/workflow/logs',
-    section: 'system_admin',
-    adminOnly: true,
-  },
-  {
-    titleAr: 'لوحات المعلومات',
-    titleEn: 'Dashboards',
-    descAr: 'إنشاء لوحات تحليلية ومشاركتها',
-    descEn: 'Build analytics dashboards and share them',
-    icon: LayoutDashboard,
-    color: '#2563EB',
-    bg: '#2563EB14',
-    route: '/dashboards',
     section: 'system_admin',
     adminOnly: true,
   },

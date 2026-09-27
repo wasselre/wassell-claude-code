@@ -1,7 +1,7 @@
 import { v4 as uuid } from 'uuid';
 import { SEED_MODELS, SEED_GROUPS, PROJECTS_GROUP_ID, RETIRED_SYSTEM_MODEL_NAMES } from '@/data/seedModels';
 import { MAPS_CONFIG_DEFAULT } from '@/types';
-import type { AppModel, AppRecord, Workflow, Dashboard, ModelView, ModelGroup, NoteEntry } from '@/types';
+import type { AppModel, AppRecord, Workflow, ModelView, ModelGroup, NoteEntry } from '@/types';
 
 /**
  * System models that belong under the Projects group. Used by the heal pass below
@@ -33,7 +33,6 @@ export interface MigrationInput {
   models: AppModel[];
   records: Record<string, AppRecord[]>;
   workflows: Workflow[];
-  dashboards: Dashboard[];
   views: ModelView[];
   groups: ModelGroup[];
 }
@@ -130,19 +129,6 @@ const migration_1_to_2: Migration = (state) => {
         `reconfigure from Records UI.`,
     );
   }
-  const danglingDashboards = state.dashboards.filter((d) =>
-    d.widgets.some((w) => {
-      const cfg = w.config as unknown as { field_ids?: string[] };
-      return Array.isArray(cfg.field_ids) && cfg.field_ids.some((id) => !validFieldIds.has(id));
-    }),
-  );
-  if (danglingDashboards.length) {
-    console.warn(
-      `[schemaMigrations] ${danglingDashboards.length} dashboard(s) have widgets with stale field IDs — ` +
-        `reconfigure from Dashboard editor.`,
-    );
-  }
-
   return { ...state, models: out, records: newRecords };
 };
 

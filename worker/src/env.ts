@@ -53,10 +53,6 @@ export interface WorkerEnv {
   /** Base URL of the app (Vercel) the worker POSTs scheduled-report runs to.
    *  Default https://app.wassel.re. */
   APP_URL: string;
-  /** Shared secret for POST /api/internal/run-report. When UNSET the worker's
-   *  scheduled-reports loop self-disables (so the worker boots fine before the
-   *  Scheduled Reports feature is enabled). Set it to turn reports on. */
-  REPORTS_RUNNER_SECRET: string | null;
   /** Shared secret for the worker→app internal surface: POST
    *  /api/internal/run-workflow-job (server-authoritative workflow runner) AND
    *  POST /api/internal/send-notification-wa (notification_deliveries →
@@ -114,7 +110,7 @@ export interface WorkerEnv {
   MARKETING_COLLECTION_ENABLED: boolean;
   /** DeepSeek key for the AI call-result lane (call_result_suggestions). When
    *  UNSET the call-analysis loop self-disables, so the worker boots fine
-   *  before the feature is turned on — same posture as REPORTS_RUNNER_SECRET.
+   *  before the feature is turned on — same posture as WORKFLOW_RUNNER_SECRET.
    *  Chosen over Claude for this lane after a 50-call blind benchmark against
    *  real agent-chosen outcomes; see docs/prd/calling.md. */
   DEEPSEEK_API_KEY: string | null;
@@ -160,7 +156,6 @@ export function loadEnv(): WorkerEnv {
     SOFFICE_BIN: process.env.SOFFICE_BIN ?? 'soffice',
     GS_BIN: process.env.GS_BIN ?? 'gs',
     APP_URL: process.env.APP_URL ?? 'https://app.wassel.re',
-    REPORTS_RUNNER_SECRET: process.env.REPORTS_RUNNER_SECRET ?? null,
     WORKFLOW_RUNNER_SECRET: process.env.WORKFLOW_RUNNER_SECRET ?? null,
     WORKFLOW_PROOF_ONLY: process.env.WORKFLOW_PROOF_ONLY === '1',
     BROWSERBASE_API_KEY: process.env.BROWSERBASE_API_KEY ?? null,

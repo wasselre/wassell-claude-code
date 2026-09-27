@@ -45,7 +45,7 @@ import type { AppState } from '../../types';
 import { wasEchoOf } from './dedup';
 import {
   mergeRecord, mergeModel, mergeModelGroup, mergeWorkflow, mergeWorkflowGroup,
-  mergeWorkflowRun, mergeDashboard, mergeModelView, mergeProfile, mergeRole, mergeUser,
+  mergeWorkflowRun, mergeModelView, mergeProfile, mergeRole, mergeUser,
 } from './mergeHandlers';
 import type { PgEvent, RealtimeOutcome } from './mergeHandlers';
 
@@ -69,7 +69,6 @@ const TABLES: TableSpec[] = [
   { table: 'workflows',       envFlag: 'VITE_REALTIME_WORKFLOWS',       handler: mergeWorkflow },
   { table: 'workflow_groups', envFlag: 'VITE_REALTIME_WORKFLOW_GROUPS', handler: mergeWorkflowGroup },
   { table: 'workflow_runs',   envFlag: 'VITE_REALTIME_WORKFLOW_RUNS',   handler: mergeWorkflowRun },
-  { table: 'dashboards',      envFlag: 'VITE_REALTIME_DASHBOARDS',      handler: mergeDashboard },
   { table: 'model_views',     envFlag: 'VITE_REALTIME_MODEL_VIEWS',     handler: mergeModelView },
   { table: 'profiles',        envFlag: 'VITE_REALTIME_PROFILES',        handler: mergeProfile },
   { table: 'roles',           envFlag: 'VITE_REALTIME_ROLES',           handler: mergeRole },

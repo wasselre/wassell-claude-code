@@ -426,7 +426,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
 
           {(() => {
             const p = location.pathname;
-            const isSettingsActive = p.startsWith('/settings') || p.startsWith('/builder') || p.startsWith('/workflow') || p.startsWith('/dashboards');
+            const isSettingsActive = p.startsWith('/settings') || p.startsWith('/builder') || p.startsWith('/workflow');
             const settingsLabel = isAr ? 'الإعدادات' : 'Settings';
             return (
               <NavLink

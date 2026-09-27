@@ -38,7 +38,6 @@ import type {
   SectionFieldGroup,
   ModelGroup,
   Workflow,
-  Dashboard,
   Role,
   Profile,
   AppRecord,
@@ -59,8 +58,6 @@ export type CandidateKind =
   | 'section_field_group_label'
   | 'sidebar_group_label'
   | 'workflow_label'
-  | 'dashboard_label'
-  | 'widget_label'
   | 'role_label'
   | 'profile_label';
 
@@ -84,8 +81,6 @@ export interface MigrationCandidate {
     optionId?: string;
     groupId?: string;
     workflowId?: string;
-    dashboardId?: string;
-    widgetId?: string;
     roleId?: string;
     profileId?: string;
   };
@@ -95,7 +90,6 @@ interface ScanInput {
   models: AppModel[];
   groups: ModelGroup[];
   workflows: Workflow[];
-  dashboards: Dashboard[];
   roles: Role[];
   profiles: Profile[];
 }
@@ -269,35 +263,6 @@ export function scanLegacyEntities(state: ScanInput): MigrationCandidate[] {
     }
   }
 
-  for (const d of state.dashboards) {
-    if (needsTranslation(d.label_ar, d.label_en)) {
-      out.push({
-        id: `dashboard:${d.id}`,
-        kind: 'dashboard_label',
-        reason: 'bad_labels',
-        sourceText: d.label_ar || d.label_en,
-        path: `Dashboard: ${d.label_ar || d.label_en}`,
-        current: { label_ar: d.label_ar, label_en: d.label_en },
-        refs: { dashboardId: d.id },
-      });
-    }
-    for (const widget of d.widgets ?? []) {
-      const titleAr = widget.title_ar ?? '';
-      const titleEn = widget.title_en ?? '';
-      if (needsTranslation(titleAr, titleEn) && (titleAr || titleEn)) {
-        out.push({
-          id: `widget:${d.id}:${widget.id}`,
-          kind: 'widget_label',
-          reason: 'bad_labels',
-          sourceText: titleAr || titleEn,
-          path: `Dashboard ${d.label_ar || d.label_en} › Widget: ${titleAr || titleEn}`,
-          current: { label_ar: titleAr, label_en: titleEn },
-          refs: { dashboardId: d.id, widgetId: widget.id },
-        });
-      }
-    }
-  }
-
   for (const r of state.roles) {
     if (needsTranslation(r.label_ar, r.label_en)) {
       out.push({
@@ -340,8 +305,6 @@ const KIND_TO_TRANSLATION_KIND: Record<CandidateKind, TranslationKind> = {
   section_field_group_label: 'group',
   sidebar_group_label: 'group',
   workflow_label: 'workflow',
-  dashboard_label: 'dashboard',
-  widget_label: 'dashboard',
   role_label: 'role',
   profile_label: 'profile',
 };
@@ -363,7 +326,6 @@ interface ApplyDeps {
     models: AppModel[];
     groups: ModelGroup[];
     workflows: Workflow[];
-    dashboards: Dashboard[];
     roles: Role[];
     profiles: Profile[];
     records: Record<string, AppRecord[]>;
@@ -371,7 +333,6 @@ interface ApplyDeps {
   saveModel: (model: AppModel) => void;
   saveGroup: (group: ModelGroup) => void;
   saveWorkflow: (workflow: Workflow) => void;
-  saveDashboard: (dashboard: Dashboard) => void;
   saveRole: (role: Role) => void;
   saveProfile: (profile: Profile) => void;
   saveRecord: (record: AppRecord) => Promise<unknown> | void;
@@ -669,33 +630,6 @@ export async function applyCandidate(
         ...w,
         label_ar: proposed.label_ar,
         label_en: proposed.label_en,
-        updated_at: new Date().toISOString(),
-      });
-      return;
-    }
-
-    case 'dashboard_label': {
-      const d = state.dashboards.find((x) => x.id === c.refs.dashboardId);
-      if (!d) throw new Error('dashboard disappeared');
-      deps.saveDashboard({
-        ...d,
-        label_ar: proposed.label_ar,
-        label_en: proposed.label_en,
-        updated_at: new Date().toISOString(),
-      });
-      return;
-    }
-
-    case 'widget_label': {
-      const d = state.dashboards.find((x) => x.id === c.refs.dashboardId);
-      if (!d) throw new Error('dashboard disappeared');
-      deps.saveDashboard({
-        ...d,
-        widgets: (d.widgets ?? []).map((w) =>
-          w.id === c.refs.widgetId
-            ? { ...w, title_ar: proposed.label_ar, title_en: proposed.label_en }
-            : w,
-        ),
         updated_at: new Date().toISOString(),
       });
       return;

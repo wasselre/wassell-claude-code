@@ -1,7 +1,10 @@
-# PRD: Scheduled Reports
+# PRD: Scheduled Reports  · **DELETED 2026-09-27**
 
-**Status:** Live + verified in prod (2026-06-17) — run-now, automatic scheduler, and source-value match all confirmed. Email is **draft-only** today (`RESEND_API_KEY` not configured). See Verified.
-**Last updated:** 2026-08-02 (**Bilingual W4 — report language:** each report has a `language` (ar/en, picker in the create/edit modal, default follows the creator's UI language; column `scheduled_reports.language`, default 'ar'). The runner + email render chrome, direction (rtl/ltr), section titles, and row labels in that language — previously the email was hardcoded English chrome with label_en-first rows. Free-text group labels without a translation fall back to source text.)
+> **This module has been removed** (architecture cleanup D44). Deleted: the Dashboards pages, the `/dashboards` + `/scheduled-reports` routes (now redirect to `/settings`), the Settings card, the store slice + realtime subscription, `/api/analytics`, `/api/scheduled-reports/run-now`, `/api/internal/run-report`, the report runner, and the worker's reports loop. `/public/dashboard/:token` now shows a "no longer available" notice. Tables `dashboards`, `scheduled_reports`, `scheduled_report_runs` and the `get_public_dashboard` RPC were dropped by `supabase/migrations/2026-09-27_delete_dashboards_scheduled_reports_d44.sql` (backups `_backup_dashboards_20260927`, `_backup_scheduled_reports_20260927`). At deletion there were 4 dashboards and 0 scheduled reports (never used). The analytics engine (`src/lib/analytics`) and `metric_definitions` were NOT deleted. Everything below is retained for history only.
+
+
+**Status:** DELETED 2026-09-27 (architecture cleanup D44) — content below is historical.
+**Last updated:** 2026-09-27 (marked deleted) | 2026-08-02 (**Bilingual W4 — report language:** each report has a `language` (ar/en, picker in the create/edit modal, default follows the creator's UI language; column `scheduled_reports.language`, default 'ar'). The runner + email render chrome, direction (rtl/ltr), section titles, and row labels in that language — previously the email was hardcoded English chrome with label_en-first rows. Free-text group labels without a translation fall back to source text.)
 **Related PRDs:** [dashboards.md](dashboards.md), [workflow-automation.md](workflow-automation.md), [access-control.md](access-control.md), [logs.md](logs.md)
 
 ## What it is (in plain English)

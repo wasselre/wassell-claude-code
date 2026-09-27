@@ -34,6 +34,7 @@ import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 import { clientActiveOptionRefs } from '@/lib/matching/clientOptionIndex';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
+import { isRetiredModel } from '@/lib/featureFlags';
 import { resolveConversationIdentity, conversationIdentityMessage } from '../lib/conversationIdentity';
 
 /** Full-screen spinner shown while a lazy overlay chunk loads. */
@@ -158,7 +159,11 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   // Advertiser whose phone matches this chat — computed live (nothing is
   // stored on the chat), so a fresh REGA lookup links instantly. The model
   // refs are lifted so we have their ids for the in-chat record popups below.
-  const advertisersModel = useMemo(() => models.find((m) => m.name === 'advertisers') ?? null, [models]);
+  // Archived (D47): no model → no advertiser match → no link to an archived page.
+  const advertisersModel = useMemo(
+    () => (isRetiredModel('advertisers') ? null : models.find((m) => m.name === 'advertisers') ?? null),
+    [models],
+  );
   const contactsModel = useMemo(() => models.find((m) => m.name === 'contacts') ?? null, [models]);
   const matchedAdvertiser = useMemo(() => {
     if (!advertisersModel || !phone) return null;

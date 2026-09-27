@@ -6,6 +6,7 @@ import StartChatModal from './StartChatModal';
 import { buildClientPrefChips, buildGeoNameMap, isClosedChat, type ClientPrefChip } from '../lib/prefChips';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
+import { isRetiredModel } from '@/lib/featureFlags';
 import type { AppRecord } from '@/types';
 
 /**
@@ -50,7 +51,11 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
 
   const chatsModel = useMemo(() => models.find((m) => m.name === 'chats'), [models]);
   const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
-  const advertisersModel = useMemo(() => models.find((m) => m.name === 'advertisers') ?? null, [models]);
+  // Archived (D47): no model → no advertiser matching, so those chats land in «أخرى».
+  const advertisersModel = useMemo(
+    () => (isRetiredModel('advertisers') ? null : models.find((m) => m.name === 'advertisers') ?? null),
+    [models],
+  );
   const contactsModel = useMemo(() => models.find((m) => m.name === 'contacts') ?? null, [models]);
   const officersModel = useMemo(() => models.find((m) => m.name === 'project_officers') ?? null, [models]);
   const chatRecords = chatsModel ? (records[chatsModel.id] ?? []) : [];
@@ -264,7 +269,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   );
 
   const visible = useMemo(() => {
-    if (tab === 'advertisers') return advertiserChats;
+    if (tab === 'advertisers' && advertisersModel) return advertiserChats;
     if (tab === 'other') return otherChats;
     if (tab !== 'clients') return searched;
     if (clientFilter === 'closed') return clientChats.filter((r) => isClosedChat(r.data as Record<string, unknown>));
@@ -285,7 +290,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const tabs: { id: ChatTab; label: string; count: number }[] = [
     { id: 'all', label: isAr ? 'الكل' : 'All', count: searched.length },
     { id: 'clients', label: isAr ? 'العملاء' : 'Clients', count: clientChats.length },
-    { id: 'advertisers', label: isAr ? 'المعلنون' : 'Advertisers', count: advertiserChats.length },
+    ...(advertisersModel ? [{ id: 'advertisers' as const, label: isAr ? 'المعلنون' : 'Advertisers', count: advertiserChats.length }] : []),
     { id: 'other', label: isAr ? 'أخرى' : 'Other', count: otherChats.length },
   ];
 

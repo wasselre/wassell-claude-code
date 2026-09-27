@@ -1,4 +1,4 @@
-import type { AnalyticsQuery, AnalyticsResult } from '../lib/analytics/types';
+import type { AnalyticsQuery } from '../lib/analytics/types';
 
 export type FieldType =
   | 'text'
@@ -1616,9 +1616,8 @@ export interface WorkflowRun {
   error?: string;
 }
 
-// Dashboard types
-
-export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress' | 'pivot' | 'heatmap' | 'map';
+// Filter conditions — shared by saved views, ad-hoc filters and the analytics
+// engine (originally the Dashboards widget filter shape; Dashboards deleted D44).
 
 export type WidgetFilterOperator =
   | 'equals'
@@ -1638,225 +1637,6 @@ export interface WidgetFilterCondition {
   field_path?: string;
   operator: WidgetFilterOperator;
   value: unknown;
-}
-
-export interface WidgetConfigStat {
-  conditions?: WidgetFilterCondition[];
-  color: string;
-}
-
-export interface WidgetConfigChart {
-  group_by_field_id: string;
-  conditions?: WidgetFilterCondition[];
-}
-
-export interface WidgetConfigLine {
-  date_field_id: string;
-  period: 'day' | 'week' | 'month';
-  conditions?: WidgetFilterCondition[];
-}
-
-export interface WidgetConfigTable {
-  field_ids: string[];
-  sort_field_id?: string | null;
-  sort_direction: 'asc' | 'desc';
-  max_rows: number;
-  conditions?: WidgetFilterCondition[];
-}
-
-export type WidgetConfig =
-  | WidgetConfigStat
-  | WidgetConfigChart
-  | WidgetConfigLine
-  | WidgetConfigTable;
-
-// ── Universal analytics widget layer (Phase A) ─────────────────────────
-// A widget is a visualization of an `AnalyticsQuery`. `viz` is visualization-
-// only config, grouped BY FAMILY so switching variants within a family keeps
-// the viz object. The 5 Phase-A families: stat, bars, pies, lines, table.
-
-export interface WidgetNumberFormat {
-  decimals?: number;
-  thousands_separator?: boolean;
-  currency?: string | null; // e.g. 'SAR'
-  percent?: boolean;
-  compact?: boolean; // 1.2K / 3.4M
-}
-
-export type WidgetColorMode =
-  | { kind: 'by_group_option' } // use the group-by field's option colors
-  | { kind: 'single'; color: string }
-  | { kind: 'palette'; colors: string[] };
-
-export interface VizStat {
-  family: 'stat';
-  color: string;
-  number_format?: WidgetNumberFormat;
-  icon?: string;
-  // Comparison metrics (current vs previous/target/secondary) for the stat card.
-  comparison?: {
-    mode: 'previous_period' | 'target' | 'secondary_query';
-    target_value?: number;
-    secondary_query?: AnalyticsQuery;
-    good_direction?: 'up' | 'down'; // colors the delta arrow
-  };
-}
-export interface VizBars {
-  family: 'bars';
-  orientation?: 'vertical' | 'horizontal';
-  color_mode?: WidgetColorMode;
-  stacked?: boolean; // when a 2nd group-by level supplies the series
-  show_legend?: boolean;
-  number_format?: WidgetNumberFormat;
-}
-export interface VizPies {
-  family: 'pies';
-  donut?: boolean;
-  color_mode?: WidgetColorMode;
-  show_legend?: boolean;
-  number_format?: WidgetNumberFormat;
-}
-export interface VizLines {
-  family: 'lines';
-  area?: boolean;
-  smooth?: boolean;
-  stacked?: boolean;
-  color_mode?: WidgetColorMode;
-  number_format?: WidgetNumberFormat;
-}
-export interface VizTable {
-  family: 'table';
-  // record_list mode: raw records (legacy table). column_field_ids = columns shown.
-  column_field_ids?: string[];
-  page_size?: number;
-}
-// Funnel: an ordered single-level grouped result rendered as descending stages
-// (preserves the group order — e.g. pipeline stages — and scales each bar to the
-// largest stage). Leaderboard: the same data ranked desc with inline bars + rank.
-export interface VizFunnel {
-  family: 'funnel';
-  color_mode?: WidgetColorMode;
-  number_format?: WidgetNumberFormat;
-  show_pct?: boolean; // show each stage as % of the largest stage
-}
-export interface VizLeaderboard {
-  family: 'leaderboard';
-  color_mode?: WidgetColorMode;
-  number_format?: WidgetNumberFormat;
-  max_rows?: number;
-}
-// Gauge: a scalar (result.total) drawn as a radial arc filling to value/max.
-// Progress: the same scalar as a linear bar filling to value/target. Both ignore
-// grouping (they use the grand total) and drill to the records behind the number.
-export interface VizGauge {
-  family: 'gauge';
-  max?: number; // scale top; defaults to 100 for percent metrics, else the value
-  target?: number; // optional goal marker
-  color?: string;
-  number_format?: WidgetNumberFormat;
-  good_direction?: 'up' | 'down';
-}
-export interface VizProgress {
-  family: 'progress';
-  target?: number; // the 100% point; defaults to 100 for percent metrics
-  color?: string;
-  number_format?: WidgetNumberFormat;
-}
-// Pivot: a two-level grouped result as a matrix — first level = rows, second
-// level = columns, cells = the aggregated value. Collapses to a one-column
-// table when only one group level is set.
-export interface VizPivot {
-  family: 'pivot';
-  number_format?: WidgetNumberFormat;
-}
-// Heatmap: a two-level grouped result as a colored matrix — first level = rows,
-// second level = columns, each cell shaded by value intensity (relative to the
-// max cell). Reuses the pivot's 2-level shape; reads as a density grid.
-export interface VizHeatmap {
-  family: 'heatmap';
-  color?: string; // base hue; cells scale its opacity by value
-  number_format?: WidgetNumberFormat;
-}
-// Map: a single-level grouped result (a city/region field) as a bubble map over
-// a built-in simplified Saudi outline — bubble area ∝ value. Self-contained (no
-// map tiles / API keys); unmatched cities surface as a footnote count.
-export interface VizMap {
-  family: 'map';
-  color?: string;
-  number_format?: WidgetNumberFormat;
-}
-export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard | VizGauge | VizProgress | VizPivot | VizHeatmap | VizMap;
-
-// Dashboard-level global filters + per-widget opt-in.
-export type DashboardFilterControl = 'date_range' | 'select' | 'search';
-export interface DashboardFilter {
-  id: string;
-  label_ar: string;
-  label_en: string;
-  control: DashboardFilterControl;
-  ref_model_id?: string | null; // model whose field defines the option set (select)
-  ref_field_id?: string | null;
-  is_multi?: boolean;
-  default_value?: unknown;
-}
-export interface WidgetFilterMapping {
-  dashboard_filter_id: string;
-  target_field_id: string | null; // field on the widget's source model; null = ignore this filter
-  target_field_path?: 'min' | 'max';
-}
-export type WidgetFilterBehavior =
-  | { mode: 'inherit_dashboard_filters' }
-  | { mode: 'ignore_dashboard_filters' }
-  | { mode: 'custom_mapping'; mappings: WidgetFilterMapping[] };
-
-// ── Scheduled Reports (analytics consumer #2) ──────────────────────────────
-export type ReportFrequency = 'daily' | 'weekly' | 'monthly';
-export type ReportSourceType = 'dashboard' | 'widget' | 'metric' | 'custom';
-export type ReportStatus = 'active' | 'paused' | 'running' | 'error';
-
-export interface ScheduledReport {
-  id: string;
-  title: string;
-  owner_user_id?: string | null;
-  owner_auth_uid?: string | null; // auth.users id — lets the runner mint an owner-scoped token
-  frequency: ReportFrequency;
-  hour_of_day: number;        // 0..23, Asia/Riyadh
-  day_of_week?: number | null;  // 0=Sun, weekly
-  day_of_month?: number | null; // 1..28, monthly
-  timezone: string;
-  recipients: string[];
-  delivery_channel: 'email';
-  /** Bilingual W4: the language the report email renders in. Default 'ar'. */
-  language?: 'ar' | 'en';
-  source_type: ReportSourceType;
-  dashboard_id?: string | null;
-  widget_id?: string | null;
-  metric_id?: string | null;
-  query?: AnalyticsQuery | null;
-  status: ReportStatus;
-  last_run_at?: string | null;
-  next_run_at?: string | null;
-  last_status?: string | null;
-  last_result_snapshot?: unknown;
-  error_message?: string | null;
-  created_by_user_id?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ScheduledReportRun {
-  id: string;
-  report_id: string;
-  started_at: string;
-  finished_at?: string | null;
-  status: 'running' | 'sent' | 'draft' | 'failed' | 'partial';
-  triggered_by: 'schedule' | 'manual';
-  data_as_of?: string | null;
-  result_snapshot?: unknown;
-  warnings?: unknown;
-  recipients?: string[];
-  delivery?: string | null;
-  error_message?: string | null;
 }
 
 /**
@@ -2063,45 +1843,6 @@ export interface ClientSalesProcessAssignment {
 export interface ChatComposerTarget {
   phone?: string;
   clientRecordId?: string;
-}
-
-export interface DashboardWidget {
-  id: string;
-  type: WidgetType;
-  title_ar: string;
-  title_en: string;
-  source_model_id: string;
-  // NEW (Phase A) — the universal query + visualization. Optional for back-compat:
-  // legacy widgets render through `migrateLegacyWidget(widget, model)` which derives
-  // these from `config` on the fly. The builder persists them; `config` is retained.
-  query?: AnalyticsQuery;
-  viz?: WidgetViz;
-  filter_behavior?: WidgetFilterBehavior;
-  // Pre-computed result for PUBLIC sharing. Filled on publish/refresh by running
-  // the engine with the owner's scope; the public page renders this so anon
-  // never reads raw records. Recomputed on demand; stale until refreshed.
-  snapshot?: { result: AnalyticsResult; computed_at: string };
-  config: WidgetConfig;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface Dashboard {
-  id: string;
-  label_ar: string;
-  label_en: string;
-  description?: string;
-  widgets: DashboardWidget[];
-  // NEW (Phase A) — dashboard-level global filters + the owner whose RLS scope
-  // public snapshots are computed with. Optional for back-compat (default []).
-  filters?: DashboardFilter[];
-  owner_user_id?: string | null;
-  is_public: boolean;
-  public_token?: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 /**
@@ -2678,9 +2419,7 @@ export interface AppState {
   /** Unified activity log — capped at 200 most recent entries in memory + localStorage.
    *  Older entries live in Supabase only and are paged in by the LogsPage. */
   activityLog: ActivityLogEntry[];
-  dashboards: Dashboard[];
   metricDefinitions: MetricDefinition[];
-  scheduledReports: ScheduledReport[];
   salesProcessOverrides: SalesProcessOverride[];
   // Sales Studio 2.0 strategy layer (top-level tables, not JSONB records).
   salesProcesses: SalesProcess[];
@@ -2886,15 +2625,9 @@ export interface AppState {
   /** Clear the entire log (admin-only — UI gates this). */
   clearActivityLog: () => void;
 
-  // Dashboards
-  saveDashboard: (dashboard: Dashboard) => void;
-  deleteDashboard: (dashboardId: string) => void;
   // Semantic metrics
   saveMetricDefinition: (metric: MetricDefinition) => void;
   deleteMetricDefinition: (metricId: string) => void;
-  // Scheduled reports
-  saveScheduledReport: (report: ScheduledReport) => void;
-  deleteScheduledReport: (reportId: string) => void;
   // Sales-process instruction overrides (manager-editable follow-up objectives)
   saveSalesProcessOverride: (override: SalesProcessOverride) => void;
   // Sales Studio 2.0 — process/version/experiment/assignment management

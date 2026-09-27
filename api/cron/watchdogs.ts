@@ -38,7 +38,6 @@ const WATCHDOG_RPCS = [
   'pdf_compress_watchdog',
   'document_jobs_watchdog',
   'data_migration_jobs_watchdog',
-  'scheduled_reports_watchdog',
   'conflict_storm_sweep',
   // WhatsApp sends were the ONE queue missing from this list, so a stuck send
   // was the one kind of stuck job with no backstop when the Fly worker is down

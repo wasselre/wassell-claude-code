@@ -77,6 +77,12 @@ export const ARCHIVED_MODULE_MODELS = [
   // The Fly worker lanes (clean-text / video-convert / listing-mirror / REGA)
   // stay deployed and simply idle on empty queues. Restore = remove this line.
   'market_listings',
+  // D47 (2026-09-27) — advertisers were the people behind market listings, so
+  // they share its archived state. The 17 records stay in the DB. Archiving
+  // also turns off the Chats «المعلنون» tab and the chat header's "View
+  // advertiser record" link (both check `isRetiredModel('advertisers')`), so
+  // those chats fall into «أخرى». Restore = remove this line.
+  'advertisers',
 ] as const;
 
 /**
@@ -144,8 +150,7 @@ export const WORKSPACE_HIDDEN_MODEL_NAMES = [
   'countries', 'regions', 'cities', 'districts',
   // D46 — hidden now; activated later with the unanswered-requests feature (D38).
   'real_estate_offices',
-  // D47 — data retained, nav off now (shares the market-listings archived state).
-  'advertisers',
+  // D47 — advertisers moved to ARCHIVED_MODULE_MODELS (2026-09-27).
 ] as const;
 
 /** True when a model's sidebar row is hidden because it's surfaced in a workspace. */

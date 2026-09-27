@@ -26,7 +26,7 @@ import { supabase } from './../supabase';
 import type { AppState } from '../../types';
 import {
   mergeRecord, mergeModel, mergeProfile, mergeRole, mergeUser,
-  mergeModelView, mergeWorkflow, mergeDashboard,
+  mergeModelView, mergeWorkflow,
 } from './mergeHandlers';
 import type { PgEvent } from './mergeHandlers';
 
@@ -52,7 +52,6 @@ const DELTA_TABLES: DeltaSpec[] = [
   { table: 'users',       handler: mergeUser,       limit: 100 },
   { table: 'model_views', handler: mergeModelView,  limit: 200 },
   { table: 'workflows',   handler: mergeWorkflow,   limit: 200 },
-  { table: 'dashboards',  handler: mergeDashboard,  limit: 100 },
 ];
 
 const lastLoadTs = new Map<string, string>();

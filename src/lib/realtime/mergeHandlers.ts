@@ -23,7 +23,6 @@ import type {
   Workflow,
   WorkflowGroup,
   WorkflowRun,
-  Dashboard,
   ModelView,
   Profile,
   Role,
@@ -231,7 +230,7 @@ export function mergeRecord(
 //
 // Used for top-level slices that are flat AppX[] arrays keyed by id:
 // models, model_groups, workflows, workflow_groups, workflow_runs,
-// dashboards, model_views, profiles, roles, users.
+// model_views, profiles, roles, users.
 function mergeFlatList<T extends { id: string; updated_at?: string }>(
   event: PgEvent,
   payload: { new?: T; old?: Partial<T> },
@@ -322,20 +321,6 @@ export function mergeWorkflowRun(
     const r = mergeFlatList(event, payload, s.workflowRuns);
     outcome = r.outcome;
     return r.outcome === 'applied' ? { workflowRuns: r.next } : s;
-  });
-  return outcome;
-}
-
-export function mergeDashboard(
-  event: PgEvent,
-  payload: { new?: Dashboard; old?: Partial<Dashboard> },
-  setState: SetState,
-): RealtimeOutcome {
-  let outcome: RealtimeOutcome = 'noop';
-  setState((s) => {
-    const r = mergeFlatList(event, payload, s.dashboards);
-    outcome = r.outcome;
-    return r.outcome === 'applied' ? { dashboards: r.next } : s;
   });
   return outcome;
 }

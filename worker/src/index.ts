@@ -139,11 +139,6 @@ let pushWakeRequested = false;
 // hourly). Self-disables when WORKFLOW_RUNNER_SECRET is unset.
 let notificationBusy = false;
 let notificationWakeRequested = false;
-// Scheduled Reports (2026-06-17) get a FIFTH independent, time-gated loop:
-// claim due reports (next_run_at passed) and trigger the owner-scoped runner on
-// the app. Self-disables when REPORTS_RUNNER_SECRET is unset.
-let reportsBusy = false;
-let reportsWakeRequested = false;
 // Document generation (document_jobs, 2026-06-21) gets a SIXTH independent loop:
 // render an authored template + a record's data into a branded A4 PDF via the
 // same LibreOffice path the office-preview queue uses.
@@ -2493,90 +2488,6 @@ async function portalPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Scheduled Reports — time-gated. scheduled_report_claim_due returns only
-// reports whose next_run_at has passed (SKIP LOCKED), so no separate scheduler
-// is needed. Each due report is run by POSTing the owner-scoped runner endpoint
-// on the app (the worker can't import the analytics engine). The runner does the
-// bookkeeping (next_run_at, status, history); a crashed run is reset by the
-// reports watchdog after 10 min.
-// ─────────────────────────────────────────────────────────────────────────
-
-async function claimAndRunDueReports(): Promise<boolean> {
-  const { data, error } = await supabase.rpc('scheduled_report_claim_due', {
-    p_worker_id: env.WORKER_ID,
-    p_limit: 5,
-  });
-  if (error) {
-    console.error(`[worker] report claim failed: ${error.message}`);
-    return false;
-  }
-  const rows = (data ?? []) as Array<{ id: string; title: string }>;
-  if (rows.length === 0) return false;
-  for (const r of rows) {
-    console.log(`[worker] running scheduled report=${r.id} "${r.title}"`);
-    try {
-      const res = await fetch(`${env.APP_URL}/api/internal/run-report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-reports-runner-secret': env.REPORTS_RUNNER_SECRET! },
-        body: JSON.stringify({ report_id: r.id }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { result?: { status?: string }; error?: string };
-      if (!res.ok) {
-        console.error(`[worker] report=${r.id} runner HTTP ${res.status}: ${body.error ?? ''}`);
-      } else {
-        console.log(`[worker] report=${r.id} → ${body.result?.status ?? 'ok'}`);
-      }
-    } catch (err) {
-      // Left status='running'; the watchdog resets it after 10 min so it retries.
-      console.error(`[worker] report=${r.id} runner call threw:`, err);
-    }
-  }
-  return true;
-}
-
-async function runReportsWatchdog(): Promise<void> {
-  try {
-    const { data, error } = await supabase.rpc('scheduled_reports_watchdog');
-    if (error) {
-      console.error(`[worker] reports watchdog RPC error: ${error.message}`);
-      return;
-    }
-    const swept = typeof data === 'number' ? data : 0;
-    if (swept > 0) console.warn(`[worker] reports watchdog reset ${swept} stuck report(s)`);
-  } catch (err) {
-    console.error(`[worker] reports watchdog threw:`, err);
-  }
-}
-
-async function reportsPollLoop(): Promise<void> {
-  let lastWatchdog = 0;
-  while (!shuttingDown) {
-    reportsBusy = true;
-    let didClaim = false;
-    try {
-      didClaim = await claimAndRunDueReports();
-    } catch (err) {
-      console.error('[worker] reports poll iteration error:', err);
-    }
-    reportsBusy = false;
-
-    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
-      lastWatchdog = Date.now();
-      await runReportsWatchdog();
-    }
-
-    if (didClaim || reportsWakeRequested) {
-      reportsWakeRequested = false;
-      continue;
-    }
-    const wokeAt = Date.now();
-    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !reportsWakeRequested && !shuttingDown) {
-      await sleep(200);
-    }
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
 // Server-authoritative workflow runner — workflow_jobs queue.
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -3117,8 +3028,6 @@ const server = http.createServer((req, res) => {
         notification_enabled: !!env.WORKFLOW_RUNNER_SECRET,
         document_busy: documentBusy,
         migration_busy: migrationBusy,
-        reports_busy: reportsBusy,
-        reports_enabled: !!env.REPORTS_RUNNER_SECRET,
         workflow_enabled: !!env.WORKFLOW_RUNNER_SECRET,
         workflow_proof_only: env.WORKFLOW_PROOF_ONLY,
         workflow_auth_disabled: workflowAuthDisabled,
@@ -3166,7 +3075,6 @@ const server = http.createServer((req, res) => {
     compressWakeRequested = true;
     documentWakeRequested = true;
     migrationWakeRequested = true;
-    reportsWakeRequested = true;
     workflowWakeRequested = true;
     regaWakeRequested = true;
     portalWakeRequested = true;
@@ -3199,7 +3107,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || enrichmentBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || portalBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || enrichmentBusy || compressBusy || documentBusy || migrationBusy || workflowBusy || regaBusy || portalBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -3792,13 +3700,6 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     loops.push(translationPollLoop());
   } else {
     console.log('[worker] translation loop disabled (DEEPSEEK_API_KEY unset)');
-  }
-  // Scheduled-reports loop only runs when the shared secret is set (feature on).
-  if (env.REPORTS_RUNNER_SECRET) {
-    console.log('[worker] scheduled-reports loop enabled');
-    loops.push(reportsPollLoop());
-  } else {
-    console.log('[worker] scheduled-reports loop disabled (REPORTS_RUNNER_SECRET unset)');
   }
   // Workflow runner loop — self-disabled (inert) until WORKFLOW_RUNNER_SECRET is
   // set on the Fly worker (matching the Vercel prod env). Deploying this code is

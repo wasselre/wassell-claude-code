@@ -19,7 +19,7 @@
  * RUNTIME REACH
  * This file is the CANONICAL implementation and is imported directly by both
  * `src/**` (SPA) and `api/**` (Vercel functions) — `tsconfig.api.json` covers
- * both and `api/_lib/analyticsRun.ts` sets the cross-import precedent.
+ * both.
  * Three runtimes cannot import it and carry documented adapters that MUST
  * satisfy the same conformance fixtures (`geoLocalizationFixtures.ts`):
  *   - `worker/src/lib/localizedName.ts`              (standalone npm pkg, rootDir:src)

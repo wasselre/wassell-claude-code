@@ -15,10 +15,7 @@ const WorkflowEditorPage = lazy(() => import('@/pages/Workflow/WorkflowEditorPag
 const WorkflowAgentPage = lazy(() => import('@/pages/Workflow/WorkflowAgentPage'));
 const WorkflowLogsPage = lazy(() => import('@/pages/Workflow/WorkflowLogsPage'));
 const WorkflowRunDetailPage = lazy(() => import('@/pages/Workflow/WorkflowRunDetailPage'));
-const DashboardListPage = lazy(() => import('@/pages/Dashboard/DashboardListPage'));
-const DashboardEditorPage = lazy(() => import('@/pages/Dashboard/DashboardEditorPage'));
-const ScheduledReportsPage = lazy(() => import('@/pages/Dashboard/ScheduledReportsPage'));
-const PublicDashboardPage = lazy(() => import('@/pages/Dashboard/PublicDashboardPage'));
+const PublicDashboardRetired = lazy(() => import('@/pages/PublicDashboardRetired'));
 const SettingsPage = lazy(() => import('@/pages/Settings/SettingsPage'));
 const LogsPage = lazy(() => import('@/pages/Logs/LogsPage'));
 const TranslationSettingsPage = lazy(() => import('@/pages/Settings/TranslationSettingsPage'));
@@ -353,7 +350,8 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/auth/reset-password" element={<ResetPassword />} />
         <Route path="/auth/mfa-setup" element={<MfaSetup />} />
-        <Route path="/public/dashboard/:token" element={<PublicDashboardPage />} />
+        {/* Dashboards were deleted (D44) — old share links get a notice, not a blank page. */}
+        <Route path="/public/dashboard/:token" element={<PublicDashboardRetired />} />
         <Route path="/share/:token" element={<PublicShareFilePage />} />
         <Route path="/rate/:token" element={<RateVisitPage />} />
         {/* Public job-application landing (ad traffic). No auth, no layout,
@@ -473,9 +471,10 @@ export default function App() {
               The page + canvas render disabled for non-admins; RLS also blocks
               any write. The list / agent routes above stay admin-only. */}
           <Route path="/workflow/:workflowId" element={<RequireWorkflowView><WorkflowEditorPage /></RequireWorkflowView>} />
-          <Route path="/dashboards" element={<RequireAdmin><DashboardListPage /></RequireAdmin>} />
-          <Route path="/dashboards/:dashboardId" element={<RequireAdmin><DashboardEditorPage /></RequireAdmin>} />
-          <Route path="/scheduled-reports" element={<RequireAdmin><ScheduledReportsPage /></RequireAdmin>} />
+          {/* Dashboards + Scheduled Reports were deleted (D44) — bookmarks go to Settings. */}
+          <Route path="/dashboards" element={<Navigate to="/settings" replace />} />
+          <Route path="/dashboards/:dashboardId" element={<Navigate to="/settings" replace />} />
+          <Route path="/scheduled-reports" element={<Navigate to="/settings" replace />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/translations" element={<RequireAdmin><TranslationSettingsPage /></RequireAdmin>} />
           <Route path="/settings/profiles" element={<RequireAdmin><ProfilesPage /></RequireAdmin>} />

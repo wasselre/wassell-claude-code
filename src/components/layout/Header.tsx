@@ -75,7 +75,6 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
     if (path === '/') return t('nav.home');
     if (path.startsWith('/builder')) return t('builder.title');
     if (path.startsWith('/workflow')) return t('workflow.title');
-    if (path.startsWith('/dashboards')) return t('dashboard.title');
     if (path === '/settings') return isAr ? 'الإعدادات' : 'Settings';
     if (path.startsWith('/settings/translations')) return isAr ? 'إعدادات الترجمة' : 'Translation Settings';
     if (path.startsWith('/settings/profiles')) return isAr ? 'الصلاحيات' : 'Profiles';

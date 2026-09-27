@@ -56,9 +56,7 @@ import type {
   Workflow,
   WorkflowGroup,
   WorkflowRun,
-  Dashboard,
   MetricDefinition,
-  ScheduledReport,
   SalesProcessOverride,
   SalesProcess,
   SalesProcessVersion,
@@ -96,7 +94,7 @@ import {
 
 /** Returns a human-readable reason a widget/metric AnalyticsQuery must not be
  *  persisted — non-serializable (the HARD RULE) or structurally invalid — else
- *  null. Used by saveDashboard / saveMetricDefinition to fail loudly. */
+ *  null. Used by saveMetricDefinition to fail loudly. */
 function analyticsQueryProblem(query: AnalyticsQuery | undefined): string | null {
   if (!query) return null;
   try {
@@ -1714,9 +1712,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   workflowRuns: [],
   serverEnrolledModelIds: new Set<string>(),
   activityLog: loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [],
-  dashboards: [],
   metricDefinitions: [],
-  scheduledReports: [],
   salesProcessOverrides: [],
   salesProcesses: [],
   salesProcessVersions: [],
@@ -1873,9 +1869,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         .limit(500);
       return error ? null : (data as ActivityLogEntry[] | null);
     })();
-    const dashboardsP        = supabaseLoad<Dashboard>('dashboards');
     const metricDefinitionsP = supabaseLoad<MetricDefinition>('metric_definitions');
-    const scheduledReportsP  = supabaseLoad<ScheduledReport>('scheduled_reports');
     const salesProcessOverridesP = supabaseLoad<SalesProcessOverride>('sales_process_overrides');
     const salesProcessesP = supabaseLoad<SalesProcess>('sales_processes');
     const salesProcessVersionsP = supabaseLoad<SalesProcessVersion>('sales_process_versions');
@@ -1986,18 +1980,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     workflowGroups = loadedWorkflowGroups ?? loadLocal<WorkflowGroup[]>('wassell_workflow_groups') ?? [];
     saveLocal('wassell_workflow_groups', workflowGroups);
 
-    // Dashboards (chrome — sidebar dashboard list).
-    let dashboards = await dashboardsP;
-    if (!dashboards) dashboards = loadLocal<Dashboard[]>('wassell_dashboards') ?? [];
-    saveLocal('wassell_dashboards', dashboards);
-
     let metricDefinitions = await metricDefinitionsP;
     if (!metricDefinitions) metricDefinitions = loadLocal<MetricDefinition[]>('wassell_metric_definitions') ?? [];
     saveLocal('wassell_metric_definitions', metricDefinitions);
-
-    let scheduledReports = await scheduledReportsP;
-    if (!scheduledReports) scheduledReports = loadLocal<ScheduledReport[]>('wassell_scheduled_reports') ?? [];
-    saveLocal('wassell_scheduled_reports', scheduledReports);
 
     let salesProcessOverrides = await salesProcessOverridesP;
     if (!salesProcessOverrides) salesProcessOverrides = loadLocal<SalesProcessOverride[]>('wassell_sales_process_overrides') ?? [];
@@ -2383,7 +2368,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // (records, workflow_runs, whiteboards, activity_log) finishes
     // in the background. Pages that need records gate on `initialized`.
     set({
-      models, groups, profiles, roles, users, views, dashboards, metricDefinitions, scheduledReports,
+      models, groups, profiles, roles, users, views, metricDefinitions,
       salesProcessOverrides,
       salesProcesses, salesProcessVersions, salesExperiments, clientSalesProcessAssignments,
       fieldTemplates, webhookSlugs, workflowGroups, workflows,
@@ -2437,14 +2422,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     let migratedRecords = records;
     let prunedWorkflows = workflows;
     let prunedViews = views;
-    let migratedDashboards = dashboards;
     if (supabaseModels === null) {
       // Run pending schema migrations (keeps system models in sync with seedModels.ts
       // even for returning users who already have localStorage state).
-      const migrated = runMigrations({ models, records, workflows, dashboards, views, groups });
+      const migrated = runMigrations({ models, records, workflows, views, groups });
       models = migrated.models;
       groups = migrated.groups;
-      migratedDashboards = migrated.dashboards;
 
       // Always-run heal — not gated by schema version. Re-attaches orphaned project
       // system models to the Projects group and re-seeds the group if it was deleted.
@@ -2498,7 +2481,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         models,
         records: migratedRecords,
         workflows: migrated.workflows,
-        dashboards: migratedDashboards,
         views: migrated.views,
         groups,
       });
@@ -2519,7 +2501,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         models,
         records: migratedRecords,
         workflows: refreshed.workflows,
-        dashboards: refreshed.dashboards,
         views: refreshed.views,
         groups: refreshed.groups,
       });
@@ -2627,7 +2608,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       workflowGroups,
       workflowRuns,
       activityLog,
-      dashboards: migratedDashboards,
       views: prunedViews,
       profiles,
       roles,
@@ -2736,7 +2716,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       markLoaded('users', loadsStartedAtIso);
       markLoaded('model_views', loadsStartedAtIso);
       markLoaded('workflows', loadsStartedAtIso);
-      markLoaded('dashboards', loadsStartedAtIso);
       startStaleWhileRevalidate(set as Parameters<typeof startStaleWhileRevalidate>[0]);
     }
 
@@ -4049,37 +4028,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  // --- Dashboards ---
-  saveDashboard: (dashboard: Dashboard) => {
-    // Guard (AnalyticsQuery HARD RULE): never persist a non-serializable or
-    // structurally-invalid widget query. Fail loudly and abort — don't save.
-    for (const w of dashboard.widgets) {
-      const problem = analyticsQueryProblem(w.query);
-      if (problem) {
-        console.error('[saveDashboard] refusing to persist invalid widget query', w.id, problem);
-        get().addToast(`${get().language === 'ar' ? 'تعذّر الحفظ' : 'Cannot save'} — "${w.title_en || w.title_ar || w.id}": ${problem}`, 'error');
-        return;
-      }
-    }
-    set((s) => {
-      const idx = s.dashboards.findIndex((d) => d.id === dashboard.id);
-      const dashboards = idx >= 0
-        ? s.dashboards.map((d) => (d.id === dashboard.id ? dashboard : d))
-        : [...s.dashboards, dashboard];
-      saveLocal('wassell_dashboards', dashboards);
-      supabaseUpsert('dashboards', dashboard);
-      return { dashboards };
-    });
-  },
-  deleteDashboard: (dashboardId: string) => {
-    set((s) => {
-      const dashboards = s.dashboards.filter((d) => d.id !== dashboardId);
-      saveLocal('wassell_dashboards', dashboards);
-      supabaseDelete('dashboards', dashboardId);
-      return { dashboards };
-    });
-  },
-
   // --- Semantic metrics ---
   saveMetricDefinition: (metric: MetricDefinition) => {
     const problem = analyticsQueryProblem(metric.query);
@@ -4107,26 +4055,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  // --- Scheduled reports ---
-  saveScheduledReport: (report: ScheduledReport) => {
-    set((s) => {
-      const idx = s.scheduledReports.findIndex((r) => r.id === report.id);
-      const scheduledReports = idx >= 0
-        ? s.scheduledReports.map((r) => (r.id === report.id ? report : r))
-        : [...s.scheduledReports, report];
-      saveLocal('wassell_scheduled_reports', scheduledReports);
-      supabaseUpsert('scheduled_reports', report);
-      return { scheduledReports };
-    });
-  },
-  deleteScheduledReport: (reportId: string) => {
-    set((s) => {
-      const scheduledReports = s.scheduledReports.filter((r) => r.id !== reportId);
-      saveLocal('wassell_scheduled_reports', scheduledReports);
-      supabaseDelete('scheduled_reports', reportId);
-      return { scheduledReports };
-    });
-  },
 
   // --- Sales-process instruction overrides ---
   saveSalesProcessOverride: (override: SalesProcessOverride) => {

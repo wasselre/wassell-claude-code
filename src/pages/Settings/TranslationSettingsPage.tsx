@@ -35,8 +35,8 @@ type FilterMode = 'all' | 'needs_translation' | 'translated';
 export default function TranslationSettingsPage() {
   const { t } = useTranslation();
   const {
-    models, groups, workflows, dashboards, roles, profiles, language,
-    saveModel, saveGroup, saveWorkflow, saveDashboard, saveRole, saveProfile,
+    models, groups, workflows, roles, profiles, language,
+    saveModel, saveGroup, saveWorkflow, saveRole, saveProfile,
     saveRecord, renameField, addToast,
   } = useAppStore();
   const isAr = language === 'ar';
@@ -194,41 +194,8 @@ export default function TranslationSettingsPage() {
       });
     });
 
-    // Dashboards + widgets
-    dashboards.forEach((d) => {
-      const dashLabel = isAr ? d.label_ar : d.label_en;
-      items.push({
-        id: `dashboard_${d.id}`,
-        category: 'dashboards',
-        categoryLabel: isAr ? 'لوحات المعلومات' : 'Dashboards',
-        parentLabel: '',
-        label_ar: d.label_ar,
-        label_en: d.label_en,
-        onSave: (ar, en) => saveDashboard({ ...d, label_ar: ar, label_en: en }),
-      });
-
-      d.widgets.forEach((w) => {
-        items.push({
-          id: `widget_${w.id}`,
-          category: 'dashboards',
-          categoryLabel: isAr ? 'لوحات المعلومات' : 'Dashboards',
-          parentLabel: `${dashLabel} > ${isAr ? 'عناصر' : 'Widgets'}`,
-          label_ar: w.title_ar,
-          label_en: w.title_en,
-          onSave: (ar, en) => {
-            saveDashboard({
-              ...d,
-              widgets: d.widgets.map((wg) =>
-                wg.id === w.id ? { ...wg, title_ar: ar, title_en: en } : wg,
-              ),
-            });
-          },
-        });
-      });
-    });
-
     return items;
-  }, [models, groups, workflows, dashboards, isAr, saveModel, saveGroup, saveWorkflow, saveDashboard]);
+  }, [models, groups, workflows, isAr, saveModel, saveGroup, saveWorkflow]);
 
   // Filter + search
   const filteredItems = useMemo(() => {
@@ -290,7 +257,7 @@ export default function TranslationSettingsPage() {
     setMigError(null);
     setMigOutcome(null);
     setMigTranslateFails([]);
-    const candidates = scanLegacyEntities({ models, groups, workflows, dashboards, roles, profiles });
+    const candidates = scanLegacyEntities({ models, groups, workflows, roles, profiles });
     setMigCandidates(candidates);
     setMigPhase(candidates.length > 0 ? 'scanned' : 'idle');
     if (candidates.length === 0) {
@@ -343,7 +310,6 @@ export default function TranslationSettingsPage() {
           saveModel,
           saveGroup,
           saveWorkflow,
-          saveDashboard,
           saveRole,
           saveProfile,
           saveRecord,
@@ -447,8 +413,8 @@ export default function TranslationSettingsPage() {
             </h2>
             <p className="text-xs text-charcoal/55 mt-0.5">
               {isAr
-                ? 'يفحص جميع النماذج والأقسام والحقول والخيارات والقواعد واللوحات بحثاً عن نصوص لم تُترجم وأسماء مولّدة تلقائياً مثل item_xxx، ويصلحها مرة واحدة. سيُحدِّث جميع المراجع المرتبطة (السجلات، الصيغ، الروابط، النسخ، التدفقات، العروض) بشكل ذرّي.'
-                : 'Scans every model, section, field, option, workflow, and dashboard for untranslated labels and auto-generated slugs like item_xxx, then fixes them in one pass. All cross-references (records, formulas, lookups, mirrors, workflows, views) are updated atomically.'}
+                ? 'يفحص جميع النماذج والأقسام والحقول والخيارات والقواعد بحثاً عن نصوص لم تُترجم وأسماء مولّدة تلقائياً مثل item_xxx، ويصلحها مرة واحدة. سيُحدِّث جميع المراجع المرتبطة (السجلات، الصيغ، الروابط، النسخ، التدفقات، العروض) بشكل ذرّي.'
+                : 'Scans every model, section, field, option, and workflow for untranslated labels and auto-generated slugs like item_xxx, then fixes them in one pass. All cross-references (records, formulas, lookups, mirrors, workflows, views) are updated atomically.'}
             </p>
           </div>
         </div>
