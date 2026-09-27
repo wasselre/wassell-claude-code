@@ -55,6 +55,34 @@ export function documentTypeLabel(
   return value;
 }
 
+/**
+ * `primary_category` — the file's CONTENT classification (what the image/doc
+ * actually IS: design / raw_photo / hero_image / brochure / unit_plan …).
+ * Deliberately DISTINCT from `document_type`, which is the SLOT a file fills on
+ * a record (e.g. gallery_image → «معرض الصور»); operators kept reading the
+ * document-type badge as the category (2026-09-27). The authoritative labels
+ * live in `file_vocabularies`; this static map mirrors the known values so a
+ * hot-path TILE can label the category without a per-tile fetch (same posture
+ * as statusLabel). An unknown/AI-added value renders as itself — ugly but true.
+ */
+const PRIMARY_CATEGORY_LABELS: Record<string, { ar: string; en: string }> = {
+  brochure:    { ar: 'كتيّب',                en: 'Brochure' },
+  unit_plan:   { ar: 'مخطط وحدة',            en: 'Unit plan' },
+  design:      { ar: 'تصميم / محتوى مصمّم',  en: 'Design / edited' },
+  raw_photo:   { ar: 'صورة خام',             en: 'Raw photo' },
+  hero_image:  { ar: 'صورة رئيسية للتسويق',  en: 'Hero image' },
+  ai_content:  { ar: 'محتوى ذكاء اصطناعي',   en: 'AI content' },
+  raw_video:   { ar: 'فيديو خام',            en: 'Raw video' },
+  ready_video: { ar: 'فيديو جاهز',           en: 'Ready video' },
+  voiceover:   { ar: 'تعليق صوتي',           en: 'Voiceover' },
+  music:       { ar: 'موسيقى',               en: 'Music' },
+};
+export function primaryCategoryLabel(value: string, isAr: boolean): string {
+  const hit = PRIMARY_CATEGORY_LABELS[value];
+  if (hit) return isAr ? hit.ar : hit.en;
+  return value;
+}
+
 export function statusLabel(value: string, t: TFunction): string {
   return t(`files.library.status.${value}`, { defaultValue: value });
 }

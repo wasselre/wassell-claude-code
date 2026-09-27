@@ -17,7 +17,7 @@
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import type { BusinessFileRow, FileDocumentTypeRow } from '@/types';
-import { documentTypeLabel, statusLabel } from './labels';
+import { documentTypeLabel, primaryCategoryLabel, statusLabel } from './labels';
 
 interface Props {
   file: BusinessFileRow;
@@ -30,13 +30,16 @@ interface Props {
   hideType?: boolean;
 }
 
-type Badge = { key: string; text: string; tone: 'warn' | 'bad' | 'muted' | 'type' };
+type Badge = { key: string; text: string; tone: 'warn' | 'bad' | 'muted' | 'type' | 'cat' };
 
 const TONE: Record<Badge['tone'], string> = {
   warn:  'bg-amber-500/15 text-amber-800 border-amber-500/25',
   bad:   'bg-red-500/15 text-red-700 border-red-500/25',
   muted: 'bg-charcoal/10 text-charcoal/70 border-charcoal/15',
   type:  'bg-copper/10 text-copper border-copper/20',
+  // Content category ("what the file IS") — a distinct colour from the copper
+  // document-type badge ("which slot it fills"), so the two read as different.
+  cat:   'bg-emerald-600/12 text-emerald-800 border-emerald-600/25',
 };
 
 export function badgesFor(
@@ -61,6 +64,13 @@ export function badgesFor(
   }
   if (file.confidentiality === 'restricted') {
     out.push({ key: 'restricted', tone: 'bad', text: t('files.library.badge.restricted') });
+  }
+  // Content category ("what it IS") ranks ABOVE document type ("which slot"):
+  // with two badge slots on a tile, the category is the one operators asked to
+  // see (they were reading the document-type badge as the category). Only shown
+  // when set — an unclassified file has no category to show.
+  if (file.primary_category) {
+    out.push({ key: 'category', tone: 'cat', text: primaryCategoryLabel(file.primary_category, isAr) });
   }
   out.push({
     key: 'type',
