@@ -49,6 +49,7 @@ import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
 import { runPortalRegistrationJob, type PortalRegistrationJob } from './runPortalRegistrationJob.js';
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
 import { runUnitPdfJob, type UnitPdfJob } from './runUnitPdfJob.js';
+import { runInboundMediaJob, type InboundMediaJob } from './runInboundMediaJob.js';
 import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
 import { ProviderError } from './marketing/providers.js';
 import { runCreativeCleanup } from './marketing/creativeCleanup.js';
@@ -946,6 +947,58 @@ async function unitPdfPollLoop(): Promise<void> {
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !unitPdfWakeRequested && !shuttingDown) {
       await sleep(200);
     }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Inbound WhatsApp media — durable save + voice transcription (inbound_media_jobs).
+
+async function claimAndRunOneInboundMedia(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('inbound_media_claim_next', { p_worker: env.WORKER_ID });
+  if (error) { console.error(`[worker] inbound-media claim failed: ${error.message}`); return false; }
+  const rows = (data ?? []) as Array<{
+    id: string; message_id: string; chat_wid: string | null; session: string;
+    fname: string; mime: string | null; kind: string | null; attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const r = rows[0]!;
+  const job: InboundMediaJob = {
+    id: r.id, messageId: r.message_id, chatWid: r.chat_wid, session: r.session,
+    fname: r.fname, mime: r.mime, kind: r.kind, attempts: r.attempts,
+  };
+  try {
+    await runInboundMediaJob({ supabase, env, job });
+  } catch (err) {
+    // runInboundMediaJob already called inbound_media_fail — just surface it.
+    console.error(`[worker] inbound-media job=${job.id} FAILED:`, err instanceof Error ? err.message : String(err));
+  }
+  return true;
+}
+
+async function runInboundMediaWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('inbound_media_jobs_watchdog');
+    if (error) { console.error(`[worker] inbound-media watchdog RPC error: ${error.message}`); return; }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) console.warn(`[worker] inbound-media watchdog swept ${swept} stale job(s)`);
+  } catch (err) {
+    console.error('[worker] inbound-media watchdog threw:', err);
+  }
+}
+
+async function inboundMediaPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    let didClaim = false;
+    try { didClaim = await claimAndRunOneInboundMedia(); }
+    catch (err) { console.error('[worker] inbound-media poll iteration error:', err); }
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runInboundMediaWatchdog();
+    }
+    if (didClaim) continue; // drain the queue back-to-back
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !shuttingDown) await sleep(200);
   }
 }
 
@@ -3719,6 +3772,7 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     // 512MB general machines.
     conflictWatchdogLoop(),
     marketingOpsPollLoop(), // always-on: ops monitoring runs even when collection is disabled
+    inboundMediaPollLoop(), // durable save + voice transcription of inbound WhatsApp media
   ];
   // AI call-result analysis only runs when the DeepSeek key is set, so the
   // worker boots cleanly before the feature is switched on.

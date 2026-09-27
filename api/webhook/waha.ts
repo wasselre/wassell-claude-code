@@ -258,7 +258,26 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // slow retries or break ingest (the message is already stored above).
   if (mediaFileId) {
     const fname = mediaFileId.slice(mediaFileId.indexOf('/') + 1);
-    await mirrorWahaHostedMedia(session, fname, mime);
+    await mirrorWahaHostedMedia(session, fname, mime); // fast first attempt (best-effort, ~10s)
+    // Durable backstop + voice transcription (2026-09-27): hand the save to the
+    // Fly worker, which retries the WAHA fetch over a LONGER window than this hot
+    // path allows (voice notes transcode async and miss the 10s budget) and
+    // transcribes audio via fal wizper. INBOUND only; fire-safe (never blocks ingest).
+    if (flow === 'in') {
+      try {
+        const svc = getServiceSupabase();
+        await svc.rpc('inbound_media_enqueue', {
+          p_message_id: p.id, p_chat_wid: chatWid, p_session: session,
+          p_fname: fname, p_mime: mime, p_kind: kind,
+        });
+        if (kind === 'audio') {
+          // Show "جارٍ التفريغ…/transcribing…" at once; the worker flips it to done/none/failed.
+          await svc.from('chat_messages').update({ transcript_status: 'pending' }).eq('id', p.id);
+        }
+      } catch (e) {
+        console.error('[waha-webhook] inbound_media_enqueue failed:', e instanceof Error ? e.message : String(e));
+      }
+    }
   }
 
   // Ad-sourced lead → marketing acquisition capture (2026-08-23).
