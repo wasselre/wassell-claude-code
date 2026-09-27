@@ -29,6 +29,7 @@ import { Globe as PortalIcon } from 'lucide-react';
 import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointmentModal';
 import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import StudyJobCard from './StudyJobCard';
+import GeoPrefCard from './GeoPrefCard';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
@@ -596,6 +597,11 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           strip. Client-linked chats only: a study is a client deliverable.
           Hidden when the header is collapsed (desktop focus-the-chat mode). */}
       {clientLinkId && !collapsedHeader && <StudyJobCard chatRecordId={recordId} />}
+
+      {/* Geography confirm card — where the customer wants to buy (and not),
+          read from THIS chat; the rep's tap saves it to the client's location
+          preferences. Client-linked chats only; hidden with the header. */}
+      {clientLinkId && chatWid && !collapsedHeader && <GeoPrefCard key={`${clientLinkId}:${chatWid}`} clientId={clientLinkId} chatWid={chatWid} />}
 
       {/* Thread — full-bleed scroll area on mobile, framed card on desktop
           (MessageThread drops its own card chrome below md). */}

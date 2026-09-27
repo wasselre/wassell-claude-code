@@ -5,16 +5,9 @@ import { Loader2, Check, X, HelpCircle, ChevronRight, ChevronLeft, MapPin, Party
 import GeoPrefMap from './GeoPrefMap';
 import {
   authHeader, reading, Bold, Transcript,
-  type Item, type Verdict, type ConversationView, type DistrictInfo, type Placement, type LocationItemDTO, type VerifierVerdict,
+  type Item, type Verdict, type ConversationView, type DistrictInfo, type LocationItemDTO,
 } from '../lib/shared';
-
-/** Short label for a verifier verdict other than 'right'. */
-const VERIFIER_VERDICT_AR: Record<Exclude<VerifierVerdict, 'right'>, string> = {
-  wrong_place: 'مكان خاطئ', not_a_preference: 'ليس تفضيلًا', not_a_place: 'ليس مكانًا', wrong_polarity: 'الاتجاه معكوس', unsure: 'غير متأكد',
-};
-const VERIFIER_VERDICT_EN: Record<Exclude<VerifierVerdict, 'right'>, string> = {
-  wrong_place: 'wrong place', not_a_preference: 'not a preference', not_a_place: 'not a place', wrong_polarity: 'polarity flipped', unsure: 'unsure',
-};
+import { placementLine, verifierMentionLine, verifierOverallLabel } from '../lib/placementLine';
 
 /**
  * The CONVERSATION grader (`/geo-grade?batch=…&view=chat`): one screen per
@@ -136,38 +129,6 @@ export default function ConversationGrader({ batchId }: Props) {
   if (!batchId) return <Center><p className="text-charcoal/60">{isAr ? 'لا توجد دفعة. افتح الرابط الذي أرسلته لك.' : 'No batch. Open the link I sent you.'}</p></Center>;
   if (conversations.length === 0) return <Center><p className="text-charcoal/60">{isAr ? 'لا توجد محادثات في هذه الدفعة.' : 'No conversations in this batch.'}</p></Center>;
 
-  const placementLine = (it: Item): { text: string; tone: 'ok' | 'none' | 'warn' } => {
-    const p: Placement | undefined = conv?.proposal?.by_evidence[it.id];
-    if (!p) {
-      return it.role === 'none' || it.role === 'exploratory'
-        ? { text: isAr ? 'ليس تفضيلًا — لا شيء على الخريطة' : 'not a preference — nothing on the map', tone: 'none' }
-        : { text: isAr ? 'لم يُوضع على الخريطة' : 'not placed on the map', tone: 'warn' };
-    }
-    const names = p.element_ids.map((id) => {
-      const d = districts[id];
-      return d ? `${isAr ? d.name_ar : (d.name_en || d.name_ar)}${d.city ? ` (${d.city})` : ''}` : id;
-    });
-    if (!p.resolved) return { text: isAr ? `لم يُحدَّد حي حقيقي لـ «${names.join('، ')}» — يحتاج تأكيدًا` : `no real district picked for “${names.join(', ')}” — needs confirmation`, tone: 'warn' };
-    const verb = p.polarity === 'exclude' ? (isAr ? 'استبعد' : 'excluded') : (isAr ? 'حدّد' : 'selected');
-    // A zone (or any big district list) is summarised, not listed — 30+ names is noise.
-    if (p.operation === 'zone_union' || (p.operation === 'district_union' && p.element_ids.length > 6)) {
-      const n = p.element_ids.length;
-      return { text: isAr ? `${verb}: ${p.label || 'منطقة'} — ${n} حيًا` : `${verb}: ${p.label || 'zone'} — ${n} districts`, tone: 'ok' };
-    }
-    if (p.operation === 'district_side_clip' && p.side) {
-      const SIDE_AR: Record<string, string> = { north: 'شمال', south: 'جنوب', east: 'شرق', west: 'غرب' };
-      const roadId = p.element_ids[p.element_ids.length - 1]!;
-      const road = districts[roadId];
-      const roadName = road ? (isAr ? road.name_ar : (road.name_en || road.name_ar)) : roadId;
-      const parts = (p.clip_parts ?? []).map((c) => c.kept
-        ? `${c.name}${c.crossed && c.kept_km2 != null && c.total_km2 != null ? (isAr ? ` (${c.kept_km2} من ${c.total_km2} كم²)` : ` (${c.kept_km2} of ${c.total_km2} km²)`) : ''}`
-        : `${c.name} ${isAr ? '(كله على الجهة الأخرى — أُسقط)' : '(entirely on the other side — dropped)'}`);
-      const sideTxt = isAr ? `${SIDE_AR[p.side] ?? p.side} ${roadName}` : `${p.side} of ${roadName}`;
-      return { text: `${verb}: ${parts.length ? parts.join(isAr ? '، ' : ', ') : names.join(', ')} — ${sideTxt}`, tone: 'ok' };
-    }
-    return { text: `${verb}: ${names.join(isAr ? '، ' : ', ')}`, tone: 'ok' };
-  };
-
   return (
     <div className="mx-auto max-w-3xl p-4" dir={isAr ? 'rtl' : 'ltr'}>
       <div className="mb-4 flex items-center gap-2">
@@ -205,11 +166,7 @@ export default function ConversationGrader({ batchId }: Props) {
                 title={verifier.status === 'error' ? (verifier.error ?? '') : (verifier.model ?? '')}
                 className={`ms-auto rounded-full px-2 py-0.5 text-[11px] font-bold ${verifier.overall === 'agree' ? 'bg-emerald-50 text-emerald-700' : verifier.overall === 'doubt' ? 'bg-amber-50 text-amber-700' : 'bg-sand/30 text-charcoal/60'}`}
               >
-                {verifier.overall === 'agree'
-                  ? (isAr ? '✓ المراجع يوافق' : '✓ reviewer agrees')
-                  : verifier.overall === 'doubt'
-                    ? (isAr ? '⚠ المراجع يشكّ' : '⚠ reviewer doubts')
-                    : (isAr ? 'المراجع لم يعمل' : 'reviewer did not run')}
+                {verifierOverallLabel(verifier.overall, isAr)}
               </span>
             )}
           </p>
@@ -227,7 +184,7 @@ export default function ConversationGrader({ batchId }: Props) {
           <div className="mb-5 flex flex-col gap-2">
             {mentions.length === 0 && <p className="text-xs text-charcoal/40">{isAr ? 'لم يستخرج أي موقع من هذه المحادثة.' : 'No place was extracted from this conversation.'}</p>}
             {mentions.map((it) => {
-              const pl = placementLine(it);
+              const pl = placementLine(conv?.proposal?.by_evidence[it.id], it.role, districts, isAr);
               return (
                 <div key={it.id} className={`rounded-xl border px-3 py-2 ${focus === it.id ? 'border-copper bg-copper/5' : 'border-sand/40'}`}>
                   <button type="button" onClick={() => setFocus(focus === it.id ? null : it.id)} className="text-start text-base font-bold text-chocolate" dir="rtl">«{it.mention}»</button>
@@ -238,13 +195,13 @@ export default function ConversationGrader({ batchId }: Props) {
                   {(() => {
                     const v = verifierByEvidence.get(it.id);
                     if (!v) return null;
-                    if (v.verdict === 'right') {
-                      return <p className="mt-0.5 text-[11px] text-emerald-700">{isAr ? '✓ المراجع يوافق' : '✓ reviewer agrees'}</p>;
+                    const vl = verifierMentionLine(v, isAr);
+                    if (vl.tone === 'ok') {
+                      return <p className="mt-0.5 text-[11px] text-emerald-700">{vl.text}</p>;
                     }
-                    const kind = isAr ? VERIFIER_VERDICT_AR[v.verdict] : VERIFIER_VERDICT_EN[v.verdict];
                     return (
                       <p className="mt-0.5 text-[11px] text-amber-700" dir={isAr ? 'rtl' : 'ltr'}>
-                        {isAr ? `⚠ المراجع يشكّ (${kind})` : `⚠ reviewer doubts (${kind})`}{v.reason ? `: ${v.reason}` : ''}
+                        {vl.text}
                       </p>
                     );
                   })()}

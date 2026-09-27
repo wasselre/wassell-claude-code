@@ -131,11 +131,16 @@ function roadIdsOf(ids: string[]): string[] {
 
 /** One resolved AnchorRef → zero or more location items at the given polarity. */
 function anchorRefToItems(
-  ref: { recipe?: { operation?: GeoOperation; source_anchors?: unknown; resolved_element_ids?: unknown; radius_or_band_m?: number | null; side?: string; clip_geojson?: { type?: string; coordinates?: unknown } | null; clip_parts?: Array<{ name?: string; kept?: boolean }> | null } } | null | undefined,
+  ref: { recipe?: { operation?: GeoOperation; source_anchors?: unknown; resolved_element_ids?: unknown; radius_or_band_m?: number | null; side?: string; clip_geojson?: { type?: string; coordinates?: unknown } | null; clip_parts?: Array<{ name?: string; kept?: boolean }> | null; geo_data_version?: string } } | null | undefined,
   polarity: GeoPolarity,
 ): LocationItem[] {
   const recipe = ref?.recipe;
   if (!recipe) return [];
+  // An UNRESOLVED mention keeps the compiler's stub recipe, whose "ids" are the
+  // customer's words («المعذر», «طريق الملك خالد»), not places. Applying it
+  // wrote location rules pointing at a bare Arabic word (found 2026-09-27 on a
+  // live proposal). Only resolved recipes become location items.
+  if (recipe.geo_data_version === 'stub') return [];
   const op = recipe.operation;
   const ids = recipeIds(recipe.resolved_element_ids);
   const anchors = (Array.isArray(recipe.source_anchors) ? recipe.source_anchors : []) as {
@@ -439,6 +444,10 @@ export async function applyReview(deps: ReviewDeps, input: ReviewInput): Promise
     throw new ReviewError(400, 'edit requires finalExpression');
   }
 
+  // Every action needs access to the client — dismissing a proposal is a
+  // decision about that client too (reject was ungated until 2026-09-27).
+  if (deps.assertCanApply) await deps.assertCanApply(proposal.client_id);
+
   const statusBefore = proposal.status;
   const isApply = input.action === 'confirm' || input.action === 'edit';
   const expressionBefore = proposal.final_expression ?? proposal.proposed_expression;
@@ -454,7 +463,6 @@ export async function applyReview(deps: ReviewDeps, input: ReviewInput): Promise
   let after: LocationItem[] | null = null;
 
   if (isApply) {
-    if (deps.assertCanApply) await deps.assertCanApply(proposal.client_id);
     const items = geoPreferenceToLocationItems(expressionAfter);
     const res = await deps.applyToClient(proposal.client_id, items);
     before = res.before;

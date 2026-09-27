@@ -5,7 +5,7 @@
  * which ships the raw {@link Placement}s to the browser) and the VERIFIER
  * (`verifier.ts`, which needs each placement as a sentence it can check against
  * the conversation). The sentence mirrors `placementLine` in
- * `src/pages/GeoGrade/components/ConversationGrader.tsx` so the verifier reads
+ * `src/pages/GeoGrade/lib/placementLine.ts` so the verifier reads
  * the map the same way the human grader sees it.
  *
  * PURE: no IO. The caller looks up district / road / landmark names (see

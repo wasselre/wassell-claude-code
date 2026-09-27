@@ -78,6 +78,14 @@ describe('geoPreferenceToLocationItems', () => {
     expect(cond).toMatchObject({ rule: 'north_of', element_id: 'king_fahd' });
   });
 
+  it('never turns an UNRESOLVED (stub) mention into a location item — its "ids" are words, not places', () => {
+    const stub = anchorRef('district_polygon', ['المعذر', 'الشمالي'], { span: 'المعذر الشمالي' });
+    stub.recipe!.geo_data_version = 'stub';
+    const real = anchorRef('district_polygon', ['11111111-1111-4111-8111-111111111111'], { span: 'النرجس' });
+    const items = geoPreferenceToLocationItems(pref([group([clause('include', [stub, real])])]));
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: 'district', district_id: '11111111-1111-4111-8111-111111111111' });
+  });
   it('drops a clause whose recipe resolved no ids (nothing to add silently)', () => {
     expect(geoPreferenceToLocationItems(pref([group([clause('include', [anchorRef('district_polygon', [])])])]))).toHaveLength(0);
   });
@@ -156,7 +164,8 @@ describe('applyReview — reject/must_confirm never write the client record', ()
     const { deps, spy } = makeDeps(baseProposal());
     const out = await applyReview(deps, { proposalId: 'p1', action: 'reject', reviewerId: 'u1', note: 'not this one' });
     expect(spy.applyCalls).toHaveLength(0);        // THE SAFETY PROPERTY
-    expect(spy.accessChecks).toHaveLength(0);
+    // Dismissing is a decision about the client too — access is checked (2026-09-27).
+    expect(spy.accessChecks).toEqual(['c1']);
     expect(spy.audits).toHaveLength(1);
     expect(spy.audits[0]).toMatchObject({ action: 'reject', applied: false, status_after: 'rejected', reviewer_id: 'u1', note: 'not this one' });
     expect(spy.audits[0]?.location_items_after).toBeNull();
