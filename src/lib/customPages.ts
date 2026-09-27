@@ -95,6 +95,9 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     // A standalone discovery tool — useful for the whole sales team. Visible to
     // every non-admin profile unless explicitly revoked in Settings → Profiles.
     default_access: 'all',
+    // Opened from the Sales Workspace «أدوات / Tools» menu since 2026-09-27, so
+    // its own sidebar row is hidden. Route + per-profile access are unchanged.
+    hidden_from_sidebar: true,
   },
   // ── Sales Workspace (D13) — one visible sidebar row + section access ids ──
   {

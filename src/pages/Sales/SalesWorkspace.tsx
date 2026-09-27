@@ -14,6 +14,11 @@
  * by role here. The workspace route is wrapped in RequirePageAccess
  * pageId="sales_workspace" in App.tsx; underlying model RLS still applies.
  *
+ * Tools (SalesToolsMenu) — one «أدوات» menu in the header, on every section,
+ * for the everyday actions: search for a client, book an appointment, record a
+ * visit, Project Finder (moved here from the sidebar), the financing
+ * calculator, a new WhatsApp chat, and a new client.
+ *
  * Client 360 (ClientDetailPage), the guided Follow-up Workspace and a full
  * conversation view remain anchored DRILL-INS reached from these sections —
  * exactly like Portfolio → project page in Projects & Inventory.
@@ -28,6 +33,7 @@ import SalesManagerPage from './SalesManagerPage';
 import MyClientsPage from './MyClientsPage';
 import MyTasksPage from './MyTasksPage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
+import SalesToolsMenu from './components/SalesToolsMenu';
 
 type SectionKey = 'overview' | 'clients' | 'work-queue' | 'whatsapp';
 
@@ -80,8 +86,9 @@ export default function SalesWorkspace() {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      <div>
+      <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'المبيعات' : 'Sales'}</h1>
+        {active !== null && <SalesToolsMenu />}
       </div>
 
       {/* Section tabs — only the sections this profile may access. */}

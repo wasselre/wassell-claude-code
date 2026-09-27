@@ -9,6 +9,7 @@ import { v4 as uuid } from 'uuid';
 import { CalendarPlus, Loader2 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import DynamicField from '@/pages/Records/components/DynamicField';
+import ClientSearch, { type PickedToolClient } from '@/pages/Sales/components/ClientSearch';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord, ModelField } from '@/types';
 
@@ -26,9 +27,12 @@ interface QuickAppointmentModalProps {
   followupId: string | null;
   onClose: () => void;
   onSaved: (appointmentId: string) => void;
+  /** Opened from the Sales Workspace Tools menu, where no client is in context:
+   *  show a client search first and require a client before saving. */
+  pickClient?: boolean;
 }
 
-export default function QuickAppointmentModal({ clientId, phone, salesRep, followupId, onClose, onSaved }: QuickAppointmentModalProps) {
+export default function QuickAppointmentModal({ clientId, phone, salesRep, followupId, onClose, onSaved, pickClient = false }: QuickAppointmentModalProps) {
   const { models, saveRecord, addToast, language } = useAppStore();
   const isAr = language === 'ar';
   const apptModel = models.find((m) => m.name === 'appointments');
@@ -45,6 +49,13 @@ export default function QuickAppointmentModal({ clientId, phone, salesRep, follo
     return p;
   });
   const [saving, setSaving] = useState(false);
+  const [picked, setPicked] = useState<PickedToolClient | null>(null);
+  // Tools flow: the chosen client fills the same hidden fields the chat flow
+  // prefills (client link, name, phone).
+  const pickClientRecord = (c: PickedToolClient) => {
+    setPicked(c);
+    setData((d) => ({ ...d, client_id: c.id, client_name: c.name || undefined, phone_number: c.phone ?? undefined }));
+  };
 
   const fields: ModelField[] = useMemo(() => {
     if (!apptModel) return [];
@@ -57,6 +68,10 @@ export default function QuickAppointmentModal({ clientId, phone, salesRep, follo
   const setField = (slug: string, value: unknown) => setData((d) => ({ ...d, [slug]: value }));
 
   const save = async () => {
+    if (pickClient && !picked) {
+      addToast(isAr ? 'اختر العميل أولاً' : 'Pick the client first', 'error');
+      return;
+    }
     if (!data.appointment_date) {
       addToast(isAr ? 'اختر تاريخ ووقت الموعد' : 'Pick the appointment date and time', 'error');
       return;
@@ -76,6 +91,24 @@ export default function QuickAppointmentModal({ clientId, phone, salesRep, follo
   return (
     <Modal open onClose={onClose} title={isAr ? 'حجز موعد' : 'Book an appointment'} maxWidth="max-w-lg">
       <div className="space-y-4">
+        {pickClient && (
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-charcoal/60">{isAr ? 'العميل' : 'Client'}</label>
+            {picked ? (
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-cream-light px-3 py-2 text-sm">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate font-semibold text-charcoal">{picked.name || (isAr ? 'عميل بلا اسم' : 'Unnamed client')}</span>
+                  {picked.phone && <span className="shrink-0 text-xs text-charcoal/50" dir="ltr">{picked.phone}</span>}
+                </span>
+                <button type="button" onClick={() => setPicked(null)} className="shrink-0 text-xs font-semibold text-copper hover:underline">
+                  {isAr ? 'تغيير' : 'Change'}
+                </button>
+              </div>
+            ) : (
+              <ClientSearch onPick={pickClientRecord} />
+            )}
+          </div>
+        )}
         {fields.map((field) => (
           <div key={field.id}>
             <label className="mb-1 block text-xs font-semibold text-charcoal/60">
