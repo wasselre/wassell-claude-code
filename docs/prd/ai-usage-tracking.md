@@ -74,6 +74,17 @@ app — was invisible.
   There is no retry queue — a lost row is a metering gap, and the gap is visible
   in the daily view rather than hidden.
 
+- **The run log (2026-09-27).** Settings → AI Usage shows the **last 10 individual
+  calls** by default — time, call site, model, tokens (or units, for fal/Modal),
+  latency, cost — and "Show all" pages through the rest 50 at a time. Clicking a
+  run expands what only a single row can say: the provider's own error text, the
+  cache-token split, the entity it was about, and the `meta` the call site
+  recorded. Two filters: "failures only", and clicking any row in the *Top
+  spending call sites* table pins the log to that call site. This is the view
+  that turns "4.3% of calls failed" into "the account was empty for 28 hours on
+  16-17 September", and "translateProvider made 1,232 calls" into "the same two
+  items, every 15 minutes, forever".
+
 ### Vendor balance check (2026-09-21)
 
 - **The vendor's latest successful reading is the balance.** Hand-entered
@@ -211,7 +222,8 @@ app — was invisible.
 | `supabase/migrations/2026-09-21_ai_vendor_truth_and_alerts.sql` | Vendor-truth reconciliation view, billing modes, thresholds, alert state + `ai_balance_alerts_evaluate`, Modal calibration |
 | `api/_lib/aiBalance.ts` + `api/cron/ai-balance-probe.ts` | DeepSeek / Moonshot / fal balance APIs, hourly |
 | `worker/src/lib/balanceBrowserProbe.ts` | Anthropic console + Modal usage page via Browserbase (cookie secrets; Modal needs `MODAL_WORKSPACE`) |
-| `src/lib/aiUsage/client.ts` | Browser client + the pure aggregation helpers |
+| `src/lib/aiUsage/client.ts` | Browser client + the pure aggregation helpers + `fetchRuns` (paged run log) |
+| `src/pages/Settings/components/AiRunsPanel.tsx` | The run log: last 10, expand a row for provider errors/tokens/meta, show-all paging, call-site + failures-only filters |
 | `src/lib/aiUsage/__tests__/aggregation.test.ts` | Tests for the page's arithmetic |
 | `summarizeProviderSpend` in `src/lib/aiUsage/client.ts` | Per-provider 30-day spend + per-day burn behind the account cards |
 

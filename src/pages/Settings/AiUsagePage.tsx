@@ -7,6 +7,7 @@ import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import type { ToastType } from '@/types';
 import BackToSettings from './components/BackToSettings';
+import AiRunsPanel from './components/AiRunsPanel';
 import {
   useAiUsage, setModelPrice, usd, usdPrecise, formatTokens,
   summarizeSpend, summarizeProviderSpend,
@@ -32,6 +33,8 @@ export default function AiUsagePage() {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
   const { spend, unpriced, checks, loading, error, reload } = useAiUsage(30);
+  // Set by clicking a call site in the spend table; the run log filters to it.
+  const [runsCallSite, setRunsCallSite] = useState<string | null>(null);
 
   const vendor = useMemo(() => summarizeVendor(checks), [checks]);
 
@@ -131,6 +134,15 @@ export default function AiUsagePage() {
           by construction. This is the only row that can disagree. */}
       <BalanceCheckPanel checks={checks} isAr={isAr} />
 
+      {/* ── The run log ──────────────────────────────────────────── */}
+      {/* Aggregates cannot say "this one failed, and here is what the provider
+          replied". One call at a time is the only view that can. */}
+      <AiRunsPanel
+        isAr={isAr}
+        callSite={runsCallSite}
+        onClearCallSite={() => setRunsCallSite(null)}
+      />
+
       {/* ── Unpriced models ──────────────────────────────────────── */}
       {unpriced.length > 0 && (
         <UnpricedPanel models={unpriced} isAr={isAr} onSaved={reload} addToast={addToast} />
@@ -221,7 +233,14 @@ export default function AiUsagePage() {
                 </thead>
                 <tbody>
                   {spend30.sites.map(([site, v]) => (
-                    <tr key={site} className="border-b border-sand/20 last:border-0">
+                    <tr
+                      key={site}
+                      onClick={() => setRunsCallSite(site)}
+                      title={isAr ? 'اعرض تشغيلات هذا الموضع' : 'Show this call site\'s runs'}
+                      className={`cursor-pointer border-b border-sand/20 transition last:border-0 ${
+                        runsCallSite === site ? 'bg-copper/10' : 'hover:bg-cream/50'
+                      }`}
+                    >
                       <td className="px-4 py-2.5">
                         <div className="font-mono text-xs text-charcoal">{site}</div>
                         <div className="text-[10px] text-charcoal/40">

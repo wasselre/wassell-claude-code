@@ -224,6 +224,104 @@ export function useAiUsage(days = 30) {
 }
 
 /**
+ * ONE model call, exactly as it was recorded.
+ *
+ * Everything else on the page is an aggregate, and an aggregate cannot answer
+ * "what actually ran, and did it work". A run row can: it carries the error
+ * text of a failure, the fallback flag of a call that only happened because the
+ * cheap provider fell over, and the latency of one that was slow.
+ */
+export interface AiRun {
+  id: string;
+  created_at: string;
+  area: string;
+  call_site: string;
+  operation: string | null;
+  provider: string;
+  model: string;
+  status: string;
+  error: string | null;
+  is_fallback: boolean;
+  fallback_from: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  units: number | null;
+  unit_kind: string | null;
+  cost_usd: number | null;
+  cost_known: boolean;
+  latency_ms: number | null;
+  entity_kind: string | null;
+  entity_id: string | null;
+  meta: Record<string, unknown> | null;
+}
+
+export interface RunsPage {
+  runs: AiRun[];
+  /** True when the provider returned a full page — there is more behind it. */
+  hasMore: boolean;
+}
+
+/**
+ * Read individual calls, newest first.
+ *
+ * Offset paging, not a cursor: the table is append-only and read newest-first,
+ * so the only drift is a call recorded WHILE the operator pages, which would
+ * show one row twice — acceptable, and far cheaper than the alternative here.
+ * `ai_usage` is admin-read under RLS, so a non-admin gets an empty page rather
+ * than a partial one.
+ */
+export async function fetchRuns(opts: {
+  limit: number;
+  offset?: number;
+  callSite?: string | null;
+  failedOnly?: boolean;
+}): Promise<RunsPage> {
+  if (!supabase) throw new Error(isOfflineMessage);
+  const from = opts.offset ?? 0;
+  let q = supabase
+    .from('ai_usage')
+    .select('id, created_at, area, call_site, operation, provider, model, status, error, is_fallback, fallback_from, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, units, unit_kind, cost_usd, cost_known, latency_ms, entity_kind, entity_id, meta')
+    .order('created_at', { ascending: false })
+    .range(from, from + opts.limit - 1);
+  if (opts.callSite) q = q.eq('call_site', opts.callSite);
+  if (opts.failedOnly) q = q.neq('status', 'ok');
+
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Record<string, unknown>[];
+  return {
+    runs: rows.map((r) => ({
+      id: String(r.id),
+      created_at: String(r.created_at),
+      area: String(r.area),
+      call_site: String(r.call_site),
+      operation: (r.operation as string | null) ?? null,
+      provider: String(r.provider),
+      model: String(r.model),
+      status: String(r.status),
+      error: (r.error as string | null) ?? null,
+      is_fallback: r.is_fallback === true,
+      fallback_from: (r.fallback_from as string | null) ?? null,
+      input_tokens: num(r.input_tokens),
+      output_tokens: num(r.output_tokens),
+      cache_read_tokens: num(r.cache_read_tokens),
+      cache_write_tokens: num(r.cache_write_tokens),
+      units: numOrNull(r.units),
+      unit_kind: (r.unit_kind as string | null) ?? null,
+      cost_usd: numOrNull(r.cost_usd),
+      cost_known: r.cost_known === true,
+      latency_ms: numOrNull(r.latency_ms),
+      entity_kind: (r.entity_kind as string | null) ?? null,
+      entity_id: (r.entity_id as string | null) ?? null,
+      meta: (r.meta as Record<string, unknown> | null) ?? null,
+    })),
+    hasMore: rows.length === opts.limit,
+  };
+}
+
+/**
  * Set a model's price and re-cost history. Returns how many existing rows just
  * became costed — the number that makes "I entered one rate and 3,500 calls
  * gained a price" visible.
