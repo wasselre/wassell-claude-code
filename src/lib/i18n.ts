@@ -1203,7 +1203,10 @@ const resources = {
       'files.compress.still_running': '{{count}} ملف لا يزال يُضغط في الخلفية — حدّث الصفحة لاحقًا',
 
       // Chat card — client preferences read from the conversation
-      'chats.prefs.title': 'تفضيلات العميل من المحادثة',
+      'chats.prefs.card_title': 'تفضيلات العميل',
+      'chats.prefs.card_show': 'إظهار تفضيلات العميل',
+      'chats.prefs.card_hide': 'إخفاء تفضيلات العميل (لتكبير المحادثة)',
+      'chats.prefs.title': 'المواصفات والميزانية',
       'chats.prefs.current': 'المحفوظ حاليًا',
       'chats.prefs.none_saved': 'لا قيمة محفوظة',
       'chats.prefs.same_as_saved': 'مطابق للمحفوظ',
@@ -2408,7 +2411,10 @@ const resources = {
       'files.compress.still_running': '{{count}} file(s) still compressing in the background — refresh later',
 
       // Chat card — client preferences read from the conversation
-      'chats.prefs.title': 'Preferences from this chat',
+      'chats.prefs.card_title': 'Client preferences',
+      'chats.prefs.card_show': 'Show client preferences',
+      'chats.prefs.card_hide': 'Hide client preferences for a bigger chat',
+      'chats.prefs.title': 'Specs & budget',
       'chats.prefs.current': 'Currently saved',
       'chats.prefs.none_saved': 'Nothing saved',
       'chats.prefs.same_as_saved': 'Same as saved',

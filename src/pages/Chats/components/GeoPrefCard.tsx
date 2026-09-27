@@ -15,7 +15,7 @@ import PrefSuggestionsSection, { type PrefsCardDTO } from './PrefSuggestionsSect
 const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
 
 /**
- * «مواقع العميل» — the geography confirm card inside a client-linked WhatsApp chat.
+ * «تفضيلات العميل» — the preference confirm card (geography + specs/budget) inside a client-linked WhatsApp chat.
  *
  * The geography ability reads THIS conversation and says where the customer
  * wants to buy (and where not). The rep ticks/unticks each line and taps
@@ -254,11 +254,11 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
         <button
           onClick={() => setCollapsedPersist(false)}
           className="w-full flex items-center justify-center gap-1 rounded-md border border-sand/60 bg-cream/40 py-0.5 text-[10px] text-charcoal/45 hover:text-copper hover:border-copper/40 transition-colors"
-          title={isAr ? 'إظهار مواقع العميل' : 'Show client locations'}
+          title={t('chats.prefs.card_show')}
         >
           <ChevronDown size={11} />
           <MapPin size={10} />
-          {isAr ? 'مواقع العميل' : 'Client locations'}
+          {t('chats.prefs.card_title')}
           {(status && OPEN.has(status) && rows.length > 0) || card?.prefs?.proposal?.status === 'pending'
             ? <span className="text-copper font-bold">•</span>
             : null}
@@ -329,7 +329,7 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
         {/* Header */}
         <div className="flex items-center gap-2">
           <MapPin size={14} className="text-copper shrink-0" />
-          <span className="text-[12px] font-bold text-chocolate">{isAr ? 'مواقع العميل' : 'Client locations'}</span>
+          <span className="text-[12px] font-bold text-chocolate">{t('chats.prefs.card_title')}</span>
           {statusLabel && <span className="text-[10.5px] text-charcoal/50">· {statusLabel}</span>}
           {(card?.prefs?.unread_voice_notes ?? 0) > 0 && (
             <span
@@ -343,7 +343,7 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
           <button
             onClick={() => setCollapsedPersist(true)}
             className="ms-auto text-charcoal/30 hover:text-copper transition-colors"
-            title={isAr ? 'إخفاء مواقع العميل (لتكبير المحادثة)' : 'Hide client locations for a bigger chat'}
+            title={t('chats.prefs.card_hide')}
           >
             <ChevronUp size={14} />
           </button>

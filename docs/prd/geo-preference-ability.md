@@ -43,7 +43,7 @@ Reps type location preferences inconsistently or not at all. The Project Finder 
 1. **Backfill (admin):** `POST /api/geo-preference/backfill {action:'enqueue', clientIds}` → `{action:'process'}` in bounded batches → per client: gather conversations → per conversation: extract → persist evidence + one checkpoint → review-first → pending proposal. Progress via `GET ?runId`.
 2. **Grade (admin):** open `/geo-grade?batch=<id>` → cards ordered by client then time → Right / Wrong / Not sure saves one `overall.verdict` label per evidence row → "All done" screen; verdicts are editable by re-visiting a card.
 3. **Review (rep):** open proposals listed by `/api/geo-preference/proposals`; confirm / reject / edit via `/api/geo-preference/review` (audit row per action). A confirm/edit IS the apply — the human tap is the authorization; `auto_write_enabled` only governs the (off) automatic path.
-4. **Confirm in the chat (rep, 2026-09-27):** open a client-linked WhatsApp chat → the «مواقع العميل» card (usually already read by the cron, or read on open when the customer wrote something unread; «اقرأ المواقع» / «أعد القراءة» force a read, up to a minute) → untick any wrong line → «احفظ في ملف العميل» (writes the ticked lines to the client's `location_items`, merged, never wiping what is there) or «تجاهل». Later, «حدّث» re-reads the chat after the customer writes again.
+4. **Confirm in the chat (rep, 2026-09-27):** open a client-linked WhatsApp chat → the «تفضيلات العميل» card (usually already read by the cron, or read on open when the customer wrote something unread; «اقرأ المواقع» / «أعد القراءة» force a read, up to a minute) → untick any wrong line → «احفظ في ملف العميل» (writes the ticked lines to the client's `location_items`, merged, never wiping what is there) or «تجاهل». Later, «حدّث» re-reads the chat after the customer writes again.
 5. **Empty states:** a client with no calls and no client-written chat completes with no proposal; a card whose transcript is missing shows «لا يوجد نص محادثة محفوظ لهذا العميل».
 
 ## Data touched
@@ -62,7 +62,7 @@ Reps type location preferences inconsistently or not at all. The Project Finder 
 | `api/_lib/clientPrefs/readChat.ts` | THE unified read (cron / open / manual): lease, watermark, both agents in parallel, finish/release |
 | `api/_lib/clientPrefs/dueSelection.ts`, `keywordGate.ts`, `readState.ts` | Pure timing rule (settle / cap / transcription hold / backoff), the free keyword gate, unread computation shared with the card |
 | `supabase/migrations/2026-09-27_05_chat_read_state.sql` | `chat_read_state` + `chat_read_candidates` / `_claim` / `_finish` / `_mark_gate_skipped` / `_release` |
-| `src/pages/Chats/components/GeoPrefCard.tsx` | The «مواقع العميل» card inside a client-linked chat |
+| `src/pages/Chats/components/GeoPrefCard.tsx` | The «تفضيلات العميل» card inside a client-linked chat |
 | `src/pages/GeoGrade/lib/placementLine.ts` | `placementLine` + verifier wording shared by the card and the conversation grader |
 | `src/lib/geo/pruneGeoExpression.ts` | Pure: drop unticked mentions from an expression (SPA + server) |
 | `api/_lib/geoPreference/__tests__/chatCard.test.ts`, `runChatCard.e2e.test.ts` | Unit tests; operator run on one real chat (`RUN_CHATCARD=1 CHATCARD_CLIENT=… CHATCARD_WID=…`) |
