@@ -58,6 +58,18 @@ jobs:
     # bootstrap, then runs the smoke assertions. This is the designated
     # validator for the 2026-09-01_* migration set — production apply is
     # gated on this job being green.
+    #
+    # Its OWN concurrency group, and it does NOT cancel in progress (measured
+    # 2026-09-27): the workflow-level group cancels the whole run on every push
+    # to main, and this is the longest job, so with several sessions pushing it
+    # was cancelled four times running and smokes 13/14 never once reached a
+    # verdict. "Gated on this job being green" is meaningless if the job never
+    # finishes. The fast jobs keep cancelling (cheap to re-run); migration
+    # validation queues and completes. Actions minutes are free on a public
+    # repo, so the only cost of queueing is wall-clock.
+    concurrency:
+      group: db-migrations-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     # Raised from 10 for Phase 3 B2A: proving that an authorization change moves
     # nobody's reach means sweeping sorted file-ID fingerprints for 7 personas x
