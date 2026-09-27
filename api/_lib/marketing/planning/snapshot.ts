@@ -61,7 +61,9 @@ export const PLANNING_DEFAULTS: PlanningSettings = {
   minActiveCreatives: 5,
   adsCreatedPaused: true,
   releaseAutoPublish: true,
-  releaseEffortDays: 0.25,
+  // Publishing is not a task (operator, 2026-09-27): a release costs nobody any
+  // time unless `mos_settings.planning.release_effort_days` says otherwise.
+  releaseEffortDays: 0,
   releaseOwnerRole: 'mos_writer',
   releaseManualPlatforms: [],
 };
@@ -100,7 +102,7 @@ export async function loadPlanningSettings(sb: SupabaseClient): Promise<Planning
     minActiveCreatives: num(v.min_active_creatives, 5),
     adsCreatedPaused: bool(v.ads_created_paused, true),
     releaseAutoPublish: bool(v.release_auto_publish, true),
-    releaseEffortDays: num(v.release_effort_days, 0.25),
+    releaseEffortDays: num(v.release_effort_days, PLANNING_DEFAULTS.releaseEffortDays),
     releaseOwnerRole: typeof v.release_owner_role === 'string' ? v.release_owner_role : 'mos_writer',
     releaseManualPlatforms: Array.isArray(v.release_manual_platforms)
       ? v.release_manual_platforms.filter((x): x is string => typeof x === 'string')
