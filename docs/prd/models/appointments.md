@@ -5,10 +5,10 @@
 # Model: Appointments / المواعيد  `appointments`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-31
+**Last updated (from DB):** 2026-09-27
 **Model id:** `b032a675-6237-4436-9783-a1a253855f74`
 **Storage:** unified records (JSONB)
-**Group:** New Group
+**Group:** (ungrouped)
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `calendar-check`   ·   **Color:** `#10B981`
 

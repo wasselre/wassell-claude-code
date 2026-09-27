@@ -5,10 +5,10 @@
 # Model: Phone Calls / المكالمات  `phone_calls`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-20
+**Last updated (from DB):** 2026-09-27
 **Model id:** `1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4`
 **Storage:** unified records (JSONB)
-**Group:** New Group
+**Group:** (ungrouped)
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `phone-call`   ·   **Color:** `#B8734F`
 

@@ -5,10 +5,10 @@
 # Model: Sales Tasks / مهام المبيعات  `sales_tasks`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-20
+**Last updated (from DB):** 2026-09-27
 **Model id:** `5a1e7a50-0000-4000-8000-000000000001`
 **Storage:** unified records (JSONB)
-**Group:** New Group
+**Group:** (ungrouped)
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `list-checks`   ·   **Color:** `#8E4E3A`
 

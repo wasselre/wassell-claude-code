@@ -5,10 +5,10 @@
 # Model: Financing / التمويل  `financing`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-17
+**Last updated (from DB):** 2026-09-27
 **Model id:** `5a1e0ffe-0000-4000-8000-000000000003`
 **Storage:** unified records (JSONB)
-**Group:** New Group
+**Group:** (ungrouped)
 **System model:** no   ·   **Custom UI:** no
 **Icon:** `database`   ·   **Color:** `#B8734F`
 

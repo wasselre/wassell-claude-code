@@ -5,10 +5,10 @@
 # Model: Follow-ups / المتابعات  `followups`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-20
+**Last updated (from DB):** 2026-09-27
 **Model id:** `764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63`
 **Storage:** unified records (JSONB)
-**Group:** New Group
+**Group:** (ungrouped)
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `phone-call`   ·   **Color:** `#C09B5F`
 
