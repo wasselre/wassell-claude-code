@@ -97,3 +97,24 @@ Then the re-plan was rehearsed on production in a rolled-back transaction and co
 From 28 Sep nobody is booked over capacity. The 27th itself is over for three people, but that is backlog already on their desks, and the plan adds nothing new that day.
 
 Known gap, not fixed: a batch that is only PARTLY started and due within a few days is still planned in full, so its started creatives are counted twice and a re-plan can be refused. It refuses loudly (`month_unscheduled_work`); it never writes a wrong plan.
+
+
+## سارة at 7 a day, and two late posts dropped — 2026-09-27 (afternoon)
+
+After the re-plan the ledger put 20 design units on سارة for the 27th: 11 ad designs for the 29 Sep batch (8 due Monday, 3 due Tuesday), the 22 Sep يمام 17 revision (3), and the 26 Sep عام and 27 Sep ريا النخيل rows (6), which could not even start because مريم had not written them. The ledger places every open task and every stale booking on today.
+
+Operator decisions: **«i want sarah to only do 7 today»** and **drop the two posts that missed their day**. Asked which 6 units wait past Monday, he restated the cap without choosing; the recommended order was applied (the revision and Tuesday's post keep their day; six of Tuesday's ads wait) and reported to him.
+
+Done on production in one asserted transaction, then re-planned through `monthConfirm`:
+
+| | |
+|---|---|
+| Dropped | the 26 Sep عام and 27 Sep ريا النخيل rows: 6 posts archived (reversible), 12 publications cancelled, 6 publish tasks cancelled (before the publications, so none was marked «done»), مريم's 2 late writing tasks skipped, 10 row bookings released |
+| سارة today | the 22 Sep revision + P-484…P-487 = 7 |
+| سارة Monday | P-488…P-491 (deadline Mon 14:16 unchanged) + Tuesday's يمام 17 post = 7 |
+| سارة Tuesday | P-478…P-483 (P-481…P-483's deadline Tue 06:00 → Wed 06:00) + 1 = 7; their checks and approvals follow them to Tuesday, so these six ads go live when approved on Tuesday rather than with the batch |
+| Out-of-order bookings | the eight final approvals of P-484…P-491 booked on the 27th, before their own design, moved to Monday |
+| Re-plan | 4 plans; 510 bookings before and after; 138 re-dated; 0 lost; 0 tasks closed; no assigned deadline changed; production still ends 19 Oct |
+| Load, 27 Sep – 4 Oct | سارة 7 every day; مريم writing ≤ 10; مريم checks ≤ 12; حسام ≤ 20 |
+
+The re-plan used the time the drop freed for مريم: the 29 Sep يمام 17 row's writing and P-502's writing were handed to her at 15:04, due the next day at 15:04.
