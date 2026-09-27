@@ -1,6 +1,15 @@
-# PRD: Sales Valuation (تقييم المبيعات) — Sales Quality & Coaching
+# PRD: Sales Valuation (تقييم المبيعات) — Sales Quality & Coaching — DELETED
 
-**Status:** Live (data + automation layer + dedicated custom operational UI for all 5 pages in the تقييم المبيعات group)
+**Status:** DELETED 2026-09-27 (D26/D27). The 5 models
+(`sales_valuation_reviews` + 1,775 records, `sales_correction_tasks`,
+`sales_rep_daily_valuations`, `sales_mistake_categories`,
+`sales_valuation_settings`), the تقييم المبيعات group, the whole `svr_*`
+trigger/function family (AFTER-triggers off `records` that auto-created reviews
+from completed follow-ups), the App.tsx custom dispatch, and `src/pages/SalesValuation/*`
+were all removed (`supabase/migrations/2026-09-27_delete_sales_valuation_d26_d27.sql`).
+Snapshots: `_backup_sv_models_20260927` / `_backup_sv_records_20260927` (1,792 rows) /
+`_backup_sv_group_20260927`. Restore = re-insert the backups + re-run the svr_*
+migration. The rest of this PRD describes the retired feature.
 **Last updated:** 2026-06-29
 **Related PRDs:** [sales-process.md](sales-process.md), [followups-workspace.md](followups-workspace.md), [dashboards.md](dashboards.md), [access-control.md](access-control.md), [record-management.md](record-management.md)
 

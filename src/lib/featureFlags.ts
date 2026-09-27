@@ -130,6 +130,11 @@ export const WORKSPACE_HIDDEN_MODEL_NAMES = [
   // D25 — sales-lifecycle models surfaced THROUGH the Sales Workspace (Clients /
   // Work Queue tabs + the guided Follow-up Workspace). Routes + triggers stay.
   'followups', 'sales_tasks', 'appointments',
+  // D25 (2026-09-27, operator request) — after dissolving the "New Group" folder,
+  // hide these top-level rows too: clients → Sales Workspace Clients tab, chats →
+  // WhatsApp tab. ai_chats has no workspace home yet — reachable by direct URL
+  // (/model/ai_chats). Routes all stay live.
+  'clients', 'chats', 'ai_chats',
   // D41 — geography lookups feeding Project Finder.
   'countries', 'regions', 'cities', 'districts',
   // D46 — hidden now; activated later with the unanswered-requests feature (D38).

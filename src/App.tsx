@@ -60,13 +60,6 @@ const ClientDetailPage = lazy(() => import('@/pages/Clients/ClientDetailPage'));
 const OurProjectsPortfolioPage = lazy(() => import('@/pages/Projects/OurProjectsPortfolioPage'));
 const ProjectsInventoryWorkspace = lazy(() => import('@/pages/ProjectsInventory/ProjectsInventoryWorkspace'));
 const SalesWorkspace = lazy(() => import('@/pages/Sales/SalesWorkspace'));
-const SalesValuationReviewPage = lazy(() => import('@/pages/SalesValuation/ReviewDetailPage'));
-const SalesValuationQueuePage = lazy(() => import('@/pages/SalesValuation/QueuePage'));
-const SalesValuationBoardPage = lazy(() => import('@/pages/SalesValuation/CorrectionBoardPage'));
-const SalesValuationCorrectionDetailPage = lazy(() => import('@/pages/SalesValuation/CorrectionDetailPage'));
-const SalesValuationCoachingPage = lazy(() => import('@/pages/SalesValuation/CoachingPage'));
-const SalesValuationCategoriesPage = lazy(() => import('@/pages/SalesValuation/CategoriesPage'));
-const SalesValuationSettingsPage = lazy(() => import('@/pages/SalesValuation/SettingsPage'));
 const MyClientsPage = lazy(() => import('@/pages/Sales/MyClientsPage'));
 const MyTasksPage = lazy(() => import('@/pages/Sales/MyTasksPage'));
 const SalesManagerPage = lazy(() => import('@/pages/Sales/SalesManagerPage'));
@@ -228,17 +221,6 @@ function RecordDetailDispatcher() {
     // New-record create stays on the generic form (RecordNewDispatcher).
     return <ClientDetailPage key={recordId ?? 'new'} />;
   }
-  if (modelName === 'sales_valuation_reviews' && searchParams.get('generic') !== '1') {
-    // Custom manager review screen replaces the generic form — a clean
-    // decision interface (summary + evidence modals + progressive decision
-    // panel). The generic form stays reachable via ?generic=1 for admin edits.
-    return <SalesValuationReviewPage key={recordId ?? 'new'} />;
-  }
-  if (modelName === 'sales_correction_tasks' && searchParams.get('generic') !== '1') {
-    // Custom correction-task detail (context / action / rep response / manager
-    // approval). Generic form stays reachable via ?generic=1.
-    return <SalesValuationCorrectionDetailPage key={recordId ?? 'new'} />;
-  }
   if (modelName === 'chats') {
     // ChatsSplitPage reads :recordId itself from useParams — no need to
     // pass it. Not keyed on recordId: the split page stays mounted while
@@ -317,13 +299,6 @@ function RecordListDispatcher() {
   if (modelName === 'project_details') {
     return <Navigate to="/settings/project-details" replace />;
   }
-  // Sales Valuation operation — each model in the تقييم المبيعات group renders a
-  // purpose-built operational screen instead of the generic record list.
-  if (modelName === 'sales_valuation_reviews') return <SalesValuationQueuePage />;
-  if (modelName === 'sales_correction_tasks') return <SalesValuationBoardPage />;
-  if (modelName === 'sales_rep_daily_valuations') return <SalesValuationCoachingPage />;
-  if (modelName === 'sales_mistake_categories') return <SalesValuationCategoriesPage />;
-  if (modelName === 'sales_valuation_settings') return <SalesValuationSettingsPage />;
   return <RecordListPage />;
 }
 
