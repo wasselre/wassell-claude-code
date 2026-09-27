@@ -9,7 +9,7 @@
 //   range fields (budget, area, bedrooms)          → REPLACE the saved range.
 //   unticked fields                                 → never touched.
 
-import { valueEqual, isEmptyValue } from '../salesProcess/valueEqual';
+import { valueEqual, isEmptyValue } from '../salesProcess/valueEqual.js';
 
 export type PrefFieldKind = 'set' | 'range';
 
