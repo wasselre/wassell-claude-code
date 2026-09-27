@@ -299,7 +299,10 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
 
   return (
     <div className="px-3 pt-2 shrink-0" dir={isAr ? 'rtl' : 'ltr'}>
-      <div className="rounded-xl border border-sand bg-white px-3 py-2">
+      {/* Capped at ~40% of the viewport with its own scroll — at full height a
+          nine-place reading (plus the map) pushed the conversation off screen
+          (seen live 2026-09-27). The chat must always stay readable. */}
+      <div className="rounded-xl border border-sand bg-white px-3 py-2 max-h-[40vh] overflow-y-auto overscroll-contain">
         {/* Header */}
         <div className="flex items-center gap-2">
           <MapPin size={14} className="text-copper shrink-0" />
