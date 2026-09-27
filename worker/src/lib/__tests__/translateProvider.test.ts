@@ -14,6 +14,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   maskLinks, restoreLinks, assertFactsIntact, protectedFacts, translateItems, type TranslateItem,
 } from '../translateProvider';
+import { safeExcerpt } from '../../runTranslationJob';
 
 const PDF = 'https://zhqqsxwealdwqzrbpwyv.supabase.co/storage/v1/object/public/marketing-assets/migrations/rabwat-alramz/masterplan-rabwat-alramz.pdf';
 const AR = `مخطط المشروع متاح هنا (${PDF})، ويضم 120 وحدة سكنية.`;
@@ -61,6 +62,48 @@ describe('maskLinks / restoreLinks', () => {
     expect(masked).toBe('لا يوجد رابط هنا');
     expect(links).toEqual([]);
     expect(restoreLinks('no link here', links).text).toBe('no link here');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The excerpt that killed 1,014 jobs. Not a provider concern — it is the
+// unit-upsert body — but it belongs with the other "what actually goes over the
+// wire" tests.
+// ---------------------------------------------------------------------------
+describe('safeExcerpt', () => {
+  const PIN = '\u{1F4CD}';                              // 📍 — ONE code point, TWO UTF-16 units
+  const LONE_HIGH = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/;
+
+  it('never cuts an emoji in half', () => {
+    const src = 'a'.repeat(199) + PIN + ' rest';
+    // The naive slice ends on the high half of the pair. JSON.stringify emits
+    // that as an unpaired escape and PostgREST answers "Empty or invalid json",
+    // which threw and killed the whole record's job.
+    expect(LONE_HIGH.test(src.slice(0, 200))).toBe(true);
+
+    const safe = safeExcerpt(src, 200);
+    expect(LONE_HIGH.test(safe)).toBe(false);
+    expect(JSON.parse(JSON.stringify({ x: safe })).x).toBe(safe);
+  });
+
+  it('counts code points, so an emoji is taken whole or not at all', () => {
+    expect(safeExcerpt(PIN + PIN + PIN, 2)).toBe(PIN + PIN);
+  });
+
+  it('keeps a valid surrogate pair intact (the regex must not eat the low half)', () => {
+    expect(safeExcerpt(`موقع ${PIN} مميز`, 200)).toBe(`موقع ${PIN} مميز`);
+  });
+
+  it('drops a lone surrogate that was already in the source', () => {
+    expect(safeExcerpt('ok\uD83Dbad', 50)).toBe('okbad');
+  });
+
+  it('drops NUL, which Postgres text cannot store', () => {
+    expect(safeExcerpt('a\u0000b', 50)).toBe('ab');
+  });
+
+  it('leaves ordinary Arabic text alone', () => {
+    expect(safeExcerpt('مخطط المشروع متاح هنا', 200)).toBe('مخطط المشروع متاح هنا');
   });
 });
 

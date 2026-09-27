@@ -59,6 +59,37 @@ interface FieldPolicy {
 const ORG_ID = '00000000-0000-0000-0000-000000000001';
 const MANUAL_REVIEW_BYTES = 200_000;
 
+/**
+ * A preview of the source that is safe to put in a JSON body.
+ *
+ * `raw.slice(0, 200)` counts UTF-16 units, so it can cut an emoji in HALF and
+ * leave an unpaired surrogate. `JSON.stringify` happily emits that lone
+ * `\ud83d`, PostgREST's parser refuses the body with "Empty or invalid json",
+ * and — because the unit upsert throws — the WHOLE record's translation job
+ * dies, taking every other field on that record with it.
+ *
+ * That is not hypothetical: «ربوة الرمز» has 📍 (U+1F4CD) at character 200 of
+ * `marketing_document`, which killed 1,014 jobs between August and 2026-09-27
+ * and is why its `project_analysis` had not been attempted since 6 September.
+ *
+ * Array.from walks CODE POINTS, so a pair is taken whole or not at all. NULs go
+ * too — Postgres text cannot store U+0000 and would reject the row for a
+ * different confusing reason.
+ */
+export function safeExcerpt(raw: string, maxCodePoints: number): string {
+  return Array.from(raw)
+    .slice(0, maxCodePoints)
+    .join('')
+    // Defensive: a lone surrogate that was already in the SOURCE (not created
+    // by the slice) breaks the body just the same. HIGH and LOW are handled
+    // separately on purpose — one class of [\uD800-\uDFFF] with a "not followed
+    // by a low surrogate" lookahead ALSO matches the low half of a perfectly
+    // valid pair and deletes it, mangling every emoji it is meant to save.
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    .replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, '$1')
+    .replace(/\u0000/g, '');
+}
+
 interface Ctx {
   supabase: SupabaseClient;
   env: WorkerEnv;
@@ -104,128 +135,146 @@ export async function runTranslationJob({ supabase, env, job }: Ctx): Promise<Re
   const providerWork: Array<{ item: TranslateItem; policy: FieldPolicy; claimedGen: number; sourceRev: string; sourceLang: string; raw: string }> = [];
 
   for (const policy of fieldSet) {
-    const rawVal = data[policy.field_path];
-    const raw = typeof rawVal === 'string' ? rawVal.trim() : '';
+    try {
+      const rawVal = data[policy.field_path];
+      const raw = typeof rawVal === 'string' ? rawVal.trim() : '';
 
-    if (raw === '') {
-      // Empty source = nothing to translate; unit (and variants) go away.
-      await supabase.from('translation_units').delete()
-        .match({ resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path });
-      continue;
-    }
-
-    const det = detectLang(raw);
-    const sourceRev = sha256(raw);
-
-    // ── Unit sync: claim the generation ─────────────────────────────────
-    const { data: unitRows, error: unitErr } = await supabase
-      .from('translation_units')
-      .upsert({
-        resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path,
-        org_id: ORG_ID, model_id: entity.model_id,
-        source_lang: det.lang, detect_confidence: det.confidence, detector_version: DETECTOR_VERSION,
-        source_rev: sourceRev, source_excerpt: raw.slice(0, 200),
-      }, { onConflict: 'resource_kind,entity_id,field_path', ignoreDuplicates: false })
-      .select('generation, source_lang, source_lang_locked');
-    if (unitErr) throw new Error(`unit upsert failed (${policy.field_path}): ${unitErr.message}`);
-    const unit = unitRows?.[0];
-    if (!unit) throw new Error(`unit upsert returned no row (${policy.field_path})`);
-    const claimedGen = unit.generation as number;
-    // A locked manual language override always wins over re-detection.
-    const sourceLang = (unit.source_lang_locked ? unit.source_lang : det.lang) as string;
-    if (unit.source_lang_locked && unit.source_lang !== det.lang) {
-      await supabase.from('translation_units')
-        .update({ source_lang: unit.source_lang })
-        .match({ resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path });
-    }
-
-    if (sourceLang === 'und') {
-      // Undecidable: no AI; surfaced in Review's "needs language" queue.
-      await ensureVariants(supabase, job.entityId, policy.field_path, null, ['ar', 'en'], 'skipped');
-      stats.skipped++;
-      continue;
-    }
-
-    const targets: TargetLang[] =
-      sourceLang === 'mixed' ? ['ar', 'en'] : sourceLang === 'ar' ? ['en'] : ['ar'];
-    const sourceSide: TargetLang | null =
-      sourceLang === 'ar' ? 'ar' : sourceLang === 'en' ? 'en' : null;
-    await ensureVariants(supabase, job.entityId, policy.field_path, sourceSide, targets, 'pending');
-
-    if (raw.length > MANUAL_REVIEW_BYTES) {
-      await supabase.from('translation_variants')
-        .update({ state: 'failed', last_error: 'manual_review:oversized' })
-        .match({ resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path })
-        .eq('role', 'target');
-      stats.failed += targets.length;
-      continue;
-    }
-
-    for (const target of targets) {
-      // Already current? (state valid at the claimed generation)
-      const { data: existing } = await supabase.from('translation_variants')
-        .select('state, generation, machine_owned')
-        .match({ resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path, lang: target })
-        .maybeSingle();
-      if (existing && ['translated', 'approved'].includes(existing.state as string)
-          && existing.generation === claimedGen) { stats.skipped++; continue; }
-      if (existing && existing.machine_owned === false) { stats.skipped++; continue; }
-
-      // Tier 1 — official counterpart (English targets of name fields).
-      if (policy.official_counterpart_path && target === 'en') {
-        const official = data[policy.official_counterpart_path];
-        if (typeof official === 'string' && official.trim() !== '') {
-          const ok = await activate(supabase, job, policy, target, claimedGen, sourceRev, sourceLang, raw,
-            official.trim(), 'official', 'official', promptVersion, glossaryVersion, policy.require_approval);
-          if (ok) stats.official++;
-          continue;
-        }
-      }
-
-      // Tier 2 — glossary exact term.
-      const glossCol = target === 'en' ? 'term_en' : 'term_ar';
-      const matchCol = target === 'en' ? 'term_ar' : 'term_en';
-      const { data: gloss } = await supabase.from('translation_glossary')
-        .select(glossCol).eq('is_active', true).ilike(matchCol, raw).limit(1);
-      const glossHit = (gloss?.[0] as Record<string, unknown> | undefined)?.[glossCol];
-      if (typeof glossHit === 'string' && glossHit.trim() !== '') {
-        const ok = await activate(supabase, job, policy, target, claimedGen, sourceRev, sourceLang, raw,
-          glossHit.trim(), 'glossary', 'glossary', promptVersion, glossaryVersion, policy.require_approval);
-        if (ok) stats.glossary++;
+      if (raw === '') {
+        // Empty source = nothing to translate; unit (and variants) go away.
+        await supabase.from('translation_units').delete()
+          .match({ resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path });
         continue;
       }
 
-      // Tier 3 — translation memory (exact context key; REV 4 §4c).
-      if (policy.tm_reuse !== 'never') {
-        const { data: tm } = await supabase.from('translation_memory')
-          .select('translated_text, provider')
-          .match({
-            org_id: ORG_ID, source_lang: sourceLang === 'mixed' ? 'mixed' : sourceLang,
-            target_lang: target, resource_kind: 'record',
-            context_scope: `${entity.model_id}:${policy.field_path}`,
-            semantic_class: policy.semantic_class, sensitivity: policy.sensitivity,
-            treatment: policy.treatment, prompt_version: promptVersion,
-            glossary_version: glossaryVersion, source_hash: sourceRev,
-          }).maybeSingle();
-        if (tm?.translated_text) {
-          const ok = await activate(supabase, job, policy, target, claimedGen, sourceRev, sourceLang, raw,
-            tm.translated_text, 'ai', `tm:${tm.provider ?? 'unknown'}`, promptVersion, glossaryVersion, policy.require_approval);
-          if (ok) stats.tmHits++;
-          continue;
-        }
+      const det = detectLang(raw);
+      const sourceRev = sha256(raw);
+
+      // ── Unit sync: claim the generation ─────────────────────────────────
+      const { data: unitRows, error: unitErr } = await supabase
+        .from('translation_units')
+        .upsert({
+          resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path,
+          org_id: ORG_ID, model_id: entity.model_id,
+          source_lang: det.lang, detect_confidence: det.confidence, detector_version: DETECTOR_VERSION,
+          source_rev: sourceRev, source_excerpt: safeExcerpt(raw, 200),
+        }, { onConflict: 'resource_kind,entity_id,field_path', ignoreDuplicates: false })
+        .select('generation, source_lang, source_lang_locked');
+      if (unitErr) throw new Error(`unit upsert failed (${policy.field_path}): ${unitErr.message}`);
+      const unit = unitRows?.[0];
+      if (!unit) throw new Error(`unit upsert returned no row (${policy.field_path})`);
+      const claimedGen = unit.generation as number;
+      // A locked manual language override always wins over re-detection.
+      const sourceLang = (unit.source_lang_locked ? unit.source_lang : det.lang) as string;
+      if (unit.source_lang_locked && unit.source_lang !== det.lang) {
+        await supabase.from('translation_units')
+          .update({ source_lang: unit.source_lang })
+          .match({ resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path });
       }
 
-      if (policy.provider_route === 'none') { stats.skipped++; continue; }
-      providerWork.push({
-        item: {
-          id: `${policy.field_path}|${target}`,
-          text: raw,
-          treatment: policy.treatment as Treatment,
-          targetLang: target,
-          mixedSource: sourceLang === 'mixed',
-        },
-        policy, claimedGen, sourceRev, sourceLang, raw,
-      });
+      if (sourceLang === 'und') {
+        // Undecidable: no AI; surfaced in Review's "needs language" queue.
+        await ensureVariants(supabase, job.entityId, policy.field_path, null, ['ar', 'en'], 'skipped');
+        stats.skipped++;
+        continue;
+      }
+
+      const targets: TargetLang[] =
+        sourceLang === 'mixed' ? ['ar', 'en'] : sourceLang === 'ar' ? ['en'] : ['ar'];
+      const sourceSide: TargetLang | null =
+        sourceLang === 'ar' ? 'ar' : sourceLang === 'en' ? 'en' : null;
+      await ensureVariants(supabase, job.entityId, policy.field_path, sourceSide, targets, 'pending');
+
+      if (raw.length > MANUAL_REVIEW_BYTES) {
+        await supabase.from('translation_variants')
+          .update({ state: 'failed', last_error: 'manual_review:oversized' })
+          .match({ resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path })
+          .eq('role', 'target');
+        stats.failed += targets.length;
+        continue;
+      }
+
+      for (const target of targets) {
+        // Already current? (state valid at the claimed generation)
+        const { data: existing } = await supabase.from('translation_variants')
+          .select('state, generation, machine_owned')
+          .match({ resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path, lang: target })
+          .maybeSingle();
+        if (existing && ['translated', 'approved'].includes(existing.state as string)
+            && existing.generation === claimedGen) { stats.skipped++; continue; }
+        if (existing && existing.machine_owned === false) { stats.skipped++; continue; }
+
+        // Tier 1 — official counterpart (English targets of name fields).
+        if (policy.official_counterpart_path && target === 'en') {
+          const official = data[policy.official_counterpart_path];
+          if (typeof official === 'string' && official.trim() !== '') {
+            const ok = await activate(supabase, job, policy, target, claimedGen, sourceRev, sourceLang, raw,
+              official.trim(), 'official', 'official', promptVersion, glossaryVersion, policy.require_approval);
+            if (ok) stats.official++;
+            continue;
+          }
+        }
+
+        // Tier 2 — glossary exact term.
+        const glossCol = target === 'en' ? 'term_en' : 'term_ar';
+        const matchCol = target === 'en' ? 'term_ar' : 'term_en';
+        const { data: gloss } = await supabase.from('translation_glossary')
+          .select(glossCol).eq('is_active', true).ilike(matchCol, raw).limit(1);
+        const glossHit = (gloss?.[0] as Record<string, unknown> | undefined)?.[glossCol];
+        if (typeof glossHit === 'string' && glossHit.trim() !== '') {
+          const ok = await activate(supabase, job, policy, target, claimedGen, sourceRev, sourceLang, raw,
+            glossHit.trim(), 'glossary', 'glossary', promptVersion, glossaryVersion, policy.require_approval);
+          if (ok) stats.glossary++;
+          continue;
+        }
+
+        // Tier 3 — translation memory (exact context key; REV 4 §4c).
+        if (policy.tm_reuse !== 'never') {
+          const { data: tm } = await supabase.from('translation_memory')
+            .select('translated_text, provider')
+            .match({
+              org_id: ORG_ID, source_lang: sourceLang === 'mixed' ? 'mixed' : sourceLang,
+              target_lang: target, resource_kind: 'record',
+              context_scope: `${entity.model_id}:${policy.field_path}`,
+              semantic_class: policy.semantic_class, sensitivity: policy.sensitivity,
+              treatment: policy.treatment, prompt_version: promptVersion,
+              glossary_version: glossaryVersion, source_hash: sourceRev,
+            }).maybeSingle();
+          if (tm?.translated_text) {
+            const ok = await activate(supabase, job, policy, target, claimedGen, sourceRev, sourceLang, raw,
+              tm.translated_text, 'ai', `tm:${tm.provider ?? 'unknown'}`, promptVersion, glossaryVersion, policy.require_approval);
+            if (ok) stats.tmHits++;
+            continue;
+          }
+        }
+
+        if (policy.provider_route === 'none') { stats.skipped++; continue; }
+        providerWork.push({
+          item: {
+            id: `${policy.field_path}|${target}`,
+            text: raw,
+            treatment: policy.treatment as Treatment,
+            targetLang: target,
+            mixedSource: sourceLang === 'mixed',
+          },
+          policy, claimedGen, sourceRev, sourceLang, raw,
+        });
+      }
+    } catch (err) {
+      // ONE field must never take the whole record down with it. Until
+      // 2026-09-27 an unhandled error here aborted the job for EVERY field
+      // on the record: «ربوة الرمز» has an emoji at character 200 of
+      // marketing_document, the sliced excerpt broke the JSON body, and the
+      // throw meant project_analysis was never attempted for three weeks —
+      // 1,014 dead jobs. Record the failure against the field that caused it
+      // and carry on; the unit stays dirty and the retry cap decides when to
+      // stop asking.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[translate] field ${policy.field_path} failed on ${job.entityId}: ${message}`);
+      stats.failed++;
+      await supabase.from('translation_variants')
+        .update({ state: 'failed', last_error: message.slice(0, 500) })
+        .match({ resource_kind: 'record', entity_id: job.entityId, field_path: policy.field_path })
+        .eq('role', 'target').eq('machine_owned', true);
     }
   }
 
