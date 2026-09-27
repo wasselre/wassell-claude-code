@@ -85,6 +85,9 @@ export interface ChatCard {
   graded: boolean;
   /** false inside the cost/concurrency cool-down after a reading. */
   can_reanalyze: boolean;
+  /** How many text messages the CUSTOMER has sent in this chat — lets the card
+   *  decide on its own whether the chat is worth reading yet. */
+  customer_messages: number;
 }
 
 export type AnalyzeMode = 'extract' | 're_review';
@@ -244,6 +247,17 @@ async function readEvidenceRows(supabase: SupabaseClient, clientId: string, chat
   return [...rows].sort((a, b) => (pos.get(s(a.id)) ?? Number.MAX_SAFE_INTEGER) - (pos.get(s(b.id)) ?? Number.MAX_SAFE_INTEGER));
 }
 
+/** Number of INBOUND (customer) text messages in the chat. A read error throws. */
+async function readCustomerMessageCount(supabase: SupabaseClient, chatWid: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('chat_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('chat_wid', chatWid).eq('flow', 'in')
+    .not('body', 'is', null).neq('body', '');
+  if (error) throw new Error(`chat card: chat_messages count failed: ${error.message}`);
+  return count ?? 0;
+}
+
 /** Date of the newest INBOUND (customer) message with text; null when none. */
 async function readNewestCustomerMessageAt(supabase: SupabaseClient, chatWid: string): Promise<string | null> {
   const { data, error } = await supabase
@@ -372,11 +386,14 @@ export async function loadChatCard(
   opts: { now?: () => Date } = {},
 ): Promise<ChatCard> {
   const now = (opts.now ?? (() => new Date()))();
-  const cp = await readCheckpoint(supabase, clientId, chatWid);
+  const [cp, customer_messages] = await Promise.all([
+    readCheckpoint(supabase, clientId, chatWid),
+    readCustomerMessageCount(supabase, chatWid),
+  ]);
   if (!cp) {
     return {
       status: 'none', checkpoint_id: null, proposal: null, mentions: [], names: {},
-      analyzed_at: null, stale: false, graded: false, can_reanalyze: true,
+      analyzed_at: null, stale: false, graded: false, can_reanalyze: true, customer_messages,
     };
   }
 
@@ -416,6 +433,7 @@ export async function loadChatCard(
     stale: computeStale(cp.created_at, newestIn),
     graded,
     can_reanalyze: !(since < REANALYZE_COOLDOWN_MS),
+    customer_messages,
   };
 }
 

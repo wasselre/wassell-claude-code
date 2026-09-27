@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MapPin, Loader2, ChevronUp, ChevronDown, RefreshCw, Check, AlertTriangle, Map as MapIcon } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -8,6 +8,7 @@ import {
 } from '@/pages/GeoGrade/lib/shared';
 import { placementLine, verifierMentionLine } from '@/pages/GeoGrade/lib/placementLine';
 import { pruneGeoExpression, type PrunableExpression } from '@/lib/geo/pruneGeoExpression';
+import { shouldAutoRead } from '@/lib/geo/geoCardAutoRead';
 
 const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
 
@@ -49,6 +50,7 @@ interface ChatCardDTO {
   stale: boolean;
   graded: boolean;
   can_reanalyze: boolean;
+  customer_messages: number;
 }
 
 interface Row {
@@ -140,6 +142,18 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
       setAnalyzing(false);
     }
   };
+
+  // Read on its own when there is something new to read (geoCardAutoRead.ts),
+  // at most once per mount so a failed reading can't loop.
+  const autoTried = useRef(false);
+  useEffect(() => {
+    if (!card || loading || analyzing || autoTried.current) return;
+    if (!shouldAutoRead(card)) return;
+    autoTried.current = true;
+    void analyze();
+    // analyze is recreated each render; the ref guard is what bounds this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card, loading, analyzing]);
 
   const rows: Row[] = useMemo(() => {
     const p = card?.proposal;
