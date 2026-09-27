@@ -33,7 +33,7 @@ function view(partial: Partial<ClientView>): ClientView {
     preferredUnitType: [],
     budget: null,
     preferredCity: null,
-    preferredDirection: [],
+    locationAreas: [],
     preferredDistrict: null,
     preferredProjects: [],
     preferredMarketListings: [],

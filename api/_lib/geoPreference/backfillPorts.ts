@@ -121,19 +121,32 @@ export async function persistExtraction(
 export const DEFAULT_ESTABLISHED_CITY = 'الرياض';
 
 /**
- * The client's established city for the resolver: their `preferred_city`
- * (clients model multiselect of Arabic city names) when exactly ONE is set,
- * else the organisational default. Without this every namesake district was
- * needs_confirm (margin 0) and no proposal ever carried a real district id.
+ * The client's established city for the resolver: the ONE city in their
+ * `location` cascade (`data.location.city` — a `cities` record uuid, resolved to
+ * its Arabic name) when exactly one is set, else the organisational default.
+ * Without this every namesake district was needs_confirm (margin 0) and no
+ * proposal ever carried a real district id. (The old free-text city field was
+ * retired 2026-09-27; its values were migrated into `location.city`.)
  */
 export async function clientEstablishedCity(
   supabase: SupabaseClient, clientId: string,
 ): Promise<{ city: string; universe: 'explicit' | 'organizational_default' }> {
   const { data, error } = await supabase.from('unified_records').select('data').eq('id', clientId).maybeSingle();
   if (error) throw new Error(`gather: client read for established city failed: ${error.message}`);
-  const pc = (data?.data as Record<string, unknown> | null)?.preferred_city;
-  if (Array.isArray(pc) && pc.length === 1 && typeof pc[0] === 'string' && pc[0].trim()) {
-    return { city: pc[0].trim(), universe: 'explicit' };
+  const loc = (data?.data as Record<string, unknown> | null)?.location;
+  const cityIds = loc && typeof loc === 'object' && !Array.isArray(loc)
+    ? (Array.isArray((loc as Record<string, unknown>).city)
+      ? ((loc as Record<string, unknown>).city as unknown[])
+      : [(loc as Record<string, unknown>).city]
+    ).filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+    : [];
+  if (cityIds.length === 1) {
+    const { data: cityRow, error: cityErr } = await supabase
+      .from('unified_records').select('data').eq('id', cityIds[0]!).maybeSingle();
+    if (cityErr) throw new Error(`gather: city read for established city failed: ${cityErr.message}`);
+    const cd = (cityRow?.data as Record<string, unknown> | null) ?? null;
+    const name = asStr(cd?.name_ar) || asStr(cd?.display_name);
+    if (name) return { city: name, universe: 'explicit' };
   }
   return { city: DEFAULT_ESTABLISHED_CITY, universe: 'organizational_default' };
 }

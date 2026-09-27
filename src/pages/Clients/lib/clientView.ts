@@ -1,5 +1,7 @@
 import type { AppModel, AppRecord, ModelField, User } from '@/types';
 import { resolveLocalizedName, pickLocalized } from '@/lib/geo/localizedName';
+import { parseLocationItems, describeLocationItem } from '@/lib/geo/locationItems';
+import { clientActiveOptionRefs, type OptionSourceKind } from '@/lib/matching/clientOptionIndex';
 
 /**
  * Pure, reusable "Client 360" view resolver.
@@ -11,9 +13,10 @@ import { resolveLocalizedName, pickLocalized } from '@/lib/geo/localizedName';
  *
  * Hard rules baked in:
  *  - Missing facts resolve to `null` (or `[]` for collections) — never guessed.
- *  - `preferred_projects` (→ all_projects) and `preferred_market_listings`
- *    (→ market_listings) are read from their OWN slugs, each verified against
- *    its own lookup target model. They can never cross-pollute at read time.
+ *  - The client's projects / market listings come from Client Options
+ *    (`client_property_options`, source_type 'project' / 'market_listing'),
+ *    each resolved against its OWN target model — they can never cross-pollute.
+ *    (The old `clients` lookup fields for these were retired 2026-09-27.)
  *  - Derived/lifecycle fields are READ here but are display-only everywhere —
  *    see DERIVED_READONLY_SLUGS, which the Preferences editor uses to exclude
  *    them from any editable surface.
@@ -60,22 +63,20 @@ export function isDerivedReadOnly(slug: string): boolean {
  * Editable client-preference slugs, in display order. Only those present on the
  * live model are rendered — the editor filters to the actual schema, so a
  * Builder rename or removal degrades gracefully. Derived slugs are deliberately
- * absent. `preferred_projects` and `preferred_market_listings` each carry their
- * own lookup target on the schema, so the picker cannot cross-pollute.
+ * absent. Projects / units / listings the client is considering are NOT edited
+ * here — they live in Client Options (the Options tab); location lives in the
+ * `location` cascade + `location_items`.
  */
 export const PREFERENCE_EDIT_SLUGS = [
   'preferred_unit_type',
   'budget',
   'preferred_bedrooms',
   'preferred_area',
-  'preferred_direction',
   'preferred_amenities',
   'location',
   'location_priority',
   'max_distance_km',
   'preferred_language',
-  'preferred_projects',
-  'preferred_market_listings',
   'client_favorite_units',
   'preferred_location_notes',
   'preference_notes',
@@ -157,9 +158,14 @@ export interface ClientView {
   preferredUnitType: string[];
   budget: NumericRange | null;
   preferredCity: string | null;
-  preferredDirection: string[];
   preferredDistrict: string | null;
+  /** Detailed location preferences (`location_items`: districts incl. those
+   *  from a curated direction zone, element rules, drawn areas) as bilingual
+   *  display labels. */
+  locationAreas: string[];
+  /** Active Client Options of source_type 'project' (main option first). */
   preferredProjects: LookupRef[];
+  /** Active Client Options of source_type 'market_listing'. */
   preferredMarketListings: LookupRef[];
   counts: RelatedCounts;
 }
@@ -275,15 +281,24 @@ function resolveLookupRef(
 }
 
 /**
- * Resolve a multi-value lookup field on the client to display refs, scoped to
- * its OWN target model. Used independently for preferred_projects and
- * preferred_market_listings so the two can never blend.
+ * The client's active Client Options of ONE source kind as display refs,
+ * resolved against that kind's OWN target model (projects → all_projects,
+ * listings → market_listings) so the two can never blend. When the target
+ * record isn't loaded, falls back to the name snapshotted on the option; still
+ * null when neither exists — never fabricated.
  */
-function resolveLookupField(ctx: ClientViewCtx, model: AppModel, slug: string, data: Record<string, unknown>): LookupRef[] {
-  const field = fieldBySlug(model, slug);
-  if (!field) return [];
-  const ids = asStringArray(data[slug]);
-  return ids.map((id) => resolveLookupRef(ctx, field.lookup_model_id, field.lookup_display_field, id));
+function resolveOptionRefs(
+  ctx: ClientViewCtx,
+  clientId: string,
+  kind: OptionSourceKind,
+  targetModelName: string,
+  displayField: string | null,
+): LookupRef[] {
+  const target = ctx.models.find((m) => m.name === targetModelName) ?? null;
+  return clientActiveOptionRefs(ctx.models, ctx.records, clientId, kind).map((o) => {
+    const ref = resolveLookupRef(ctx, target?.id, displayField, o.sourceId);
+    return ref.name ? ref : { id: o.sourceId, name: o.sourceName };
+  });
 }
 
 /** The option label for a dropdown/select field VALUE, in the UI language.
@@ -575,10 +590,10 @@ export function resolveClientView(client: AppRecord, ctx: ClientViewCtx): Client
     preferredUnitType: asStringArray(data.preferred_unit_type),
     budget: readRange(data.budget),
     preferredCity: cityNames[0] ?? null,
-    preferredDirection: asStringArray(data.preferred_direction),
     preferredDistrict: districtNames.length ? districtNames.join(lang === 'ar' ? '، ' : ', ') : null,
-    preferredProjects: model ? resolveLookupField(ctx, model, 'preferred_projects', data) : [],
-    preferredMarketListings: model ? resolveLookupField(ctx, model, 'preferred_market_listings', data) : [],
+    locationAreas: [...new Set(parseLocationItems(data.location_items).map((it) => describeLocationItem(it, lang === 'ar')))],
+    preferredProjects: resolveOptionRefs(ctx, client.id, 'project', 'all_projects', 'project_name'),
+    preferredMarketListings: resolveOptionRefs(ctx, client.id, 'market_listing', 'market_listings', null),
     counts: {
       followups: countRelatedByModelName(ctx, client.id, 'followups'),
       visits: countRelatedByModelName(ctx, client.id, 'visits'),

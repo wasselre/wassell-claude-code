@@ -30,7 +30,7 @@ function PreferenceSummary({ v, isAr }: { v: ClientView; isAr: boolean }) {
   if (budget) parts.push(budget);
   if (v.preferredCity) parts.push(v.preferredCity);
   if (!parts.length && v.preferredProjects.length) {
-    parts.push(`${v.preferredProjects.length} ${isAr ? 'مشروع مفضل' : 'preferred'}`);
+    parts.push(`${v.preferredProjects.length} ${isAr ? 'مشروع في الخيارات' : 'in options'}`);
   }
   if (!parts.length) return <Dash />;
   return (

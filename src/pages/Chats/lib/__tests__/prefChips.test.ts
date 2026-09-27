@@ -23,16 +23,6 @@ const clientsModel = {
               { id: 'o2', label_ar: 'شقة', label_en: 'Apartment', value: 'شقة' },
             ],
           },
-          {
-            id: 'f2', name: 'preferred_city', label_ar: 'المدينة', label_en: 'City',
-            type: 'multiselect', required: false, order: 1, section_id: 'sec',
-            options: [{ id: 'o3', label_ar: 'الرياض', label_en: 'Riyadh', value: 'الرياض' }],
-          },
-          {
-            id: 'f3', name: 'preferred_neighborhoods', label_ar: 'الأحياء', label_en: 'Neighborhoods',
-            type: 'multiselect', required: false, order: 2, section_id: 'sec',
-            options: [{ id: 'o4', label_ar: 'النرجس', label_en: 'An-Narjis', value: 'النرجس' }],
-          },
         ],
       },
     ],
@@ -96,21 +86,26 @@ describe('buildClientPrefChips', () => {
     expect(loc.text).toBe('الرياض · حي الياسمين · كافد +1');
   });
 
-  it('ignores exclude items and falls back to legacy multiselects', () => {
+  it('ignores exclude items; city comes from location.city, districts from location_items', () => {
     const chips = buildClientPrefChips(
       {
-        preferred_city: ['الرياض'],
-        preferred_neighborhoods: ['النرجس'],
+        location: { city: ['city-1'] },
         location_items: [
           { id: 'i1', kind: 'district', polarity: 'exclude', district_id: 'district-1', district_label: 'مستثنى' },
+          { id: 'i2', kind: 'district', polarity: 'include', district_id: 'd2', district_label: 'النرجس' },
         ],
       },
       clientsModel,
-      geoNames,
+      { 'city-1': 'Riyadh' },
       false,
     );
     const loc = chips.find((c) => c.kind === 'location')!;
-    expect(loc.text).toBe('Riyadh · An-Narjis');
+    expect(loc.text).toBe('Riyadh · النرجس');
+  });
+
+  it('shows no location chip when the client has no location and no location_items', () => {
+    const chips = buildClientPrefChips({ preferred_unit_type: ['فيلا'] }, clientsModel, geoNames, true);
+    expect(chips.some((c) => c.kind === 'location')).toBe(false);
   });
 
   it('returns no chips when the client has no preferences', () => {

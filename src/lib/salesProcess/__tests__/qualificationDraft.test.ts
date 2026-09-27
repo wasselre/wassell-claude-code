@@ -127,9 +127,9 @@ describe('multi-value semantics (gate 7) + op extensibility', () => {
     expect(applyOp(['شقة', 'دور'], ['دور'], 'remove', 'multi')).toEqual(['شقة']);
   });
 
-  it('unmanaged fields (preferred_direction) are never applied', () => {
-    const s = applyAiEvidence(seed({}), [ev('preferred_direction', ['شمال'], 99)], { savedData: {}, now: NOW });
-    expect(s.draft.preferred_direction).toBeUndefined();
+  it('unmanaged fields are never applied', () => {
+    const s = applyAiEvidence(seed({}), [ev('some_unmanaged_field', ['شمال'], 99)], { savedData: {}, now: NOW });
+    expect(s.draft.some_unmanaged_field).toBeUndefined();
     expect(s.exceptions).toHaveLength(0);
   });
 
@@ -182,12 +182,17 @@ describe('district resolution + adapter', () => {
     expect(dex).toHaveLength(2);
   });
 
-  it('adapter excludes preferred_direction from evidence', () => {
+  it('adapter drops unmanaged slugs and explicit excludeSlugs from evidence', () => {
     const { evidence } = extractionToEvidence(
-      { suggestions: { preferred_direction: { value: ['شمال'], confidence: 99 }, budget: { value: { max: 1 }, confidence: 90 } } },
+      { suggestions: { some_unmanaged_field: { value: ['شمال'], confidence: 99 }, budget: { value: { max: 1 }, confidence: 90 } } },
       {},
     );
     expect(evidence.map((e) => e.slug)).toEqual(['budget']);
+    const excluded = extractionToEvidence(
+      { suggestions: { budget: { value: { max: 1 }, confidence: 90 }, preferred_area: { value: { min: 100 }, confidence: 90 } } },
+      { excludeSlugs: ['budget'] },
+    );
+    expect(excluded.evidence.map((e) => e.slug)).toEqual(['preferred_area']);
   });
 });
 

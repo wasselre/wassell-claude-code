@@ -391,10 +391,7 @@ const migration_5_to_6: Migration = (state) => {
  *   mirrored from clients, Call, Appointment Confirmation, Post-Visit, WhatsApp).
  *   All old follow-up records are wiped — their field slugs (call_duration,
  *   meeting_summary, contract_value, etc.) no longer exist in the new schema.
- * - Clients schema refreshed so `preferred_projects` and `preferred_units` gain
- *   `is_multi: true`. Scalar IDs are wrapped into single-element arrays.
- * - `preferred_units` now points at the new Units model; old values that
- *   referenced all_projects are cleared (the IDs don't exist in Units).
+ * - Clients schema refreshed from the seed.
  * - The Appointments and Units system models are inserted if missing.
  */
 const migration_6_to_7: Migration = (state) => {
@@ -429,7 +426,7 @@ const migration_6_to_7: Migration = (state) => {
     }
   }
 
-  // 2. Refresh the Clients system model schema (picks up is_multi + new lookup_model_id on preferred_units).
+  // 2. Refresh the Clients system model schema from the seed.
   const clientsSeed = seededByName.get('clients');
   const clientsIdx = models.findIndex((m) => m.name === 'clients' && m.is_system);
   if (clientsSeed && clientsIdx !== -1) {
@@ -440,38 +437,9 @@ const migration_6_to_7: Migration = (state) => {
       card_config: clientsSeed.card_config,
       updated_at: now,
     };
-    // Migrate client records: wrap scalar preferred_projects into arrays; clear preferred_units
-    // (old values pointed at all_projects; new field points at units, IDs don't match).
-    const clientRecords = records[existing.id] ?? [];
-    if (clientRecords.length) {
-      let changed = 0;
-      records[existing.id] = clientRecords.map((rec) => {
-        const data = { ...rec.data };
-        let dirty = false;
-        if (typeof data.preferred_projects === 'string' && data.preferred_projects) {
-          data.preferred_projects = [data.preferred_projects];
-          dirty = true;
-        }
-        if (data.preferred_units !== undefined && !Array.isArray(data.preferred_units)) {
-          data.preferred_units = [];
-          dirty = true;
-        } else if (Array.isArray(data.preferred_units) && data.preferred_units.length > 0) {
-          // Old IDs referred to all_projects — clear them; user re-picks from Units.
-          data.preferred_units = [];
-          dirty = true;
-        }
-        if (dirty) {
-          changed++;
-          return { ...rec, data, updated_at: now };
-        }
-        return rec;
-      });
-      if (changed) {
-        console.warn(
-          `[schemaMigrations v7] Normalized ${changed} client record(s): wrapped preferred_projects to array, cleared preferred_units.`,
-        );
-      }
-    }
+    // (Until 2026-09-27 this step also normalized the old client project/unit
+    // lookup values. Those fields were retired — projects/units a client is
+    // considering live in Client Options — so there is nothing left to rewrite.)
   }
 
   // 3. Insert new system models (appointments, units) if missing.

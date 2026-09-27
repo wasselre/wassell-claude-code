@@ -32,6 +32,7 @@ import StudyJobCard from './StudyJobCard';
 import GeoPrefCard from './GeoPrefCard';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
+import { clientActiveOptionRefs } from '@/lib/matching/clientOptionIndex';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
 import { resolveConversationIdentity, conversationIdentityMessage } from '../lib/conversationIdentity';
 
@@ -144,15 +145,14 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     () => (linkedClientData ? buildDetailedClientPrefChips(linkedClientData, clientsModel, geoNames, isAr) : []),
     [linkedClientData, clientsModel, geoNames, isAr],
   );
-  // The linked client's preferred projects (multi-lookup → array of project ids),
-  // used to prefill the "Notify officer" project picker when there's exactly one.
-  const preferredProjectIds = useMemo<string[]>(() => {
-    const pp = linkedClientData?.preferred_projects;
-    if (!Array.isArray(pp)) return [];
-    return pp
-      .map((x) => (typeof x === 'string' ? x : x && typeof x === 'object' && 'id' in x ? String((x as { id: unknown }).id) : ''))
-      .filter(Boolean);
-  }, [linkedClientData]);
+  // The linked client's project options (Client Options, source_type 'project',
+  // not eliminated / not interested; main option first) — already in the store,
+  // same records the Client Options panel shows. Used to prefill the "Notify
+  // officer" / "Register in portal" project pickers when there's exactly one.
+  const preferredProjectIds = useMemo<string[]>(
+    () => (clientLinkId ? clientActiveOptionRefs(models, records, clientLinkId, 'project').map((o) => o.sourceId) : []),
+    [models, records, clientLinkId],
+  );
 
 
   // Advertiser whose phone matches this chat — computed live (nothing is
@@ -850,7 +850,6 @@ const DETAIL_CHIP_STYLES: Record<ClientPrefDetailChip['kind'], string> = {
   area: 'bg-gold/20 text-chocolate',
   location: 'bg-charcoal/5 text-charcoal/70',
   distance: 'bg-charcoal/5 text-charcoal/70',
-  direction: 'bg-charcoal/5 text-charcoal/70',
   amenities: 'bg-copper/10 text-copper',
   objective: 'bg-gold/20 text-chocolate',
   setting: 'bg-charcoal/5 text-charcoal/70',

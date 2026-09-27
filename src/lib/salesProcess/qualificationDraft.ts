@@ -27,8 +27,9 @@ import { normalizeForSearch } from '@/lib/recordSearch';
  *  real extraction data — start conservative. */
 export const HIGH_CONFIDENCE_THRESHOLD = 80;
 
-/** How a field merges new evidence. Excludes `preferred_direction` on purpose
- *  (extracted but not applied in this phase — no editor/finder support yet). */
+/** How a field merges new evidence. A slug absent from the map is unmanaged and
+ *  never applied. (Direction is not a field: it arrives as district items in
+ *  `location_items`.) */
 export type FieldKind = 'multi' | 'range' | 'scalar' | 'location_items';
 
 export const QUALIFICATION_FIELD_KINDS: Record<string, FieldKind> = {
@@ -215,7 +216,7 @@ export function applyAiEvidence(
 
   for (const ev of evidence) {
     const kind = kinds[ev.slug];
-    if (!kind) continue; // unmanaged field (e.g. preferred_direction) — never applied
+    if (!kind) continue; // unmanaged field — never applied
 
     const current = draft[ev.slug];
     const next = applyOp(current, ev.value, ev.op ?? defaultOp(kind), kind);
@@ -292,13 +293,13 @@ export interface ExtractionAdapterCtx {
 }
 
 /** Map the extractor's ExtractionInput into op-based evidence + district results.
- *  `preferred_direction` (and any excludeSlugs) is dropped here. */
+ *  Unmanaged slugs (and any excludeSlugs) are dropped here. */
 export function extractionToEvidence(extraction: ExtractionInput, ctx: ExtractionAdapterCtx): {
   evidence: AiFieldEvidence[];
   districtNames: { name: string; result: 'ambiguous' | 'not_found' }[];
 } {
   const kinds = ctx.fieldKinds ?? QUALIFICATION_FIELD_KINDS;
-  const exclude = new Set(ctx.excludeSlugs ?? ['preferred_direction']);
+  const exclude = new Set(ctx.excludeSlugs ?? []);
   const evidence: AiFieldEvidence[] = [];
 
   for (const [slug, sug] of Object.entries(extraction.suggestions ?? {})) {

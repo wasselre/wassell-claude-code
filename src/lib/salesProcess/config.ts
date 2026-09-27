@@ -163,7 +163,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     // so they're intentionally NOT repeated here. `campaign` has no field in the
     // live clients model, so it is not offered.
     context_blocks: ['lead_source', 'preferred_project'],
-    preference_summary_fields: ['budget', 'preferred_projects', 'location', 'preferred_unit_type', 'preferred_area', 'preferred_language'],
+    preference_summary_fields: ['budget', 'location', 'preferred_unit_type', 'preferred_area', 'preferred_language'],
     script: {
       ar: ['ما المنطقة التي تهمك؟', 'ما نطاق الميزانية المناسب لك؟', 'هل البحث للاستخدام الشخصي أم للاستثمار؟', 'هل يناسبك تحديد موعد زيارة قريبًا؟'],
       en: ['Which area interests you?', 'What budget range are you considering?', 'Personal use or investment?', 'Could we schedule a project visit soon?'],
@@ -202,7 +202,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     // / `suggested_template` are not wired to a synchronous source yet, and
     // `preference_summary` / `next_recommended` render nothing, so they're dropped.
     context_blocks: ['whatsapp_status', 'preferred_project'],
-    preference_summary_fields: ['budget', 'preferred_projects', 'preferred_unit_type', 'preferred_language'],
+    preference_summary_fields: ['budget', 'preferred_unit_type', 'preferred_language'],
     script: {
       ar: [
         'أُرسل المشروع للعميل بعد المكالمة — تحقّق أولاً إن كان قد ردّ.',
@@ -269,7 +269,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     primary_channel: 'call',
     stage: 'موعد زيارة',
     context_blocks: ['appointment', 'project_location', 'appointment_status', 'sales_rep', 'previous_confirmations'],
-    preference_summary_fields: ['preferred_projects', 'preferred_language'],
+    preference_summary_fields: ['preferred_language'],
     script: {
       ar: ['تأكيد تاريخ ووقت الموعد', 'تأكيد اسم المشروع وموقعه', 'هل تحتاج إلى الاتجاهات؟'],
       en: ['Confirm the appointment date and time', 'Confirm the project name and location', 'Do you need directions?'],
@@ -314,7 +314,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     primary_channel: 'call',
     stage: 'موعد زيارة',
     context_blocks: ['appointment', 'project_location', 'appointment_status', 'sales_rep'],
-    preference_summary_fields: ['preferred_projects'],
+    preference_summary_fields: [],
     allowed_outcomes: [
       { value: 'attendance_confirmed', requires: { ...REQ_ACTUAL, appointment_id: true }, client_update_preview: { stage: 'موعد زيارة', status: 'تم تأكيد الحضور' }, next_action_preview: { kind: 'none' } },
       { value: 'no_answer', requires: { ...REQ_ACTUAL, appointment_id: true }, client_update_preview: { status: 'لا يوجد رد' }, next_action_preview: { kind: 'none', note_en: 'Same-day — keep appointment, flag risk', note_ar: 'نفس اليوم — إبقاء الموعد مع الإشارة للخطورة' } },
@@ -331,7 +331,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     primary_channel: 'call',
     stage: 'موعد زيارة',
     context_blocks: ['missed_appointment_date', 'appointment', 'previous_confirmations', 'reschedule_suggestion'],
-    preference_summary_fields: ['preferred_projects', 'budget'],
+    preference_summary_fields: ['budget'],
     allowed_outcomes: [
       { value: 'rescheduled', requires: { ...REQ_ACTUAL, new_appointment_datetime: true }, client_update_preview: { status: 'تمت إعادة الجدولة' }, next_action_preview: { kind: 'book_appointment', use_field: 'new_appointment_datetime' } },
       { value: 'still_interested', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'مهتم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_booking_call', delay_days: 0 } },
@@ -349,7 +349,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     primary_channel: 'call',
     stage: 'متابعة بعد الزيارة',
     context_blocks: ['visited_project', 'visit_date', 'visited_units', 'customer_feedback', 'budget', 'objections', 'offer_readiness'],
-    preference_summary_fields: ['budget', 'preferred_projects', 'preferred_unit_type'],
+    preference_summary_fields: ['budget', 'preferred_unit_type'],
     allowed_outcomes: [
       { value: 'request_offer', requires: { ...REQ_ACTUAL, outcome_notes: true }, client_update_preview: { stage: 'عرض سعر', status: 'تم طلب عرض سعر' }, next_action_preview: { kind: 'create_offer', note_en: 'Create/open offer + offer follow-up', note_ar: 'إنشاء/فتح عرض سعر + متابعة العرض' } },
       { value: 'still_interested', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'مهتم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'follow_up_call_after_visit', delay_days: 2 } },
@@ -378,7 +378,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     primary_channel: 'call',
     stage: 'عرض سعر',
     context_blocks: ['offer_details', 'preference_summary'],
-    preference_summary_fields: ['budget', 'preferred_projects'],
+    preference_summary_fields: ['budget'],
     allowed_outcomes: [
       { value: 'offer_accepted', requires: { ...REQ_ACTUAL }, client_update_preview: { stage: 'حجز', status: 'بانتظار دفعة الحجز' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'reservation_payment_follow_up', delay_days: 1 } },
       { value: 'waiting_decision', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'بانتظار القرار' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'offer_follow_up', delay_days: 2 } },
@@ -397,7 +397,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     primary_channel: 'call',
     stage: 'حجز',
     context_blocks: ['offer_details'],
-    preference_summary_fields: ['preferred_projects'],
+    preference_summary_fields: [],
     allowed_outcomes: [
       { value: 'payment_received', requires: { ...REQ_ACTUAL }, client_update_preview: { stage: 'تمويل', status: 'تم الحجز' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 1 } },
       { value: 'payment_pending', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'بانتظار دفعة الحجز' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'reservation_payment_follow_up', delay_days: 2 } },
@@ -414,7 +414,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     primary_channel: 'call',
     stage: 'تمويل',
     context_blocks: ['preference_summary'],
-    preference_summary_fields: ['preferred_projects'],
+    preference_summary_fields: [],
     allowed_outcomes: [
       { value: 'documents_pending', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'البنك' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 2 } },
       { value: 'payment_received', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'التقييم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 3 } },
@@ -432,7 +432,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     primary_channel: 'call',
     stage: 'الإفراغ',
     context_blocks: ['preference_summary'],
-    preference_summary_fields: ['preferred_projects'],
+    preference_summary_fields: [],
     allowed_outcomes: [
       { value: 'documents_pending', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'تم إصدار نموذج الإفراغ' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'ownership_transfer_follow_up', delay_days: 2 } },
       { value: 'payment_received', requires: { ...REQ_ACTUAL }, client_update_preview: { stage: 'مغلق ناجح', status: 'تم الإفراغ' }, is_terminal: true },

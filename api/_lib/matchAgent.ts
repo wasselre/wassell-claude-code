@@ -2874,13 +2874,25 @@ function cleanClientPrefs(
   };
   put('budget', d.budget);
   put('preferred_area', d.preferred_area);
-  // Relational geography only — names resolved from preferred_cities / preferred_districts
-  // lookups (no legacy preferred_city / preferred_neighborhoods text).
+  // Relational geography only — city/district names resolved from the `location`
+  // cascade, plus the district items of `location_items` (where the retired
+  // free-text district / direction fields were migrated on 2026-09-27 — a
+  // direction is a curated zone of districts, so it arrives as districts).
+  const include = new Set(districtNames);
+  const exclude = new Set<string>();
+  for (const it of Array.isArray(d.location_items) ? d.location_items : []) {
+    if (!it || typeof it !== 'object') continue;
+    const item = it as Record<string, unknown>;
+    if (item.kind !== 'district') continue;
+    const label = typeof item.district_label === 'string' ? item.district_label.trim() : '';
+    if (!label) continue;
+    (item.polarity === 'exclude' ? exclude : include).add(label);
+  }
   put('preferred_cities', cityNames);
-  put('preferred_districts', districtNames);
+  put('preferred_districts', [...include]);
+  put('excluded_districts', [...exclude]);
   put('preferred_unit_type', d.preferred_unit_type);
   put('preferred_amenities', d.preferred_amenities);
-  put('preferred_direction', d.preferred_direction);
   return out;
 }
 

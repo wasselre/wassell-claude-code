@@ -10,8 +10,13 @@
  * Design invariants:
  *  - Active filter = `isActive()` applied to a resolved `ClientView`.
  *  - Demand is keyed by DISTRICT ID (from a client's `location.district` ids ∪
- *    each preferred project's district ids) so it lines up with the map's real
- *    district polygons and can't be confused by name collisions.
+ *    the district ids of each project in the client's Client Options) so it
+ *    lines up with the map's real district polygons and can't be confused by
+ *    name collisions.
+ *  - "Interested in a project" = the project is an ACTIVE Client Option of the
+ *    client (`client_property_options`, source_type 'project', not eliminated /
+ *    not interested). Options are read from `ctx.records` — the same store
+ *    snapshot the caller already passes — via the pure clientOptionIndex.
  *  - Supply uses the AVAILABLE-ONLY project rollups (`available_units`,
  *    `available_price_range`) — never all-unit or archived-listing data.
  *  - Every aggregate keeps the exact contributing client / project IDs, so any
@@ -25,6 +30,7 @@ import type { ClientViewCtx } from '@/pages/Clients/lib/clientView';
 import { resolveClientView } from '@/pages/Clients/lib/clientView';
 import { isActive, EMPTY_RELATED } from '@/pages/Sales/lib/salesClients';
 import { emptyFollowupSummary } from '@/pages/Sales/lib/myWork';
+import { optionRecordsByClient, activeOptionRefs } from '@/lib/matching/clientOptionIndex';
 
 export interface NumRange { min: number | null; max: number | null }
 
@@ -59,11 +65,15 @@ export function projectDistrictIds(project: AppRecord): string[] {
   return districtIdsOf(project.data as Record<string, unknown>);
 }
 
-/** Districts a client wants: own location.district ids ∪ each preferred
- *  project's district ids. */
-function clientDistrictIds(data: Record<string, unknown>, projectsById: Map<string, AppRecord>): string[] {
+/** Districts a client wants: own location.district ids ∪ the district ids of
+ *  each project in their Client Options. */
+function clientDistrictIds(
+  data: Record<string, unknown>,
+  optionProjectIds: string[],
+  projectsById: Map<string, AppRecord>,
+): string[] {
   const set = new Set<string>(districtIdsOf(data));
-  for (const pid of idArray(data.preferred_projects)) {
+  for (const pid of optionProjectIds) {
     const p = projectsById.get(pid);
     if (p) for (const did of districtIdsOf(p.data as Record<string, unknown>)) set.add(did);
   }
@@ -82,18 +92,20 @@ export function buildActiveClientDemand(
   allProjects: AppRecord[],
 ): ClientDemand[] {
   const projectsById = new Map(allProjects.map((p) => [p.id, p]));
+  const optionsByClient = optionRecordsByClient(ctx.models, ctx.records);
   const out: ClientDemand[] = [];
   for (const rec of clients) {
     const view = resolveClientView(rec, ctx);
     if (!isActive({ view, code: null, related: EMPTY_RELATED, followup: emptyFollowupSummary() })) continue;
     const data = (rec.data ?? {}) as Record<string, unknown>;
+    const optionProjectIds = activeOptionRefs(optionsByClient.get(rec.id) ?? [], 'project').map((o) => o.sourceId);
     out.push({
       clientId: rec.id,
       name: view.name,
       stage: view.stage,
       status: view.status,
-      districtIds: clientDistrictIds(data, projectsById),
-      preferredProjectIds: idArray(data.preferred_projects),
+      districtIds: clientDistrictIds(data, optionProjectIds, projectsById),
+      preferredProjectIds: optionProjectIds,
       unitTypes: view.preferredUnitType,
       budget: view.budget,
     });

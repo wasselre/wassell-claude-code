@@ -30,7 +30,6 @@ export interface ClientPrefDetailChip {
     | 'budget'
     | 'area'
     | 'bedrooms'
-    | 'direction'
     | 'amenities'
     | 'objective'
     | 'location'
@@ -129,17 +128,13 @@ export function buildClientPrefChips(
     ? (clientData.location as Record<string, unknown>)
     : {};
 
-  // City: the location cascade's city record id, else the legacy
-  // preferred_city multiselect's first value (already a display label).
-  const cityField = fieldBySlug(clientsModel, 'preferred_city');
-  const city =
-    stringList(loc.city).map((id) => geoNames[id]).find((n): n is string => !!n) ??
-    stringList(clientData.preferred_city).map((v) => optionLabel(cityField, v, isAr)).find((n) => !!n) ??
-    null;
+  // City: the location cascade's city record id (the retired free-text city
+  // field was migrated into it on 2026-09-27).
+  const city = stringList(loc.city).map((id) => geoNames[id]).find((n): n is string => !!n) ?? null;
 
   // Districts: include-polarity district items (labels stashed inline) +
-  // legacy cascade district ids. Excludes are deliberately skipped — the
-  // chip answers "where does the client want", not "where not".
+  // cascade district ids. Excludes are deliberately skipped — the chip
+  // answers "where does the client want", not "where not".
   const districts: string[] = [];
   const elements: string[] = [];
   for (const item of parseLocationItems(clientData.location_items)) {
@@ -157,14 +152,6 @@ export function buildClientPrefChips(
   for (const id of stringList(loc.district)) {
     const name = geoNames[id];
     if (name && !districts.includes(name)) districts.push(name);
-  }
-  // Legacy multiselect fallback so pre-geo clients still show a district.
-  if (districts.length === 0) {
-    const nbField = fieldBySlug(clientsModel, 'preferred_neighborhoods');
-    for (const v of stringList(clientData.preferred_neighborhoods)) {
-      const name = optionLabel(nbField, v, isAr);
-      if (!districts.includes(name)) districts.push(name);
-    }
   }
 
   const parts = [city, districts[0] ?? null, elements[0] ?? null].filter((p): p is string => !!p);
@@ -185,7 +172,7 @@ const truncate = (s: string, n = 60): string => (s.length > n ? `${s.slice(0, n 
 /**
  * Detailed preference chips for the conversation header — everything the
  * client-preferences surface knows about (unit type, budget, bedrooms, area,
- * location incl. excludes + radius rules, direction, amenities, purchase
+ * location incl. excludes + radius rules, amenities, purchase
  * objective, max distance, priority/language settings, notes). Slugs missing
  * from the live model or empty on the record simply produce no chip — nothing
  * here invents fields.
@@ -227,11 +214,7 @@ export function buildDetailedClientPrefChips(
   const loc = clientData.location && typeof clientData.location === 'object' && !Array.isArray(clientData.location)
     ? (clientData.location as Record<string, unknown>)
     : {};
-  const cityField = fieldBySlug(clientsModel, 'preferred_city');
-  const city =
-    stringList(loc.city).map((id) => geoNames[id]).find((n): n is string => !!n) ??
-    stringList(clientData.preferred_city).map((v) => optionLabel(cityField, v, isAr)).find((n) => !!n) ??
-    null;
+  const city = stringList(loc.city).map((id) => geoNames[id]).find((n): n is string => !!n) ?? null;
   if (city) chips.push({ key: 'loc:city', kind: 'location', text: city });
 
   const seenLoc = new Set<string>();
@@ -241,7 +224,8 @@ export function buildDetailedClientPrefChips(
     seenLoc.add(text);
     chips.push({ key: `loc:item:${item.id}`, kind: 'location', text });
   }
-  // Legacy cascade district ids + legacy preferred_neighborhoods multiselect.
+  // Cascade district ids (the old free-text district/direction fields were
+  // migrated into location_items on 2026-09-27 — rendered above).
   for (const id of stringList(loc.district)) {
     const name = geoNames[id];
     if (!name) continue;
@@ -250,16 +234,6 @@ export function buildDetailedClientPrefChips(
     seenLoc.add(text);
     chips.push({ key: `loc:district:${id}`, kind: 'location', text });
   }
-  if (seenLoc.size === 0) {
-    const nbField = fieldBySlug(clientsModel, 'preferred_neighborhoods');
-    for (const v of stringList(clientData.preferred_neighborhoods)) {
-      const name = optionLabel(nbField, v, isAr);
-      const text = isAr ? `حي ${name}` : name;
-      if (seenLoc.has(text)) continue;
-      seenLoc.add(text);
-      chips.push({ key: `loc:nb:${v}`, kind: 'location', text });
-    }
-  }
 
   // ── Max distance (km) ──
   const dist = Number(clientData.max_distance_km);
@@ -267,9 +241,10 @@ export function buildDetailedClientPrefChips(
     chips.push({ key: 'distance', kind: 'distance', text: isAr ? `≤ ${dist} كم` : `≤ ${dist} km` });
   }
 
-  // ── Direction / amenities / purchase objective — one joined chip each ──
+  // ── Amenities / purchase objective / settings — one joined chip each ──
+  // (A direction is a curated zone of districts now — it arrives as
+  // location_items above, not as its own chip.)
   const joined: Array<{ slug: string; kind: ClientPrefDetailChip['kind']; prefix: boolean }> = [
-    { slug: 'preferred_direction', kind: 'direction', prefix: true },
     { slug: 'preferred_amenities', kind: 'amenities', prefix: false },
     { slug: 'purchase_objective', kind: 'objective', prefix: true },
     { slug: 'location_priority', kind: 'setting', prefix: true },

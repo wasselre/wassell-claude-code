@@ -73,7 +73,7 @@ function fieldBySlug(model: AppModel | undefined, slug: string): ModelField | un
 /**
  * Resolve a field slug from a list of candidates (first one present on the
  * model wins). The LIVE all_projects model was rebuilt in the Builder with
- * different slugs than the seed (e.g. `preferred_city` not `city`), so we
+ * different slugs than the seed (e.g. `brochure_url` not `brochure_link`), so we
  * try the live slug first and fall back to the seed slug — works for both.
  */
 function slugByCandidates(model: AppModel | undefined, candidates: string[]): string | null {

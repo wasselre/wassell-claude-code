@@ -19,7 +19,7 @@ function clientField(client: AppRecord, candidates: string[]): unknown {
 }
 
 const SOURCE_SLUGS = ['lead_source', 'source', 'client_source'];
-const PROJECT_SLUGS = ['preferred_project', 'preferred_projects', 'project', 'interested_project'];
+const PROJECT_SLUGS = ['preferred_project', 'project', 'interested_project'];
 const BUDGET_SLUGS = ['budget', 'budget_max', 'max_budget', 'budget_amount'];
 
 // Relational geography lives in the `location` cascade compound { region:[], city:[],

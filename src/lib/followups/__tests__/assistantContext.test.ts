@@ -118,3 +118,23 @@ describe('buildAssistantContext — draft-first preference resolution (lookup ge
     expect(ctx.preface).toContain('دروازة');
   });
 });
+
+describe('buildAssistantContext — location_items (where the retired direction field now lives)', () => {
+  it('lists the wanted areas from location_items, excludes included', () => {
+    const savedClientData = {
+      location_items: [
+        { id: 'i1', kind: 'district', polarity: 'include', district_id: 'd-narjis', district_label: 'النرجس' },
+        { id: 'i2', kind: 'district', polarity: 'exclude', district_id: 'd-aridh', district_label: 'العارض' },
+      ],
+    };
+    const ctx = buildAssistantContext({ clientsModel, prefDraft: {}, savedClientData, followupDraft: {}, geoNames, isAr: true });
+    const row = ctx.used.find((p) => p.slug === 'location_items');
+    expect(row?.value).toBe('حي النرجس، استثناء حي العارض');
+    expect(ctx.used.some((p) => p.label_en === 'Direction')).toBe(false);
+  });
+
+  it('adds no areas row when the client has no location_items', () => {
+    const ctx = buildAssistantContext({ clientsModel, prefDraft: {}, savedClientData: {}, followupDraft: {}, geoNames, isAr: false });
+    expect(ctx.used.find((p) => p.slug === 'location_items')).toBeUndefined();
+  });
+});

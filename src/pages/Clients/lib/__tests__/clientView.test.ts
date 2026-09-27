@@ -13,7 +13,7 @@ import {
   buildClientTimeline,
   DERIVED_READONLY_SLUGS,
 } from '../clientView';
-import { makeWorld, clientRecord, genericRecord } from './fixtures';
+import { makeWorld, clientRecord, genericRecord, optionRecord } from './fixtures';
 
 const NOW = Date.parse('2026-06-20T12:00:00Z');
 
@@ -42,7 +42,7 @@ describe('resolveClientView — sparse client', () => {
     expect(v.preferredUnitType).toEqual([]);
     expect(v.budget).toBeNull();
     expect(v.preferredCity).toBeNull();
-    expect(v.preferredDirection).toEqual([]);
+    expect(v.locationAreas).toEqual([]);
     expect(v.preferredDistrict).toBeNull();
     expect(v.preferredProjects).toEqual([]);
     expect(v.preferredMarketListings).toEqual([]);
@@ -63,7 +63,10 @@ describe('resolveClientView — populated client', () => {
       next_action_due_at: '2026-06-10T09:00:00Z',
       budget: { min: 800000, max: 1200000 },
       preferred_unit_type: ['فيلا', 'شقة'],
-      preferred_direction: ['شمال'],
+      location_items: [
+        { id: 'i1', kind: 'district', polarity: 'include', district_id: 'd1', district_label: 'النرجس' },
+        { id: 'i2', kind: 'district', polarity: 'exclude', district_id: 'd2', district_label: 'الملقا' },
+      ],
     });
     ctx.records[clientsModel.id] = [client];
 
@@ -75,21 +78,22 @@ describe('resolveClientView — populated client', () => {
     expect(v.lifecycleHealth).toBe('overdue');
     expect(v.budget).toEqual({ min: 800000, max: 1200000 });
     expect(v.preferredUnitType).toEqual(['فيلا', 'شقة']);
-    expect(v.preferredDirection).toEqual(['شمال']);
+    expect(v.locationAreas).toEqual(['النرجس', 'Exclude الملقا']);
   });
 });
 
-describe('preferred_projects vs preferred_market_listings separation', () => {
+describe('Client Options: projects vs market listings separation', () => {
   it('resolves each from its own target model and never cross-pollutes', () => {
-    const { ctx, clientsModel, projectsModel, listingsModel } = makeWorld();
+    const { ctx, clientsModel, projectsModel, listingsModel, optionsModel } = makeWorld();
     ctx.records[projectsModel.id] = [genericRecord(projectsModel.id, 'proj-1', { project_name: 'Marina Towers' })];
     ctx.records[listingsModel.id] = [genericRecord(listingsModel.id, 'listing-1', { title: 'Aqar Villa 12' })];
 
-    const client = clientRecord(clientsModel.id, {
-      preferred_projects: ['proj-1'],
-      preferred_market_listings: ['listing-1'],
-    });
+    const client = clientRecord(clientsModel.id, {});
     ctx.records[clientsModel.id] = [client];
+    ctx.records[optionsModel.id] = [
+      optionRecord(optionsModel.id, client.id, 'project', 'proj-1'),
+      optionRecord(optionsModel.id, client.id, 'market_listing', 'listing-1'),
+    ];
 
     const v = resolveClientView(client, ctx);
     expect(v.preferredProjects).toEqual([{ id: 'proj-1', name: 'Marina Towers' }]);
@@ -101,11 +105,48 @@ describe('preferred_projects vs preferred_market_listings separation', () => {
   });
 
   it('keeps ids with unresolved names (target not loaded) — no fabrication', () => {
-    const { ctx, clientsModel } = makeWorld();
-    const client = clientRecord(clientsModel.id, { preferred_projects: ['missing-proj'] });
+    const { ctx, clientsModel, optionsModel } = makeWorld();
+    const client = clientRecord(clientsModel.id, {});
     ctx.records[clientsModel.id] = [client];
+    ctx.records[optionsModel.id] = [optionRecord(optionsModel.id, client.id, 'project', 'missing-proj')];
     const v = resolveClientView(client, ctx);
     expect(v.preferredProjects).toEqual([{ id: 'missing-proj', name: null }]);
+  });
+
+  it('falls back to the name snapshotted on the option when the project is not loaded', () => {
+    const { ctx, clientsModel, optionsModel } = makeWorld();
+    const client = clientRecord(clientsModel.id, {});
+    ctx.records[clientsModel.id] = [client];
+    ctx.records[optionsModel.id] = [
+      optionRecord(optionsModel.id, client.id, 'project', 'p-snap', { source_name: 'Snapshot Name' }),
+    ];
+    expect(resolveClientView(client, ctx).preferredProjects).toEqual([{ id: 'p-snap', name: 'Snapshot Name' }]);
+  });
+
+  it('skips eliminated / not-interested options, other clients, and puts the main option first', () => {
+    const { ctx, clientsModel, optionsModel } = makeWorld();
+    const client = clientRecord(clientsModel.id, {});
+    const other = clientRecord(clientsModel.id, {});
+    ctx.records[clientsModel.id] = [client, other];
+    ctx.records[optionsModel.id] = [
+      optionRecord(optionsModel.id, client.id, 'project', 'p-a'),
+      optionRecord(optionsModel.id, client.id, 'project', 'p-gone', { status: 'eliminated' }),
+      optionRecord(optionsModel.id, client.id, 'project', 'p-no', { status: 'not_interested' }),
+      optionRecord(optionsModel.id, client.id, 'project', 'p-main', { is_main: true }),
+      optionRecord(optionsModel.id, other.id, 'project', 'p-other'),
+    ];
+    const ids = resolveClientView(client, ctx).preferredProjects.map((p) => p.id);
+    expect(ids).toEqual(['p-main', 'p-a']);
+  });
+
+  it('a client with no options (or no options model loaded) resolves to empty lists', () => {
+    const { ctx, clientsModel } = makeWorld();
+    const client = clientRecord(clientsModel.id, {});
+    ctx.records[clientsModel.id] = [client];
+    ctx.models = ctx.models.filter((m) => m.name !== 'client_property_options');
+    const v = resolveClientView(client, ctx);
+    expect(v.preferredProjects).toEqual([]);
+    expect(v.preferredMarketListings).toEqual([]);
   });
 });
 
@@ -135,11 +176,12 @@ describe('bilingual W6 localization', () => {
     expect(ar.stageLabel).toBe('زيارة');
   });
 
-  it('localizes the client name + preferred-project names via the translate resolver', () => {
-    const { ctx, clientsModel, projectsModel } = makeWorld();
+  it('localizes the client name + option project names via the translate resolver', () => {
+    const { ctx, clientsModel, projectsModel, optionsModel } = makeWorld();
     ctx.records[projectsModel.id] = [genericRecord(projectsModel.id, 'proj-1', { project_name: 'برج مارينا' })];
-    const client = clientRecord(clientsModel.id, { client_name: 'أحمد', preferred_projects: ['proj-1'] });
+    const client = clientRecord(clientsModel.id, { client_name: 'أحمد' });
     ctx.records[clientsModel.id] = [client];
+    ctx.records[optionsModel.id] = [optionRecord(optionsModel.id, client.id, 'project', 'proj-1')];
 
     const translations: Record<string, string> = {
       [`${client.id}|client_name|en`]: 'Ahmed',
@@ -215,7 +257,7 @@ describe('derived read-only fields', () => {
       expect(isDerivedReadOnly(slug)).toBe(true);
     }
     expect(isDerivedReadOnly('budget')).toBe(false);
-    expect(isDerivedReadOnly('preferred_projects')).toBe(false);
+    expect(isDerivedReadOnly('preferred_area')).toBe(false);
     expect(isDerivedReadOnly('client_name')).toBe(false);
   });
 

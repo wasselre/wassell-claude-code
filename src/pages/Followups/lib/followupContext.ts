@@ -3,6 +3,7 @@
 // the store's models/records and returns plain data.
 
 import type { AppModel, AppRecord } from '@/types';
+import { clientActiveOptionRefs } from '@/lib/matching/clientOptionIndex';
 
 export interface FollowupContext {
   clientId: string | null;
@@ -53,7 +54,11 @@ export function resolveFollowupContext(
   const clientId = asString(data.client_id);
   const client = findRecord(models, records, 'clients', clientId);
   const appointment = findRecord(models, records, 'appointments', asString(data.appointment_id));
-  const projectId = asString(appointment?.project_id) ?? asString((client?.preferred_projects as unknown));
+  // Appointment's project, else the client's MAIN project option (then the
+  // first still-active project option) from Client Options.
+  const projectId =
+    asString(appointment?.project_id) ??
+    (clientId ? clientActiveOptionRefs(models, records, clientId, 'project')[0]?.sourceId ?? null : null);
   const project = findRecord(models, records, 'all_projects', projectId);
 
   const phones = [

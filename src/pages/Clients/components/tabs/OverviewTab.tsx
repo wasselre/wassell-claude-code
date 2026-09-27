@@ -144,11 +144,11 @@ export default function OverviewTab({ view, ctx, isAr, returnTo, onOpenTimeline,
         <Row label={isAr ? 'نوع الوحدة' : 'Unit type'}>{view.preferredUnitType.length ? view.preferredUnitType.join('، ') : <Dash />}</Row>
         <Row label={isAr ? 'الميزانية' : 'Budget'}>{formatBudget(view.budget, isAr) ?? <Dash />}</Row>
         <Row label={isAr ? 'المدينة' : 'City'}>{view.preferredCity ?? <Dash />}</Row>
-        <Row label={isAr ? 'الاتجاه' : 'Direction'}>{view.preferredDirection.length ? view.preferredDirection.join('، ') : <Dash />}</Row>
         <Row label={isAr ? 'الحي' : 'District'}>{view.preferredDistrict ?? <Dash />}</Row>
-        <Row label={isAr ? 'مشاريع مفضلة' : 'Preferred projects'}>{view.preferredProjects.length || <Dash />}</Row>
+        <Row label={isAr ? 'المناطق المطلوبة' : 'Wanted areas'}>{view.locationAreas.length ? view.locationAreas.join(isAr ? '، ' : ', ') : <Dash />}</Row>
+        <Row label={isAr ? 'مشاريع في الخيارات' : 'Projects in options'}>{view.preferredProjects.length || <Dash />}</Row>
         {!MARKET_LISTINGS_ARCHIVED && (
-          <Row label={isAr ? 'إعلانات مفضلة' : 'Preferred listings'}>{view.preferredMarketListings.length || <Dash />}</Row>
+          <Row label={isAr ? 'إعلانات في الخيارات' : 'Listings in options'}>{view.preferredMarketListings.length || <Dash />}</Row>
         )}
       </Card>
 

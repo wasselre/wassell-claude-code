@@ -7,8 +7,8 @@
  *
  * The prompt is the "v2" recipe validated on 16 real clients (measured against
  * what reps actually saved): budget 83%, unit_type 76%, area 58–67%. The key
- * lesson baked in: DO record a stated-but-casual preference ("شمال أكيد يعني" →
- * ["شمال"]); the ONLY forbidden thing is inventing a value the client never
+ * lesson baked in: DO record a stated-but-casual preference ("فيلا أكيد يعني" →
+ * ["فيلا"]); the ONLY forbidden thing is inventing a value the client never
  * said. An over-cautious "leave it blank if unsure" made the model refuse
  * rather than answer and cost ~6 points of recall.
  *
@@ -16,6 +16,11 @@
  * count against max_tokens. Too small a budget returns an EMPTY string with
  * finish_reason:"length" (not an error). callDeepSeek retries larger, then
  * fails loudly rather than silently storing nothing.
+ *
+ * Location is NOT extracted here beyond raw district names: the client's
+ * geography (city, districts, direction zones) is owned by the chat geography
+ * card / geoPreference pipeline and lives in `location` + `location_items`.
+ * The free-text direction field was retired 2026-09-27.
  */
 
 import { recordAiUsage, openAiCompatTokens, openAiCompatModel } from './aiUsage.js';
@@ -23,7 +28,6 @@ import { recordAiUsage, openAiCompatTokens, openAiCompatModel } from './aiUsage.
 /** The fields the extractor fills, with their allowed values (clients model). */
 export const PREF_FIELDS = {
   preferred_unit_type: { kind: 'set', options: ['استوديو', 'تاون هاوس', 'دبلكس', 'دور', 'شقة', 'فيلا', 'ملحق'] },
-  preferred_direction: { kind: 'set', options: ['جنوب', 'جنوب شرق', 'جنوب غرب', 'شرق', 'شمال', 'شمال شرق', 'شمال غرب', 'غرب'] },
   purchase_objective:  { kind: 'set', options: ['investment', 'residential'] },
   preferred_amenities: { kind: 'set', options: ['حوش', 'سطح', 'غرفة خادمة', 'غرفة سائق', 'قبو', 'مجلس', 'مسبح', 'مصعد', 'ملحق'] },
   budget:              { kind: 'range' },
@@ -54,14 +58,13 @@ export const EXTRACT_SYSTEM_PROMPT = `أنت مساعد لفريق مبيعات 
 - استخدم القيم العربية الحرفية من القوائم أدناه فقط، لا تترجمها للإنجليزية (عدا purchase_objective الذي قيمه investment/residential).
 - المهم ما يريده العميل ويوافق عليه، لا ما يقترحه المندوب.
 - إذا لم يُذكر شيء عن حقل ما إطلاقًا، اترك قيمته null.
-- لكن إذا ذكر العميل تفضيلًا ولو بشكل عابر أو غير مؤكد، سجّله. «شمال أكيد يعني» = ["شمال"]، «أي حي عادي بس شمال» = ["شمال"]، «ما يتجاوز الثلاثة مليون» = budget.max 3000000، «حوالي ميتين متر» = area حول 200. لا تتردد في تسجيل ما قاله العميل فعلًا.
+- لكن إذا ذكر العميل تفضيلًا ولو بشكل عابر أو غير مؤكد، سجّله. «فيلا أكيد يعني» = ["فيلا"]، «أي شي عادي بس شقة» = ["شقة"]، «ما يتجاوز الثلاثة مليون» = budget.max 3000000، «حوالي ميتين متر» = area حول 200. لا تتردد في تسجيل ما قاله العميل فعلًا.
 - الممنوع الوحيد هو الاختلاق: لا تسجّل قيمة لم تُذكر ولا يمكن استنتاجها من كلام العميل.
 - الأرقام بالعامية: «مليونين ونص» = 2500000، «ميتين متر» = 200، «ثلاث مية» = 300، «مليون وستمية» = 1600000.
 - لكل حقل تستخرجه، أرفق «quote» = العبارة الحرفية التي قالها العميل، و«confidence» من 0 إلى 100.
 
 الحقول والقيم المسموحة (استخدم القيم حرفيًا):
 - preferred_unit_type: مصفوفة من [${setOptions('preferred_unit_type').join(', ')}]
-- preferred_direction: مصفوفة من [${setOptions('preferred_direction').join(', ')}]
 - purchase_objective: مصفوفة من [investment, residential]
 - preferred_amenities: مصفوفة من [${setOptions('preferred_amenities').join(', ')}]
 - budget: {"min": رقم أو null, "max": رقم أو null} بالريال
@@ -72,7 +75,6 @@ export const EXTRACT_SYSTEM_PROMPT = `أنت مساعد لفريق مبيعات 
 أعد JSON فقط بهذا الشكل بدون أي نص آخر. اترك أي حقل غير مذكور = null:
 {
   "preferred_unit_type": {"value": [], "quote": "", "confidence": 0} أو null,
-  "preferred_direction": null,
   "purchase_objective": null,
   "preferred_amenities": null,
   "budget": {"value": {"min": null, "max": null}, "quote": "", "confidence": 0} أو null,

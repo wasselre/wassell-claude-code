@@ -44,6 +44,7 @@ export interface TestWorld {
   projectsModel: AppModel;
   listingsModel: AppModel;
   followupsModel: AppModel;
+  optionsModel: AppModel;
   user: User;
 }
 
@@ -82,21 +83,17 @@ export function makeWorld(): TestWorld {
     section('Client Preferences', [
       field({ name: 'preferred_unit_type', type: 'multiselect' }),
       field({ name: 'budget', type: 'range' }),
-      field({ name: 'preferred_direction', type: 'multiselect' }),
-      field({
-        name: 'preferred_projects',
-        type: 'lookup',
-        is_multi: true,
-        lookup_model_id: projectsModel.id,
-        lookup_display_field: 'project_name',
-      }),
-      field({
-        name: 'preferred_market_listings',
-        type: 'lookup',
-        is_multi: true,
-        lookup_model_id: listingsModel.id,
-        lookup_display_field: 'title',
-      }),
+    ]),
+  ]);
+
+  // Client Options — where a client's projects / units / listings live.
+  const optionsModel = model('client_property_options', [
+    section('Basic', [
+      field({ name: 'client_id', type: 'text' }),
+      field({ name: 'source_type', type: 'dropdown' }),
+      field({ name: 'source_id', type: 'text' }),
+      field({ name: 'source_name', type: 'text' }),
+      field({ name: 'status', type: 'dropdown' }),
     ]),
   ]);
 
@@ -112,13 +109,32 @@ export function makeWorld(): TestWorld {
   ]);
 
   const ctx: ClientViewCtx = {
-    models: [projectsModel, listingsModel, clientsModel, followupsModel],
+    models: [projectsModel, listingsModel, clientsModel, followupsModel, optionsModel],
     records: {},
     users: [user],
     language: 'en',
   };
 
-  return { ctx, clientsModel, projectsModel, listingsModel, followupsModel, user };
+  return { ctx, clientsModel, projectsModel, listingsModel, followupsModel, optionsModel, user };
+}
+
+/** A Client Option record (client_property_options) for tests. */
+export function optionRecord(
+  modelId: string,
+  clientId: string,
+  sourceType: 'project' | 'unit' | 'market_listing',
+  sourceId: string,
+  extra: Record<string, unknown> = {},
+): AppRecord {
+  return {
+    id: id('opt'),
+    model_id: modelId,
+    data: { client_id: clientId, source_type: sourceType, source_id: sourceId, status: 'suitable', ...extra },
+    created_by_user_id: 'user-1',
+    created_at: '2026-06-01T00:00:00Z',
+    updated_at: '2026-06-01T00:00:00Z',
+    version: 1,
+  };
 }
 
 export function clientRecord(modelId: string, data: Record<string, unknown>): AppRecord {

@@ -148,8 +148,9 @@ export function InventoryUpdateTab({ project, isAr }: { project: ProjectView; is
 // ── Customer Demand tab (deterministic) ─────────────────────────────────────
 // Real, structured client preferences only. Active clients use the CANONICAL
 // Sales resolver (isActive); a client is "interested in this project" when the
-// project is in their preferred_projects OR the project's district is among
-// their preferred districts. No AI, no off-plan facet (no such client field).
+// project is an active Client Option of theirs (client_property_options) OR the
+// project's district is among their preferred districts. No AI, no off-plan
+// facet (no such client field).
 
 function fmtBudget(r: { min: number | null; max: number | null } | null, isAr: boolean): string | null {
   if (!r) return null;
@@ -182,7 +183,7 @@ export function CustomerDemandTab({ view, isAr }: { view: ProjectView; isAr: boo
       status: client.status,
       budget: fmtBudget(client.budget, isAr),
       reason: reason === 'preferred'
-        ? (isAr ? 'في مشاريعه المفضلة' : 'In their preferred projects')
+        ? (isAr ? 'ضمن خيارات العميل' : 'In their client options')
         : (isAr ? 'نفس الحي المطلوب' : 'Same requested district'),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps

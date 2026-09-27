@@ -19,10 +19,10 @@ interface PreferencesTabProps {
 const FULL_WIDTH_TYPES = new Set(['textarea', 'notes', 'location', 'lookup', 'unit_picker', 'multiselect']);
 
 /**
- * Editable client preferences. Reuses the generic DynamicField (so lookups use
- * the correct, schema-bound pickers — preferred_projects → all_projects and
- * preferred_market_listings → market_listings can never cross-pollute) and the
- * versioned saveRecord path (optimistic concurrency, pending-sync queue).
+ * Editable client preferences. Reuses the generic DynamicField (schema-bound
+ * pickers) and the versioned saveRecord path (optimistic concurrency,
+ * pending-sync queue). The projects / units / listings a client is considering
+ * are NOT edited here — they live in Client Options (the Options tab).
  *
  * Derived/trigger-maintained fields are NEVER rendered here — guarded twice:
  * the slug list excludes them, and `isDerivedReadOnly` is asserted defensively.

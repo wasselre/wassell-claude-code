@@ -8,7 +8,19 @@ import {
 // Minimal clients model — resolveClientView reads stage/status/lifecycle from
 // RAW data, so an empty-schema model is enough to exercise the active filter.
 const clientsModel = { id: 'm-clients', name: 'clients', schema: { sections: [] } } as unknown as AppModel;
-const ctx: ClientViewCtx = { models: [clientsModel], records: {}, users: [], language: 'en' };
+// Client Options — the home of "this client is interested in this project".
+const optionsModel = { id: 'm-options', name: 'client_property_options', schema: { sections: [] } } as unknown as AppModel;
+const ctx: ClientViewCtx = { models: [clientsModel, optionsModel], records: {}, users: [], language: 'en' };
+
+/** ctx whose store snapshot carries these Client Options: [clientId, projectId, status?]. */
+function ctxWithOptions(opts: Array<[string, string, string?]>): ClientViewCtx {
+  const rows = opts.map(([clientId, projectId, status], i) => ({
+    id: `opt-${i}`,
+    model_id: 'm-options',
+    data: { client_id: clientId, source_type: 'project', source_id: projectId, status: status ?? 'suitable' },
+  })) as unknown as AppRecord[];
+  return { ...ctx, records: { 'm-options': rows } };
+}
 
 function client(id: string, data: Record<string, unknown>): AppRecord {
   return { id, model_id: 'm-clients', data } as unknown as AppRecord;
@@ -22,8 +34,8 @@ const activeBase = { client_stage: 'موعد زيارة', client_status: 'مهت
 
 describe('buildActiveClientDemand — canonical active filter', () => {
   it('includes an active client and captures its demand atoms', () => {
-    const c = client('c1', { ...activeBase, preferred_unit_type: ['شقة'], budget: { min: 500000, max: 900000 }, preferred_projects: ['p9'] });
-    const d = buildActiveClientDemand([c], ctx, []);
+    const c = client('c1', { ...activeBase, preferred_unit_type: ['شقة'], budget: { min: 500000, max: 900000 } });
+    const d = buildActiveClientDemand([c], ctxWithOptions([['c1', 'p9']]), []);
     expect(d).toHaveLength(1);
     expect(d[0]).toMatchObject({ clientId: 'c1', districtIds: ['d1'], unitTypes: ['شقة'], preferredProjectIds: ['p9'] });
     expect(d[0]!.budget).toEqual({ min: 500000, max: 900000 });
@@ -49,21 +61,33 @@ describe('buildActiveClientDemand — canonical active filter', () => {
     }
   });
 
-  it('folds a preferred project’s district into the client’s demand districts', () => {
+  it('folds a Client Option project’s district into the client’s demand districts', () => {
     const p = project('p9', { location: { district: ['d2'] } });
-    const c = client('c1', { ...activeBase, location: { district: ['d1'] }, preferred_projects: ['p9'] });
-    const d = buildActiveClientDemand([c], ctx, [p]);
+    const c = client('c1', { ...activeBase, location: { district: ['d1'] } });
+    const d = buildActiveClientDemand([c], ctxWithOptions([['c1', 'p9']]), [p]);
     expect(d[0]!.districtIds.sort()).toEqual(['d1', 'd2']);
+  });
+
+  it('ignores eliminated / not-interested options and a client with no options', () => {
+    const c1 = client('c1', { ...activeBase });
+    const c2 = client('c2', { ...activeBase });
+    const d = buildActiveClientDemand(
+      [c1, c2],
+      ctxWithOptions([['c1', 'p-gone', 'eliminated'], ['c1', 'p-no', 'not_interested'], ['c1', 'p-ok']]),
+      [],
+    );
+    expect(d.find((x) => x.clientId === 'c1')!.preferredProjectIds).toEqual(['p-ok']);
+    expect(d.find((x) => x.clientId === 'c2')!.preferredProjectIds).toEqual([]);
   });
 });
 
 describe('clientsInterestedInProject', () => {
   const demand = buildActiveClientDemand([
-    client('c-pref', { ...activeBase, preferred_projects: ['p1'] }),
+    client('c-pref', { ...activeBase }),
     client('c-dist', { ...activeBase, location: { district: ['d1'] } }),
     client('c-none', { ...activeBase, location: { district: ['d9'] } }),
-  ], ctx, []);
-  it('matches by preferred project and by district, with reasons', () => {
+  ], ctxWithOptions([['c-pref', 'p1']]), []);
+  it('matches by Client Option project and by district, with reasons', () => {
     const res = clientsInterestedInProject(demand, 'p1', ['d1']);
     const byId = Object.fromEntries(res.map((r) => [r.client.clientId, r.reason]));
     expect(byId['c-pref']).toBe('preferred');

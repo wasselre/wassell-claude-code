@@ -16,6 +16,7 @@
 
 import type { AppModel, ModelField } from '@/types';
 import { pickLocalized, type LocalizedName } from '@/lib/geo/localizedName';
+import { parseLocationItems, describeLocationItem } from '@/lib/geo/locationItems';
 
 /** One resolved preference, ready to show in the panel and feed the assistant. */
 export interface UsedPreference {
@@ -30,7 +31,7 @@ export interface UsedPreference {
  *  we present them. Slugs verified against the live `clients` model (2026-06-21).
  *  All but the two ranges are multiselect storing the Arabic label as the value,
  *  which is exactly what match_projects fuzzy-matches against project text. */
-const PREF_FIELDS: Array<{ slug: string; label_ar: string; label_en: string; kind: 'list' | 'money' | 'area' | 'geo'; geoKey?: 'city' | 'district' }> = [
+const PREF_FIELDS: Array<{ slug: string; label_ar: string; label_en: string; kind: 'list' | 'money' | 'area' | 'geo' | 'areas'; geoKey?: 'city' | 'district' }> = [
   // Relational geography: the `location` cascade compound { region:[], city:[], district:[] }
   // of record ids, resolved to names via geoNames. geoKey selects which level to show.
   { slug: 'location', geoKey: 'city', label_ar: 'المدينة', label_en: 'City', kind: 'geo' },
@@ -40,7 +41,10 @@ const PREF_FIELDS: Array<{ slug: string; label_ar: string; label_en: string; kin
   { slug: 'budget', label_ar: 'الميزانية', label_en: 'Budget', kind: 'money' },
   { slug: 'preferred_area', label_ar: 'المساحة', label_en: 'Area', kind: 'area' },
   { slug: 'preferred_amenities', label_ar: 'المرافق / نمط الحياة', label_en: 'Amenities / lifestyle', kind: 'list' },
-  { slug: 'preferred_direction', label_ar: 'الاتجاه', label_en: 'Direction', kind: 'list' },
+  // Detailed location preferences (districts — incl. a curated direction zone's
+  // districts — element rules, drawn areas). The old free-text direction field
+  // was retired 2026-09-27; its values now arrive here as district items.
+  { slug: 'location_items', label_ar: 'المناطق المطلوبة', label_en: 'Wanted areas', kind: 'areas' },
 ];
 
 /**
@@ -178,6 +182,9 @@ export function buildAssistantContext(args: BuildContextArgs): AssistantContext 
       const sub = raw && typeof raw === 'object' && !Array.isArray(raw)
         ? (raw as Record<string, unknown>)[def.geoKey ?? 'district'] : undefined;
       value = geoValue(sub, geoNames, isAr);
+    } else if (def.kind === 'areas') {
+      const labels = [...new Set(parseLocationItems(raw).map((it) => describeLocationItem(it, isAr)))];
+      value = labels.length ? labels.join(isAr ? '، ' : ', ') : null;
     } else value = listValue(field, raw, isAr);
     if (!value) continue;
     used.push({ slug: def.slug, label_ar: def.label_ar, label_en: def.label_en, value });

@@ -53,19 +53,17 @@ export const PROFILE_SIDECAR_KEYS = ['location_items', 'preference_constraints']
 /**
  * Preference slugs a profile always captures, even when the live schema label
  * drifts. Superset of the editable set plus the goal tag (`purchase_objective`,
- * which lives in the Basic section but genuinely differs per goal) and legacy
- * geography slugs some records still carry.
+ * which lives in the Basic section but genuinely differs per goal). Geography
+ * rides in `location` (editable set) + the `location_items` sidecar; the old
+ * free-text city / country / neighborhood fields and the units lookup were
+ * retired 2026-09-27 (units now live in Client Options).
  */
 const KNOWN_PREFERENCE_SLUGS: readonly string[] = [
   ...PREFERENCE_EDIT_SLUGS,
   'preferred_max_unit_age',
   'preferred_bedrooms',
   'preferred_amenities',
-  'preferred_neighborhoods',
-  'preferred_city',
-  'preferred_country',
   'preferred_districts',
-  'preferred_units',
   'purchase_objective',
 ];
 
