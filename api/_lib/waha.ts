@@ -513,6 +513,61 @@ export async function listMessages(
   return out;
 }
 
+/** Case-insensitive property read — the decoded WhatsApp message uses Go struct
+ *  names on the GOWS engine (`Conversation`, `ExtendedTextMessage`) and Baileys
+ *  lowercase on NOWEB (`conversation`, `extendedTextMessage`). */
+function ciGet(obj: Record<string, unknown> | null | undefined, key: string): unknown {
+  if (!obj || typeof obj !== 'object') return undefined;
+  const kl = key.toLowerCase();
+  for (const k of Object.keys(obj)) if (k.toLowerCase() === kl) return obj[k];
+  return undefined;
+}
+function asStr(v: unknown): string { return typeof v === 'string' ? v.trim() : ''; }
+
+/** Walk the text-bearing locations of ONE decoded WhatsApp message node. */
+function pluckWahaText(msg: Record<string, unknown>, path: string): { text: string; field: string } | null {
+  // Envelopes that nest the real message (disappearing / view-once / edited).
+  for (const w of ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension', 'documentWithCaptionMessage', 'editedMessage']) {
+    const inner = ciGet(ciGet(msg, w) as Record<string, unknown> | undefined, 'message') as Record<string, unknown> | undefined;
+    if (inner) { const hit = pluckWahaText(inner, `${path}.${w}.message`); if (hit) return hit; }
+  }
+  const conv = asStr(ciGet(msg, 'conversation'));
+  if (conv) return { text: conv, field: `${path}.conversation` };
+  const ext = asStr(ciGet(ciGet(msg, 'extendedTextMessage') as Record<string, unknown> | undefined, 'text'));
+  if (ext) return { text: ext, field: `${path}.extendedTextMessage.text` };
+  // Interactive replies carry their label as the effective "text".
+  const btn = asStr(ciGet(ciGet(msg, 'buttonsResponseMessage') as Record<string, unknown> | undefined, 'selectedDisplayText'));
+  if (btn) return { text: btn, field: `${path}.buttonsResponseMessage.selectedDisplayText` };
+  const list = asStr(ciGet(ciGet(msg, 'listResponseMessage') as Record<string, unknown> | undefined, 'title'));
+  if (list) return { text: list, field: `${path}.listResponseMessage.title` };
+  const tmpl = asStr(ciGet(ciGet(msg, 'templateButtonReplyMessage') as Record<string, unknown> | undefined, 'selectedDisplayText'));
+  if (tmpl) return { text: tmpl, field: `${path}.templateButtonReplyMessage.selectedDisplayText` };
+  return null;
+}
+
+/**
+ * Recover a text body from a raw WAHA message when the flattened top-level
+ * `body` is empty. WAHA's `body` comes through empty for some inbound messages
+ * — observed on `@lid` first-contacts on the NOWEB engine (5 in 14 days, 2026-09)
+ * where the customer's text was silently lost and the bot replied to nothing.
+ * The decoded WhatsApp message is preserved under `_data.Message` /
+ * `_data.RawMessage`; the text sits at one of a few well-known locations
+ * depending on the message shape. Returns the text AND the dotted field path it
+ * came from (for logging), or null when there is genuinely no text (a body-less
+ * event). Never throws.
+ */
+export function recoverWahaText(m: WahaMessageRaw): { text: string; field: string } | null {
+  const direct = asStr(m.body);
+  if (direct) return { text: direct, field: 'body' };
+  for (const [name, root] of [['_data.Message', m._data?.Message], ['_data.RawMessage', m._data?.RawMessage]] as const) {
+    if (root && typeof root === 'object') {
+      const hit = pluckWahaText(root as Record<string, unknown>, name);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 /** Map a raw WAHA message → the shared HaberchatMessage shape. */
 export function mapWahaMessage(m: WahaMessageRaw, fallbackChatWid: string, session: string): HaberchatMessage | null {
   const wid = m.id ?? '';
@@ -548,7 +603,7 @@ export function mapWahaMessage(m: WahaMessageRaw, fallbackChatWid: string, sessi
     flow,
     kind,
     subtype: null,
-    body: m.body ?? null,
+    body: recoverWahaText(m)?.text ?? null,
     fromPhone,
     toPhone,
     // Ack is a DELIVERY receipt for messages WE sent. The NOWEB engine reports

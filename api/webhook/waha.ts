@@ -33,7 +33,7 @@ import {
   type ChatMessageRow,
 } from '../_lib/chatIngest.js';
 import { wakeWorker } from '../_lib/leadPortals.js';
-import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, mirrorWahaHostedMedia, type WahaMessageRaw } from '../_lib/waha.js';
+import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, mirrorWahaHostedMedia, recoverWahaText, type WahaMessageRaw } from '../_lib/waha.js';
 
 export const config = {
   runtime: 'edge',
@@ -222,6 +222,24 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   const adReferral = flow === 'in' && !isOps ? extractAdReferral(p) : null;
   const adMeta = adReferral ? await attachAdResolution(adReferral) : null;
 
+  // Text body. WAHA's top-level `p.body` comes through EMPTY for some inbound
+  // messages (observed on @lid first-contacts on the NOWEB engine, 2026-09) —
+  // the customer's text was silently lost and the bot then replied to nothing.
+  // Fall back to the raw decoded message (`_data.Message`/`RawMessage`). We LOG
+  // the exact field we recovered from — and, when we recover nothing from an
+  // empty-body TEXT message, the available raw keys — so the shape stays
+  // diagnosable if a new message layout appears.
+  const recovered = recoverWahaText(p);
+  if (flow === 'in' && !(p.body ?? '').trim()) {
+    if (recovered) {
+      console.log(`[waha-webhook] recovered empty inbound body from ${recovered.field} id=${p.id} chat=${chatWid}`);
+    } else if (kind === 'text') {
+      const mk = p._data?.Message ? Object.keys(p._data.Message) : [];
+      const rk = p._data?.RawMessage ? Object.keys(p._data.RawMessage) : [];
+      console.warn(`[waha-webhook] inbound empty-body text, nothing recovered id=${p.id} chat=${chatWid} type=${p._data?.Info?.Type ?? ''} Message.keys=${JSON.stringify(mk)} RawMessage.keys=${JSON.stringify(rk)}`);
+    }
+  }
+
   const row: ChatMessageRow = {
     id: p.id,
     chat_wid: chatWid,
@@ -230,7 +248,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     flow,
     kind,
     subtype: null,
-    body: p.body ?? null,
+    body: recovered?.text ?? null,
     from_phone: flow === 'in' ? counterpartyPhone : null,
     to_phone: flow === 'out' ? counterpartyPhone : null,
     // Ack is a delivery receipt for messages WE sent. NOWEB reports -1/"ERROR"
