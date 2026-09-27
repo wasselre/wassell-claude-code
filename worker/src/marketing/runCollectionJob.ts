@@ -11,7 +11,7 @@ import {
   type NormalizedContentPost, type NormalizedMetrics, type ProviderKey,
 } from './providers.js';
 import {
-  collectViaApify, incrementalWindow, apifyCycleEnd, ProviderPausedError,
+  collectViaApify, incrementalWindow, apifyBudgetState, decideBudgetAction, ProviderPausedError,
 } from './apifyLifecycle.js';
 import { collectMetaAdsByPage, discoverAdvertiser } from './metaAdsLifecycle.js';
 import { storeCreative } from './creativeStore.js';
@@ -61,21 +61,31 @@ function knownExternalIdsFor(sb: SupabaseClient, platform: string) {
  *  mkt_provider_pause_for_budget cancels its queued jobs, raises one alert and
  *  notifies admins once. Failures here are logged loudly and do not mask the
  *  original error, which the caller re-throws. */
-async function pauseForBudget(sb: SupabaseClient, provider: string, detail: string): Promise<void> {
-  let until: string | null = null;
-  let untilNote = '';
+async function pauseForBudget(sb: SupabaseClient, provider: string, detail: string): Promise<{ paused: boolean; reason: string }> {
+  let state = null;
+  let readNote = '';
   try {
-    until = await apifyCycleEnd();
+    state = await apifyBudgetState();
   } catch (e) {
-    untilNote = ` (cycle end unreadable: ${e instanceof Error ? e.message : String(e)}; pausing 24h and re-checking)`;
+    readNote = ` (limit unreadable: ${e instanceof Error ? e.message : String(e)})`;
   }
+  const decision = decideBudgetAction(state);
+  if (decision.action === 'retry') {
+    // Believe the money, not the refusal — see decideBudgetAction.
+    console.error(`[collect] ${provider} refused a run but has budget — retrying instead of pausing: ${decision.reason}`);
+    return { paused: false, reason: decision.reason };
+  }
+
+  let until = decision.until;
+  let untilNote = readNote;
   if (!until || new Date(until).getTime() <= Date.now()) {
     until = new Date(Date.now() + 24 * 3_600_000).toISOString();
-    if (!untilNote) untilNote = ' (no future cycle end reported; pausing 24h and re-checking)';
+    untilNote += ' (no future cycle end reported; pausing 24h and re-checking)';
   }
-  const { data, error } = await sb.rpc('mkt_provider_pause_for_budget', { p_provider: provider, p_until: until, p_detail: `${detail}${untilNote}`.slice(0, 500) });
+  const { data, error } = await sb.rpc('mkt_provider_pause_for_budget', { p_provider: provider, p_until: until, p_detail: `${detail} — ${decision.reason}${untilNote}`.slice(0, 500) });
   if (error) console.error(`[collect] 🚨 budget pause for ${provider} FAILED — collection will keep hitting the limit: ${error.message}`);
   else console.error(`[collect] 🚨 ${provider} monthly budget spent — paused until ${until}: ${JSON.stringify(data)}`);
+  return { paused: true, reason: decision.reason };
 }
 
 // ── project index, SCOPED to a set of project ids ───────────────────────────
@@ -521,7 +531,15 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       // The ACCOUNT is fine; the budget is spent. Leave its status alone, pause
       // the provider (unless this error came FROM the pause), and let index.ts
       // cancel the job instead of retrying it.
-      if (!(err instanceof ProviderPausedError)) await pauseForBudget(sb, job.provider, err.message);
+      if (!(err instanceof ProviderPausedError)) {
+        const outcome = await pauseForBudget(sb, job.provider, err.message);
+        if (!outcome.paused) {
+          // Apify says there is budget left, so this is an outage, not a spent
+          // month: hand it back as one so the queue retries with backoff rather
+          // than cancelling the job and stopping collection.
+          throw new ProviderError(`${err.message} — ${outcome.reason}`, 'unavailable');
+        }
+      }
       throw err;
     }
     await sb.from('mkt_social_accounts').update({ scrape_status: err.health === 'auth_failed' ? 'auth_failed' : err.health === 'rate_limited' ? 'rate_limited' : 'error' }).eq('id', job.social_account_id ?? '00000000-0000-0000-0000-000000000000');

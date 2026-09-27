@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   collectViaApify, classifyApifyError, buildInput, incrementalWindow,
-  ProviderPausedError, INCREMENTAL_CEILING, CATCH_UP_CEILING,
+  ProviderPausedError, INCREMENTAL_CEILING, CATCH_UP_CEILING, decideBudgetAction,
 } from '../apifyLifecycle';
 import { apifyRunIdsToSweep, mayHoldMedia } from '../apifyStorageSweep';
 import { browserbaseFallbackEligible } from '../pipeline';
@@ -203,5 +203,29 @@ describe('apify storage sweep — which runs, and whether media may still be nee
     expect(mayHoldMedia({ run_id: 'OLD' }, 'instagram')).toBe(false);
     expect(mayHoldMedia({ run_id: 'A', runs: [{ run_id: 'A' }], pending_storage_runs: [] }, 'tiktok')).toBe(false);
     expect(mayHoldMedia({ run_id: 'A', runs: [{ run_id: 'A' }, { run_id: 'B' }], pending_storage_runs: ['B'] }, 'tiktok')).toBe(true);
+  });
+});
+
+
+describe('decideBudgetAction — a refusal is not proof the budget is gone', () => {
+  // The 2026-09-23 incident: 19 seconds into a fresh cycle Apify answered 402
+  // "remaining usage of $0.00" while its limits endpoint reported $29 free. The
+  // old code paused collection until 2026-10-22 and lost four days.
+  it('retries when Apify reports the cycle is fresh', () => {
+    const d = decideBudgetAction({ usedUsd: 0.0014, capUsd: 29, cycleEnd: '2026-10-22T23:59:59.999Z' });
+    expect(d.action).toBe('retry');
+    expect(d.reason).toMatch(/\$28\.00 left|left\)/);
+  });
+  it('pauses to the cycle end when the budget really is spent', () => {
+    const d = decideBudgetAction({ usedUsd: 31.65, capUsd: 29, cycleEnd: '2026-10-22T23:59:59.999Z' });
+    expect(d).toMatchObject({ action: 'pause', until: '2026-10-22T23:59:59.999Z' });
+  });
+  it('pauses when the remaining budget is only rounding dust', () => {
+    expect(decideBudgetAction({ usedUsd: 28.9, capUsd: 29, cycleEnd: null }).action).toBe('pause');
+  });
+  it('pauses on the provider word when the limit cannot be read', () => {
+    expect(decideBudgetAction(null)).toMatchObject({ action: 'pause', until: null });
+    expect(decideBudgetAction({ usedUsd: null, capUsd: null, cycleEnd: '2026-10-22T23:59:59.999Z' }))
+      .toMatchObject({ action: 'pause', until: '2026-10-22T23:59:59.999Z' });
   });
 });

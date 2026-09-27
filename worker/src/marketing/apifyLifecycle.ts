@@ -90,11 +90,70 @@ export class ProviderPausedError extends ProviderError {
   constructor(message: string) { super(message, 'budget_exhausted'); this.name = 'ProviderPausedError'; }
 }
 
-/** When does Apify's current billing cycle end? This is when a spent limit
- *  renews, so it is how long collection should stay paused. */
-export async function apifyCycleEnd(): Promise<string | null> {
-  const r = await apify<{ data?: { monthlyUsageCycle?: { endAt?: string } } }>('GET', '/users/me/limits');
-  return r.data?.monthlyUsageCycle?.endAt ?? null;
+export interface ApifyBudgetState {
+  /** Spend so far this billing cycle, as Apify reports it. */
+  usedUsd: number | null;
+  /** The plan's monthly spending limit. */
+  capUsd: number | null;
+  /** When the limit renews — how long a genuinely spent budget should pause. */
+  cycleEnd: string | null;
+}
+
+/** Apify's own view of the money: used, limit, and when the cycle rolls. */
+export async function apifyBudgetState(): Promise<ApifyBudgetState> {
+  const r = await apify<{ data?: {
+    monthlyUsageCycle?: { endAt?: string };
+    limits?: { maxMonthlyUsageUsd?: number };
+    current?: { monthlyUsageUsd?: number };
+  } }>('GET', '/users/me/limits');
+  const d = r.data ?? {};
+  return {
+    usedUsd: typeof d.current?.monthlyUsageUsd === 'number' ? d.current.monthlyUsageUsd : null,
+    capUsd: typeof d.limits?.maxMonthlyUsageUsd === 'number' ? d.limits.maxMonthlyUsageUsd : null,
+    cycleEnd: d.monthlyUsageCycle?.endAt ?? null,
+  };
+}
+
+/** Headroom below which we believe a budget refusal. Covers rounding and the
+ *  cost of the refused run itself. */
+const BUDGET_SPENT_MARGIN_USD = 0.5;
+
+export type BudgetAction =
+  | { action: 'pause'; until: string | null; reason: string }
+  | { action: 'retry'; reason: string };
+
+/**
+ * A provider refusal that SAYS "no budget" is not always true.
+ *
+ * On 2026-09-23 at 00:00:19 UTC — nineteen seconds into a fresh billing cycle —
+ * Apify answered 402 "Your remaining usage of $0.00 this billing cycle isn't
+ * enough for this run" while its own limits endpoint reported $29 available.
+ * The pause took the refusal at face value, read the NEW cycle's end date, and
+ * stopped all collection until 2026-10-22. Four days were lost before anyone
+ * looked. The bug was pausing for a month on a single refusal at the one moment
+ * a refusal is least trustworthy.
+ *
+ * So the money is checked against Apify's own figures before pausing: real
+ * exhaustion pauses to the cycle end; anything else is an outage and goes back
+ * to the queue's ordinary bounded retries.
+ */
+export function decideBudgetAction(state: ApifyBudgetState | null): BudgetAction {
+  if (!state || state.capUsd == null || state.usedUsd == null) {
+    // Cannot read the limit: pause, but only until the cycle end we know of
+    // (or, with none, let the caller fall back to a short pause).
+    return { action: 'pause', until: state?.cycleEnd ?? null, reason: 'limit unreadable — pausing on the provider word' };
+  }
+  const remaining = state.capUsd - state.usedUsd;
+  if (remaining > BUDGET_SPENT_MARGIN_USD) {
+    return {
+      action: 'retry',
+      reason: `provider refused but its own limit reports $${state.usedUsd.toFixed(2)} of $${state.capUsd} used ($${remaining.toFixed(2)} left) — treating as a transient refusal, not a spent budget`,
+    };
+  }
+  return {
+    action: 'pause', until: state.cycleEnd,
+    reason: `budget spent: $${state.usedUsd.toFixed(2)} of $${state.capUsd} used`,
+  };
 }
 
 /** Refuse to start a paid run while the provider is paused. A failed read is
