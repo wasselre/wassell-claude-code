@@ -36,6 +36,8 @@ import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import StudyJobCard from './StudyJobCard';
 import GeoPrefCard from './GeoPrefCard';
 import ChatToolsMenu from './ChatToolsMenu';
+import ChatTaskBar from './ChatTaskBar';
+import type { ChatOutcomeSuggestion } from '@/lib/chatSuggestions/client';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 import { clientActiveOptionRefs } from '@/lib/matching/clientOptionIndex';
@@ -374,6 +376,25 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     return rows.slice().sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())[0];
   }, [followupsModel, records, clientLinkId, recordId]);
 
+  // The client's current open follow-up of ANY type, for the task bar. Same
+  // rule as the AI lane's matcher (_cos_match_open_followup): a WhatsApp task
+  // first, else the newest open task — so the bar and the suggestion always
+  // point at the same task.
+  const activeTask = useMemo(() => {
+    if (activeWaFollowup) return activeWaFollowup;
+    if (!followupsModel || !clientLinkId) return null;
+    const rows = (records[followupsModel.id] ?? []).filter((r) => {
+      const d = r.data as Record<string, unknown>;
+      if (firstId(d.client_id) !== clientLinkId) return false;
+      const st = (typeof d.followup_status === 'string' && d.followup_status) ? d.followup_status : 'open';
+      return st === 'open' || st === 'in_progress';
+    });
+    if (rows.length === 0) return null;
+    return rows.slice().sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())[0];
+  }, [activeWaFollowup, followupsModel, records, clientLinkId]);
+  // Completion modal opened from the task bar (never resolves the chat).
+  const [taskOutcome, setTaskOutcome] = useState<{ suggestion: ChatOutcomeSuggestion | null; preselect: boolean } | null>(null);
+
   // Resolve-or-prompt: closing a chat with an active WhatsApp follow-up opens
   // the completion popup instead of silently resolving. Reopen / archive and
   // chats with no active follow-up take the direct patchChat path.
@@ -668,6 +689,18 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           preferences. Client-linked chats only; hidden with the header. */}
       {clientLinkId && chatWid && !collapsedHeader && <GeoPrefCard key={`${clientLinkId}:${chatWid}`} clientId={clientLinkId} chatWid={chatWid} />}
 
+      {/* The client's open follow-up + the AI's suggested outcome, where the rep
+          works. Stays visible when the header is collapsed: recording the
+          outcome is the one CRM step every conversation needs. */}
+      {clientLinkId && activeTask && (
+        <ChatTaskBar
+          key={clientLinkId}
+          clientId={clientLinkId}
+          task={activeTask}
+          onRecordOutcome={(suggestion, preselect) => setTaskOutcome({ suggestion, preselect })}
+        />
+      )}
+
       {/* Thread — full-bleed scroll area on mobile, framed card on desktop
           (MessageThread drops its own card chrome below md). */}
       <div className="flex-1 min-h-0 overflow-hidden px-0 pt-0 md:px-3 md:pt-3">
@@ -887,6 +920,27 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           onResolveChat={() => patchChat(chatWid ?? '', { status: 'resolved' })}
           onOpenChat={() => setShowCompleteFollowup(false)}
           onClose={() => setShowCompleteFollowup(false)}
+        />
+      )}
+      {/* Record the outcome from the task bar — same completion modal, but the
+          chat stays open (the rep is still talking to the client). */}
+      {taskOutcome && activeTask && followupsModel && (
+        <CompleteWhatsAppFollowupModal
+          key={`${activeTask.id}:${taskOutcome.suggestion?.id ?? 'none'}:${taskOutcome.preselect}`}
+          followup={activeTask}
+          followupModel={followupsModel}
+          chatRecordId={recordId}
+          clientId={clientLinkId}
+          clientStage={(linkedClientData?.client_stage as string | undefined) ?? null}
+          clientStatus={(linkedClientData?.client_status as string | undefined) ?? null}
+          phone={phone}
+          suggestion={taskOutcome.suggestion}
+          preselect={taskOutcome.preselect}
+          resolveChatOnComplete={false}
+          onBookAppointment={() => { setTaskOutcome(null); setShowBookAppointment(true); }}
+          onResolveChat={() => undefined}
+          onOpenChat={() => setTaskOutcome(null)}
+          onClose={() => setTaskOutcome(null)}
         />
       )}
     </div>{/* /conversation column */}

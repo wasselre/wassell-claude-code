@@ -30,6 +30,7 @@ import { makeServiceClient } from './lib/serviceClient.js';
 import { runBrowserBalanceProbes } from './lib/balanceBrowserProbe.js';
 import { tryClaimBalanceProbeHour } from './lib/balanceProbeClaim.js';
 import { runCallAnalysisJob, type CallAnalysisJob } from './runCallAnalysisJob.js';
+import { runChatOutcomeJob, type ChatOutcomeJob } from './runChatOutcomeJob.js';
 import { runCleanTextJob, type CleanTextJob } from './runCleanTextJob.js';
 import { runVideoConvertJob, type VideoConvertJob } from './runVideoConvertJob.js';
 import { runListingMirrorJob, type ListingMirrorJob } from './runListingMirrorJob.js';
@@ -118,6 +119,7 @@ let socialFileBusy = false;
 // a 12-minute deck build.
 let callAnalysisBusy = false;
 let callAnalysisWakeRequested = false;
+let chatOutcomeBusy = false;
 // Office-preview conversions (file_preview_jobs) get a THIRD independent loop
 // for the same reason — a 2-10s soffice run should never wait behind a deck.
 let previewBusy = false;
@@ -1177,6 +1179,112 @@ async function callAnalysisPollLoop(): Promise<void> {
     }
     const wokeAt = Date.now();
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !callAnalysisWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AI chat-outcome suggestions — chat_outcome_suggestions queue.
+//
+// The WhatsApp twin of the call lane above. A client writes; the DB trigger
+// queues ONE row per client that waits until the client has been quiet for 3
+// minutes; this loop reads the conversation and proposes the outcome of the
+// client's open follow-up. 'ready' is a proposal shown on the chat's task bar —
+// the rep confirms it; nothing here writes the follow-up.
+
+async function claimAndRunOneChatOutcome(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('chat_outcome_suggestion_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] chat-outcome claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    id: string; client_id: string; chat_record_id: string | null; chat_wid: string | null;
+    followup_id: string | null; followup_type: string | null; attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: ChatOutcomeJob = {
+    id: row.id,
+    clientId: row.client_id,
+    chatRecordId: row.chat_record_id,
+    chatWid: row.chat_wid,
+    followupId: row.followup_id,
+    followupType: row.followup_type,
+    attempts: row.attempts,
+  };
+  console.log(`[worker] claimed chat-outcome job=${job.id} client=${job.clientId} task=${job.followupType ?? 'none'}`);
+
+  try {
+    if (!job.followupId) {
+      // Nothing open to attach an outcome to — the reconcilers will create a
+      // task and the next message re-queues a reading.
+      const { error: skipErr } = await supabase.rpc('chat_outcome_suggestion_skip', {
+        p_id: job.id, p_reason: 'no open follow-up for this client',
+      });
+      if (skipErr) console.error(`[worker] chat_outcome_suggestion_skip RPC failed: ${skipErr.message}`);
+      return true;
+    }
+    const r = await runChatOutcomeJob({ supabase, env, job });
+    const { error: doneErr } = await supabase.rpc('chat_outcome_suggestion_ready', {
+      p_id: job.id,
+      p_outcome: r.outcome,
+      p_confidence: r.confidence,
+      p_reasoning: r.reasoning,
+      p_summary: r.summary,
+      p_fields: r.fields,
+      p_quoted: r.quoted,
+      p_model: r.model,
+      p_last_message_at: r.lastMessageAt,
+    });
+    if (doneErr) console.error(`[worker] chat_outcome_suggestion_ready RPC failed: ${doneErr.message}`);
+    else console.log(`[worker] chat-outcome job=${job.id} → ${r.outcome ?? 'none'}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] chat-outcome job=${job.id} FAILED:`, msg);
+    try {
+      const { error: failErr } = await supabase.rpc('chat_outcome_suggestion_fail', { p_id: job.id, p_error: msg });
+      if (failErr) console.error(`[worker] chat_outcome_suggestion_fail RPC failed: ${failErr.message}`);
+    } catch (innerErr) {
+      console.error(`[worker] could not mark chat-outcome job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+async function runChatOutcomeWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('chat_outcome_suggestions_watchdog');
+    if (error) { console.error(`[worker] chat-outcome watchdog RPC error: ${error.message}`); return; }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) console.warn(`[worker] chat-outcome watchdog swept ${swept} stale job(s)`);
+  } catch (err) {
+    console.error('[worker] chat-outcome watchdog threw:', err);
+  }
+}
+
+async function chatOutcomePollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    chatOutcomeBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneChatOutcome();
+    } catch (err) {
+      console.error('[worker] chat-outcome poll iteration error:', err);
+    }
+    chatOutcomeBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runChatOutcomeWatchdog();
+    }
+    if (didClaim) continue;
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !shuttingDown) {
       await sleep(200);
     }
   }
@@ -3109,7 +3217,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || previewBusy || enrichmentBusy || compressBusy || documentBusy || migrationBusy || workflowBusy || regaBusy || portalBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || chatOutcomeBusy || previewBusy || enrichmentBusy || compressBusy || documentBusy || migrationBusy || workflowBusy || regaBusy || portalBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -3700,8 +3808,9 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
   // AI call-result analysis only runs when the DeepSeek key is set, so the
   // worker boots cleanly before the feature is switched on.
   if (env.DEEPSEEK_API_KEY) {
-    console.log(`[worker] call-analysis loop enabled (model=${env.DEEPSEEK_MODEL})`);
+    console.log(`[worker] call-analysis + chat-outcome loops enabled (model=${env.DEEPSEEK_MODEL})`);
     loops.push(callAnalysisPollLoop());
+    loops.push(chatOutcomePollLoop());
   } else {
     console.log('[worker] call-analysis loop disabled (DEEPSEEK_API_KEY unset)');
   }

@@ -73,7 +73,7 @@ interface RunArgs {
 
 // ── outcome matrix (COPY of src/lib/salesProcess/config.ts — keep in sync) ────
 
-const OUTCOMES_BY_TYPE: Record<string, string[]> = {
+export const OUTCOMES_BY_TYPE: Record<string, string[]> = {
   appointment_booking_call: ['appointment_booked', 'interested', 'no_answer', 'recontact_later', 'not_interested', 'wants_rent', 'unanswered_request', 'invalid_number', 'duplicate'],
   appointment_confirmation_call: ['attendance_confirmed', 'no_answer', 'rescheduled', 'appointment_cancelled_rebook', 'appointment_cancelled_lost', 'recontact_later', 'not_interested'],
   same_day_appointment_confirmation: ['attendance_confirmed', 'no_answer', 'rescheduled', 'appointment_cancelled_lost'],
@@ -89,7 +89,7 @@ const OUTCOMES_BY_TYPE: Record<string, string[]> = {
 const DEFAULT_TYPE = 'appointment_booking_call';
 
 /** Arabic labels + the discriminating rule for each outcome the model may pick. */
-const OUTCOME_HELP: Record<string, { ar: string; hint: string }> = {
+export const OUTCOME_HELP: Record<string, { ar: string; hint: string }> = {
   appointment_booked:           { ar: 'تم حجز موعد', hint: 'The customer agreed to a specific visit.' },
   interested:                   { ar: 'مهتم', hint: 'Engaged, gave requirements or asked for options/WhatsApp, but did NOT commit to a visit.' },
   still_interested:             { ar: 'لا يزال مهتمًا', hint: 'Confirms continued interest after a previous step.' },
@@ -117,11 +117,11 @@ const OUTCOME_HELP: Record<string, { ar: string; hint: string }> = {
 };
 
 /** Outcomes that need a reschedule/appointment datetime prefilled. */
-const NEEDS_DATE = new Set(['recontact_later', 'rescheduled', 'appointment_cancelled_rebook']);
+export const NEEDS_DATE = new Set(['recontact_later', 'rescheduled', 'appointment_cancelled_rebook']);
 /** Outcomes that need a lost_reason prefilled. */
-const NEEDS_LOST_REASON = new Set(['not_interested', 'invalid_number', 'duplicate', 'appointment_cancelled_lost', 'offer_rejected', 'visited_other_project']);
+export const NEEDS_LOST_REASON = new Set(['not_interested', 'invalid_number', 'duplicate', 'appointment_cancelled_lost', 'offer_rejected', 'visited_other_project']);
 /** lost_reason dropdown values (followups model). */
-const LOST_REASONS = ['price', 'location', 'unit_not_suitable', 'bought_elsewhere', 'not_serious', 'financing_issue', 'timing_issue', 'invalid_number', 'duplicate', 'other'];
+export const LOST_REASONS = ['price', 'location', 'unit_not_suitable', 'bought_elsewhere', 'not_serious', 'financing_issue', 'timing_issue', 'invalid_number', 'duplicate', 'other'];
 
 // ── transcript reconstruction ────────────────────────────────────────────────
 
@@ -252,12 +252,12 @@ Reply with ONLY this JSON object — no prose, no markdown fence:
 }`;
 }
 
-interface DeepSeekRaw {
+export interface DeepSeekRaw {
   outcome?: unknown; confidence?: unknown; summary?: unknown; reasoning?: unknown;
   outcome_notes?: unknown; reschedule_datetime?: unknown; quoted_phrase?: unknown; lost_reason?: unknown;
 }
 
-function parseJsonObject(raw: string): DeepSeekRaw {
+export function parseJsonObject(raw: string): DeepSeekRaw {
   let t = raw.trim();
   t = t.replace(/<think>[\s\S]*?<\/think>/g, '').trim();     // reasoning models
   t = t.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
@@ -267,7 +267,7 @@ function parseJsonObject(raw: string): DeepSeekRaw {
   return JSON.parse(t.slice(start, end + 1)) as DeepSeekRaw;
 }
 
-const str = (v: unknown): string | null => {
+export const str = (v: unknown): string | null => {
   if (typeof v !== 'string') return null;
   const s = v.trim();
   return s && s.toLowerCase() !== 'null' ? s : null;

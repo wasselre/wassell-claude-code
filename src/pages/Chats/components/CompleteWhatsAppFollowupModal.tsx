@@ -5,6 +5,7 @@ import type { AppModel, AppRecord } from '@/types';
 import { buildFieldLabels, getFollowUpTypeConfig, validateFollowUpCompletion } from '@/lib/salesProcess';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import OutcomePanel from '@/pages/Followups/components/OutcomePanel';
+import { resolveChatSuggestion, type ChatOutcomeSuggestion } from '@/lib/chatSuggestions/client';
 
 /**
  * "Complete WhatsApp Follow-Up" — shown when the rep clicks Done/Resolve on a
@@ -27,6 +28,10 @@ export default function CompleteWhatsAppFollowupModal({
   onResolveChat,
   onOpenChat,
   onClose,
+  suggestion = null,
+  preselect = false,
+  resolveChatOnComplete = true,
+  onBookAppointment,
 }: {
   followup: AppRecord;
   followupModel: AppModel;
@@ -40,6 +45,20 @@ export default function CompleteWhatsAppFollowupModal({
   /** Close the modal to reveal the chat composer behind it ("Open chat"). */
   onOpenChat: () => void;
   onClose: () => void;
+  /**
+   * The AI's reading of this chat (ChatTaskBar). Travels with the modal even
+   * when not pre-selected, so the rep's final choice is recorded against it.
+   */
+  suggestion?: ChatOutcomeSuggestion | null;
+  /** Start with the AI's outcome selected and its prefilled fields in the draft. */
+  preselect?: boolean;
+  /**
+   * The Done/Resolve path closes the conversation after completing; the task
+   * bar path does not — the rep is still in the chat.
+   */
+  resolveChatOnComplete?: boolean;
+  /** Booking an appointment from the outcome panel (task bar path). */
+  onBookAppointment?: () => void;
 }) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const currentUserId = useAppStore((s) => s.currentUserId);
@@ -57,7 +76,13 @@ export default function CompleteWhatsAppFollowupModal({
   // Local editable draft, seeded from the follow-up's real state. The panel then
   // shows the honest choice ("did the client reply?"): send a check-in, mark as
   // waiting, record no-message-sent, or record the reply outcome.
-  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...followup.data }));
+  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({
+    ...followup.data,
+    ...(preselect && suggestion ? suggestion.suggested_fields : {}),
+    // Clicking an outcome stamps the completion time; a pre-selected one was
+    // never clicked, so stamp it here or the Save button stays disabled.
+    ...(preselect && suggestion && !followup.data.actual_datetime ? { actual_datetime: new Date().toISOString() } : {}),
+  }));
   const patchDraft = (patch: Record<string, unknown>) => setDraft((d) => ({ ...d, ...patch }));
 
   // "Waiting for reply" from the chat Done popup: park the task in the waiting
@@ -135,15 +160,28 @@ export default function CompleteWhatsAppFollowupModal({
       return;
     }
 
-    // Follow-up completed (workflow fired). Now resolve the chat.
-    try {
-      await onResolveChat();
-    } catch {
-      // The chat-resolve store path toasts + reverts on its own; the follow-up
-      // is already completed, which is the important half.
+    // Record the rep's final choice against the AI's proposal (the accuracy
+    // ledger). Best-effort: the follow-up is already completed, so a failure
+    // here must not look like the save failed.
+    if (suggestion) {
+      try {
+        await resolveChatSuggestion(suggestion.id, 'confirmed', outcomeKey, finalData);
+      } catch {
+        console.error('[chatSuggestions] follow-up saved but the suggestion was not marked confirmed');
+      }
+    }
+
+    // Follow-up completed (workflow fired). Now resolve the chat — Done path only.
+    if (resolveChatOnComplete) {
+      try {
+        await onResolveChat();
+      } catch {
+        // The chat-resolve store path toasts + reverts on its own; the follow-up
+        // is already completed, which is the important half.
+      }
     }
     setSaving(false);
-    addToast(isAr ? 'تم إنهاء متابعة واتساب' : 'WhatsApp follow-up completed', 'success');
+    addToast(isAr ? 'تم تسجيل النتيجة' : 'Outcome recorded', 'success');
     onClose();
   };
 
@@ -155,7 +193,11 @@ export default function CompleteWhatsAppFollowupModal({
       <div className="mt-6 w-full max-w-lg rounded-2xl bg-cream shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 border-b border-sand/60 p-4">
           <div>
-            <h2 className="text-lg font-bold text-chocolate">{isAr ? 'إنهاء متابعة واتساب' : 'Complete WhatsApp Follow-Up'}</h2>
+            <h2 className="text-lg font-bold text-chocolate">
+              {typeKey === 'whatsapp_follow_up'
+                ? (isAr ? 'إنهاء متابعة واتساب' : 'Complete WhatsApp Follow-Up')
+                : (isAr ? 'تسجيل نتيجة المتابعة' : 'Record follow-up outcome')}
+            </h2>
             <p className="mt-0.5 text-sm text-charcoal/70">
               {isAr ? 'ما نتيجة هذه المحادثة؟' : 'What was the outcome of this conversation?'}
             </p>
@@ -174,6 +216,7 @@ export default function CompleteWhatsAppFollowupModal({
           {typeConfig ? (
             <OutcomePanel
               followupModel={followupModel}
+              suggestedOutcome={preselect ? suggestion?.suggested_outcome ?? null : null}
               typeKey={typeKey}
               draft={draft}
               patchDraft={patchDraft}
@@ -181,7 +224,7 @@ export default function CompleteWhatsAppFollowupModal({
               clientId={clientId}
               phones={phone ? [phone] : []}
               // Booking an appointment needs the full task workspace — hand off.
-              onBookAppointment={onOpenChat}
+              onBookAppointment={onBookAppointment ?? onOpenChat}
               // "Open chat" (replied banner) just reveals the composer behind.
               onSendWhatsApp={onOpenChat}
               onMarkWaiting={doMarkWaiting}
@@ -198,6 +241,7 @@ export default function CompleteWhatsAppFollowupModal({
               outcome to record. This closes/resolves the chat (it leaves the
               inbox) and deliberately leaves the follow-up untouched in its
               waiting state, so the auto-reminder keeps tracking it. */}
+          {resolveChatOnComplete ? (
           <button
             type="button"
             disabled={saving}
@@ -208,6 +252,7 @@ export default function CompleteWhatsAppFollowupModal({
             {saving ? <Loader2 size={15} className="animate-spin" /> : <Clock size={15} />}
             {isAr ? 'ما زلت بانتظار رد العميل' : 'Still waiting'}
           </button>
+          ) : <span />}
           <button type="button" onClick={onClose} className="rounded-lg border border-sand px-3 py-1.5 text-sm font-semibold text-charcoal/70 hover:bg-sand/30">
             {isAr ? 'إلغاء' : 'Cancel'}
           </button>

@@ -61,3 +61,20 @@ describe('worker call-analysis outcome matrix', () => {
     expect(worker.appointment_booking_call).toContain('no_answer');
   });
 });
+
+// The chat-outcome lane (worker/src/runChatOutcomeJob.ts) proposes outcomes for
+// WhatsApp follow-ups from its own copy. Same failure mode as above: a drifted
+// value is an AI answer the chat's task bar has no button for.
+describe('worker chat-outcome WhatsApp outcome list', () => {
+  const CHAT_FILE = path.resolve(__dirname, '../../../../worker/src/runChatOutcomeJob.ts');
+  const src = fs.readFileSync(CHAT_FILE, 'utf8');
+  const m = /CHAT_WHATSAPP_OUTCOMES\s*=\s*\[(.*)\];/.exec(src);
+  const chat = m ? [...m[1]!.matchAll(/'([^']+)'/g)].map((x) => x[1]!) : [];
+  const wa = DEFAULT_SALES_PROCESS.followup_types.find((t) => t.type === 'whatsapp_follow_up');
+
+  it('is config.ts whatsapp_follow_up minus the rep-only no_message_sent', () => {
+    expect(m, 'CHAT_WHATSAPP_OUTCOMES not found in the worker runner').not.toBeNull();
+    expect(wa).toBeDefined();
+    expect(chat).toEqual(wa!.allowed_outcomes.map((o) => o.value).filter((v) => v !== 'no_message_sent'));
+  });
+});

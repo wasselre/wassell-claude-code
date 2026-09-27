@@ -72,7 +72,9 @@ export default function OutcomePanel(props: OutcomePanelProps) {
   // recordMode = chose "Record customer response" → show the outcome buttons
   // immediately (no send required); completion runs the normal flow and never
   // schedules escalation (whatsapp_state stays unset).
-  const [recordMode, setRecordMode] = useState(false);
+  // An AI-suggested outcome came from reading the client's reply, so the panel
+  // opens straight in record mode with the answer pre-selected.
+  const [recordMode, setRecordMode] = useState(Boolean(suggestedOutcome));
 
   // Hoisted ABOVE the early `!typeConfig` return below: hooks must run on every
   // render. On a direct deep-link load the follow-up's draft (and thus typeKey)
