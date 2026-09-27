@@ -9,12 +9,14 @@ import { MapPin, Loader2 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import ClientSearch, { type PickedToolClient } from '@/pages/Sales/components/ClientSearch';
+import { useProjectUnitsPicker, ProjectUnitsSummaryButton } from '@/pages/Records/components/ProjectUnitsPicker';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord, ModelField } from '@/types';
 
-// The three fields a rep needs: project visited · date · result (the
+// Project visited (+ units) is one control (ProjectUnitsSummaryButton → the
+// chat's Projects & Units browser, Our Projects only); then date · result (the
 // `visit_result` dropdown — Interested / Considering / Not interested / Reserved).
-const VISIT_FIELDS = ['project_id', 'scheduled_datetime', 'visit_result'] as const;
+const VISIT_FIELDS = ['scheduled_datetime', 'visit_result'] as const;
 
 interface QuickVisitModalProps {
   clientId: string | null;
@@ -63,6 +65,20 @@ export default function QuickVisitModal({ clientId, clientName, phone, salesRep,
     return VISIT_FIELDS.map((slug) => all.find((f) => f.name === slug)).filter((f): f is ModelField => !!f);
   }, [visitsModel]);
 
+  // Project + units are chosen in the chat's Projects & Units browser (pick mode)
+  // instead of the plain lookup + unit-card fields.
+  const projectField = useMemo(
+    () => visitsModel?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === 'project_id'),
+    [visitsModel],
+  );
+  const picker = useProjectUnitsPicker({
+    projectLookupModelId: projectField?.lookup_model_id,
+    projectValue: data.project_id,
+    unitIds: Array.isArray(data.units) ? (data.units as string[]) : [],
+    withUnits: true,
+    onChange: ({ projectValue, unitIds }) => setData((d) => ({ ...d, project_id: projectValue, units: unitIds })),
+  });
+
   if (!visitsModel) return null;
 
   const setField = (slug: string, value: unknown) => setData((d) => ({ ...d, [slug]: value }));
@@ -87,6 +103,8 @@ export default function QuickVisitModal({ clientId, clientName, phone, salesRep,
   };
 
   return (
+    <>
+    {!picker.open && (
     <Modal open onClose={onClose} title={isAr ? 'تسجيل زيارة' : 'Record a visit'} maxWidth="max-w-lg">
       <div className="space-y-4">
         {pickClient && (
@@ -107,6 +125,10 @@ export default function QuickVisitModal({ clientId, clientName, phone, salesRep,
             )}
           </div>
         )}
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-charcoal/60">{isAr ? 'المشروع والوحدات' : 'Project & units'}</label>
+          <ProjectUnitsSummaryButton picker={picker} />
+        </div>
         {fields.map((field) => (
           <div key={field.id}>
             <label className="mb-1 block text-xs font-semibold text-charcoal/60">
@@ -140,5 +162,8 @@ export default function QuickVisitModal({ clientId, clientName, phone, salesRep,
         </div>
       </div>
     </Modal>
+    )}
+    {picker.browser}
+    </>
   );
 }

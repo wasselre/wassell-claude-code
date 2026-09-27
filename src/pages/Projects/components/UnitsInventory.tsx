@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Download, FileText, GitCompare, ListPlus, Loader2, Search, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -38,6 +38,13 @@ interface UnitsInventoryProps {
    * saveUnitToClient). Absent (plain project pages) → no save action is shown.
    */
   clientId?: string | null;
+  /**
+   * Pick mode (the appointment / visit forms, via the Projects & Units browser):
+   * the row checkboxes become the unit choice. Seeded from `initialSelectedIds`
+   * and reported on every change. Absent → selection is only for Compare.
+   */
+  initialSelectedIds?: string[];
+  onSelectionChange?: (ids: string[]) => void;
 }
 
 /** Drop the punctuation reps omit when typing a code by hand (B-18 -> b18). */
@@ -45,7 +52,7 @@ const stripSeparators = (s: string) => s.replace(/[\s\-_/.]/g, '');
 
 const SAR = (n: number | null, isAr: boolean) => (n === null ? (isAr ? 'غير متوفر' : 'N/A') : `${n.toLocaleString(isAr ? 'ar-SA' : 'en-US')} ${isAr ? 'ر.س' : 'SAR'}`);
 
-export default function UnitsInventory({ projectId, projectName, isAr, project, chatPdf, clientId }: UnitsInventoryProps) {
+export default function UnitsInventory({ projectId, projectName, isAr, project, chatPdf, clientId, initialSelectedIds, onSelectionChange }: UnitsInventoryProps) {
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
   const addToast = useAppStore((s) => s.addToast);
@@ -74,7 +81,12 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
   const [areaMin, setAreaMin] = useState('');
   const [areaMax, setAreaMax] = useState('');
   const [sortKey, setSortKey] = useState<UnitSortKey>('cheapest');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(initialSelectedIds ?? []));
+  useEffect(() => {
+    onSelectionChange?.([...selected]);
+    // Report the SELECTION only; a new callback identity each render must not re-fire it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
   // Hold the OPEN UNIT'S ID, not its resolved view: editing the unit's status
   // from the drawer rewrites the record, and a captured UnitView object would
   // keep showing the pre-edit status. Re-deriving from `allUnits` (unfiltered,

@@ -75,12 +75,32 @@ interface Props {
   chatWid?: string | null;
   /** Close the sheet (the caller owns the open/closed flag). */
   onClose: () => void;
+  /**
+   * PICK MODE — the appointment / visit forms choose a project (and units) here
+   * instead of sending one. The client/chat actions (send, save to options,
+   * bulk send, send location) are switched off by running with no client and no
+   * chat, the unit checkboxes become the unit choice, and a bottom bar confirms.
+   */
+  pick?: ProjectUnitsPick;
+}
+
+export interface ProjectUnitsPick {
+  /** all_projects id to open on arrival — the form's current project, if any. */
+  initialProjectId?: string | null;
+  /** Units already chosen for that project. */
+  initialUnitIds?: string[];
+  /** The form also stores units (both current callers do). */
+  withUnits: boolean;
+  onPick: (result: { projectId: string; unitIds: string[] }) => void;
 }
 
 /** How many rows render before "show more" — keeps a 1,000-project list cheap on a phone. */
 const PAGE = 60;
 
-export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Props) {
+export default function ProjectsUnitsBrowser({ clientId: clientIdProp, chatWid: chatWidProp, onClose, pick }: Props) {
+  // Pick mode runs with no client and no chat, which hides every send/save action.
+  const clientId = pick ? null : clientIdProp;
+  const chatWid = pick ? null : chatWidProp;
   const isAr = useAppStore((s) => s.language === 'ar');
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
@@ -252,7 +272,15 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
   // ── drill-down ────────────────────────────────────────────────────────────
   // Hold the project ID (not the resolved view) so a live record update — a
   // rollup recomputed after a unit changes — keeps the open panel current.
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(pick?.initialProjectId ?? null);
+  // Pick mode: the units ticked in the OPEN project. Switching project starts
+  // over (units belong to one project), except when returning to the form's own.
+  const [pickedUnitIds, setPickedUnitIds] = useState<string[]>(pick?.initialUnitIds ?? []);
+  const unitsSeedFor = (id: string) => (pick && id === pick.initialProjectId ? pick.initialUnitIds ?? [] : []);
+  useEffect(() => {
+    if (openId) setPickedUnitIds(unitsSeedFor(openId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId]);
   const openView = useMemo(() => (openId ? views.find((v) => v.id === openId) ?? null : null), [views, openId]);
   const [sendTarget, setSendTarget] = useState<{ id: string; name: string } | null>(null);
   // Bulk send: multi-select several projects and send them to this client in
@@ -361,12 +389,16 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
           )}
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-base font-bold text-chocolate">
-              {openView ? (openView.name ?? L('مشروع', 'Project')) : L('المشاريع والوحدات', 'Projects & units')}
+              {openView
+                ? (openView.name ?? L('مشروع', 'Project'))
+                : pick ? L('اختيار المشروع والوحدات', 'Choose project & units') : L('المشاريع والوحدات', 'Projects & units')}
             </h2>
             <p className="truncate text-[11px] text-charcoal/60">
               {openView
                 ? [openView.district, openView.city].filter(Boolean).join(isAr ? '، ' : ', ') || L('موقع غير محدد', 'No location')
-                : L('تصفّح بدون مغادرة المحادثة', 'Browse without leaving the conversation')}
+                : pick
+                  ? L('اختر المشروع ثم الوحدات', 'Pick the project, then its units')
+                  : L('تصفّح بدون مغادرة المحادثة', 'Browse without leaving the conversation')}
             </p>
           </div>
           <button
@@ -394,6 +426,7 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
               clientId={clientRec ? clientId ?? null : null}
               onSend={() => setSendTarget({ id: openView.id, name: openView.name ?? '' })}
               onAdd={() => void addToOptions(openView)}
+              pickUnits={pick?.withUnits ? { initial: unitsSeedFor(openView.id), onChange: setPickedUnitIds } : null}
             />
           </div>
         ) : (
@@ -571,6 +604,28 @@ export default function ProjectsUnitsBrowser({ clientId, chatWid, onClose }: Pro
               </div>
             )}
           </>
+        )}
+        {/* Pick mode: confirm the open project (+ its ticked units) back to the form. */}
+        {pick && openView && (
+          <div className="flex shrink-0 items-center gap-2 border-t border-sand/40 bg-white px-3 py-2.5">
+            <span className="min-w-0 flex-1 truncate text-xs text-charcoal/60">
+              {pick.withUnits
+                ? pickedUnitIds.length > 0
+                  ? L(`${pickedUnitIds.length} وحدة محددة`, `${pickedUnitIds.length} unit${pickedUnitIds.length === 1 ? '' : 's'} selected`)
+                  : L('حدّد الوحدات من الجدول، أو اختر المشروع وحده', 'Tick units in the table, or choose the project alone')
+                : openView.name}
+            </span>
+            <button
+              type="button"
+              onClick={() => pick.onPick({ projectId: openView.id, unitIds: pick.withUnits ? pickedUnitIds : [] })}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-terracotta"
+            >
+              <Check size={15} />
+              {pick.withUnits && pickedUnitIds.length > 0
+                ? L(`اختيار المشروع + ${pickedUnitIds.length} وحدة`, `Choose project + ${pickedUnitIds.length} unit${pickedUnitIds.length === 1 ? '' : 's'}`)
+                : L('اختيار هذا المشروع', 'Choose this project')}
+            </button>
+          </div>
         )}
       </div>
 
@@ -820,7 +875,7 @@ function ProjectRow({
 
 /** The opened project: facts, rep actions, then the real units inventory. */
 function ProjectDetail({
-  v, isAr, model, canAct, addState, chatPdf, clientId, onSend, onAdd,
+  v, isAr, model, canAct, addState, chatPdf, clientId, onSend, onAdd, pickUnits = null,
 }: {
   v: ProjectView;
   isAr: boolean;
@@ -831,6 +886,8 @@ function ProjectDetail({
   clientId: string | null;
   onSend: () => void;
   onAdd: () => void;
+  /** Pick mode: the unit checkboxes are the unit choice. */
+  pickUnits?: { initial: string[]; onChange: (ids: string[]) => void } | null;
 }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const img = useSignedImage(v.imageRef);
@@ -950,7 +1007,20 @@ function ProjectDetail({
           horizontally inside the sheet on narrow viewports. */}
       <div>
         <h3 className="mb-2 text-sm font-bold text-chocolate">{L('الوحدات', 'Units')}</h3>
-        <UnitsInventory projectId={v.id} projectName={v.name} isAr={isAr} project={v} chatPdf={chatPdf} clientId={clientId} />
+        {pickUnits && (
+          <p className="mb-2 text-xs text-charcoal/60">{L('حدّد الوحدات بمربع الاختيار بجانب كل وحدة.', 'Tick the box next to each unit you want.')}</p>
+        )}
+        <UnitsInventory
+          key={v.id}
+          projectId={v.id}
+          projectName={v.name}
+          isAr={isAr}
+          project={v}
+          chatPdf={chatPdf}
+          clientId={clientId}
+          initialSelectedIds={pickUnits?.initial}
+          onSelectionChange={pickUnits?.onChange}
+        />
       </div>
     </div>
   );

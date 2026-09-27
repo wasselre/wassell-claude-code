@@ -10,13 +10,13 @@ import { CalendarPlus, Loader2 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import ClientSearch, { type PickedToolClient } from '@/pages/Sales/components/ClientSearch';
+import { useProjectUnitsPicker, ProjectUnitsSummaryButton } from '@/pages/Records/components/ProjectUnitsPicker';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord, ModelField } from '@/types';
 
-// `units` sits right after `project_id` so the rep picks the project, then its
-// units. The field self-hides if the appointments model has no `units` field
-// (filtered out below), so this is safe before the migration lands.
-const APPT_FIELDS = ['project_id', 'units', 'appointment_date'] as const;
+// Project + units are one control (ProjectUnitsSummaryButton → the chat's
+// Projects & Units browser); only the date is a plain field.
+const APPT_FIELDS = ['appointment_date'] as const;
 
 interface QuickAppointmentModalProps {
   clientId: string | null;
@@ -63,6 +63,20 @@ export default function QuickAppointmentModal({ clientId, phone, salesRep, follo
     return APPT_FIELDS.map((slug) => all.find((f) => f.name === slug)).filter((f): f is ModelField => !!f);
   }, [apptModel]);
 
+  // Project + units are chosen in the chat's Projects & Units browser (pick mode)
+  // instead of the plain lookup + unit-card fields.
+  const projectField = useMemo(
+    () => apptModel?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === 'project_id'),
+    [apptModel],
+  );
+  const picker = useProjectUnitsPicker({
+    projectLookupModelId: projectField?.lookup_model_id,
+    projectValue: data.project_id,
+    unitIds: Array.isArray(data.units) ? (data.units as string[]) : [],
+    withUnits: true,
+    onChange: ({ projectValue, unitIds }) => setData((d) => ({ ...d, project_id: projectValue, units: unitIds })),
+  });
+
   if (!apptModel) return null;
 
   const setField = (slug: string, value: unknown) => setData((d) => ({ ...d, [slug]: value }));
@@ -89,6 +103,8 @@ export default function QuickAppointmentModal({ clientId, phone, salesRep, follo
   };
 
   return (
+    <>
+    {!picker.open && (
     <Modal open onClose={onClose} title={isAr ? 'حجز موعد' : 'Book an appointment'} maxWidth="max-w-lg">
       <div className="space-y-4">
         {pickClient && (
@@ -109,6 +125,10 @@ export default function QuickAppointmentModal({ clientId, phone, salesRep, follo
             )}
           </div>
         )}
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-charcoal/60">{isAr ? 'المشروع والوحدات' : 'Project & units'}</label>
+          <ProjectUnitsSummaryButton picker={picker} />
+        </div>
         {fields.map((field) => (
           <div key={field.id}>
             <label className="mb-1 block text-xs font-semibold text-charcoal/60">
@@ -142,5 +162,8 @@ export default function QuickAppointmentModal({ clientId, phone, salesRep, follo
         </div>
       </div>
     </Modal>
+    )}
+    {picker.browser}
+    </>
   );
 }

@@ -9,6 +9,7 @@ import LookupCombobox from './LookupCombobox';
 import LocationCascadeField from './LocationCascadeField';
 import ClientLocationField from './ClientLocationField';
 import UnitPickerField from './UnitPickerField';
+import { ProjectUnitsPickerField, BROWSER_UNIT_PICKER_MODELS } from './ProjectUnitsPicker';
 import PhoneInput from './PhoneInput';
 import DynamicCell from './DynamicCell';
 import AutoGrowTextarea from './AutoGrowTextarea';
@@ -486,8 +487,16 @@ export default function DynamicField({
         return <LocationCascadeField field={field} value={value} onChange={onChange} />;
       }
 
-      case 'unit_picker':
+      case 'unit_picker': {
+        // Appointments / visits choose project + units in the chat's Projects &
+        // Units browser; it writes the sibling project field too, so it needs
+        // `onPatch` — surfaces that don't thread it keep the plain picker.
+        const owner = modelId ? models.find((m) => m.id === modelId) : undefined;
+        if (owner && BROWSER_UNIT_PICKER_MODELS.has(owner.name) && onPatch) {
+          return <ProjectUnitsPickerField owner={owner} field={field} value={value} recordData={recordData} onPatch={onPatch} />;
+        }
         return <UnitPickerField field={field} value={value} onChange={onChange} recordData={recordData} />;
+      }
 
       case 'mirror': {
         const res = resolveMirror(field, recordData ?? null, records, models);
