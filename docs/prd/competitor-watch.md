@@ -1,7 +1,7 @@
 # PRD: Competitor Watch (مرصد المنافسين)
 
 **Status:** Live (all five surfaces: Content Library + Agents & runs, Content pipeline, Storage, Companies)
-**Last updated:** 2026-09-27 (**Companies surface rebuilt around the marketing read** — type, channels, cadence, format mix, dominant message, offers, projects and districts per competitor; «آخر نشاط» was our scrape time and is now «آخر نشر», theirs.) Previously 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
+**Last updated:** 2026-09-27 (**Relationships follow the project records** — a project's marketer in the CRM now becomes its marketer here automatically, and stale copies are retired; see `mkt_project_organizations` under «Data touched».) Also 2026-09-27 (**Companies surface rebuilt around the marketing read** — type, channels, cadence, format mix, dominant message, offers, projects and districts per competitor; «آخر نشاط» was our scrape time and is now «آخر نشر», theirs.) Previously 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
 
 > A NEW, from-scratch workspace that succeeds the **Marketing Intelligence**
 > page (`marketing-intelligence.md`), built because the operator found that page
@@ -55,7 +55,11 @@ that study the corpus (how competitors write posts, script reels, price offers).
 - **How a post gets its project (rebuilt 2026-09-13).** Two steps, both
   bounded. (1) A deterministic matcher in the worker builds a SMALL candidate
   list from the publisher's projects — the relationship table ∪ every catalog
-  project whose `developer` is the publisher (kept live by trigger). The whole
+  project whose `developer` is the publisher (kept live by trigger). Since
+  2026-09-27 the relationship table also follows each project's **marketer**
+  field, so a marketer such as ريفا gets every project the CRM says it markets
+  (it had 14 of its 20 our_projects before). Projects on the publisher's list
+  match on a partial mention; any other project needs its full name. The whole
   project name matched as a phrase (also `#hashtag_form`, parenthesised and
   dash-segment variants) is strong; a distinctive number is strong; ONE lone
   word is weak. The publisher's own brand words, district/city names and
@@ -195,10 +199,25 @@ Reads, plus two admin writes (`attribution_set`, `attribution_rerun`).
   as `confirmed` (method `manual`) and rejects the others. `mkt_attribution_review`
   (Y/N surface) delegates to it on accept. `mkt_enrichment_upsert` keeps a
   locked pointer on every machine write.
-- `mkt_project_organizations` — now synced from `all_projects.developer` by
-  `records_sync_developer_relationship` (records trigger) and
-  `mkt_organizations_sync_developer_relationships`; rows carry
-  `evidence.source = developer_field_sync`.
+- `mkt_project_organizations` — **follows the project records** (2026-09-27,
+  `2026-09-27_02_relationships_follow_project_records.sql`). The project record
+  is the source of truth for what it holds: `developer` rows come from
+  `all_projects.developer` via `mkt_organizations.developer_record_id`;
+  `authorized_marketer` rows come from `all_projects.marketer` via the new
+  `mkt_organizations.marketer_record_id` (a CRM marketer is linked to a
+  competitor company only on an unambiguous name match — `mkt_org_name_key`).
+  `mkt_sync_developer_relationships` runs on every project save
+  (`records_sync_developer_relationship`) and on a company's link / name / type
+  change (`mkt_organizations_sync_developer_relationships`). It no longer only
+  adds: a copy the record stops supporting is retired — a marketer the record no
+  longer names becomes `former_marketer`, anything else goes `is_active=false`
+  with the reason in `evidence`. The table still holds what one field can't:
+  observed marketers, former marketers, confidence, evidence. Rows a person
+  confirmed (`confirmed_by` set) are never changed. Every reader must filter
+  `is_active` — `mkt_content_org_attribute` and the four `api/marketing.ts`
+  reads now do. The 2026-07-22 import had written the project's developer in
+  as its marketer on 38 projects and flagged them `human_confirmed` with no
+  confirmer; those were retired.
 - `mkt_intelligence_evidence` — adds `organization_name`, `brand_tokens`,
   `sibling_projects`, `attribution_locked`; candidates carry `strength` /
   `ambiguous` / `matchedAliases`.

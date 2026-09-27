@@ -181,9 +181,12 @@ export default async function handler(req: Request): Promise<Response> {
           if (p?.published_at && new Date(p.published_at).getTime() >= monthAgo) thisMonth++;
           if (r.review_status === 'candidate') candidates++;
         }
+        // Current marketers only: a retired link (is_active=false) or a former
+        // marketer is history, not someone marketing the project now.
         const { count: marketerCount } = await sb.from('mkt_project_organizations')
           .select('id', { count: 'exact', head: true })
-          .eq('project_id', pid).neq('relationship_type', 'developer');
+          .eq('project_id', pid).eq('is_active', true)
+          .in('relationship_type', ['authorized_marketer', 'observed_marketer', 'internal_marketer']);
         return jsonOk({
           developer: { posts: devPosts, videos, images, this_month: thisMonth },
           competitors: { marketers: marketerCount ?? 0, posts: mktPosts },
@@ -245,7 +248,8 @@ export default async function handler(req: Request): Promise<Response> {
       case 'accounts': {
         const pid = str(body.project_id);
         let q = sb.from('mkt_project_organizations')
-          .select('relationship_type, human_confirmed, confidence, mkt_organizations!inner(id, name_ar, name_en, org_type, website, mkt_social_accounts(platform, handle, provider, scrape_status, last_synced_at, followers))');
+          .select('relationship_type, human_confirmed, confidence, mkt_organizations!inner(id, name_ar, name_en, org_type, website, mkt_social_accounts(platform, handle, provider, scrape_status, last_synced_at, followers))')
+          .eq('is_active', true);
         if (pid) q = q.eq('project_id', pid);
         const { data, error } = await q.limit(200);
         if (error) return jsonError(500, error.message);
@@ -300,7 +304,9 @@ export default async function handler(req: Request): Promise<Response> {
         const pid = str(body.project_id);
         if (!pid) return jsonError(400, 'project_id required');
         // insights for the developer orgs linked to this project
-        const { data: links } = await sb.from('mkt_project_organizations').select('organization_id').eq('project_id', pid);
+        const { data: links, error: linksErr } = await sb.from('mkt_project_organizations')
+          .select('organization_id').eq('project_id', pid).eq('is_active', true);
+        if (linksErr) return jsonError(500, linksErr.message);
         const orgIds = [...new Set((links ?? []).map((l) => l.organization_id as string))];
         if (orgIds.length === 0) return jsonOk({ insights: [] });
         const { data, error } = await sb.from('mkt_insights')
@@ -314,7 +320,9 @@ export default async function handler(req: Request): Promise<Response> {
       case 'project_campaigns': {
         const pid = str(body.project_id);
         if (!pid) return jsonError(400, 'project_id required');
-        const { data: links } = await sb.from('mkt_project_organizations').select('organization_id').eq('project_id', pid);
+        const { data: links, error: linksErr } = await sb.from('mkt_project_organizations')
+          .select('organization_id').eq('project_id', pid).eq('is_active', true);
+        if (linksErr) return jsonError(500, linksErr.message);
         const orgIds = [...new Set((links ?? []).map((l) => l.organization_id as string))];
         if (orgIds.length === 0) return jsonOk({ campaigns: [] });
         const { data, error } = await sb.from('mkt_ad_campaigns')
