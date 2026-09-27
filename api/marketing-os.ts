@@ -887,6 +887,9 @@ const CAPABILITIES = [
   // an approved package (revise_approved_content), and edit per-person
   // capacity / holidays / step effort (manage_capacity).
   'plan_campaign', 'approve_plan', 'decide_refresh', 'revise_approved_content', 'manage_capacity',
+  // Team KPIs (2026-09-27): see the team's numbers on «مهامي» › «الفريق» —
+  // separate from manage_performance, which can also approve deductions.
+  'view_team_kpis',
 ] as const;
 
 /** The notification channels a step may permit; AND-ed with each role's grid. */
@@ -5539,10 +5542,14 @@ export default async function handler(req: Request): Promise<Response> {
         // It used to start from `mos_content_v.owner_role`, a role filter that
         // disagreed with the manual-task half of this very handler — and which
         // cannot see a row task at all, because a row is not a content item.
-        // An administrator has no queue of their own, so they keep seeing the
-        // team board rather than an empty screen that reads as "nothing to do".
+        // «مهامي» is the caller's OWN queue for every role, administrators
+        // included (operator, 2026-09-27). An administrator's «مهامي» used to
+        // fall back to the whole team's board "rather than an empty screen" —
+        // which put other people's late work at the top of his own page under
+        // «متأخر», counted in HIS header as if it were his. The team's work is
+        // «الجميع» (scope 'team'); the team's numbers are «الفريق».
         const meUserId = await resolveAppUserId(sb, user.userId);
-        const teamBoard = scope === 'team' || (scope === 'mine' && myRole === 'administrator');
+        const teamBoard = scope === 'team';
         const queue = await readOpenQueueTasks(sb, {
           // Under an admin's role preview the queue is that ROLE's, not the
           // admin's own — display only, exactly as bootstrap treats the header.
@@ -5676,6 +5683,25 @@ export default async function handler(req: Request): Promise<Response> {
         });
         if ('fail' in manual) return manual.fail;
 
+        // Who holds each listed task, by name, so every row can say whose it
+        // is (operator, 2026-09-27: «I don't see my team's task»). Read for the
+        // assignees actually listed — workflow and hand-assigned alike — not
+        // for a directory, which leaves out anyone without a marketing role.
+        const assigneeIds = Array.from(new Set(
+          [
+            ...queue.tasks.map((t) => t.assignee_user_id),
+            ...(manual.rows as Array<{ assignee_user_id?: unknown }>).map((m) => m.assignee_user_id),
+          ].filter((v): v is string => typeof v === 'string' && v !== ''),
+        ));
+        let assignees: Array<{ user_id: string; name_ar: string | null; name_en: string | null }> = [];
+        if (assigneeIds.length > 0) {
+          const ur = await sb.from('users').select('id, name_ar, name_en').in('id', assigneeIds);
+          const uf = dbFail(ur.error);
+          if (uf) return uf;
+          assignees = ((ur.data ?? []) as Array<{ id: string; name_ar: string | null; name_en: string | null }>)
+            .map((u) => ({ user_id: u.id, name_ar: u.name_ar, name_en: u.name_en }));
+        }
+
         // The booked load behind this queue, from the one union view. A row is
         // already charged as three slots on ONE day in there.
         const ledger = await readWorkLedger(sb, {
@@ -5699,6 +5725,8 @@ export default async function handler(req: Request): Promise<Response> {
           ledger: ledger.ledger,
           scope: teamBoard ? 'team' : 'mine',
           me_user_id: meUserId,
+          // Added 2026-09-27: the names behind every listed assignee.
+          assignees,
         });
       }
 
@@ -10067,6 +10095,22 @@ export default async function handler(req: Request): Promise<Response> {
           work_ledger: deskLoad.ledger,
           user_capacity: capRes.data ?? [],
         });
+      }
+
+      /*
+       * «مهامي» › «الفريق» (2026-09-27) — the team's numbers, not its tasks:
+       * open / late / due today, finished and on time, time to finish,
+       * strikes, and 30 days of booked work against each person's daily
+       * limit. Read-only. Every number comes from ONE SQL definition,
+       * mos_team_kpis, which gates on view_team_kpis itself; the check here
+       * only turns a refusal into a clean 403.
+       */
+      case 'team_kpis': {
+        const gate = await requireCap(sb, 'view_team_kpis'); if (gate) return gate;
+        const period = str(body.period) === 'week' ? 'week' : 'month';
+        const res = await sb.rpc('mos_team_kpis', { p_period: period });
+        const f = dbFail(res.error); if (f) return f;
+        return jsonOk(res.data as Record<string, unknown>);
       }
 
       /* Decisions — all definer RPCs with their own gates. */

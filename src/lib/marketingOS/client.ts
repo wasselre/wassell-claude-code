@@ -3449,6 +3449,74 @@ export const fetchPerfMe = (): Promise<PerfMe> => call('perf_me');
 
 export const fetchPerfDesk = (): Promise<PerfDesk> => call('perf_desk');
 
+/* ── Team KPIs — «مهامي» › «الفريق» (2026-09-27) ────────────────────────
+   The team's numbers, not its tasks. Every figure comes from ONE SQL
+   definition (mos_team_kpis, gated on view_team_kpis). A task counts for the
+   person it is ASSIGNED to, whoever closed it; publishing never counts. */
+
+export type TeamKpiPeriod = 'month' | 'week';
+
+/** One bucket's booked work on one day, against the person's daily limit. */
+export interface TeamKpiLoad {
+  bucket: string;
+  units: number;
+  capacity: number;
+}
+
+export interface TeamKpiDay {
+  /** YYYY-MM-DD, Riyadh. */
+  day: string;
+  /** A weekend day or a holiday. */
+  off: boolean;
+  /** Approved leave. */
+  leave: boolean;
+  loads: TeamKpiLoad[];
+}
+
+/** The counters shared by the team total and each person. */
+export interface TeamKpiCounts {
+  open_now: number;
+  late_now: number;
+  blocked_now: number;
+  due_today: number;
+  /** Finished in the period. */
+  done: number;
+  /** Finished in the period, late (a strike, or after the deadline). */
+  done_late: number;
+  done_no_deadline: number;
+  /** Median hours from hand-off to done; null when nothing was finished. */
+  median_hours: number | null;
+  /** Lateness strikes recorded in the period. */
+  strikes: number;
+  /** Distinct tasks and bookings in the next 30 days. */
+  booked_items: number;
+  booked_units: number;
+}
+
+export interface TeamKpiPerson extends TeamKpiCounts {
+  user_id: string;
+  name_ar: string | null;
+  name_en: string | null;
+  /** Marketing role keys, without the mos_ prefix. */
+  roles: string[];
+  /** Today and the next 29 days. */
+  days: TeamKpiDay[];
+}
+
+export interface TeamKpis {
+  period: TeamKpiPeriod;
+  /** First day of the period, YYYY-MM-DD. */
+  from: string;
+  /** Last day of the period (today), YYYY-MM-DD. */
+  to: string;
+  horizon_days: number;
+  team: TeamKpiCounts;
+  people: TeamKpiPerson[];
+}
+
+export const fetchTeamKpis = (period: TeamKpiPeriod): Promise<TeamKpis> =>
+  call('team_kpis', { period });
+
 export const claimPerfReward = (rewardId: string): Promise<{ claim_id: string }> =>
   call('perf_reward_claim', { reward_id: rewardId });
 

@@ -117,6 +117,7 @@ const CAPABILITY_GROUPS: Array<{ ar: string; en: string; keys: Array<{ key: stri
     keys: [
       { key: 'enter_metrics', ar: 'إدخال الأرقام', en: 'Enter metrics' },
       { key: 'review_performance', ar: 'مراجعة الأداء', en: 'Review performance' },
+      { key: 'view_team_kpis', ar: 'رؤية أرقام الفريق', en: 'See team numbers' },
     ],
   },
   {

@@ -186,6 +186,16 @@ export interface MosWorkQueue {
   rows: MosRowFacts[];
   scope: 'mine' | 'team';
   me_user_id: string | null;
+  /** The names behind every listed assignee (added 2026-09-27), so each row
+   *  can say whose it is. Absent from an older server. */
+  assignees?: MosAssigneeName[];
+}
+
+/** A person holding a listed task, by name. */
+export interface MosAssigneeName {
+  user_id: string;
+  name_ar: string | null;
+  name_en: string | null;
 }
 
 export const fetchWorkQueue = (scope: 'mine' | 'team') =>

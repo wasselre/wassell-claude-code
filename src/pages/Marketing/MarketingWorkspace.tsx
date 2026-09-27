@@ -125,7 +125,9 @@ export type Capability =
   // commit it (which reserves people's days), settle a weekly creative refresh,
   // reopen an approved package, and edit capacity / holidays / step effort.
   | 'plan_campaign' | 'approve_plan' | 'decide_refresh'
-  | 'revise_approved_content' | 'manage_capacity';
+  | 'revise_approved_content' | 'manage_capacity'
+  // Team KPIs (2026-09-27): see the team's numbers on «مهامي» › «الفريق».
+  | 'view_team_kpis';
 
 const Ctx = createContext<WorkspaceCtx | null>(null);
 

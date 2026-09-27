@@ -2181,3 +2181,206 @@
 .mos-root .ring-copper\/30,
 .mos-root .ring-copper\/15,
 .mos-root .focus\:ring-copper\/30:focus { --tw-ring-color: color-mix(in srgb, var(--copper) 35%, transparent); }
+
+/* ── «مهامي» › «الفريق» — team KPIs (2026-09-27) ───────────────────────
+   Numbers, not tasks. Tokens only, so the dark palette above applies as-is.
+   One grid per person: name + six figures, then the 30-day strip across the
+   whole row. On a phone the figures wrap to three columns and each carries
+   its own label (the header row is hidden). */
+.mos-root .tk-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.mos-root .tk-range {
+  font-size: 12px;
+  color: var(--mute);
+}
+.mos-root .tk-dim {
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+.mos-root .tk-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.mos-root .tk-note {
+  font-size: 12px;
+  color: var(--mute);
+  margin: 10px 2px 18px;
+}
+.mos-root .tk-list {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.mos-root .tk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(6, minmax(0, 1fr));
+  gap: 6px 12px;
+  align-items: start;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mos-root .tk-row:last-child {
+  border-bottom: 0;
+}
+.mos-root .tk-head {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mute);
+  padding-block: 9px;
+}
+.mos-root .tk-person.click {
+  cursor: pointer;
+}
+.mos-root .tk-person.click:hover {
+  background: var(--sand-2);
+}
+.mos-root .tk-name {
+  min-width: 0;
+}
+.mos-root .tk-nm {
+  display: block;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: start;
+  cursor: inherit;
+  overflow-wrap: anywhere;
+}
+.mos-root button.tk-nm:focus-visible {
+  outline: 2px solid var(--copper);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.mos-root .tk-rl {
+  font-size: 11px;
+  color: var(--mute);
+}
+.mos-root .tk-go {
+  color: var(--copper);
+  margin-inline-start: 6px;
+}
+.mos-root .tk-cl {
+  display: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--mute);
+}
+.mos-root .tk-v {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.mos-root .tk-s {
+  font-size: 11px;
+  color: var(--mute);
+}
+.mos-root .tk-v.t-late,
+.mos-root .tk-s.t-late {
+  color: var(--late);
+}
+.mos-root .tk-v.t-wait {
+  color: var(--wait);
+}
+.mos-root .tk-v.t-go {
+  color: var(--go);
+}
+.mos-root .tk-bar2 {
+  height: 3px;
+  max-width: 90px;
+  margin-top: 4px;
+  background: var(--sand);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.mos-root .tk-bar2 i {
+  display: block;
+  height: 100%;
+}
+.mos-root .tk-strip {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(30, minmax(0, 1fr));
+  gap: 3px;
+  margin-top: 4px;
+}
+.mos-root .tk-d {
+  height: 12px;
+  border-radius: 3px;
+  background: var(--sand-2);
+}
+.mos-root .tk-d.today {
+  outline: 1.5px solid var(--ink);
+  outline-offset: 1px;
+}
+.mos-root .tk-d.lv-off {
+  background: transparent;
+  border: 1px dashed var(--line);
+}
+.mos-root .tk-d.lv-leave {
+  background: color-mix(in srgb, var(--calm) 40%, transparent);
+}
+.mos-root .tk-d.lv-light {
+  background: color-mix(in srgb, var(--copper) 30%, transparent);
+}
+.mos-root .tk-d.lv-busy {
+  background: color-mix(in srgb, var(--copper) 62%, transparent);
+}
+.mos-root .tk-d.lv-full {
+  background: var(--copper);
+}
+.mos-root .tk-d.lv-over {
+  background: var(--late);
+}
+.mos-root .tk-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 12px 2px 0;
+  font-size: 11px;
+  color: var(--mute);
+}
+.mos-root .tk-legend .tk-d {
+  display: inline-block;
+  width: 12px;
+  vertical-align: middle;
+  margin-inline-end: 5px;
+}
+.mos-root .tk-foot {
+  margin: 10px 2px 0;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--mute);
+}
+@media (max-width: 760px) {
+  .mos-root .tk-head {
+    display: none;
+  }
+  .mos-root .tk-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 12px;
+  }
+  .mos-root .tk-name {
+    grid-column: 1 / -1;
+  }
+  .mos-root .tk-cl {
+    display: block;
+  }
+  .mos-root .tk-strip {
+    gap: 2px;
+  }
+  .mos-root .tk-d {
+    height: 10px;
+    border-radius: 2px;
+  }
+}

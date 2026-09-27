@@ -7,14 +7,19 @@
  *   • pending leave requests + reward claims
  *   • blocked / late open tasks (+ mark blocked / unblock)
  *   • the team: XP totals + this-month late counters
- *   • the load heatmap: capacity vs tasks opened today, per role × bucket
+ *   • the team's load — a pointer to «مهامي» › «الفريق» (2026-09-27), which
+ *     shows each person's next 30 days against their daily limit from the same
+ *     ledger the capacity guard reads. The old table here counted tasks OPENED
+ *     today per role, a different number that would have contradicted it.
+ *     The structural demand-vs-capacity meter stays.
  *   • KPI bonus goals for this month (+ add / delete) with live status
  *   • the global toggles (observe mode, deductions, ratings…)
  */
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  PerfBucket, PerfDesk, PerfKpiGoal, PerfSettings, blockPerfTask, decidePerfDiscipline,
+  PerfDesk, PerfKpiGoal, PerfSettings, blockPerfTask, decidePerfDiscipline,
   decidePerfLeave, decidePerfReward, deletePerfKpiGoal, fetchPerfDesk, savePerfKpiGoal,
   savePerfSettings,
 } from '@/lib/marketingOS/client';
@@ -23,8 +28,6 @@ import { Empty, Field, LoadError, Modal, PageHead, Skeleton } from './components
 import { num } from './lib/format';
 import { computeDemand, type CapacityRow, type DemandLine } from './lib/coverage';
 import DemandMeter from './components/DemandMeter';
-
-const BUCKETS: readonly PerfBucket[] = ['post', 'video'];
 
 const fmtDate = (iso: string | null | undefined, isAr: boolean): string => {
   if (!iso) return '—';
@@ -35,6 +38,7 @@ const fmtDate = (iso: string | null | undefined, isAr: boolean): string => {
 
 export default function PerformanceDeskPage() {
   const { isAr, can } = useWorkspace();
+  const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
   const allowed = can('manage_performance');
 
@@ -122,16 +126,6 @@ export default function PerformanceDeskPage() {
     if (!p) return userId.slice(0, 8);
     return (isAr ? p.name_ar : p.name_en) ?? p.name_en ?? p.name_ar ?? userId.slice(0, 8);
   };
-
-  const openedToday = (roleKey: string, bucket: PerfBucket): number => {
-    if (!desk) return 0;
-    const today = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
-    return desk.open_tasks.filter((t) => t.role_key === roleKey && t.bucket === bucket
-      && t.opened_at && new Date(new Date(t.opened_at).getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10) === today).length;
-  };
-
-  const capacityOf = (roleId: string, bucket: PerfBucket): number =>
-    desk?.role_load.find((l) => l.role_id === roleId && l.bucket === bucket)?.daily_new_tasks ?? 0;
 
   const roleKeyById = (roleId: string): string =>
     (desk?.roles.find((r) => r.id === roleId)?.key ?? '').replace(/^mos_/, '');
@@ -311,42 +305,20 @@ export default function PerformanceDeskPage() {
               </div>
             </div>
 
-            {/* ── load heatmap + structural gap ───────────────────────── */}
+            {/* ── the team's load (→ «الفريق») + structural gap ─────────── */}
             <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-h"><h4>{isAr ? 'حمل اليوم مقابل الطاقة' : 'Today\'s load vs capacity'}</h4></div>
-              <div className="tbl-wrap">
-                <table className="tbl">
-                  <thead>
-                    <tr>
-                      <th>{isAr ? 'الدور' : 'Role'}</th>
-                      {BUCKETS.map((b) => (
-                        <th key={b} style={{ width: 160 }}>
-                          {b === 'post' ? (isAr ? 'منشورات' : 'Posts') : (isAr ? 'فيديوهات' : 'Videos')}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {desk.roles.map((r) => {
-                      const key = r.key.replace(/^mos_/, '');
-                      return (
-                        <tr key={r.id}>
-                          <td className="ttl">{isAr ? r.label_ar : r.label_en}</td>
-                          {BUCKETS.map((b) => {
-                            const cap = capacityOf(r.id, b);
-                            const used = openedToday(key, b);
-                            const over = cap > 0 && used >= cap;
-                            return (
-                              <td key={b} style={{ fontSize: 12, color: over ? 'var(--bad, #b3261e)' : undefined }}>
-                                {cap > 0 ? `${num(used, isAr)} / ${num(cap, isAr)}` : '—'}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="card-h"><h4>{isAr ? 'حمل الفريق' : 'The team’s load'}</h4></div>
+              <div className="card-b" style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 13, color: 'var(--mute)', maxWidth: 560 }}>
+                  {isAr
+                    ? 'حمل كل شخص للثلاثين يومًا القادمة مقابل طاقته اليومية، مع المفتوح والمتأخر والمنجز في الوقت — في «مهامي» › «الفريق».'
+                    : 'Each person’s next 30 days against their daily limit, with open, late and on-time work — in My work › Team.'}
+                </div>
+                {can('view_team_kpis') && (
+                  <button type="button" className="btn btn-sm" onClick={() => navigate('/m/my-work?view=kpis')}>
+                    {isAr ? 'افتح «الفريق»' : 'Open Team'}
+                  </button>
+                )}
               </div>
               <div className="card-b" style={{ display: 'grid', gap: 12 }}>
                 <DemandMeter lines={demandLines} isAr={isAr} />

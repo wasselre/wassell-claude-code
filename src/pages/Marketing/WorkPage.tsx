@@ -50,7 +50,7 @@ import {
   statusLabel,
 } from '@/lib/marketingOS/client';
 import {
-  MosRowFacts, MosSubjectTask, fetchWorkQueue,
+  MosAssigneeName, MosRowFacts, MosSubjectTask, fetchWorkQueue,
 } from '@/lib/marketingOS/rowClient';
 import { useWorkspace } from './MarketingWorkspace';
 import {
@@ -59,6 +59,7 @@ import {
 import ProjectLink from './components/ProjectLink';
 import { IconSearch } from './components/icons';
 import NewTaskModal from './components/NewTaskModal';
+import TeamKpiPanel from './components/TeamKpiPanel';
 import { usePreview } from './components/ContentPreviewModal';
 import RowPane from './components/RowPane';
 import { dateTimeShort, dayName, daysAgo, daysFromNow, num, shortDate } from './lib/format';
@@ -240,7 +241,7 @@ type QueueItem =
  */
 function RowCardRows({
   facts, task, members, open, overdue, isMine, faded, tone, isAr, projectLabel,
-  onToggle, onChanged, offered, starting, onStartEarly,
+  onToggle, onChanged, offered, starting, onStartEarly, holder,
 }: {
   facts: MosRowFacts;
   task: MosSubjectTask;
@@ -258,6 +259,8 @@ function RowCardRows({
   offered?: boolean;
   starting?: boolean;
   onStartEarly?: () => void;
+  /** Whose it is — «لدى سارة» — when it is not plainly the reader's. */
+  holder?: string | null;
 }) {
   const day = facts.batch_day;
   const general = facts.kind === 'general_row' || !facts.project_id;
@@ -282,6 +285,12 @@ function RowCardRows({
               : `Social media batch · ${day ? shortDate(day, false) : 'no day'} — ${general ? 'general' : projectLabel}`}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
+            {holder && (
+              <>
+                <b style={{ color: 'var(--ink-2)' }}>{holder}</b>
+                {members.length > 0 ? ' · ' : ''}
+              </>
+            )}
             {members.map((m, i) => (
               <span key={m.id}>
                 {i > 0 ? ' · ' : ''}
@@ -370,6 +379,8 @@ interface GroupCtx {
   isOffered: (it: QueueItem) => boolean;
   starting: string | null;
   startEarly: (taskId: string) => void;
+  /** Whose an item is — «لدى سارة» — or null when it is plainly the reader's. */
+  holderOf: (it: QueueItem) => string | null;
 }
 
 /**
@@ -396,7 +407,7 @@ function QueueGroup({
   const {
     isAr, myRole, typeLabel, projectName, openRowId, openPostId,
     expandRow, expandPost, taskFor, itemLate, itemMine, reload,
-    isOffered, starting, startEarly,
+    isOffered, starting, startEarly, holderOf,
   } = ctx;
   if (groupItems.length === 0) return null;
   return (
@@ -442,6 +453,7 @@ function QueueGroup({
                       offered={isOffered(it)}
                       starting={starting === task.id}
                       onStartEarly={() => startEarly(task.id)}
+                      holder={holderOf(it)}
                     />
                   );
                 }
@@ -449,6 +461,7 @@ function QueueGroup({
                 const task = taskFor(r.id);
                 const isMine = r.owner_role === myRole;
                 const open = openPostId === r.id;
+                const holder = holderOf(it);
                 return (
                   <Fragment key={`post:${r.id}`}>
                     <tr className="click" onClick={() => expandPost(open ? null : r.id)}>
@@ -464,6 +477,7 @@ function QueueGroup({
                           {statusLabel(r, isAr)} — {r.title}
                         </div>
                         <div style={{ fontSize: 11.5, color: 'var(--mute)', marginTop: 3 }}>
+                          {holder && <><b style={{ color: 'var(--ink-2)' }}>{holder}</b> · </>}
                           <span className="ltr">{r.ref}</span> · {typeLabel(r.content_type_key)}
                           {r.project_id && <> · <ProjectLink projectIds={[r.project_id]} variant="link" /></>}
                           {task && task.round > 1 && (
@@ -540,12 +554,15 @@ function QueueGroup({
 }
 
 export default function WorkPage() {
-  const { isAr, typeLabel, projectName, setBadge, people, surfaces } = useWorkspace();
+  const { isAr, typeLabel, projectName, setBadge, people, surfaces, can } = useWorkspace();
   const navigate = useNavigate();
   // The «الجميع» (everyone) view is the team board — visible only to roles whose
   // `team` surface is not hidden (CEO + marketing manager by default). Without
   // this gate the toggle let any role click through to everyone's tasks.
   const canSeeTeam = surfaces.team !== 'hidden';
+  // «الفريق» — the team's numbers — is its own capability (view_team_kpis,
+  // marketing manager + CEO by default), separate from seeing everyone's tasks.
+  const canSeeKpis = can('view_team_kpis');
   const isMobile = useIsMobile();
   const addToast = useAppStore((s) => s.addToast);
 
@@ -579,6 +596,14 @@ export default function WorkPage() {
   // Band B — my app-user id, to tell an OFFERED task (start it early) from an
   // assigned one; and the task whose early start is in flight.
   const [meUserId, setMeUserId] = useState<string | null>(null);
+  // The names behind every listed assignee (work_list.assignees, 2026-09-27) —
+  // it covers people the workspace directory leaves out (no marketing role).
+  const [assignees, setAssignees] = useState<MosAssigneeName[]>([]);
+  const nameOf = (uid: string): string | null => {
+    const p = assignees.find((x) => x.user_id === uid) ?? people.find((x) => x.user_id === uid);
+    if (!p) return null;
+    return (isAr ? (p.name_ar ?? p.name_en) : (p.name_en ?? p.name_ar)) ?? null;
+  };
   const [starting, setStarting] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<MosRole>('viewer');
   const [loading, setLoading] = useState(true);
@@ -590,7 +615,18 @@ export default function WorkPage() {
    * now: the same queue, the same row and item screens, over the whole team's
    * open work (`work_list` scope 'team' — the server already served it).
    */
-  const [scope, setScope] = useState<'mine' | 'team'>('mine');
+  const [params, setParams] = useSearchParams();
+  const [scope, setScope] = useState<'mine' | 'team'>(() => (params.get('person') ? 'team' : 'mine'));
+  /*
+   * «الفريق» (2026-09-27) — the team's NUMBERS, not its tasks: a third tab for
+   * roles holding view_team_kpis. It lives in the URL (`?view=kpis`) so the
+   * performance desk can link to it, and so the browser's Back returns to it
+   * from a person's tasks.
+   */
+  const showKpis = canSeeKpis && params.get('view') === 'kpis';
+  // «الجميع» narrowed to one person (`?person=`) — what clicking a person on
+  // «الفريق» opens. Only ever applied to the team board.
+  const personFilter = scope === 'team' ? params.get('person') : null;
   const [newTask, setNewTask] = useState(false);
   const [closing, setClosing] = useState<string | null>(null);
   // A task row opens the item's PREVIEW POPUP (the same one every other list
@@ -612,7 +648,6 @@ export default function WorkPage() {
   // carries; `?task=` is the task id, for a row you cannot name yet; `?item=` is
   // ONE content item (a paid creative) — what `/m/content/:id` forwards to now
   // that the old per-item page is gone.
-  const [params, setParams] = useSearchParams();
   const openRowId = params.get('row');
   const openTaskId = params.get('task');
   const openPostId = params.get('item');
@@ -633,6 +668,8 @@ export default function WorkPage() {
   };
 
   const load = useCallback(async () => {
+    // «الفريق» reads its own numbers; the queue is fetched when a queue tab opens.
+    if (showKpis) return;
     setLoading(true);
     setError(null);
     try {
@@ -643,6 +680,7 @@ export default function WorkPage() {
       setManual(res.manual_tasks ?? []);
       setPlanned(res.planned ?? []);
       setMeUserId(res.me_user_id ?? null);
+      setAssignees(res.assignees ?? []);
       setMyRole(res.role);
       // The rail badge counts EVERYTHING open for me. A ROW is ONE item, not
       // three: counting its members would tell the reader they have three times
@@ -657,7 +695,7 @@ export default function WorkPage() {
     } finally {
       setLoading(false);
     }
-  }, [setBadge, scope]);
+  }, [setBadge, scope, showKpis]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -712,7 +750,20 @@ export default function WorkPage() {
     ? it.row.owner_role === myRole
     : it.task.role === myRole);
 
-  const filtered = useMemo(() => items.filter(matches), [items, term, myRole]);
+  // A queue item belongs to a person through its open task: a row's own task,
+  // or a post's task (looked up here — `taskFor` is declared further down).
+  const ofPerson = (it: QueueItem): boolean => {
+    if (!personFilter) return true;
+    const t = it.kind === 'row'
+      ? it.task
+      : tasks.find((x) => x.subject_table !== 'mos_content_rows' && x.subject_id === it.row.id);
+    return t?.assignee_user_id === personFilter;
+  };
+
+  const filtered = useMemo(
+    () => items.filter((it) => matches(it) && ofPerson(it)),
+    [items, term, myRole, personFilter, tasks],
+  );
 
   /**
    * The PERMALINK case: the page was OPENED on a row that is not in this queue
@@ -904,10 +955,11 @@ export default function WorkPage() {
   // Late first, then by due date, then the undated — the same "start here"
   // ordering the workflow queue uses.
   const manualSorted = useMemo(() => {
+    const scoped = personFilter ? manual.filter((t) => t.assignee_user_id === personFilter) : manual;
     const list = term
-      ? manual.filter((t) => t.title.toLowerCase().includes(term)
+      ? scoped.filter((t) => t.title.toLowerCase().includes(term)
           || (t.details ?? '').toLowerCase().includes(term))
-      : manual;
+      : scoped;
     return [...list].sort((a, b) => {
       const la = manualOverdue(a) ? 0 : 1;
       const lb = manualOverdue(b) ? 0 : 1;
@@ -916,9 +968,11 @@ export default function WorkPage() {
       if (!b.due_at) return -1;
       return new Date(a.due_at).getTime() - new Date(b.due_at).getTime();
     });
-  }, [manual, term]);
+  }, [manual, term, personFilter]);
 
-  const manualLateCount = manual.filter(manualOverdue).length;
+  const manualLateCount = (personFilter
+    ? manual.filter((t) => t.assignee_user_id === personFilter)
+    : manual).filter(manualOverdue).length;
 
   const closeManual = async (id: string): Promise<void> => {
     setClosing(id);
@@ -976,6 +1030,10 @@ export default function WorkPage() {
   // deliberately kept OUT of this plain-text meta line to avoid showing twice.
   const manualMeta = (t: MosManualTask): string => {
     const bits: string[] = [];
+    if (t.assignee_user_id && t.assignee_user_id !== meUserId) {
+      const n = nameOf(t.assignee_user_id);
+      bits.push(isAr ? `مُسندة إلى ${n ?? 'شخص آخر'}` : `assigned to ${n ?? 'someone else'}`);
+    }
     if (t.details) bits.push(t.details);
     if (t.series_id) bits.push(isAr ? 'مهمة متكررة' : 'repeating');
     if (t.created_by_user_id) {
@@ -1012,7 +1070,9 @@ export default function WorkPage() {
     return (
       <>
         <div className="lbl" style={{ marginBottom: 9, color: manualLateCount > 0 ? 'var(--late)' : undefined }}>
-          {isAr ? 'مهام مُسندة إليك' : 'Assigned to you'}
+          {scope === 'team'
+            ? (isAr ? 'مهام مُسندة يدويًا' : 'Hand-assigned tasks')
+            : (isAr ? 'مهام مُسندة إليك' : 'Assigned to you')}
         </div>
         <div className="card" style={{ marginBottom: 22 }}>
           <div className="tbl-wrap">
@@ -1162,6 +1222,33 @@ export default function WorkPage() {
 
   const roleLabel = ROLE_LABELS[myRole] ? (isAr ? ROLE_LABELS[myRole].ar : ROLE_LABELS[myRole].en) : myRole;
 
+  /**
+   * «لدى سارة» — whose an item is (operator, 2026-09-27: on the team board no
+   * row said whose it was, so someone else's late work read as the reader's).
+   * On «مهامي» the reader's own items need no label; on «الجميع» they read
+   * «لديك». Offered-early items carry their own pill. Nobody yet → the plan
+   * has not handed it out, named by the role whose turn it is.
+   */
+  const holderOf = (it: QueueItem): string | null => {
+    const t = it.kind === 'row' ? it.task : taskFor(it.row.id);
+    if (itemOffered(it)) return null;
+    const uid = t?.assignee_user_id
+      ?? (it.kind === 'post' ? it.row.current_assignee_user_id : null)
+      ?? null;
+    if (uid && meUserId && uid === meUserId) {
+      return scope === 'team' ? (isAr ? 'لديك' : 'With you') : null;
+    }
+    if (uid) {
+      const n = nameOf(uid);
+      return isAr ? `لدى ${n ?? 'شخص آخر'}` : `With ${n ?? 'someone else'}`;
+    }
+    const role = (t?.role ?? (it.kind === 'post' ? it.row.owner_role : null)) as MosRole | null;
+    const rl = role ? ROLE_LABELS[role] : undefined;
+    return rl
+      ? (isAr ? `لم تُسند بعد · ${rl.ar}` : `Not handed out yet · ${rl.en}`)
+      : (isAr ? 'لم تُسند بعد' : 'Not handed out yet');
+  };
+
   const groupCtx: GroupCtx = {
     isAr,
     myRole,
@@ -1179,11 +1266,77 @@ export default function WorkPage() {
     isOffered: itemOffered,
     starting,
     startEarly: (id) => { void startEarly(id); },
+    holderOf,
   };
 
   // s28's phone header: «اليوم» + «الخميس ٣٠ يوليو · ٤ مفتوحة، ١ متأخرة».
   const todayIso = new Date().toISOString();
   const mOpen = mMine.length + mLate.length;
+
+  /* ── the tabs: «مهامي» · «الجميع» · «الفريق» ─────────────────────────
+     A tab switch that changes the URL is a history entry (Back returns to the
+     tab you came from); «مهامي» ↔ «الجميع» alone changes no URL and adds none.
+     Expanding a card stays a replace, as before. */
+  const goTab = (next: 'mine' | 'team' | 'kpis', person: string | null = null): void => {
+    const p = new URLSearchParams(params);
+    p.delete('row');
+    p.delete('task');
+    p.delete('item');
+    if (next === 'kpis') p.set('view', 'kpis'); else p.delete('view');
+    if (person) p.set('person', person); else p.delete('person');
+    if (p.toString() !== params.toString()) setParams(p);
+    if (next !== 'kpis') setScope(next);
+  };
+  // «الجميع» is a desktop board; the phone keeps its own queue.
+  const showEveryoneTab = canSeeTeam && !isMobile;
+  const teamHint = showEveryoneTab && canSeeKpis
+    ? (isAr ? 'مهام الفريق في «الجميع»، وأرقامه في «الفريق».' : 'The team’s tasks are under Everyone, and its numbers under Team.')
+    : showEveryoneTab
+      ? (isAr ? 'مهام الفريق في «الجميع».' : 'The team’s tasks are under Everyone.')
+      : canSeeKpis
+        ? (isAr ? 'أرقام الفريق في «الفريق».' : 'The team’s numbers are under Team.')
+        : undefined;
+  const tabs = (showEveryoneTab || canSeeKpis) ? (
+    <div className="seg">
+      <button type="button" className={!showKpis && scope === 'mine' ? 'on' : ''} onClick={() => goTab('mine')}>
+        {isAr ? 'مهامي' : 'Mine'}
+      </button>
+      {showEveryoneTab && (
+        <button type="button" className={!showKpis && scope === 'team' ? 'on' : ''} onClick={() => goTab('team')}>
+          {isAr ? 'الجميع' : 'Everyone'}
+        </button>
+      )}
+      {canSeeKpis && (
+        <button type="button" className={showKpis ? 'on' : ''} onClick={() => goTab('kpis')}>
+          {isAr ? 'الفريق' : 'Team'}
+        </button>
+      )}
+    </div>
+  ) : null;
+
+  // The person «الجميع» is narrowed to, by name, for the removable chip.
+  const personLabel = (() => {
+    if (!personFilter) return '';
+    const p = people.find((x) => x.user_id === personFilter);
+    const name = p ? (isAr ? (p.name_ar ?? p.name_en) : (p.name_en ?? p.name_ar)) : null;
+    return name ?? personFilter.slice(0, 8);
+  })();
+
+  if (showKpis) {
+    return (
+      <>
+        <PageHead
+          title={isAr ? 'الفريق' : 'Team'}
+          sub={isAr ? 'أرقام الفريق، لا مهامه' : 'The team’s numbers, not its tasks'}
+        >
+          {tabs}
+        </PageHead>
+        <div className="body">
+          <TeamKpiPanel onOpenPerson={showEveryoneTab ? (id) => goTab('team', id) : undefined} />
+        </div>
+      </>
+    );
+  }
 
   if (isMobile) {
     return (
@@ -1194,6 +1347,7 @@ export default function WorkPage() {
             ? `${dayName(todayIso, true)} ${shortDate(todayIso, true)} · ${num(mOpen + manualSorted.length, true)} مفتوحة، ${num(mLate.length + manualLateCount, true)} متأخرة`
             : `${dayName(todayIso, false)} ${shortDate(todayIso, false)} · ${mOpen + manualSorted.length} open, ${mLate.length + manualLateCount} late`}
         >
+          {tabs}
           <button type="button" className="btn btn-p btn-sm" onClick={() => setNewTask(true)}>
             {isAr ? 'مهمة جديدة' : 'New task'}
           </button>
@@ -1242,6 +1396,7 @@ export default function WorkPage() {
             && manualSorted.length === 0 && (
             <Empty
               title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
+              body={teamHint}
             />
           )}
 
@@ -1478,21 +1633,17 @@ export default function WorkPage() {
   return (
     <ThumbSigner rows={rows}>
       <PageHead
-        title={isAr ? 'مهامي' : 'My work'}
-        sub={isAr
-          ? `${roleLabel} · ${num(mine.length + late.length + manualSorted.length, true)} مفتوحة، ${num(late.length + manualLateCount, true)} متأخرة`
-          : `${roleLabel} · ${mine.length + late.length + manualSorted.length} open, ${late.length + manualLateCount} late`}
+        title={scope === 'team' ? (isAr ? 'مهام الفريق' : 'Team tasks') : (isAr ? 'مهامي' : 'My work')}
+        sub={scope === 'team'
+          // The team board counts EVERYONE's open work — never as the reader's.
+          ? (isAr
+            ? `${personFilter ? personLabel : 'الفريق كله'} · ${num(filtered.length + manualSorted.length, true)} مفتوحة، ${num(late.length + manualLateCount, true)} متأخرة`
+            : `${personFilter ? personLabel : 'Whole team'} · ${filtered.length + manualSorted.length} open, ${late.length + manualLateCount} late`)
+          : isAr
+            ? `${roleLabel} · ${num(mine.length + late.length + manualSorted.length, true)} مفتوحة، ${num(late.length + manualLateCount, true)} متأخرة`
+            : `${roleLabel} · ${mine.length + late.length + manualSorted.length} open, ${late.length + manualLateCount} late`}
       >
-        {canSeeTeam && (
-          <div className="seg">
-            <button type="button" className={scope === 'mine' ? 'on' : ''} onClick={() => setScope('mine')}>
-              {isAr ? 'مهامي' : 'Mine'}
-            </button>
-            <button type="button" className={scope === 'team' ? 'on' : ''} onClick={() => setScope('team')}>
-              {isAr ? 'الجميع' : 'Everyone'}
-            </button>
-          </div>
-        )}
+        {tabs}
         {/* Everyone can give themselves a task; assigning to someone else is
             gated inside the modal by the `assign_task` capability. */}
         <button type="button" className="btn btn-p" onClick={() => setNewTask(true)}>
@@ -1503,7 +1654,9 @@ export default function WorkPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={isAr ? 'ابحث في مهامي' : 'Search my work'}
+            placeholder={scope === 'team'
+              ? (isAr ? 'ابحث في مهام الفريق' : 'Search team tasks')
+              : (isAr ? 'ابحث في مهامي' : 'Search my work')}
           />
         </div>
       </PageHead>
@@ -1515,10 +1668,24 @@ export default function WorkPage() {
         {linkedRow}
           {linkedItem}
 
+        {personFilter && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            <button type="button" className="fbtn on" onClick={() => goTab('team')}>
+              {isAr ? `مهام ${personLabel}` : `${personLabel}’s tasks`}
+              <span className="x" aria-label={isAr ? 'إزالة' : 'Remove'}>×</span>
+            </button>
+          </div>
+        )}
+
         {!loading && filtered.length === 0
           && manualSorted.length === 0 && !error && (
           <Empty
-            title={isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you'}
+            title={personFilter
+              ? (isAr ? `لا مهام مفتوحة لدى ${personLabel}` : `${personLabel} has nothing open`)
+              : scope === 'team'
+                ? (isAr ? 'لا مهام مفتوحة عند الفريق' : 'Nothing open across the team')
+                : (isAr ? 'لا مهام مفتوحة لديك' : 'Nothing open for you')}
+            body={scope === 'mine' ? teamHint : undefined}
           />
         )}
 
