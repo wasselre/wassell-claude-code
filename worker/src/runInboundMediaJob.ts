@@ -34,11 +34,21 @@ export interface InboundMediaJob {
   mime: string | null;
   kind: string | null;
   attempts: number;
+  /** The webhook's decision (isNew && !isOps && has-phone) that this inbound
+   *  should drive the basic bot. For a voice note the webhook skips its own
+   *  immediate basic-reply call and lets the transcript drive the answer here. */
+  triggerBot: boolean;
 }
 
 interface Deps {
   supabase: SupabaseClient;
-  env: { WAHA_URL?: string | null; WAHA_API_KEY?: string | null; WORKER_ID: string };
+  env: {
+    WAHA_URL?: string | null;
+    WAHA_API_KEY?: string | null;
+    WORKER_ID: string;
+    APP_URL?: string | null;
+    WHATSAPP_AI_SECRET?: string | null;
+  };
   job: InboundMediaJob;
 }
 
@@ -97,6 +107,7 @@ export async function runInboundMediaJob({ supabase, env, job }: Deps): Promise<
 
     // Voice note → transcribe (fal wizper, auto-detect language). A failure here
     // never fails the job: the audio is saved and playable regardless.
+    let transcriptText = '';
     if (isAudio(job.kind, job.mime)) {
       try {
         const { data: signed, error: signErr } = await supabase.storage.from(BUCKET).createSignedUrl(target, 600);
@@ -105,15 +116,26 @@ export async function runInboundMediaJob({ supabase, env, job }: Deps): Promise<
           track: { area: 'sales', callSite: 'worker/runInboundMediaJob' },
           language: null, // fal auto-detect — inbound is Saudi Arabic, sometimes mixed/English
         });
-        const text = (t.text ?? '').trim();
+        transcriptText = (t.text ?? '').trim();
         await supabase.from('chat_messages').update({
-          transcript: text || null,
+          transcript: transcriptText || null,
           transcript_lang: t.language ?? null,
-          transcript_status: text ? 'done' : 'none',
+          transcript_status: transcriptText ? 'done' : 'none',
         }).eq('id', job.messageId);
       } catch (e) {
         await supabase.from('chat_messages').update({ transcript_status: 'failed' }).eq('id', job.messageId);
         console.error(`[inbound-media] transcribe failed msg=${job.messageId}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      // Now that the voice note is transcribed, let it DRIVE the basic bot — the
+      // webhook deliberately skipped its own immediate reply for audio (which
+      // could only ever hand off). A non-empty transcript is fed as the trigger
+      // message so classify() answers it like a typed message; on empty/failed we
+      // still fire with a null message, reproducing the media hand-off so the
+      // customer is never left without a reply. Fire-and-forget: never fails the
+      // job (the bytes + transcript are already saved).
+      if (job.triggerBot) {
+        await driveBot({ supabase, env, job, transcript: transcriptText || null });
       }
     }
 
@@ -124,5 +146,55 @@ export async function runInboundMediaJob({ supabase, env, job }: Deps): Promise<
     console.error(`[inbound-media] job=${job.id} error: ${msg}`);
     await failJob(msg, true);
     throw err;
+  }
+}
+
+/**
+ * POST the transcribed voice note to the basic bot so it answers like a typed
+ * message. Fire-and-forget by contract: any failure is logged and swallowed —
+ * the media + transcript are already durably saved, and a bot hiccup must not
+ * fail (or requeue) the media job. basic-reply re-checks its own gate
+ * (should_reply: kill switch / working hours / human-active / reply cap), so a
+ * late trigger after a human has replied is correctly skipped there.
+ */
+async function driveBot(
+  { supabase, env, job, transcript }: Deps & { transcript: string | null },
+): Promise<void> {
+  try {
+    const chatWid = (job.chatWid ?? '').trim();
+    const base = (env.APP_URL ?? '').replace(/\/+$/, '');
+    const secret = env.WHATSAPP_AI_SECRET ?? '';
+    if (!chatWid || !base || !secret) {
+      if (!secret) console.warn('[inbound-media] WHATSAPP_AI_SECRET unset — not driving bot');
+      return;
+    }
+    // The counterparty phone lives on the stored message; basic-reply needs it to
+    // resolve the device + recipient. chat_record_id is derived by basic-reply
+    // from chat_wid when omitted.
+    const { data: msg } = await supabase
+      .from('chat_messages')
+      .select('from_phone')
+      .eq('id', job.messageId)
+      .maybeSingle();
+    const phone = (msg as { from_phone?: string | null } | null)?.from_phone ?? null;
+
+    const res = await fetch(`${base}/api/whatsapp/basic-reply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-wassel-ai-secret': secret },
+      body: JSON.stringify({
+        chat_wid: chatWid,
+        trigger_message: transcript, // null on empty/failed → media hand-off fallback
+        device_id: job.session,
+        phone,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) {
+      console.error(`[inbound-media] basic-reply ${res.status} for msg=${job.messageId}`);
+    } else {
+      console.log(`[inbound-media] drove bot for msg=${job.messageId} (transcript=${transcript ? 'yes' : 'none'})`);
+    }
+  } catch (e) {
+    console.error(`[inbound-media] driveBot failed msg=${job.messageId}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }

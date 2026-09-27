@@ -249,6 +249,14 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
 
   const { isNew } = await upsertChatMessage(row);
 
+  // Would this inbound normally trigger the basic bot? (Same gate as the
+  // basic-reply block far below.) For a VOICE NOTE we defer that trigger to the
+  // transcription worker so the transcript can drive a real answer instead of an
+  // immediate "we got your media" hand-off — set true only once the media job is
+  // safely enqueued, so an enqueue failure falls back to the immediate reply.
+  const botEligible = flow === 'in' && isNew && !!counterpartyPhone && !isOps;
+  let deferBotToTranscription = false;
+
   // Proactively mirror WAHA-hosted media the instant it arrives, while the
   // gateway still holds its transient /api/files copy (it evicts within minutes).
   // Covers INBOUND client media — photos/voice notes/documents — which had no
@@ -266,13 +274,19 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     if (flow === 'in') {
       try {
         const svc = getServiceSupabase();
+        // For a voice note the worker drives the bot after transcribing, so carry
+        // the bot-eligibility decision onto the job.
+        const triggerBot = kind === 'audio' && botEligible;
         await svc.rpc('inbound_media_enqueue', {
           p_message_id: p.id, p_chat_wid: chatWid, p_session: session,
-          p_fname: fname, p_mime: mime, p_kind: kind,
+          p_fname: fname, p_mime: mime, p_kind: kind, p_trigger_bot: triggerBot,
         });
         if (kind === 'audio') {
           // Show "جارٍ التفريغ…/transcribing…" at once; the worker flips it to done/none/failed.
           await svc.from('chat_messages').update({ transcript_status: 'pending' }).eq('id', p.id);
+          // The job is queued — let the transcript drive the bot; skip the
+          // immediate media hand-off below.
+          if (triggerBot) deferBotToTranscription = true;
         }
       } catch (e) {
         console.error('[waha-webhook] inbound_media_enqueue failed:', e instanceof Error ? e.message : String(e));
@@ -379,7 +393,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // Requires a phone: the agent qualifies the lead against the client record,
   // which is matched by number. A LID-only chat has nothing to match on, so
   // storing the message (above) is the whole job here.
-  if (flow === 'in' && isNew && counterpartyPhone && !isOps) {
+  if (flow === 'in' && isNew && counterpartyPhone && !isOps && !deferBotToTranscription) {
     // Route to the BASIC responder (fast, deterministic + one Kimi fallback — no
     // Claude session). It internally delegates to the heavy Claude-session queue
     // (whatsapp_ai_enqueue) only when responder_mode='agent'. The isNew guard

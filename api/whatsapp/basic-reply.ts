@@ -31,6 +31,7 @@ import { trackedAnthropic } from '../_lib/aiUsage.js';
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { enqueueAiReply } from '../_lib/aiSend.js';
 import { sendProjectViaAiFlow } from '../_lib/aiSendProject.js';
+import { uuidV5FromWidSync } from '../_lib/chatIngest.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -249,6 +250,9 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 
   const chatWid = (body.chat_wid ?? '').trim();
   if (!chatWid) return jsonRes(nodeRes, 400, { error: 'chat_wid is required' });
+  // The transcription worker triggers us without a chat_record_id — derive the
+  // same deterministic id the webhook uses so agent-mode delegation is unaffected.
+  const chatRecordId = body.chat_record_id ?? uuidV5FromWidSync(chatWid);
 
   const supa = getServiceSupabase();
 
@@ -257,7 +261,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   if ((settings?.responder_mode ?? 'basic') === 'agent') {
     const { error: enqErr } = await supa.rpc('whatsapp_ai_enqueue', {
       p_chat_wid: chatWid,
-      p_chat_record_id: body.chat_record_id ?? null,
+      p_chat_record_id: chatRecordId,
       p_phone: body.phone ?? null,
       p_device_id: body.device_id ?? null,
       p_trigger_message: body.trigger_message ?? null,

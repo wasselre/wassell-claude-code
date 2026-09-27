@@ -954,12 +954,14 @@ async function claimAndRunOneInboundMedia(): Promise<boolean> {
   const rows = (data ?? []) as Array<{
     id: string; message_id: string; chat_wid: string | null; session: string;
     fname: string; mime: string | null; kind: string | null; attempts: number;
+    trigger_bot: boolean | null;
   }>;
   if (rows.length === 0) return false;
   const r = rows[0]!;
   const job: InboundMediaJob = {
     id: r.id, messageId: r.message_id, chatWid: r.chat_wid, session: r.session,
     fname: r.fname, mime: r.mime, kind: r.kind, attempts: r.attempts,
+    triggerBot: r.trigger_bot ?? false,
   };
   try {
     await runInboundMediaJob({ supabase, env, job });

@@ -60,6 +60,11 @@ export interface WorkerEnv {
    *  while the features are inert. Set it (matching the Vercel prod env) to
    *  turn them on. */
   WORKFLOW_RUNNER_SECRET: string | null;
+  /** Shared secret for the worker→app basic-bot surface: POST
+   *  /api/whatsapp/basic-reply, fired after a voice note is transcribed so the
+   *  transcript drives the bot the same way typed text does. When UNSET the
+   *  inbound-media lane still saves + transcribes but does not drive the bot. */
+  WHATSAPP_AI_SECRET: string | null;
   /** LOCAL PROOF MODE: when '1', the worker registers ONLY the workflow loop
    *  (skips deck/image/preview/compress/document/migration/reports/conflict),
    *  so the real worker code can be run locally against a preview endpoint
@@ -156,6 +161,7 @@ export function loadEnv(): WorkerEnv {
     SOFFICE_BIN: process.env.SOFFICE_BIN ?? 'soffice',
     GS_BIN: process.env.GS_BIN ?? 'gs',
     APP_URL: process.env.APP_URL ?? 'https://app.wassel.re',
+    WHATSAPP_AI_SECRET: process.env.WHATSAPP_AI_SECRET ?? null,
     WORKFLOW_RUNNER_SECRET: process.env.WORKFLOW_RUNNER_SECRET ?? null,
     WORKFLOW_PROOF_ONLY: process.env.WORKFLOW_PROOF_ONLY === '1',
     BROWSERBASE_API_KEY: process.env.BROWSERBASE_API_KEY ?? null,

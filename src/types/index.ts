@@ -2257,6 +2257,16 @@ export interface ChatMessage {
   media_caption: string | null;
   reference: string | null;
   quoted: { wid: string; body: string | null; kind: string } | null;
+  /** Voice-note transcription (inbound audio, fal wizper via the Fly worker).
+   *  `transcript_status`: pending = queued/in-flight, done = text present,
+   *  none = decoded but silent/empty, failed = transcription errored. The audio
+   *  itself is always playable from the durable mirror regardless of this. */
+  transcript?: string | null;
+  transcript_lang?: string | null;
+  transcript_status?: 'pending' | 'done' | 'none' | 'failed' | null;
+  /** True once the media bytes are durably saved to our own bucket (survives the
+   *  gateway evicting its transient copy). */
+  media_saved?: boolean | null;
   /** Optimistic placeholder — true between send click and webhook ack. */
   pending?: boolean;
   /** Local correlation key used to match the optimistic placeholder to

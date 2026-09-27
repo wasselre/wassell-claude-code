@@ -237,7 +237,7 @@ function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean 
     );
   }
 
-  // Audio — compact inline player.
+  // Audio — compact inline player + voice-note transcription (fal wizper).
   if (kind === 'audio' || mime.startsWith('audio/')) {
     return (
       <div>
@@ -251,6 +251,7 @@ function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean 
           // decoded fine — readyState 4, real duration). Reported live 2026-07-19.
           <audio src={url} controls className="w-[260px] max-w-full" />
         )}
+        <AudioTranscript message={message} isAr={isAr} />
         {caption && (
           <p className="text-sm mt-1.5 whitespace-pre-wrap break-words">{caption}</p>
         )}
@@ -292,6 +293,55 @@ function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean 
       )}
     </div>
   );
+}
+
+/**
+ * Voice-note transcription, shown under the audio player. The bytes are always
+ * playable (durable mirror); this is the machine-read text so a rep can skim a
+ * voice note without listening and the AI can act on it. `pending` shows a
+ * spinner while the worker runs; `failed` is a muted note, never red — nothing
+ * is broken and there's nothing for the rep to do. `none` (silent clip) shows
+ * nothing.
+ */
+function AudioTranscript({ message, isAr }: { message: ChatMessage; isAr: boolean }) {
+  const status = message.transcript_status;
+  const text = (message.transcript ?? '').trim();
+
+  if (status === 'pending') {
+    return (
+      <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-charcoal/50">
+        <Loader2 size={12} className="animate-spin" />
+        <span>{isAr ? 'جارٍ تحويل الرسالة الصوتية إلى نص…' : 'Transcribing voice note…'}</span>
+      </div>
+    );
+  }
+
+  if (status === 'done' && text) {
+    // Follow the DETECTED language of the speech, not the UI language — a rep on
+    // an English UI still reads an Arabic voice note right-to-left.
+    const dir = message.transcript_lang === 'en' ? 'ltr' : message.transcript_lang === 'ar' ? 'rtl' : (isAr ? 'rtl' : 'ltr');
+    return (
+      <div className="mt-1.5 rounded-lg bg-charcoal/[0.04] border-s-2 border-copper/40 px-2.5 py-1.5">
+        <div className="flex items-center gap-1 text-[10px] font-medium text-charcoal/45 mb-0.5">
+          <Mic size={10} />
+          <span>{isAr ? 'النص' : 'Transcript'}</span>
+        </div>
+        <p dir={dir} className="text-[13px] leading-relaxed text-charcoal/80 whitespace-pre-wrap break-words">
+          {text}
+        </p>
+      </div>
+    );
+  }
+
+  if (status === 'failed') {
+    return (
+      <div className="mt-1.5 text-[11px] text-charcoal/40">
+        {isAr ? 'تعذّر تحويل الصوت إلى نص' : 'Could not transcribe audio'}
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // ─── Media fetching hook ────────────────────────────────────────────

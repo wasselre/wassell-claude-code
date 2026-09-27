@@ -1426,6 +1426,10 @@ interface DbChatMessageRow {
   media_caption: string | null;
   reference: string | null;
   quoted: ChatMessage['quoted'];
+  transcript: string | null;
+  transcript_lang: string | null;
+  transcript_status: ChatMessage['transcript_status'];
+  media_saved: boolean | null;
 }
 
 /** Map a `chat_messages` table row to the store's ChatMessage shape. Shared
@@ -1448,6 +1452,10 @@ function dbRowToChatMessage(row: DbChatMessageRow): ChatMessage {
     media_caption: row.media_caption,
     reference: row.reference,
     quoted: row.quoted,
+    transcript: row.transcript ?? null,
+    transcript_lang: row.transcript_lang ?? null,
+    transcript_status: row.transcript_status ?? null,
+    media_saved: row.media_saved ?? null,
   };
 }
 
