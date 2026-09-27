@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolveAnchor, parseDirection, placeKey, roadKey, type ResolverDb, type ResolutionContext, type DistrictCandidate, type ElementCandidate } from '../resolver.js';
 import type { AnchorToken } from '../ontology.js';
+import { latinVariants } from '../latinNames.js';
 
 /**
  * Unit tests for the anchor→geometry resolver. Everything runs against a
@@ -25,6 +26,9 @@ const DISTRICTS: DistrictCandidate[] = [
   // Official spellings a customer mangles: «النرجس» said as «نرجس», «المحمدية» typed «المحمديه».
   mkDistrict('d-narjis-ryd', 'حي النرجس', 'An Narjis', 'الرياض', 'الرياض', 'منطقة الرياض', 'SA', 24.85, 46.65),
   mkDistrict('d-mohammadiyah', 'حي المحمدية', 'Al Mohammadiyah', 'الرياض', 'الرياض', 'منطقة الرياض', 'SA', 24.73, 46.65),
+  // English-letter spellings (calib-003, 2026-09-27): the customer types «Malga».
+  mkDistrict('d-malqa', 'حي الملقا', 'Al Malqa Dist.', 'الرياض', 'الرياض', 'منطقة الرياض', 'SA', 24.80, 46.60),
+  mkDistrict('d-yasmin', 'حي الياسمين', 'Al Yasmeen Dist.', 'الرياض', 'الرياض', 'منطقة الرياض', 'SA', 24.83, 46.63),
 ];
 
 const KING_FAHD_ROAD: ElementCandidate = {
@@ -50,10 +54,11 @@ function fold(s: string): string {
   return s.replace(/^\s*حي\s+/, '').replace(/ـ/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').trim().toLowerCase();
 }
 function matchIlike(rows: DistrictCandidate[], token: string): DistrictCandidate[] {
-  const t = fold(token.replace(/^\s*حي\s+/, ''));
+  // The real port also tries the Latin spelling variants (resolverDb.ilikeModel).
+  const ts = [token, ...latinVariants(token)].map((v) => fold(v.replace(/^\s*حي\s+/, '')));
   return rows.filter((r) => {
     const na = fold(r.name_ar), ne = fold(r.name_en);
-    return na.includes(t) || t.includes(na) || ne.includes(t) || t.includes(ne);
+    return ts.some((t) => na.includes(t) || t.includes(na) || ne.includes(t) || t.includes(ne));
   });
 }
 
@@ -290,6 +295,20 @@ describe('resolveAnchor — article-insensitive and spelling-tolerant district m
     const r = await resolveAnchor(anchor('district', 'المحمديه'), ctx({ established_city: 'الرياض' }));
     expect(r.status).toBe('resolved');
     expect(r.recipe?.resolved_element_ids).toEqual(['d-mohammadiyah']);
+  });
+  it('«Malga» (English letters, g for ق) resolves «حي الملقا» through its English name', async () => {
+    const r = await resolveAnchor(anchor('district', 'Malga'), ctx({ established_city: 'الرياض' }));
+    expect(r.status).toBe('resolved');
+    expect(r.recipe?.resolved_element_ids).toEqual(['d-malqa']);
+  });
+  it('«Yasmin» resolves «حي الياسمين» («Al Yasmeen Dist.»)', async () => {
+    const r = await resolveAnchor(anchor('district', 'Yasmin'), ctx({ established_city: 'الرياض' }));
+    expect(r.status).toBe('resolved');
+    expect(r.recipe?.resolved_element_ids).toEqual(['d-yasmin']);
+  });
+  it('an English spelling that matches nothing exactly is NOT guessed («Malqah» ≠ «Al Mahdiyah»)', async () => {
+    const r = await resolveAnchor(anchor('district', 'Mahdi'), ctx({ established_city: 'الرياض' }));
+    expect(r.status).not.toBe('resolved');
   });
   it('a mangled normalized_token falls back to the verbatim span', async () => {
     const r = await resolveAnchor(anchor('district', 'المهدية', 'المهديه_'), ctx());

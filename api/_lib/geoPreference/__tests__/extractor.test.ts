@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
   extract, parseExtractorOutput, buildExtractionUserText, attributeMentionSource,
-  CALL_TRANSCRIPT_RULES, CALL_LABELLED_RULES, type Conversation,
+  CALL_TRANSCRIPT_RULES, CALL_LABELLED_RULES, projectGuardRules, type Conversation,
 } from '../extractor.js';
 import { isActivePreference, type Evidence, type EvidenceRelation } from '../ontology.js';
 
@@ -195,6 +195,53 @@ describe('per-mention provenance — channel from the conversation, ref/timestam
     const { evidence } = parseExtractorOutput(raw, { channel: 'chat', ref: 'wid-2', timestamp: '' }, conv);
     expect(evidence.map((e) => e.source.ref)).toEqual(['x1', 'x2']);
     expect(evidence.map((e) => e.source.timestamp)).toEqual(['2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z']);
+  });
+});
+
+describe('project-name guard — OUR projects are not places (calib-003, 2026-09-27)', () => {
+  const HEADS = ['مينا 52', 'الماجديه 163'];
+  const src = { channel: 'chat' as const, ref: 'msg-1', timestamp: '' };
+  const ev = (id: string, mention_span: string, anchors: Array<[string, string]>) => ({
+    id, mention_span,
+    anchors: anchors.map(([span, anchor_type]) => ({ anchor_type, span, normalized_token: span })),
+    speaker: 'client', preference_holder: 'client', holder_role: 'buyer', quoted_speaker: 'none',
+    dialogue_act: 'statement', conditionality: 'asserted', temporal_reference: 'none_explicit',
+    preference_applicability: 'active', preference_role: 'positive', commitment: 'preferred',
+    hardness_evidence: 'none', modality: 'explicit',
+  });
+
+  it('drops a mention whose only anchor is a project (pin «مينا 52»), and the relation that pointed at it', () => {
+    const raw = JSON.stringify({
+      evidence: [ev('e1', 'مشروع مينا 52', [['مينا 52', 'pin']]), ev('e2', 'النرجس', [['النرجس', 'district']])],
+      relations: [{ id: 'r1', relation: 'any_of', members: [{ type: 'evidence', id: 'e1' }, { type: 'evidence', id: 'e2' }], source_span: 'x', explicit_or_inferred: 'explicit' }],
+    });
+    const out = parseExtractorOutput(raw, src, undefined, HEADS);
+    expect(out.evidence.map((e) => e.mention_span)).toEqual(['النرجس']);
+    expect(out.relations).toEqual([]);
+  });
+  it('keeps the real district when a project is mentioned alongside it («مينا 52 بالنرجس»)', () => {
+    const raw = JSON.stringify({ evidence: [ev('e1', 'مينا 52 بالنرجس', [['مينا 52', 'pin'], ['النرجس', 'district']])], relations: [] });
+    const out = parseExtractorOutput(raw, src, undefined, HEADS);
+    expect(out.evidence).toHaveLength(1);
+    expect(out.evidence[0]!.anchors.map((a) => a.span)).toEqual(['النرجس']);
+  });
+  it('matches Arabic digits and the «الشقه هذي» → «الماجدية 163» pin', () => {
+    const raw = JSON.stringify({ evidence: [ev('e1', 'الشقه هذي', [['الماجدية ١٦٣', 'pin']])], relations: [] });
+    expect(parseExtractorOutput(raw, src, undefined, HEADS).evidence).toEqual([]);
+  });
+  it('with no heads supplied nothing changes', () => {
+    const raw = JSON.stringify({ evidence: [ev('e1', 'مينا 52', [['مينا 52', 'pin']])], relations: [] });
+    expect(parseExtractorOutput(raw, src).evidence).toHaveLength(1);
+  });
+  it('the prompt names ONLY the project heads that occur in the conversation', () => {
+    const conv: Conversation = {
+      id: 'c1', channel: 'chat',
+      turns: [{ speaker: 'client', text: 'ابي شقة في مشروع مينا ٥٢', ref: 'm1', timestamp: '' }],
+    };
+    const text = buildExtractionUserText(conv, HEADS);
+    expect(text).toContain(projectGuardRules(['مينا 52']));
+    expect(text).not.toContain('الماجديه 163');
+    expect(buildExtractionUserText(conv, [])).not.toContain('أسماء مشاريع');
   });
 });
 

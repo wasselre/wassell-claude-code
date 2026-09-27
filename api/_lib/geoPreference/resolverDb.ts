@@ -17,6 +17,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_GEO_COUNTRY } from '../matchAgent.js';
+import { isLatinToken, latinVariants } from './latinNames.js';
 import type {
   ResolverDb, DistrictCandidate, CityCandidate, RegionCandidate, ElementCandidate,
   ZoneDistrict, PointDistrict,
@@ -65,7 +66,12 @@ export function lexicalVariants(token: string): string[] {
 async function ilikeModel(
   supabase: SupabaseClient, mId: string, token: string, limit = 60,
 ): Promise<Array<{ id: string; data: Record<string, unknown> }>> {
-  const variants = lexicalVariants(token).map((v) => v.replace(/[%_,()]/g, '')).filter(Boolean);
+  // A Latin token («Malga») also tries its transliteration spellings (q↔g …) so
+  // the official English name («Al Malqa Dist.») becomes a candidate at all.
+  const variants = Array.from(new Set([
+    ...lexicalVariants(token),
+    ...(isLatinToken(token) ? latinVariants(token) : []),
+  ])).map((v) => v.replace(/[%_,()]/g, '')).filter(Boolean);
   if (variants.length === 0) return [];
   const or = variants.flatMap((v) => [`data->>name_ar.ilike.%${v}%`, `data->>name_en.ilike.%${v}%`]).join(',');
   const { data, error } = await supabase

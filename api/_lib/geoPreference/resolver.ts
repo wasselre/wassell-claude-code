@@ -43,6 +43,7 @@ import type {
 // canonicalPlaceName / DEFAULT_GEO_COUNTRY are the SAME normalizers the runtime
 // name-resolver (matchAgent.ts) uses — reuse, don't reinvent (v-stack rule).
 import { canonicalPlaceName, DEFAULT_GEO_COUNTRY } from '../matchAgent.js';
+import { latinKey } from './latinNames.js';
 
 export const RESOLVER_VERSION = 'geo-anchor-resolver@v4c6-v7a3';
 export const DEFAULT_GEO_DATA_VERSION = 'unknown';
@@ -320,7 +321,12 @@ function isExact(c: AdminCandidate, token: string): boolean {
   const want = placeKey(token);
   if (!want) return false;
   if (c.names.some((n) => placeKey(n) === want)) return true;
-  return c.aliases.some((a) => placeKey(a) === want);
+  if (c.aliases.some((a) => placeKey(a) === want)) return true;
+  // A span typed in Latin letters («Malga») is compared on the transliteration
+  // key against the English name («Al Malqa Dist.») — still exact, see latinNames.ts.
+  const lk = latinKey(token);
+  if (!lk) return false;
+  return c.names.some((n) => latinKey(n) === lk) || c.aliases.some((a) => latinKey(a) === lk);
 }
 
 /**

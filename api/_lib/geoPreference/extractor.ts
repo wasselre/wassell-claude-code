@@ -33,6 +33,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { trackedAnthropic } from '../aiUsage.js';
 import { llmText, llmRoutingEnabled, logLlmFallback } from '../textLlm.js';
 import { estimateExtractionTokens, type LlmBudget } from './llmBudget.js';
+import { isProjectMention, projectMentionsIn } from './projectGuard.js';
 import type {
   Evidence,
   EvidenceRelation,
@@ -99,6 +100,13 @@ export interface ExtractOptions {
    * live single-extraction path (a lone call has nothing to throttle).
    */
   budget?: LlmBudget;
+  /**
+   * OUR project-name "heads" (see projectGuard.ts) — normalized, already
+   * stripped of anything that is also a district name. The ones that occur in
+   * the conversation are named in the prompt as NOT places, and any anchor whose
+   * span is one of them is dropped after parsing. Omit ⇒ no guard.
+   */
+  projectNames?: readonly string[];
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -239,7 +247,7 @@ export const CALL_LABELLED_RULES = `تنبيه — هذه مكالمة هاتف�
  *  the channel is a call — the labelled variant when the turns carry reliable
  *  speaker labels, else the unlabelled one), then the numbered turns. Exported
  *  so tests can assert the rules are present without calling an LLM. */
-export function buildExtractionUserText(conversation: Conversation): string {
+export function buildExtractionUserText(conversation: Conversation, projectNames: readonly string[] = []): string {
   let header: string;
   if (conversation.channel !== 'call') {
     header = 'المحادثة (شات واتساب):';
@@ -248,7 +256,18 @@ export function buildExtractionUserText(conversation: Conversation): string {
   } else {
     header = `المحادثة (مكالمة هاتفية):\n${CALL_TRANSCRIPT_RULES}\n\nنص المكالمة:`;
   }
-  return `${header}\n${renderConversation(conversation)}`;
+  const rendered = renderConversation(conversation);
+  const projects = projectMentionsIn(rendered, projectNames);
+  const guard = projects.length ? `${projectGuardRules(projects)}\n\n` : '';
+  return `${guard}${header}\n${rendered}`;
+}
+
+/** The prompt block naming OUR projects that occur in this conversation. Only the
+ *  heads actually present are listed, so the block stays short and specific. */
+export function projectGuardRules(projects: readonly string[]): string {
+  return `تنبيه إلزامي — الأسماء التالية أسماء مشاريع عقارية لدينا وليست أحياء ولا أماكن جغرافية: ${projects.map((p) => `«${p}»`).join('، ')}.
+- ذكر العميل لمشروع منها (اهتمام، سؤال، «الشقة مناسبة») هو اهتمام بمشروع وليس تفضيلًا جغرافيًا — لا تُخرِج له سجلّ Evidence ولا تجعله anchor من أي نوع (لا pin ولا district ولا landmark).
+- إن ذكر العميل مع اسم المشروع حيًا حقيقيًا («مينا 52 بالنرجس») فأخرِج الحي وحده.`;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -571,6 +590,7 @@ export function parseExtractorOutput(
   raw: string,
   source: Evidence['source'],
   conversation?: Conversation,
+  projectNames: readonly string[] = [],
 ): ExtractResult {
   let text = String(raw ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   text = text.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
@@ -591,6 +611,13 @@ export function parseExtractorOutput(
   rawEvidence.forEach((e, i) => {
     const rep = repairEvidence(e, i, source);
     if (!rep) return;
+    // Project guard: an anchor that names one of OUR projects is not a place. A
+    // mention left with no anchors is dropped (and never enters `seen`, so any
+    // relation pointing at it is dropped by repairRelations too).
+    if (projectNames.length) {
+      rep.anchors = rep.anchors.filter((a) => !isProjectMention(a.span, projectNames) && !isProjectMention(a.normalized_token, projectNames));
+      if (rep.anchors.length === 0) return;
+    }
     if (conversation) {
       const turnHint = e != null && typeof e === 'object' ? (e as Record<string, unknown>).turn : undefined;
       rep.source = attributeMentionSource(conversation, rep.mention_span, rep.anchors.map((a) => a.span), turnHint).source;
@@ -664,7 +691,8 @@ export async function extract(
   }
 
   const source = conversationSource(conversation);
-  const userText = buildExtractionUserText(conversation);
+  const projectNames = opts.projectNames ?? [];
+  const userText = buildExtractionUserText(conversation, projectNames);
 
   // Per-call token estimate for the budget. Over-estimates on purpose (see
   // estimateExtractionTokens) so the cost ceiling errs toward stopping early.
@@ -687,7 +715,7 @@ export async function extract(
         temperature: 0,
         json: true,
       });
-      return parseExtractorOutput(raw, source, conversation);
+      return parseExtractorOutput(raw, source, conversation, projectNames);
     } catch (err) {
       logLlmFallback('geoPreference/extract', err);
     } finally {
@@ -699,7 +727,7 @@ export async function extract(
   const releaseFallback = budget ? await budget.begin(estTokens) : null;
   try {
     const raw = await claudeExtract(userText);
-    return parseExtractorOutput(raw, source, conversation);
+    return parseExtractorOutput(raw, source, conversation, projectNames);
   } catch (err) {
     console.error('[geoPreference/extract] Claude fallback failed:', err instanceof Error ? err.message : String(err));
     // No provider succeeded — return well-formed empty rather than throwing.

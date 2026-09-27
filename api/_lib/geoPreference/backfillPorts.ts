@@ -18,6 +18,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_GEO_COUNTRY } from '../matchAgent.js';
 import { createSupabaseResolverDb } from './resolverDb.js';
 import { extract, type Conversation, type ConversationTurn } from './extractor.js';
+import { deriveProjectHeads } from './projectGuard.js';
 import { hatifWordsToTurns, isoUtc } from './hatifDialogue.js';
 import { runReviewFirst } from './orchestrator.js';
 import type {
@@ -407,6 +408,37 @@ export function createSupabaseProposalStore(supabase: SupabaseClient): ProposalS
 }
 
 /** Assemble the full {@link BackfillDeps} against a service-role Supabase client. */
+/**
+ * OUR project names, reduced to guard "heads" (projectGuard.ts): every
+ * all_projects name, paged in full (never a silent cap), minus any head that is
+ * also a district name. A read failure throws — a backfill that silently ran
+ * without the guard would re-create the very defect it exists to stop.
+ */
+export async function loadProjectHeads(supabase: SupabaseClient): Promise<string[]> {
+  const { data: model, error: mErr } = await supabase.from('models').select('id').eq('name', 'all_projects').maybeSingle();
+  if (mErr) throw new Error(`project guard: models read failed: ${mErr.message}`);
+  if (!model?.id) return [];
+  const names: string[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('unified_records').select('data->>project_name').eq('model_id', model.id as string)
+      .order('id', { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(`project guard: all_projects read failed: ${error.message}`);
+    for (const r of (data ?? []) as Array<{ project_name: string | null }>) if (r.project_name) names.push(String(r.project_name));
+    if (!data || data.length < 1000) break;
+  }
+  const districts: string[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('districts').select('name_ar').eq('is_active', true)
+      .order('id', { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(`project guard: districts read failed: ${error.message}`);
+    for (const r of (data ?? []) as Array<{ name_ar: string | null }>) if (r.name_ar) districts.push(String(r.name_ar));
+    if (!data || data.length < 1000) break;
+  }
+  return deriveProjectHeads(names, districts);
+}
+
 export function makeSupabaseBackfillDeps(
   supabase: SupabaseClient,
   workerId: string,
@@ -415,6 +447,18 @@ export function makeSupabaseBackfillDeps(
   const maxAttempts = opts.maxAttempts ?? 3;
   const resolverDb = createSupabaseResolverDb(supabase);
   const proposals = createSupabaseProposalStore(supabase);
+  // Loaded once per deps instance, on first use; a failed load is retried on
+  // the next call rather than cached as "no projects".
+  let headsPromise: Promise<string[]> | null = null;
+  const projectHeads = (): Promise<string[]> => {
+    if (!headsPromise) {
+      headsPromise = loadProjectHeads(supabase).then((h) => {
+        opts.log?.(`[geo-backfill] project guard: ${h.length} project heads loaded`);
+        return h;
+      }).catch((e: unknown) => { headsPromise = null; throw e; });
+    }
+    return headsPromise;
+  };
 
   return {
     async claimNext(runId: string): Promise<BackfillJob | null> {
@@ -438,7 +482,7 @@ export function makeSupabaseBackfillDeps(
       if (error) throw new Error(`geo_pref_backfill_fail failed: ${error.message}`);
     },
     gatherConversations: (clientId: string) => gatherClientConversations(supabase, clientId),
-    extract,
+    extract: async (conversation: Conversation) => extract(conversation, { projectNames: await projectHeads() }),
     async buildRunContext(clientId: string, evidenceCount: number): Promise<RunContext> {
       const config = await loadGateConfig(supabase);
       const established = await clientEstablishedCity(supabase, clientId);
