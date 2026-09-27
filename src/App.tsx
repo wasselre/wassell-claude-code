@@ -433,6 +433,9 @@ export default function App() {
               workspace instead of on a blank route. */}
           <Route path="/marketing-management" element={<Navigate to="/m" replace />} />
           <Route path="/marketing-management/*" element={<Navigate to="/m" replace />} />
+          {/* The Posts / Content Writer page was deleted (cleanup D02/D03). Send
+              its old deep link to the marketing workspace instead of a blank route. */}
+          <Route path="/marketing/posts" element={<Navigate to="/m" replace />} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
           {/* Geography Understanding — rep-facing review surface: confirm / edit /
