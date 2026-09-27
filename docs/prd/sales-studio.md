@@ -1,6 +1,13 @@
-# PRD: Sales Studio 2.0 (Sales Strategy Layer)
+# PRD: Sales Studio 2.0 (Sales Strategy Layer) — RETIRED
 
-**Status:** Live
+**Status:** RETIRED 2026-09-27 (D18). The Sales Studio pages
+(`src/pages/SalesStudio/*`) and the Sales Process "Workflow Map"
+(`src/pages/SalesProcess/*`), their routes (`/sales/studio*`, `/sales/process`)
+and the `sales_studio` / `sales_process` custom-page entries were deleted. The
+executor + config layer it overlaid is UNCHANGED — `src/lib/salesProcess/*`,
+`src/lib/salesStudio/*` (still used by the store), the `sales_processes` data,
+and the guided Follow-up Workspace all keep running; the sales-process config is
+now frozen/un-editable in-app, as agreed. Restore = revert the deletion commit.
 **Last updated:** 2026-07-27 (**Hidden from the sidebar:** the `sales_studio` entry in `src/lib/customPages.ts` carries `hidden_from_sidebar: true`, so no nav link renders. The route `/sales/studio` (and its `experiments` / `processes/:id` children), its `RequirePageAccess` guard, and the per-profile access toggle are unchanged — a direct URL still opens Studio for anyone permitted. Restore = delete the flag.) | Previously 2026-06-21
 **Related PRDs:** [sales-process.md](sales-process.md) (the executor + config layer it overlays), [followups-workspace.md](followups-workspace.md), [data-storage.md](data-storage.md)
 

@@ -34,7 +34,9 @@ export default function WorkflowEditorPage() {
   // admin-only. (RLS also blocks writes server-side.)
   const isAdmin = useIsAdmin();
   const readOnly = !isAdmin;
-  const backTo = readOnly ? '/sales/process' : '/workflow';
+  // The read-only referrer used to be the Sales Process "Workflow Map" page
+  // (deleted in D18); non-admins now return home.
+  const backTo = readOnly ? '/' : '/workflow';
 
   const isNew = workflowId === 'new';
   const existing = !isNew ? workflows.find((w) => w.id === workflowId) : null;

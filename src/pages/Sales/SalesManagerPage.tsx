@@ -7,6 +7,7 @@ import type { FollowUpTypeConfig } from '@/lib/salesProcess';
 import { fieldBySlug } from '@/pages/Clients/lib/clientView';
 import type { AppRecord, SalesProcessOverride } from '@/types';
 import { computeManagerMetrics, type Distribution } from './lib/salesMetrics';
+import { computeNoNextAction } from './lib/queueViews';
 import { activeClientsOnly, retiredClientIdSet } from '@/lib/clients/retirement';
 
 /** Admin manager view — the sales-operation health metrics (Part 13, "views
@@ -20,6 +21,20 @@ export default function SalesManagerPage() {
 
   const clientsModel = models.find((m) => m.name === 'clients');
   const followupsModel = models.find((m) => m.name === 'followups');
+  const [showNoNext, setShowNoNext] = useState(false);
+
+  // D16 — the "no next action" audit, ported into the Overview so the headline
+  // stat drills into the actual clients (no more /sales/tasks deep-link).
+  const noNextRows = useMemo(() => {
+    const allClients = clientsModel ? records[clientsModel.id] ?? [] : [];
+    const active = activeClientsOnly(allClients);
+    const retiredIds = retiredClientIdSet(allClients);
+    const followups = (followupsModel ? records[followupsModel.id] ?? [] : []).filter(
+      (f) => !retiredIds.has(String((f.data as Record<string, unknown>).client_id ?? '')),
+    );
+    return computeNoNextAction(active, followups);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientsModel, followupsModel, records]);
 
   const m = useMemo(() => {
     // Retired clients (and their follow-ups) are excluded from every manager
@@ -73,19 +88,41 @@ export default function SalesManagerPage() {
 
       {/* headline stats */}
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <button type="button" onClick={() => navigate('/sales/tasks?view=no_next_action')} className="block text-start">
+        <button type="button" onClick={() => setShowNoNext((v) => !v)} className="block w-full text-start" disabled={noNextRows.length === 0}>
           <Stat
             label={isAr ? 'بدون إجراء تالٍ' : 'No Next Action'}
-            value={m.noNextAction}
-            tone={m.noNextAction === 0 ? 'good' : 'bad'}
-            icon={m.noNextAction === 0 ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-            hint={isAr ? 'يجب أن يكون صفرًا' : 'should be zero'}
+            value={noNextRows.length}
+            tone={noNextRows.length === 0 ? 'good' : 'bad'}
+            icon={noNextRows.length === 0 ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+            hint={noNextRows.length === 0 ? (isAr ? 'يجب أن يكون صفرًا' : 'should be zero') : (isAr ? (showNoNext ? 'إخفاء القائمة' : 'اضغط لعرض العملاء') : (showNoNext ? 'hide list' : 'click to view clients'))}
           />
         </button>
         <Stat label={isAr ? 'متابعات متأخرة' : 'Overdue'} value={m.overdue} tone={m.overdue > 0 ? 'warn' : 'neutral'} icon={<Clock size={18} />} />
         <Stat label={isAr ? 'متابعات مفتوحة' : 'Open Follow-ups'} value={m.openFollowups} tone="neutral" />
         <Stat label={isAr ? 'أُكملت (30 يومًا)' : 'Completed (30d)'} value={m.completed30d} tone="neutral" hint={isAr ? `${m.completedLate} متأخرة` : `${m.completedLate} late`} />
       </div>
+
+      {/* No-next-action drill (D16) — the clients behind the headline stat. */}
+      {showNoNext && noNextRows.length > 0 && (
+        <div className="mb-6 rounded-2xl border border-sand/40 bg-white p-4">
+          <div className="mb-3 text-sm font-bold text-chocolate">
+            {isAr ? `عملاء بلا إجراء تالٍ (${noNextRows.length})` : `Clients with no next action (${noNextRows.length})`}
+          </div>
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+            {noNextRows.map((r) => (
+              <button
+                key={r.clientId}
+                type="button"
+                onClick={() => navigate(`/model/clients/${r.clientId}`)}
+                className="rounded-lg border border-sand/40 px-3 py-2 text-start transition hover:border-copper/40 hover:bg-cream"
+              >
+                <div className="truncate text-sm font-semibold text-charcoal">{r.clientName || (isAr ? 'بدون اسم' : 'Unnamed')}</div>
+                <div className="mt-0.5 truncate text-xs text-charcoal/55">{[stageLabel(r.stage), r.status].filter(Boolean).join(' · ')}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* derived rates */}
       <div className="mb-4 flex flex-wrap items-center gap-x-8 gap-y-2 rounded-2xl bg-cream px-5 py-3.5 text-sm text-charcoal">

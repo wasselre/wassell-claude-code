@@ -67,11 +67,8 @@ const SalesValuationCorrectionDetailPage = lazy(() => import('@/pages/SalesValua
 const SalesValuationCoachingPage = lazy(() => import('@/pages/SalesValuation/CoachingPage'));
 const SalesValuationCategoriesPage = lazy(() => import('@/pages/SalesValuation/CategoriesPage'));
 const SalesValuationSettingsPage = lazy(() => import('@/pages/SalesValuation/SettingsPage'));
-const SalesTasksPage = lazy(() => import('@/pages/Sales/SalesTasksPage'));
 const MyClientsPage = lazy(() => import('@/pages/Sales/MyClientsPage'));
 const MyTasksPage = lazy(() => import('@/pages/Sales/MyTasksPage'));
-const FollowUpQueuePage = lazy(() => import('@/pages/Sales/FollowUpQueuePage'));
-const SalesProcessStudioPage = lazy(() => import('@/pages/SalesProcess/SalesProcessStudioPage'));
 const SalesManagerPage = lazy(() => import('@/pages/Sales/SalesManagerPage'));
 const MarketIntelligencePage = lazy(() => import('@/pages/MarketIntelligence/MarketIntelligencePage'));
 const MarketAutomationPage = lazy(() => import('@/pages/MarketAutomation/MarketAutomationPage'));
@@ -120,10 +117,6 @@ const ProjectFinderPage = lazy(() => import('@/pages/ProjectFinder/ProjectFinder
 const GeoReviewPage = lazy(() => import('@/pages/GeoReview/GeoReviewPage'));
 const FinancingPage = lazy(() => import('@/pages/Financing/FinancingPage'));
 const PostsContentPage = lazy(() => import('@/pages/PostsContent/PostsContentPage'));
-const SalesStudioHomePage = lazy(() => import('@/pages/SalesStudio/SalesStudioHomePage'));
-const ProcessJourneyPage = lazy(() => import('@/pages/SalesStudio/ProcessJourneyPage'));
-const ExperimentsPage = lazy(() => import('@/pages/SalesStudio/ExperimentsPage'));
-const ExperimentDetailPage = lazy(() => import('@/pages/SalesStudio/ExperimentDetailPage'));
 const FilesPage = lazy(() => import('@/pages/Files/FilesPage'));
 const FilesRoot = lazy(() => import('@/pages/Files/FilesRoot'));
 const FilesAiReviewPage = lazy(() => import('@/pages/Files/FilesAiReviewPage'));
@@ -445,15 +438,9 @@ export default function App() {
               (my_clients / my_tasks). Opt-in via Settings → Profiles. */}
           <Route path="/sales/my-clients" element={<RequirePageAccess pageId="my_clients"><MyClientsPage /></RequirePageAccess>} />
           <Route path="/sales/my-tasks" element={<RequirePageAccess pageId="my_tasks"><MyTasksPage /></RequirePageAccess>} />
-          <Route path="/sales/follow-up-queue" element={<RequirePageAccess pageId="follow_up_queue"><FollowUpQueuePage /></RequirePageAccess>} />
-          <Route path="/sales/tasks" element={<RequirePageAccess pageId="sales_tasks"><SalesTasksPage /></RequirePageAccess>} />
-          {/* Sales Studio 2.0 — strategy layer (process library → journey, experiments).
-              Sub-routes share the sales_studio page-access gate. */}
-          <Route path="/sales/studio" element={<RequirePageAccess pageId="sales_studio"><SalesStudioHomePage /></RequirePageAccess>} />
-          <Route path="/sales/studio/experiments" element={<RequirePageAccess pageId="sales_studio"><ExperimentsPage /></RequirePageAccess>} />
-          <Route path="/sales/studio/experiments/:experimentId" element={<RequirePageAccess pageId="sales_studio"><ExperimentDetailPage /></RequirePageAccess>} />
-          <Route path="/sales/studio/processes/:processId" element={<RequirePageAccess pageId="sales_studio"><ProcessJourneyPage /></RequirePageAccess>} />
-          <Route path="/sales/process" element={<RequirePageAccess pageId="sales_process"><SalesProcessStudioPage /></RequirePageAccess>} />
+          {/* Follow-up Queue (D15), Sales Tasks (D16), Sales Studio + Sales Process
+              (D18) were deleted — their function moved into the Sales Workspace.
+              Old bookmarks fall through to the catch-all. */}
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
           {/* Market Intelligence + Market Automation ride the archived
               market-listings module (2026-09-14): a bookmark lands on the

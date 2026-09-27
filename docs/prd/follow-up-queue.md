@@ -1,6 +1,14 @@
-# PRD: Follow-up Queue (متابعات مقترحة)
+# PRD: Follow-up Queue (متابعات مقترحة) — RETIRED
 
-**Status:** Live
+**Status:** RETIRED 2026-09-27 (D15). The page (`FollowUpQueuePage`), its route
+`/sales/follow-up-queue`, the `follow_up_queue` custom-page entry, and its only
+reader (`src/lib/followupSuggestions/client.ts`) were deleted; the
+`wa_followup_suggestions` table was dropped (backup:
+`public._backup_wa_followup_suggestions_20260927`, 111 rows). The feed was
+dormant — 0 new rows in the 14 days before removal — and its function is served
+by the Sales Workspace → **Work Queue**. The operator-run
+`wassel-whatsapp-voice` Claude batch that populated it simply stops being used.
+Restore = recreate the table from the backup + revert the deletion commit.
 **Last updated:** 2026-09-13 (voice rules added the same day — see `.claude/skills/wassel-whatsapp-voice/SKILL.md`)
 
 ## What it is

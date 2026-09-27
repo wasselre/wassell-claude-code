@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench, Briefcase } from 'lucide-react';
+import { BarChart3, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench, Briefcase } from 'lucide-react';
 import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 
 /**
@@ -38,10 +38,7 @@ export type CustomPageId =
   | 'sw_whatsapp'
   | 'my_clients'
   | 'my_tasks'
-  | 'sales_tasks'
-  | 'sales_process'
   | 'sales_manager'
-  | 'sales_studio'
   | 'market_intelligence'
   | 'posts_content'
   | 'marketing_intelligence'
@@ -168,44 +165,6 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_ar: 'مهامي',
     label_en: 'My Tasks',
     icon: ListChecks,
-    default_access: 'admin',
-    hidden_from_sidebar: true,
-  },
-  {
-    id: 'follow_up_queue',
-    route: '/sales/follow-up-queue',
-    label_ar: 'متابعات مقترحة',
-    label_en: 'Follow-up Queue',
-    icon: MessageSquareText,
-    // Claude-suggested WhatsApp follow-ups awaiting a human's read + confirm.
-    // Opt-in: an admin grants it to the profiles that work the queue.
-    default_access: 'admin',
-    hidden_from_sidebar: true,
-  },
-  {
-    id: 'sales_tasks',
-    route: '/sales/tasks',
-    label_ar: 'مهام المبيعات',
-    label_en: 'Sales Tasks',
-    icon: ClipboardList,
-    default_access: 'all',
-    hidden_from_sidebar: true,
-  },
-  {
-    id: 'sales_studio',
-    route: '/sales/studio',
-    label_ar: 'استوديو المبيعات 2.0',
-    label_en: 'Sales Studio',
-    icon: Layers,
-    default_access: 'admin',
-    hidden_from_sidebar: true,
-  },
-  {
-    id: 'sales_process',
-    route: '/sales/process',
-    label_ar: 'خريطة سير العمل',
-    label_en: 'Workflow Map',
-    icon: Activity,
     default_access: 'admin',
     hidden_from_sidebar: true,
   },
