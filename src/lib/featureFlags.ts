@@ -135,6 +135,12 @@ export const WORKSPACE_HIDDEN_MODEL_NAMES = [
   // WhatsApp tab. ai_chats has no workspace home yet — reachable by direct URL
   // (/model/ai_chats). Routes all stay live.
   'clients', 'chats', 'ai_chats',
+  // 2026-09-27 (operator request) — dissolve the "المشاريع / Projects" folder too:
+  // these are surfaced in the Projects & Inventory workspace (Market Registry =
+  // all_projects, Portfolio = our_projects). With every other member of that group
+  // already hidden (developers/units/…) or deleted (developer_knowledge, D45),
+  // hiding these three empties the folder so it stops rendering. Routes + data stay.
+  'all_projects', 'our_projects', 'targeted_projects',
   // D41 — geography lookups feeding Project Finder.
   'countries', 'regions', 'cities', 'districts',
   // D46 — hidden now; activated later with the unanswered-requests feature (D38).
