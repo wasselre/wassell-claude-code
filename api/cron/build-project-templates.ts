@@ -26,7 +26,7 @@
  * templates ready. Whether the bot sends media is a separate flag.
  */
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
-import { resolveProjectSheet } from '../_lib/projectSheet.js';
+import { generateProjectMessage } from '../_lib/projectMessageAi.js';
 import { buildPickerItems, isUnitPlanFile } from '../../src/pages/Chats/lib/projectFilePicker.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
@@ -34,6 +34,11 @@ export const config = { runtime: 'nodejs', maxDuration: 300 };
 const FILE_COLS =
   'id, kind, title, original_name, document_type, primary_category, origin, usage_rights, acquisition_source, duration_seconds';
 const PHOTO_COUNT = 3;
+// The body is written by the SAME AI rewrite a rep triggers (generateProjectMessage,
+// Kimi ~40s each), NOT the deterministic sheet. Vercel caps a request at 300s, so
+// only this many bodies are (re)generated per run — missing/stale ones first; the
+// rest wait for the next daily run. Media refreshes for EVERY project every run.
+const BODY_BUDGET_PER_RUN = 5;
 
 interface FileRow {
   id: string;
@@ -133,7 +138,8 @@ export default async function handler(req: Request): Promise<Response> {
   if (limit > 0) projectIds = projectIds.slice(0, limit);
 
   const report: Array<Record<string, unknown>> = [];
-  const stats = { projects: projectIds.length, built: 0, created: 0, updated: 0, skipped_manual: 0, deduped: 0, no_media: 0, errors: 0 };
+  const stats = { projects: projectIds.length, built: 0, created: 0, updated: 0, skipped_manual: 0, deduped: 0, no_media: 0, body_generated: 0, body_pending: 0, errors: 0 };
+  let bodyBudget = BODY_BUDGET_PER_RUN;
 
   for (const projectId of projectIds) {
     try {
@@ -147,12 +153,6 @@ export default async function handler(req: Request): Promise<Response> {
       }
       const sel = selectMedia(files);
 
-      // Deterministic body.
-      const sheet = await resolveProjectSheet(svc, svc, { projectId });
-      const bodyAr = sheet.ok ? sheet.body_ar : '';
-      const bodyEn = sheet.ok ? sheet.body_en : '';
-      const projName = (sheet.ok ? (sheet.facts as { project_name?: string }).project_name : '') || '';
-
       // Existing templates for this project (newest first).
       const { data: tplRows } = await svc.from('records').select('id, data, created_at')
         .eq('model_id', ctId).eq('data->>project_id', projectId).order('created_at', { ascending: false });
@@ -162,10 +162,50 @@ export default async function handler(req: Request): Promise<Response> {
 
       if (newest && newest.data?.media_source === 'manual') {
         stats.skipped_manual++;
-        report.push({ projectId, projName, action: 'skip_manual', images: sel.imageIds.length, video: sel.videoId, dups: dups.length });
+        report.push({ projectId, action: 'skip_manual', images: sel.imageIds.length, video: sel.videoId, dups: dups.length });
         continue;
       }
       if (sel.imageIds.length === 0 && !sel.videoId) stats.no_media++;
+
+      // Project record → name + a signature of the numbers the message quotes, so
+      // the AI body is (re)written only when it's missing or those numbers moved.
+      const { data: apRec } = await svc.from('records').select('data').eq('id', projectId).maybeSingle();
+      const pdata = (apRec?.data ?? {}) as Record<string, unknown>;
+      const projName = typeof pdata.project_name === 'string' ? pdata.project_name : '';
+      const factsSig = JSON.stringify([
+        pdata.available_price_range, pdata.available_area_range, pdata.unit_count,
+        pdata.available_units, pdata.bedroom_range, pdata.bathroom_range,
+      ]);
+
+      const existingAr = typeof newest?.data?.body_ar === 'string' ? (newest.data.body_ar as string) : '';
+      const existingEn = typeof newest?.data?.body_en === 'string' ? (newest.data.body_en as string) : '';
+      const bodyIsAi = newest?.data?.body_source === 'ai';
+      // Needs a body write when: none yet, never AI-written, or the numbers changed.
+      const bodyStale = (!existingAr && !existingEn) || !bodyIsAi || newest?.data?.facts_sig !== factsSig;
+
+      let bodyAr = existingAr;
+      let bodyEn = existingEn;
+      let bodySource: string | undefined = bodyIsAi ? 'ai' : (newest?.data?.body_source as string | undefined);
+      let generatedBy: string | undefined;
+
+      if (bodyStale && !dryRun && bodyBudget > 0) {
+        bodyBudget--;
+        // fact-check (keep the rep-quality wording, fix numbers) once a body exists
+        // and was AI-written; otherwise generate fresh — same call the rep triggers.
+        const factcheck = bodyIsAi && (existingAr || existingEn);
+        const r = await generateProjectMessage(svc, svc, {
+          projectId,
+          ...(factcheck ? { existingAr, existingEn } : {}),
+        });
+        if (r.ok) {
+          bodyAr = r.body_ar; bodyEn = r.body_en; bodySource = 'ai'; generatedBy = r.generated_by;
+          stats.body_generated++;
+        } else {
+          console.error(`[build-templates] AI body project=${projectId} failed (${r.status}): ${r.error}`);
+        }
+      } else if (bodyStale) {
+        stats.body_pending++; // over budget this run, or dry-run — next run picks it up
+      }
 
       const canonicalId = newest?.id ?? crypto.randomUUID();
       const action = newest ? 'update' : 'create';
@@ -178,8 +218,11 @@ export default async function handler(req: Request): Promise<Response> {
         project_id: projectId,
         project_image_file_ids: sel.imageIds,
         videos: sel.videoId ? [sel.videoId] : [],
-        body_ar: bodyAr || (newest?.data?.body_ar ?? ''),
-        body_en: bodyEn || (newest?.data?.body_en ?? ''),
+        body_ar: bodyAr,
+        body_en: bodyEn,
+        ...(bodySource ? { body_source: bodySource } : {}),
+        facts_sig: factsSig,
+        ...(generatedBy ? { body_generated_by: generatedBy } : {}),
         media_source: 'auto',
       };
 
