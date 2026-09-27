@@ -43,17 +43,87 @@ export function detectLang(text: string): { lang: SourceLang; confidence: number
   return { lang: 'mixed', confidence: 1 - Math.abs(0.5 - ratio) };
 }
 
+/**
+ * Punctuation that sits AFTER a link rather than inside it.
+ *
+ * `\S+` grabs everything up to whitespace, so "(<link>)، ويضم" yielded the fact
+ * `…masterplan-rabwat-alramz.pdf)،` — closing paren and Arabic comma included.
+ * An English translation writes "),", never ")،", so that field could not be
+ * translated by ANY output: the guard demanded Arabic punctuation inside an
+ * English sentence. That is the real reason «ربوة الرمز» → project_analysis
+ * retried from 6 to 27 September and never once succeeded. Strip the tail so
+ * the protected fact is the link itself, which is the thing we actually care
+ * about keeping. (The digits branch has always done this — `[,.]+$`.)
+ */
+const URL_TRAILING_PUNCT = /[)\]}>.,;:!?"'«»،؛؟]+$/;
+
+export function stripUrlTail(raw: string): string {
+  const trimmed = raw.replace(URL_TRAILING_PUNCT, '');
+  // A "link" that is nothing but punctuation is not a link; keep the original
+  // rather than returning an empty fact that matches everything.
+  return trimmed.length > 'https://'.length ? trimmed : raw;
+}
+
 /** Digits (Arabic-Indic normalized) + URLs that must survive translation. */
 export function protectedFacts(src: string): string[] {
   const norm = src.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
   const digits = norm.match(/\d[\d,.]{1,}/g) ?? [];
-  const urls = src.match(/https?:\/\/\S+/g) ?? [];
+  const urls = (src.match(/https?:\/\/\S+/g) ?? []).map(stripUrlTail);
   return [...new Set([...digits.map((d) => d.replace(/[,.]+$/, '')), ...urls])];
 }
 
 export function assertFactsIntact(src: string, out: string): string[] {
   const outNorm = out.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/,/g, '');
   return protectedFacts(src).filter((f) => !outNorm.includes(f.replace(/,/g, '')));
+}
+
+/**
+ * Links never reach the model — they travel as placeholders and come back.
+ *
+ * WHY. The fact guard above refuses any output that lost a URL, and it is right
+ * to: a translated brochure line pointing at the wrong PDF is worse than no
+ * translation. But a long link is exactly what a translator mangles — it
+ * re-encodes a hyphen, drops a path segment, "tidies" the file name. Measured
+ * on 2026-09-27: «ربوة الرمز» → project_analysis had been failing on
+ * `…/masterplan-rabwat-alramz.pdf` since 6 September, retrying every 30 minutes
+ * forever (the retry cap in 2026-09-27_translation_retry_cap.sql is the other
+ * half of that fix — this half makes the item actually translatable).
+ *
+ * Swapping each link for `[[L0]]` before the call removes the thing the model
+ * gets wrong, and restoring afterwards puts the byte-identical original back —
+ * so the guard passes for the right reason, not because it was weakened. A
+ * placeholder the model DROPS is still a lost fact and still fails.
+ */
+const LINK_RE = /https?:\/\/\S+/g;
+/** Tolerant of a model that adds spaces inside the brackets. Nothing else. */
+const PLACEHOLDER_RE = /\[\[\s*L(\d+)\s*\]\]/g;
+
+export function maskLinks(text: string): { masked: string; links: string[] } {
+  const links: string[] = [];
+  const masked = text.replace(LINK_RE, (raw) => {
+    // The trailing "), ." belongs to the SENTENCE, not the link — it must stay
+    // in the text the model translates, or the model has to guess where the
+    // Arabic punctuation went. Same boundary as protectedFacts, deliberately.
+    const url = stripUrlTail(raw);
+    const tail = raw.slice(url.length);
+    links.push(url);
+    return `[[L${links.length - 1}]]${tail}`;
+  });
+  return { masked, links };
+}
+
+export function restoreLinks(text: string, links: string[]): { text: string; missing: string[] } {
+  if (links.length === 0) return { text, missing: [] };
+  const seen = new Set<number>();
+  const restored = text.replace(PLACEHOLDER_RE, (whole, idx: string) => {
+    const i = Number(idx);
+    const url = links[i];
+    if (url === undefined) return whole;   // a placeholder we never issued — leave it visible
+    seen.add(i);
+    return url;
+  });
+  const missing = links.filter((_, i) => !seen.has(i));
+  return { text: restored, missing };
 }
 
 export interface TranslateItem {
@@ -80,7 +150,8 @@ Rules:
 2. kind "text" — translate naturally and FAITHFULLY into the target language. Keep every fact: numbers, prices, dates, directions, names. Professional real-estate register. Never summarize, embellish, or drop anything.
 3. kind "mixed" — the source mixes Arabic and English. Produce a clean, natural version PURELY in the target language, preserving embedded proper nouns and codes verbatim.
 4. Keep digits, URLs, phone numbers, and codes untouched.
-5. Every item MUST appear in the output with its same index "i". Reply with ONLY the JSON object {"results":[{"i": number, "t": string}]}.`;
+5. A source may contain placeholders like [[L0]] or [[L3]]. Copy each placeholder into your output EXACTLY as written — same brackets, same number, no spaces added, never translated and never dropped. Place it where the link belongs in the target sentence.
+6. Every item MUST appear in the output with its same index "i". Reply with ONLY the JSON object {"results":[{"i": number, "t": string}]}.`;
 
 interface ProviderOpts {
   deepseekKey: string | null;
@@ -200,11 +271,13 @@ export async function translateItems(
   if (current.length > 0) batches.push(current);
 
   for (const batch of batches) {
+    // Links leave as [[L0]] and come back as themselves — see maskLinks.
+    const masked = batch.map((it) => maskLinks(it.text));
     const payload = batch.map((it, i) => ({
       i,
       kind: it.mixedSource ? 'mixed' : it.treatment === 'transliterate' ? 'name' : 'text',
       target: it.targetLang,
-      src: it.text,
+      src: masked[i]!.masked,
     }));
     let map: Map<number, string> | null = null;
     let provider: 'deepseek' | 'anthropic' = 'deepseek';
@@ -228,12 +301,19 @@ export async function translateItems(
         results.set(it.id, { error: 'missing from provider reply', provider });
         return;
       }
-      const missing = assertFactsIntact(it.text, t);
+      // Put the real links back before ANY checking: the guard compares against
+      // the untouched source, so it must see the untouched links.
+      const { text: restored, missing: lostLinks } = restoreLinks(t, masked[i]!.links);
+      if (lostLinks.length > 0) {
+        results.set(it.id, { error: `protected link lost: ${lostLinks.slice(0, 2).join(', ')}`, provider });
+        return;
+      }
+      const missing = assertFactsIntact(it.text, restored);
       if (missing.length > 0) {
         results.set(it.id, { error: `protected facts lost: ${missing.slice(0, 3).join(', ')}`, provider });
         return;
       }
-      results.set(it.id, { translated: t, provider });
+      results.set(it.id, { translated: restored, provider });
     });
   }
   return results;

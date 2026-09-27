@@ -94,6 +94,12 @@ jobs:
         run: |
           psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-09-07_never_raise_sqlstate_40001.sql
           psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/assert_no_retryable_sqlstate.sql
+      # 2026-09-27: the unit retry cap. Outside the 2026-09-0* glob above, so it
+      # is applied by name — without it smoke 13 has nothing to assert against,
+      # and an unresolvable unit retries the provider every 15 minutes forever
+      # (1,232 wasted calls before it was caught).
+      - name: Translation retry cap
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-09-27_translation_retry_cap.sql
       - name: Smoke assertions
         run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_translation.sql
 

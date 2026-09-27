@@ -341,3 +341,69 @@ BEGIN
 
   RAISE NOTICE 'W5 smoke 12 (word-similarity cross-language search): passed';
 END $$;
+
+-- 13) Retry cap (2026-09-27). A unit whose target variant can never resolve must
+--     STOP being retried. Before the cap, `translation_unit_finalize` deferred it
+--     for 15 minutes and the reconcile re-queued it forever: two real fields ran
+--     from 6 to 27 September and cost 1,232 provider calls that could not succeed.
+--     The cap must not touch the ordinary success path, and a new source (a
+--     generation bump) must put a blocked unit straight back in the queue.
+DO $$
+DECLARE v_model uuid; v_rec uuid; v_cap int; i int; v_cleared int;
+BEGIN
+  SELECT COALESCE(max_unit_retries, 6) INTO v_cap FROM translation_settings WHERE id;
+
+  INSERT INTO models (name, schema) VALUES ('smoke_retry_cap', '{"sections":[]}'::jsonb)
+  RETURNING id INTO v_model;
+  INSERT INTO records (model_id, data) VALUES (v_model, '{"f":"نص"}') RETURNING id INTO v_rec;
+  INSERT INTO translation_units (resource_kind, entity_id, field_path, model_id, source_lang, generation, dirty, source_rev)
+  VALUES ('record', v_rec, 'f', v_model, 'ar', 1, true, 'stub');
+  -- A target that stays FAILED is what an unsatisfiable item looks like.
+  INSERT INTO translation_variants (resource_kind, entity_id, field_path, lang, role, state, generation, machine_owned, last_error)
+  VALUES ('record', v_rec, 'f', 'en', 'target', 'failed', 1, true, 'protected facts lost: https://example.test/a.pdf');
+
+  FOR i IN 1..(v_cap - 1) LOOP
+    v_cleared := translation_unit_finalize('record', v_rec);
+  END LOOP;
+  IF NOT (SELECT dirty FROM translation_units WHERE entity_id = v_rec) THEN
+    RAISE EXCEPTION 'SMOKE 13a failed: unit stopped retrying BEFORE the cap (% rounds)', v_cap - 1;
+  END IF;
+
+  v_cleared := translation_unit_finalize('record', v_rec);   -- the cap round
+  IF (SELECT dirty FROM translation_units WHERE entity_id = v_rec) THEN
+    RAISE EXCEPTION 'SMOKE 13b failed: unit is still dirty at the cap — the loop survives';
+  END IF;
+  IF (SELECT blocked_at FROM translation_units WHERE entity_id = v_rec) IS NULL THEN
+    RAISE EXCEPTION 'SMOKE 13c failed: unit went quiet without being marked blocked (invisible to the operator)';
+  END IF;
+  IF (SELECT block_reason FROM translation_units WHERE entity_id = v_rec) NOT LIKE 'protected facts lost%' THEN
+    RAISE EXCEPTION 'SMOKE 13d failed: block_reason lost the provider error (got %)',
+      (SELECT block_reason FROM translation_units WHERE entity_id = v_rec);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM v_translation_blocked WHERE entity_id = v_rec) THEN
+    RAISE EXCEPTION 'SMOKE 13e failed: blocked unit missing from v_translation_blocked';
+  END IF;
+
+  -- The reconcile must not pick it up again.
+  PERFORM translation_reconcile(200);
+  IF EXISTS (SELECT 1 FROM translation_jobs WHERE entity_id = v_rec AND status = 'queued') THEN
+    RAISE EXCEPTION 'SMOKE 13f failed: reconcile re-queued a BLOCKED unit';
+  END IF;
+
+  -- A new source clears the ceiling.
+  UPDATE translation_units SET generation = 2 WHERE entity_id = v_rec;
+  IF (SELECT retry_count FROM translation_units WHERE entity_id = v_rec) <> 0
+     OR (SELECT blocked_at FROM translation_units WHERE entity_id = v_rec) IS NOT NULL THEN
+    RAISE EXCEPTION 'SMOKE 13g failed: a generation bump did not unblock the unit — edits could never revive it';
+  END IF;
+
+  -- And a unit that DOES resolve still clears on its first round.
+  UPDATE translation_variants SET state = 'translated' WHERE entity_id = v_rec;
+  UPDATE translation_units SET dirty = true, retry_count = 3 WHERE entity_id = v_rec;
+  v_cleared := translation_unit_finalize('record', v_rec);
+  IF v_cleared <> 1 OR (SELECT retry_count FROM translation_units WHERE entity_id = v_rec) <> 0 THEN
+    RAISE EXCEPTION 'SMOKE 13h failed: the success path stopped clearing (cleared=%)', v_cleared;
+  END IF;
+
+  RAISE NOTICE 'W1 smoke 13 (translation retry cap): passed';
+END $$;

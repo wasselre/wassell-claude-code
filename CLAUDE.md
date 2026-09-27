@@ -651,7 +651,31 @@ One human entry → automatic generation + persistence of BOTH languages → bot
 
 8. **The legacy on-demand overlay (`src/lib/valueTranslation/runtime.ts` `resolveDisplayText`) is NOT dead — do not remove it.** It still serves: (a) `resolveFieldDisplay`'s fallback when a render site has no record id, and (b) the Marketing OS content values (`useMosText`, W6-M — `mkt_*` is NOT in the durable pipeline). It doubles as the worker's translation memory. Removing it needs those consumers migrated first.
 
-9. **Migration gotchas:** (a) PostGIS/frozen-table RPCs need `SET check_function_bodies = off` so the CI ephemeral DB (no PostGIS, minimal fixture) can create them; (b) guard data-fixes on frozen tables (`districts`, etc.) with `to_regclass` — CI doesn't have them; (c) NEVER call `digest` inside the records capture trigger (search_path); the trigger uses a stub `source_rev`, the worker computes the real sha. CI validates every `2026-09-0*` migration against `postgres:17` via `.github/workflows/ci.yml` `db-migrations` + `supabase/tests/ci/smoke_translation.sql` (smokes 1–13).
+9. **A failed unit is CAPPED, and the fact guard must stay satisfiable (added
+   2026-09-27, `supabase/migrations/2026-09-27_translation_retry_cap.sql`).**
+   `translation_unit_finalize` used to leave any unresolved unit `dirty` with a
+   15-minute backoff and NO ceiling, so an item that could never succeed was
+   retried forever: two fields ran from 6 to 27 September and burned 1,232
+   provider calls, making `worker/translateProvider` the app's 4th-busiest AI
+   call site while doing nothing. Now each failed round counts, and at
+   `translation_settings.max_unit_retries` (6) the unit is marked BLOCKED
+   (`blocked_at` / `block_reason`, listed in `v_translation_blocked`) and the
+   reconcile skips it. **Blocked is a pause, not a tombstone:** a generation
+   bump resets it via the `translation_units_reset_retries` trigger (hooked to
+   `generation` so the capture trigger — rule 2 — is never touched), and
+   `translation_unit_unblock(kind, entity, path)` re-queues it by hand.
+   **Never remove the ceiling**, and never "fix" a blocked unit by clearing
+   `dirty` without fixing its cause — that just hides it.
+   The root cause of the worst case was the GUARD, not the provider:
+   `protectedFacts` matched URLs with `\S+`, so "(<link>)، ويضم" produced the
+   fact `…masterplan-rabwat-alramz.pdf)،` — closing paren plus Arabic comma.
+   No English sentence can contain that, so the field was UNSATISFIABLE by any
+   output. `stripUrlTail` now trims trailing punctuation (the digit branch
+   always did), and `maskLinks`/`restoreLinks` send links to the provider as
+   `[[L0]]` placeholders and restore the bytes before the guard runs — so the
+   guard passes because the link genuinely survived, never because it was
+   weakened. A DROPPED placeholder is still a failure.
+10. **Migration gotchas:** (a) PostGIS/frozen-table RPCs need `SET check_function_bodies = off` so the CI ephemeral DB (no PostGIS, minimal fixture) can create them; (b) guard data-fixes on frozen tables (`districts`, etc.) with `to_regclass` — CI doesn't have them; (c) NEVER call `digest` inside the records capture trigger (search_path); the trigger uses a stub `source_rev`, the worker computes the real sha. CI validates every `2026-09-0*` migration against `postgres:17` via `.github/workflows/ci.yml` `db-migrations` + `supabase/tests/ci/smoke_translation.sql` (smokes 1–13).
 
 ## Marketing OS capabilities are DATA (added 2026-08-06)
 
