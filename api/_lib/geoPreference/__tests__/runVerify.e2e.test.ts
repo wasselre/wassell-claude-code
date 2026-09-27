@@ -4,7 +4,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { makeSupabaseBackfillDeps, gatherClientConversations } from '../backfillPorts.js';
 import type { Conversation } from '../extractor.js';
 import type { Evidence } from '../ontology.js';
-import type { VerifierResult } from '../verifier.js';
+import { VERIFIER_VERSION, type VerifierResult } from '../verifier.js';
 
 /**
  * OPERATIONAL verifier run (RUN_VERIFY=1 CALIB_BATCH_ID=<batch>). For every
@@ -101,7 +101,7 @@ describe.skipIf(!process.env.RUN_VERIFY || !URL_ || !KEY || !BATCH_ID)('VERIFY a
       await deps.verify!(conversation, rows.map(rowToEvidence), proposalId);
       const { data: stored, error: rErr } = await supabase.from('geo_pref_proposals').select('verifier, verifier_version, verified_at').eq('id', proposalId).single();
       expect(rErr).toBeNull();
-      expect(stored?.verifier_version).toBe('geo-verify/v1');
+      expect(stored?.verifier_version).toBe(VERIFIER_VERSION);
       const result = stored!.verifier as VerifierResult;
       results.push({ conv: convId, result });
       for (const m of result.mentions ?? []) verdictOf.set(m.evidence_id, { verdict: m.verdict, reason: m.reason });

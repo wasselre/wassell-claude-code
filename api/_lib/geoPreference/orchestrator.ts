@@ -24,6 +24,7 @@
 
 import { resolveAnchor, parseDirection, type ResolutionContext } from './resolver.js';
 import { compile } from './compiler.js';
+import { applyCompanyRules } from './companyRules.js';
 import { classify, type SatUniverse } from './satisfiability.js';
 import { decide, type GateConfig } from './gate.js';
 import { geoObserver, type GeoObserver } from './observability.js';
@@ -133,6 +134,10 @@ export async function runReviewFirst(
 ): Promise<ReviewFirstResult> {
   const obs = ctx.observer ?? geoObserver;
   const meta = { client_id: ctx.client_id, checkpoint_id: ctx.checkpoint_id ?? null };
+  // Operator rules on the extracted readings (companyRules.ts) — e.g. a
+  // customer's question about a place is interest. Shapes the proposal only;
+  // the stored evidence rows are untouched.
+  evidence = applyCompanyRules(evidence);
 
   // 1. Resolve every anchor across every mention against the map. (timed stage)
   const anchorCount = evidence.reduce((n, e) => n + e.anchors.length, 0);

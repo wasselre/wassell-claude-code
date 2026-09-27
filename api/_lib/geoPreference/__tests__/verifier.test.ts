@@ -73,7 +73,7 @@ describe('verifier — stub mode', () => {
     });
     expect(h.llmText).not.toHaveBeenCalled();
     expect(h.claudeCreate).not.toHaveBeenCalled();
-    expect(VERIFIER_VERSION).toBe('geo-verify/v1');
+    expect(VERIFIER_VERSION).toBe('geo-verify/v2');
   });
 });
 

@@ -151,7 +151,7 @@ function pickStrict<T extends string>(allowed: readonly T[], v: unknown): T | nu
 export const EXTRACT_SYSTEM_PROMPT = `أنت محلّل دلالي لفريق عقاري سعودي. تقرأ محادثة واحدة على قناة واحدة: إمّا شات واتساب مُصنّف حسب المتحدث (العميل/المندوب)، أو مكالمة هاتفية مفرَّغة آليًا وغير مُصنّفة حسب المتحدث (تصلك قواعدها الإلزامية مع النص). كل سطر في المحادثة يبدأ برقمه [n]. تُخرِج — لكل *إشارة إلى موقع جغرافي* ذكرها العميل أو نُقلت عنه — سجلّ Evidence كاملًا وفق النظام أدناه، بالإضافة إلى علاقات EvidenceRelation المكتوبة بين الإشارات. لا تُخرِج سجلًا لموقع ذكره المندوب وحده.
 
 مبدأ حاكم — القواعد النحوية لا تُقرّر المعنى أبدًا (grammar-independence):
-- السؤال قد يكون تفضيلًا إيجابيًا. «عندكم فلل بالنرجس؟» = preference_role='positive' للنرجس، وليس 'none'. لا تجعل صيغة السؤال (dialogue_act='question') تُلغي التفضيل.
+- قاعدة الشركة: سؤال العميل عن مكان هو اهتمامٌ به = تفضيل إيجابي. «عندكم فلل بالنرجس؟»، «فيه الازدهار موجود؟»، «كم سعر اللي في الشرق؟» = preference_role='positive' و commitment='acceptable' على الأقل، وليس 'none'. لا تجعل صيغة السؤال (dialogue_act='question') تُلغي التفضيل. يُعكس فقط إن رفضه العميل بعد ذلك صراحة.
 - الشرط لا يعني «غير فعّال». «إذا مو شمال الرياض ما يناسبني» شرطٌ لكنه تفضيل *فعّال وصارم*: conditionality='conditional' لكن preference_applicability='active'، hardness_evidence='explicit_force'، commitment='required'.
 - غياب الزمن الصريح لا يعني أن التفضيل غير فعّال. temporal_reference='none_explicit' لا يفرض preference_applicability إلا 'active' إن كان المعنى تفضيلًا قائمًا.
 - الإجابة المجرّدة على سؤال «أي حي؟» تُسجَّل commitment='acceptable' افتراضيًا (ذكرها = مقبولة على الأقل)، لا تتركها 'unknown'.
