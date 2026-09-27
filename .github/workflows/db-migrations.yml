@@ -1,0 +1,175 @@
+# Migration validation — the gate production applies are supposed to depend on.
+#
+# This job used to live in ci.yml, where the workflow-level concurrency group
+# (`cancel-in-progress: true`) killed the whole run on every push to main. It is
+# the longest job in the repo, so with several sessions pushing through the day
+# it was cancelled four times running on 2026-09-27 and its smoke assertions
+# never once reached a verdict. A job-level concurrency group does NOT help:
+# cancelling a RUN cancels its jobs regardless of their own groups.
+#
+# So it is its own workflow now. Normal CI keeps cancelling superseded runs —
+# that is the right behaviour for fast feedback on the newest commit — while
+# migration validation QUEUES and completes for every commit. Actions minutes
+# are free on a public repo; the only cost is wall-clock.
+name: db-migrations
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: db-migrations-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  db-migrations:
+    # Ephemeral-database integration stage (bilingual W1): executes the
+    # translation migrations against a blank Postgres 17 with the fixture
+    # bootstrap, then runs the smoke assertions. This is the designated
+    # validator for the 2026-09-01_* migration set — production apply is
+    # gated on this job being green.
+    runs-on: ubuntu-latest
+    # Raised from 10 for Phase 3 B2A: proving that an authorization change moves
+    # nobody's reach means sweeping sorted file-ID fingerprints for 7 personas x
+    # 3 kinds over an 8,000-row corpus, three times (before, after, after
+    # rollback). That is ~7 minutes on a shared runner and it is the point of
+    # the job, not overhead to trim.
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: wassell_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5432/wassell_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bootstrap fixture
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/bootstrap_fixture.sql
+      - name: Apply translation migrations (W1 set + W4 server-language)
+        run: |
+          for f in supabase/migrations/2026-09-01_0*.sql supabase/migrations/2026-09-02_0*.sql; do
+            case "$f" in
+              # Marketing / Marketing-OS migrations share the 2026-09-0x date range
+              # but are NOT part of the translation set this job validates: they
+              # target mkt_*/mos_* tables the translation fixture deliberately omits
+              # and (unlike the translation migrations) carry no
+              # to_regclass/check_function_bodies CI guard. They have no fixture here,
+              # so skip them — they are validated by production apply, not this job.
+              *_attribution_*|*_mos_*)
+                echo "== skip (marketing, out of scope for the translation validator): $f"; continue ;;
+            esac
+            echo "== $f"
+            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
+          done
+      # 2026-09-07: rewrite every retryable SQLSTATE (40001/40P01) raise to WS409/WS429
+      # BEFORE the smoke runs (the smoke expects WS409 on a stale generation), then
+      # assert the rule holds for the whole schema. PostgREST retries 40001 forever;
+      # that was the engine of every conflict storm since June.
+      - name: Never raise a PostgREST-retryable SQLSTATE
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-09-07_never_raise_sqlstate_40001.sql
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/assert_no_retryable_sqlstate.sql
+      # 2026-09-27: the unit retry cap. Outside the 2026-09-0* glob above, so it
+      # is applied by name — without it smoke 13 has nothing to assert against,
+      # and an unresolvable unit retries the provider every 15 minutes forever
+      # (1,232 wasted calls before it was caught).
+      - name: Translation retry cap
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-09-27_translation_retry_cap.sql
+      # 2026-09-27: variant roles must follow the source language when it flips.
+      # Applied by name for the same reason as the cap above; smoke 14 asserts it.
+      - name: Translation variant role repair
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-09-27_translation_variant_role_repair.sql
+      - name: Smoke assertions
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_translation.sql
+
+      # The month PLANNER (TypeScript) and the task DISPATCHER (SQL) decide two
+      # halves of the same question — "does this month fit?" and "can this
+      # person be handed this task?" — from two different tables. On 2026-09-20
+      # they disagreed in production for the first time anyone checked:
+      # `mos_task_units` had zero references in the whole TypeScript codebase.
+      # This asserts the SQL half; `monthHonestCapacity.test.ts` asserts the
+      # TypeScript half.
+      - name: Planner and dispatcher agree on cost and capacity
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/fixture_engine_conformance.sql
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/assert_engine_conformance.sql
+
+      # The file-link projection (Phase 1) needs its own fixture: the translation
+      # bootstrap has no models/records/files tables. Without this step the
+      # db-migrations badge would be green while never executing this migration
+      # at all — the exact false signal called out in the Phase 1 design.
+      - name: File-link projection — fixture, migration, smoke
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE wassell_file_links;'
+          PGURL_FL="${PGURL%/*}/wassell_file_links"
+          psql "$PGURL_FL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/fixture_file_links.sql
+          psql "$PGURL_FL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-08-10_file_links_projection.sql
+          psql "$PGURL_FL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_file_links.sql
+
+      # Phase 2 (synchronisation) gets its OWN database. It cannot share the one
+      # above: smoke_file_links.sql parts 4 and 5 deliberately induce drift to
+      # prove the reconciler sees it, and Phase 2 exists to make that drift
+      # impossible. Those sixteen scenarios are re-run inverted in part 3 of the
+      # sync smoke, so nothing is lost by separating them.
+      - name: File-link sync — fixture, both migrations, smoke
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE wassell_file_link_sync;'
+          PGURL_FS="${PGURL%/*}/wassell_file_link_sync"
+          psql "$PGURL_FS" -v ON_ERROR_STOP=1 -f supabase/tests/ci/fixture_file_links.sql
+          psql "$PGURL_FS" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-08-10_file_links_projection.sql
+          psql "$PGURL_FS" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-08-12_file_link_sync.sql
+          psql "$PGURL_FS" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_file_link_sync.sql
+
+      # Two REAL concurrent sessions. The first design passed every single-session
+      # test and still deadlocked 11 runs in 12 here, so this is not optional.
+      - name: File-link sync — concurrency (two live sessions)
+        run: bash supabase/tests/ci/concurrency_file_link_sync.sh
+
+      # Phase 3 · B1 (business-file metadata). Its own database again, because
+      # it adds RLS + an authorization surface to `files` that the Phase 1/2
+      # smokes deliberately run without. The runner also owns the checks that
+      # need state either side of the apply: projection untouched, reach
+      # unchanged, idempotent re-apply, and a rollback that restores the exact
+      # pre-B1 structure.
+      - name: File metadata (B1) — fixtures, migration, smoke, rollback
+        run: bash supabase/tests/ci/run_b1_metadata_test.sh
+
+      # Phase 3 · B2A (file authorization performance). This one changes an
+      # AUTHORIZATION path, so the gate is not "it got faster": the runner
+      # captures per-persona, per-kind sorted file-ID fingerprints BEFORE the
+      # migration and requires them byte-identical AFTER. It also pulls B2 from
+      # its own branch (PR #21) to answer whether business_files_search reaches
+      # its 300 ms budget once the authorization cost is removed — without
+      # mixing the two batches' trees.
+      - name: File authorization performance (B2A) — equivalence, perf, rollback
+        run: |
+          B2=""
+          if git fetch --depth=1 origin claude/phase3-b2-search 2>/dev/null; then
+            mkdir -p /tmp/b2
+            if git show FETCH_HEAD:supabase/migrations/2026-08-16_02_business_files_search.sql \
+                 > /tmp/b2/b2.sql 2>/dev/null; then B2=/tmp/b2/b2.sql; fi
+          fi
+          B2_MIGRATION="$B2" bash supabase/tests/ci/run_b2a_authz_perf_test.sh
+
+      # Phase 3 · B2A.2 (set-based grant/folder resolution, identity-guarded).
+      # Same equivalence
+      # bar as B2A, plus synthetic high-cardinality personas (3,000 direct
+      # grants, a 12-deep folder chain) that exist to make a wrong design fail:
+      # an InitPlan-array membership test is a linear scan per row and would
+      # visibly lose here, while a hash semi-join holds.
+      - name: File authz grant sets (B2A.2) — equivalence, high-cardinality, perf
+        run: |
+          B2=""
+          if git fetch --depth=1 origin claude/phase3-b2-search 2>/dev/null; then
+            mkdir -p /tmp/b2
+            if git show FETCH_HEAD:supabase/migrations/2026-08-16_02_business_files_search.sql                  > /tmp/b2/b2.sql 2>/dev/null; then B2=/tmp/b2/b2.sql; fi
+          fi
+          B2_MIGRATION="$B2" bash supabase/tests/ci/run_b2a2_grant_sets_test.sh
