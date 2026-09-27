@@ -217,10 +217,16 @@ app — was invisible.
 
 ## Open questions / known limitations
 
-- **DeepSeek, Moonshot, Modal and fal-image prices are unset.** Tokens and units
-  are being recorded in full, but those rows read as unknown cost until someone
-  enters the rate from each vendor's dashboard. This is deliberate: the project's
-  standing rule is that an unknown price is NULL, never a guess.
+- **Every recorded call is now priced (2026-09-27): zero unpriced rows, all
+  time.** DeepSeek and Moonshot rates came from the vendors' published lists;
+  fal images, fal audio minutes and Modal GPU seconds carry the cost the caller
+  measured. The last gap was 152 calls stored under the legacy alias
+  `deepseek-chat`, which is absent from DeepSeek's price list — the alias is
+  served by DeepSeek-V4.1-Flash and billed at the Flash price, so it is seeded
+  at the Flash rate (exactly what the note in `openAiCompatModel` prescribed)
+  and the history re-costed to $0.0131. The standing rule is unchanged: an
+  unknown price is NULL, never a guess, and `ai_price_book.source` records where
+  each rate came from.
 - **Modal GPU seconds are not itemised.** The `cv_process` row carries the cost
   Modal itself reports in its manifest, which is authoritative, but `units` is
   not populated — so a Modal rate change cannot be re-costed retroactively the
