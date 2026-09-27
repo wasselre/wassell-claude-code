@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, NotebookPen, Bot, Contact, MoreVertical, LayoutGrid, X, CalendarPlus, MapPin, ChevronUp, ChevronDown } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, Bot, Contact, MoreVertical, LayoutGrid, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
@@ -35,6 +35,7 @@ import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointment
 import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import StudyJobCard from './StudyJobCard';
 import GeoPrefCard from './GeoPrefCard';
+import ChatToolsMenu from './ChatToolsMenu';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 import { clientActiveOptionRefs } from '@/lib/matching/clientOptionIndex';
@@ -1063,7 +1064,7 @@ function CrmActions({
             title={isAr ? 'عرض ملف العميل' : 'View client profile'}
           >
             <User size={12} />
-            {isAr ? 'عميل مرتبط' : 'Linked client'}
+            {isAr ? 'ملف العميل' : 'Client profile'}
           </button>
           <button
             onClick={run(onClientOptions)}
@@ -1073,30 +1074,15 @@ function CrmActions({
             <ListChecks size={12} />
             {isAr ? 'خيارات العميل' : 'Client options'}
           </button>
-          <button
-            onClick={run(onLogInteraction)}
-            className={`inline-flex items-center gap-1 rounded-full border border-gold/40 bg-gold/10 ${pad} font-medium text-[#8a6a2f] transition-colors hover:bg-gold/20`}
-            title={isAr ? 'تسجيل مكالمة أو تواصل خارج المهام' : 'Log a call or other interaction'}
-          >
-            <NotebookPen size={12} />
-            {isAr ? 'تسجيل تواصل' : 'Log interaction'}
-          </button>
-          <button
-            onClick={run(onBookAppointment)}
-            className={`inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 ${pad} font-medium text-copper transition-colors hover:bg-copper/10`}
-            title={isAr ? 'حجز موعد لهذا العميل' : 'Book an appointment for this client'}
-          >
-            <CalendarPlus size={12} />
-            {isAr ? 'حجز موعد' : 'Book appointment'}
-          </button>
-          <button
-            onClick={run(onRecordVisit)}
-            className={`inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 ${pad} font-medium text-copper transition-colors hover:bg-copper/10`}
-            title={isAr ? 'تسجيل زيارة قام بها العميل' : 'Record a visit this client made'}
-          >
-            <MapPin size={12} />
-            {isAr ? 'تسجيل زيارة' : 'Record a visit'}
-          </button>
+          {/* Log interaction / book appointment / record visit live in ONE
+              «أدوات» pop-up (operator request 2026-09-27) to keep the header short. */}
+          <ChatToolsMenu
+            onLogInteraction={run(onLogInteraction)}
+            onBookAppointment={run(onBookAppointment)}
+            onRecordVisit={run(onRecordVisit)}
+            padClass={pad}
+            big={big}
+          />
           <button
             onClick={run(onNotifyOfficer)}
             className={`inline-flex items-center gap-1 rounded-full border border-terracotta/40 bg-terracotta/5 ${pad} font-medium text-terracotta transition-colors hover:bg-terracotta/10`}
@@ -1113,10 +1099,10 @@ function CrmActions({
             <PortalIcon size={12} />
             {isAr ? 'تسجيل في البوابة' : 'Register in portal'}
           </button>
-          {/* AI handover is a self-contained toggle (a fetch, no overlay) — it
-              stays mounted in the sheet so its busy spinner + result toast show;
-              the rep closes the sheet via its own X. */}
-          <AiHandoverButton chatRecordId={recordId} aiManaged={aiManaged} isAr={isAr} />
+          {/* «تسليم للمساعد الذكي» was removed from the header (operator request
+              2026-09-27). The toggle still renders on a chat the AI ALREADY
+              manages — otherwise nobody could take that conversation back. */}
+          {aiManaged && <AiHandoverButton chatRecordId={recordId} aiManaged={aiManaged} isAr={isAr} />}
         </>
       ) : (
         <>

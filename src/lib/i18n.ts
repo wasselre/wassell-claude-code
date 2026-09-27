@@ -1204,6 +1204,14 @@ const resources = {
 
       // Chat card — client preferences read from the conversation
       'chats.prefs.card_title': 'تفضيلات العميل',
+      'chats.tools.button': 'أدوات',
+      'chats.tools.title': 'تسجيل تواصل، حجز موعد، تسجيل زيارة',
+      'chats.tools.log_interaction': 'تسجيل تواصل',
+      'chats.tools.log_interaction_hint': 'تسجيل مكالمة أو تواصل خارج المهام',
+      'chats.tools.book_appointment': 'حجز موعد',
+      'chats.tools.book_appointment_hint': 'حجز موعد لهذا العميل',
+      'chats.tools.record_visit': 'تسجيل زيارة',
+      'chats.tools.record_visit_hint': 'تسجيل زيارة قام بها العميل',
       'chats.prefs.card_show': 'إظهار تفضيلات العميل',
       'chats.prefs.card_hide': 'إخفاء تفضيلات العميل (لتكبير المحادثة)',
       'chats.prefs.title': 'المواصفات والميزانية',
@@ -2412,6 +2420,14 @@ const resources = {
 
       // Chat card — client preferences read from the conversation
       'chats.prefs.card_title': 'Client preferences',
+      'chats.tools.button': 'Tools',
+      'chats.tools.title': 'Log an interaction, book an appointment, record a visit',
+      'chats.tools.log_interaction': 'Log interaction',
+      'chats.tools.log_interaction_hint': 'Log a call or other interaction',
+      'chats.tools.book_appointment': 'Book appointment',
+      'chats.tools.book_appointment_hint': 'Book an appointment for this client',
+      'chats.tools.record_visit': 'Record a visit',
+      'chats.tools.record_visit_hint': 'Record a visit this client made',
       'chats.prefs.card_show': 'Show client preferences',
       'chats.prefs.card_hide': 'Hide client preferences for a bigger chat',
       'chats.prefs.title': 'Specs & budget',
