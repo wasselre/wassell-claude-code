@@ -277,6 +277,28 @@ describe('compile() — any_of', () => {
   });
 });
 
+describe('compile() — any_of of REFUSALS (calib-002, 2026-09-27)', () => {
+  const rel = (members: string[]) => [{
+    id: 'R_neg', relation: 'any_of' as const,
+    members: members.map((id) => ({ type: 'evidence' as const, id })),
+    source_span: 'x', explicit_or_inferred: 'explicit' as const,
+  }];
+  it('«ميكفاي، الأندلس، هذي كلها ما أبيها» → each refusal is its own EXCLUDE clause, nothing is included', () => {
+    const { preference } = compile([ev('mikfay', { role: 'negative' }), ev('andalus', { role: 'negative' })], rel(['mikfay', 'andalus']));
+    const clauses = preference.groups.flatMap((g) => g.clauses);
+    expect(clauses.filter((c) => c.op === 'include')).toHaveLength(0);
+    expect(clauses.filter((c) => c.op === 'exclude').map((c) => c.anyOf[0]!.geometry_id).sort()).toEqual([G('andalus'), G('mikfay')]);
+  });
+  it('a mixed any_of keeps the wanted places as one include and excludes the refused one', () => {
+    const { preference } = compile([ev('narjis'), ev('ard'), ev('rawdah', { role: 'negative' })], rel(['narjis', 'ard', 'rawdah']));
+    const clauses = preference.groups.flatMap((g) => g.clauses);
+    const inc = clauses.filter((c) => c.op === 'include');
+    expect(inc).toHaveLength(1);
+    expect(inc[0]!.anyOf.map((a) => a.geometry_id).sort()).toEqual([G('ard'), G('narjis')]);
+    expect(clauses.filter((c) => c.op === 'exclude').map((c) => c.anyOf[0]!.geometry_id)).toEqual([G('rawdah')]);
+  });
+});
+
 describe('compile() — all_of', () => {
   it('«شمال … وقريب من المطار» → one group, two AND include clauses', () => {
     const { preference, needs_confirm, reasons } = compile(F_all_of.evidence, F_all_of.relations);

@@ -355,15 +355,23 @@ function clausesOf(ref: RelationMemberRef, ctx: Ctx): GeoClause[] {
 
   switch (r.relation) {
     case 'any_of': {
+      // Positive members are alternatives for the SAME slot ⇒ one include clause.
+      // A REFUSED member is never an alternative the customer wants: «ميكفاي،
+      // الأندلس، هذي كلها ما أبيها» is extracted as an any_of of two NEGATIVE
+      // mentions, and compiling it as one include drew both refusals as wanted
+      // places (caught by the verifier on calib-002, 2026-09-27). NOT(A or B) is
+      // exclude A AND exclude B, so each negative member becomes its own exclude
+      // clause; the positives keep their shared include.
       const refs: AnchorRef[] = [];
+      const excludes: GeoClause[] = [];
       for (const m of r.members) {
         if (m.type !== 'evidence') continue;
         const e = ctx.evById.get(m.id);
-        if (e && ctx.activeIds.has(e.id)) refs.push(anchorRefOf(e));
+        if (!e || !ctx.activeIds.has(e.id)) continue;
+        if (polarityOf(e) === 'exclude') excludes.push({ op: 'exclude', anyOf: [anchorRefOf(e)] });
+        else refs.push(anchorRefOf(e));
       }
-      if (refs.length === 0) return [];
-      // any_of members are alternatives for the SAME positive slot ⇒ include.
-      return [{ op: 'include', anyOf: refs }];
+      return [...(refs.length ? [{ op: 'include' as const, anyOf: refs }] : []), ...excludes];
     }
     case 'all_of': {
       const clauses: GeoClause[] = [];

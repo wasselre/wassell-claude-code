@@ -296,6 +296,13 @@ describe('resolveAnchor — article-insensitive and spelling-tolerant district m
     expect(r.status).toBe('resolved');
     expect(r.recipe?.resolved_element_ids).toEqual(['d-mohammadiyah']);
   });
+  it('a Riyadh client naming a district that exists only ABROAD is asked about, never placed abroad («الحمرة»)', async () => {
+    const hamra = mkDistrict('d-hamra-uaq', 'الحمرة', 'Al Hamra', 'أم القيوين', 'أم القيوين', 'أم القيوين', 'AE', 25.5, 55.6);
+    const db = fakeDb({ async findDistricts(token) { return matchIlike([...DISTRICTS, hamra], token); } });
+    const r = await resolveAnchor(anchor('district', 'الحمرة'), ctx({ established_city: 'الرياض', db }));
+    expect(r.status).toBe('needs_confirm');
+    expect(r.recipe?.resolved_element_ids ?? []).not.toContain('d-hamra-uaq');
+  });
   it('«Malga» (English letters, g for ق) resolves «حي الملقا» through its English name', async () => {
     const r = await resolveAnchor(anchor('district', 'Malga'), ctx({ established_city: 'الرياض' }));
     expect(r.status).toBe('resolved');

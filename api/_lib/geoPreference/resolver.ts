@@ -468,7 +468,13 @@ async function resolveAdminToken(
     }));
   }
   // Country scoping: never let a cross-border namesake even be a candidate.
+  // The cross-border fallback exists for a client with NO established place
+  // (a Dubai-only enquiry on a Saudi-default run). Once the client is anchored
+  // in a city, a same-name district abroad is a wrong answer, not a fallback:
+  // «الحمرة» from a Riyadh customer resolved to الحمرة in أم القيوين (calib-002,
+  // 2026-09-27) because Riyadh has no district spelled exactly that. Ask instead.
   const scoped = candidates.filter((c) => (c.country_code || DEFAULT_GEO_COUNTRY) === preferCountry);
+  if (scoped.length === 0 && ctx.established_city && kind === 'district') return needsConfirm('outside_admin');
   const pool = scoped.length ? scoped : candidates;
 
   const { pick, result } = selectAdmin(pool, token, anchor.anchor_type, ctx);
