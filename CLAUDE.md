@@ -789,12 +789,13 @@ implementation runs on Vercel Edge, Node and Deno alike.
    the file, so an exemption cannot decay into a hole. Fix the call site, not
    the allowlist.
 
-**Credit balances (same migration day):** `ai_provider_accounts` +
-`ai_credit_entries` (`supabase/migrations/2026-09-14_ai_credit_accounts.sql`)
-track how much is LEFT. No provider here exposes a balance an API key can read,
-so the operator enters an opening balance and the app subtracts metered spend
-from it — surfaced at **Settings → AI Usage & Credit**
-(`src/pages/Settings/AiUsagePage.tsx`).
+**Credit balances (same migration day; SUPERSEDED 2026-09-27 — see rule 27):**
+`ai_provider_accounts` + `ai_credit_entries`
+(`supabase/migrations/2026-09-14_ai_credit_accounts.sql`) tracked how much was
+LEFT by having the operator enter an opening balance and subtracting metered
+spend from it. Rules 9-12 below describe that model; the hand-entered balance is
+no longer shown anywhere and `ai_credit_entries` is dormant. `ai_provider_accounts`
+is still live (label, billing_mode, alert thresholds).
 
 8. **Spend is attributed by PROVIDER**, so exactly ONE active account per
    provider is allowed (unique partial index). Two separately-billed keys for
@@ -914,6 +915,16 @@ by `/api/cron/ai-balance-probe` and shown at the TOP of Settings -> AI Usage.
     — never put a phone number in the repo.
 25. **Don't store `unsupported` API-probe rows for providers the browser probe
     owns** (Anthropic, Modal); they buried real readings before 2026-09-21.
+27. **Nothing in the UI may show a hand-entered balance (2026-09-27).** The
+    account cards on Settings → AI Usage now read the vendor probe, not
+    `credited - spent`. That arithmetic had drifted to **-$0.21 "left" with a
+    red LOW badge on Anthropic while the console held $99.34**, because a
+    top-up nobody recorded is invisible to it — the exact failure the vendor
+    probe exists to prevent. If you find yourself reviving `summarizeAccounts`,
+    `AddCreditModal`, `v_ai_account_balances` or `v_ai_account_runway` as a
+    DISPLAYED figure, you are re-introducing it. Our own metered spend stays on
+    the card as spend-per-day and runway, labelled as an estimate and flagged
+    when unpriced calls make it optimistic.
 26. **Modal's own cost estimate is calibrated ×4.13** (`mkt_settings`
     `cv.modal_cost_calibration`, applied in `mkt_cv_cost_add`) because the
     per-frame OCR estimate misses fan-out containers' cold-start/idle time.

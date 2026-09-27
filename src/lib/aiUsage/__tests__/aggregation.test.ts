@@ -7,20 +7,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  summarizeAccounts, summarizeSpend, usd, usdPrecise, formatTokens, areaLabel,
-  type AiAccountBalance, type AiSpendRow,
+  summarizeProviderSpend, summarizeSpend, usd, usdPrecise, formatTokens, areaLabel,
+  type AiSpendRow,
 } from '../client';
-
-function account(over: Partial<AiAccountBalance> = {}): AiAccountBalance {
-  return {
-    id: 'a1', provider: 'anthropic', label: 'Anthropic', currency: 'USD',
-    is_active: true, low_balance_threshold: null, notes: null,
-    credited_usd: 100, tracking_since: '2026-09-01T00:00:00Z', last_topup_at: null,
-    entry_count: 1, spent_usd: 10, remaining_usd: 90, pct_used: 10,
-    unpriced_calls: 0, total_calls: 5, remaining_is_upper_bound: false, is_low: false,
-    ...over,
-  };
-}
 
 function row(over: Partial<AiSpendRow> = {}): AiSpendRow {
   return {
@@ -31,51 +20,42 @@ function row(over: Partial<AiSpendRow> = {}): AiSpendRow {
   };
 }
 
-describe('summarizeAccounts', () => {
-  it('adds up the tracked accounts', () => {
-    const t = summarizeAccounts([
-      account({ id: 'a', credited_usd: 100, spent_usd: 10, remaining_usd: 90 }),
-      account({ id: 'b', provider: 'fal', credited_usd: 50, spent_usd: 5, remaining_usd: 45 }),
-    ]);
-    expect(t).toMatchObject({ credited: 150, spent: 15, remaining: 135, trackedCount: 2, untrackedCount: 0 });
+describe('summarizeProviderSpend', () => {
+  it('buckets cost, calls and unpriced calls per provider', () => {
+    const p = summarizeProviderSpend([
+      row({ provider: 'deepseek', cost_usd: 0.4, calls: 10 }),
+      row({ provider: 'deepseek', cost_usd: 0.2, calls: 5 }),
+      row({ provider: 'fal', cost_usd: 1, calls: 2 }),
+    ], 30);
+    expect(p.deepseek).toMatchObject({ cost: 0.6000000000000001, calls: 15, unpricedCalls: 0 });
+    expect(p.fal.cost).toBe(1);
   });
 
-  it('EXCLUDES accounts with no credit entries from every total', () => {
-    // An untracked account has no balance. Counting its zero would report
-    // "$0 left" for an account nobody has entered a number for yet.
-    const t = summarizeAccounts([
-      account({ id: 'a', credited_usd: 100, spent_usd: 10, remaining_usd: 90 }),
-      account({ id: 'b', provider: 'modal', entry_count: 0, credited_usd: 0, spent_usd: 0, remaining_usd: 0 }),
-    ]);
-    expect(t.remaining).toBe(90);
-    expect(t.trackedCount).toBe(1);
-    expect(t.untrackedCount).toBe(1);
+  it('a null cost adds nothing to the money but the unpriced calls still land', () => {
+    // The bucket must be able to say "$0.00 across 400 calls we cannot price"
+    // rather than looking free.
+    const p = summarizeProviderSpend([
+      row({ provider: 'deepseek', cost_usd: null, calls: 400, unpriced_calls: 400 }),
+    ], 30);
+    expect(p.deepseek.cost).toBe(0);
+    expect(p.deepseek.unpricedCalls).toBe(400);
   });
 
-  it('flags the whole total as an upper bound when ANY account has unpriced usage', () => {
-    const t = summarizeAccounts([
-      account({ id: 'a' }),
-      account({ id: 'b', provider: 'deepseek', unpriced_calls: 400, remaining_is_upper_bound: true }),
-    ]);
-    expect(t.anyUpperBound).toBe(true);
+  it('averages over the WHOLE window, not over the days that had traffic', () => {
+    // One busy day in thirty is not a $3/day burn rate; dividing by the days
+    // that happened to have rows would make every runway wildly pessimistic.
+    const p = summarizeProviderSpend([row({ provider: 'fal', cost_usd: 3, calls: 1 })], 30);
+    expect(p.fal.perDay).toBeCloseTo(0.1, 10);
   });
 
-  it('does not flag an upper bound from an UNTRACKED account', () => {
-    // Its usage is not being subtracted from anything, so it cannot make a
-    // balance optimistic.
-    const t = summarizeAccounts([
-      account({ id: 'a' }),
-      account({ id: 'b', entry_count: 0, unpriced_calls: 99, remaining_is_upper_bound: true }),
-    ]);
-    expect(t.anyUpperBound).toBe(false);
+  it('a window of zero days never divides by zero', () => {
+    const p = summarizeProviderSpend([row({ provider: 'fal', cost_usd: 3 })], 0);
+    expect(Number.isFinite(p.fal.perDay)).toBe(true);
+    expect(p.fal.perDay).toBe(3);
   });
 
-  it('counts low-balance accounts', () => {
-    expect(summarizeAccounts([account({ is_low: true }), account({ id: 'b' })]).lowCount).toBe(1);
-  });
-
-  it('returns zeros for no accounts at all', () => {
-    expect(summarizeAccounts([])).toMatchObject({ remaining: 0, trackedCount: 0, anyUpperBound: false });
+  it('returns an empty map for no rows', () => {
+    expect(summarizeProviderSpend([], 30)).toEqual({});
   });
 });
 

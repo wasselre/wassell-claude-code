@@ -18,49 +18,6 @@ import { supabase } from '@/lib/supabase';
  * `remaining_is_upper_bound` travels with it everywhere and the UI must show it.
  */
 
-export interface AiAccountBalance {
-  id: string;
-  provider: string;
-  label: string;
-  currency: string;
-  is_active: boolean;
-  low_balance_threshold: number | null;
-  notes: string | null;
-  credited_usd: number;
-  tracking_since: string | null;
-  last_topup_at: string | null;
-  entry_count: number;
-  spent_usd: number;
-  remaining_usd: number;
-  pct_used: number | null;
-  unpriced_calls: number;
-  total_calls: number;
-  /** Some metered usage could not be priced — `remaining_usd` is a ceiling, not a figure. */
-  remaining_is_upper_bound: boolean;
-  is_low: boolean;
-}
-
-export interface AiAccountRunway {
-  account_id: string;
-  provider: string;
-  spent_30d: number;
-  unpriced_30d: number;
-  avg_daily_usd: number;
-  remaining_usd: number;
-  /** null = no spend in the last 30 days, or nothing left to burn. */
-  days_remaining: number | null;
-}
-
-export interface AiCreditEntry {
-  id: string;
-  account_id: string;
-  kind: 'opening' | 'topup' | 'adjustment';
-  amount_usd: number;
-  effective_at: string;
-  note: string | null;
-  created_at: string;
-}
-
 export interface AiSpendRow {
   day: string;
   area: string;
@@ -107,33 +64,6 @@ function numOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/**
- * Postgres returns `numeric` as a STRING through PostgREST (it is arbitrary
- * precision and would lose digits as a JS float). Coercing here rather than at
- * each render site is what stops `"90.50" - 0` style bugs downstream.
- */
-function normalizeBalance(r: Record<string, unknown>): AiAccountBalance {
-  return {
-    id: String(r.id),
-    provider: String(r.provider),
-    label: String(r.label),
-    currency: String(r.currency ?? 'USD'),
-    is_active: Boolean(r.is_active),
-    low_balance_threshold: numOrNull(r.low_balance_threshold),
-    notes: (r.notes as string | null) ?? null,
-    credited_usd: num(r.credited_usd),
-    tracking_since: (r.tracking_since as string | null) ?? null,
-    last_topup_at: (r.last_topup_at as string | null) ?? null,
-    entry_count: num(r.entry_count),
-    spent_usd: num(r.spent_usd),
-    remaining_usd: num(r.remaining_usd),
-    pct_used: numOrNull(r.pct_used),
-    unpriced_calls: num(r.unpriced_calls),
-    total_calls: num(r.total_calls),
-    remaining_is_upper_bound: Boolean(r.remaining_is_upper_bound),
-    is_low: Boolean(r.is_low),
-  };
-}
 
 /**
  * The vendor's own number for each provider, and whether anything spent that
@@ -187,14 +117,12 @@ export interface AiBalanceCheck {
 }
 
 export interface AiUsageData {
-  balances: AiAccountBalance[];
-  runway: Record<string, AiAccountRunway>;
   spend: AiSpendRow[];
   unpriced: AiUnpricedModel[];
   checks: AiBalanceCheck[];
 }
 
-const EMPTY: AiUsageData = { balances: [], runway: {}, spend: [], unpriced: [], checks: [] };
+const EMPTY: AiUsageData = { spend: [], unpriced: [], checks: [] };
 
 /**
  * Load everything the AI Usage page shows, in one pass.
@@ -221,34 +149,16 @@ export function useAiUsage(days = 30) {
         return;
       }
       const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-      const [balancesRes, runwayRes, spendRes, unpricedRes, checksRes] = await Promise.all([
-        supabase.from('v_ai_account_balances').select('*').order('provider'),
-        supabase.from('v_ai_account_runway').select('*'),
+      const [spendRes, unpricedRes, checksRes] = await Promise.all([
         supabase.from('v_ai_usage_daily').select('*').gte('day', since).order('day', { ascending: false }),
         supabase.from('v_ai_usage_unpriced').select('*'),
         supabase.from('v_ai_balance_reconciliation').select('*').order('provider'),
       ]);
 
-      const firstError =
-        balancesRes.error ?? runwayRes.error ?? spendRes.error ?? unpricedRes.error ?? checksRes.error;
+      const firstError = spendRes.error ?? unpricedRes.error ?? checksRes.error;
       if (firstError) throw new Error(firstError.message);
 
-      const runway: Record<string, AiAccountRunway> = {};
-      for (const r of (runwayRes.data ?? []) as Record<string, unknown>[]) {
-        runway[String(r.account_id)] = {
-          account_id: String(r.account_id),
-          provider: String(r.provider),
-          spent_30d: num(r.spent_30d),
-          unpriced_30d: num(r.unpriced_30d),
-          avg_daily_usd: num(r.avg_daily_usd),
-          remaining_usd: num(r.remaining_usd),
-          days_remaining: numOrNull(r.days_remaining),
-        };
-      }
-
       setData({
-        balances: ((balancesRes.data ?? []) as Record<string, unknown>[]).map(normalizeBalance),
-        runway,
         spend: ((spendRes.data ?? []) as Record<string, unknown>[]).map((r) => ({
           day: String(r.day),
           area: String(r.area),
@@ -313,73 +223,6 @@ export function useAiUsage(days = 30) {
   return { ...data, loading, error, reload };
 }
 
-/** Credit history for one account, newest first. */
-export async function fetchCreditEntries(accountId: string): Promise<AiCreditEntry[]> {
-  requireSupabase();
-  const { data, error } = await supabase!
-    .from('ai_credit_entries')
-    .select('*')
-    .eq('account_id', accountId)
-    .order('effective_at', { ascending: false });
-  if (error) throw new Error(error.message);
-  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
-    id: String(r.id),
-    account_id: String(r.account_id),
-    kind: r.kind as AiCreditEntry['kind'],
-    amount_usd: num(r.amount_usd),
-    effective_at: String(r.effective_at),
-    note: (r.note as string | null) ?? null,
-    created_at: String(r.created_at),
-  }));
-}
-
-/** Record money going IN to an account. Throws on failure — callers toast it. */
-export async function addCredit(input: {
-  accountId: string;
-  amountUsd: number;
-  kind?: AiCreditEntry['kind'];
-  effectiveAt?: string;
-  note?: string;
-}): Promise<string> {
-  requireSupabase();
-  const { data, error } = await supabase!.rpc('ai_credit_add', {
-    p_account_id: input.accountId,
-    p_amount_usd: input.amountUsd,
-    p_kind: input.kind ?? 'topup',
-    p_effective_at: input.effectiveAt ?? new Date().toISOString(),
-    p_note: input.note ?? null,
-  });
-  if (error) throw new Error(error.message);
-  return String(data);
-}
-
-export async function deleteCredit(entryId: string): Promise<void> {
-  requireSupabase();
-  const { error } = await supabase!.rpc('ai_credit_delete', { p_entry_id: entryId });
-  if (error) throw new Error(error.message);
-}
-
-export async function saveAccount(input: {
-  id?: string;
-  provider: string;
-  label: string;
-  threshold?: number | null;
-  notes?: string | null;
-  isActive?: boolean;
-}): Promise<string> {
-  requireSupabase();
-  const { data, error } = await supabase!.rpc('ai_account_upsert', {
-    p_provider: input.provider,
-    p_label: input.label,
-    p_id: input.id ?? null,
-    p_threshold: input.threshold ?? null,
-    p_notes: input.notes ?? null,
-    p_is_active: input.isActive ?? true,
-  });
-  if (error) throw new Error(error.message);
-  return String(data);
-}
-
 /**
  * Set a model's price and re-cost history. Returns how many existing rows just
  * became costed — the number that makes "I entered one rate and 3,500 calls
@@ -416,35 +259,37 @@ export async function setModelPrice(input: {
 // Aggregation (pure — lives here so it can be tested without a DOM)
 // ---------------------------------------------------------------------------
 
-export interface AccountTotals {
-  remaining: number;
-  credited: number;
-  spent: number;
-  trackedCount: number;
-  untrackedCount: number;
-  /** Any tracked account resting on unpriced usage — `remaining` is a ceiling. */
-  anyUpperBound: boolean;
-  lowCount: number;
+/** What one provider cost us over the window the page loaded. */
+export interface ProviderSpend {
+  /** Priced cost only. With `unpricedCalls > 0` this is a FLOOR, not a total. */
+  cost: number;
+  calls: number;
+  unpricedCalls: number;
+  /** Average per day across the whole window, not across days that had traffic. */
+  perDay: number;
 }
 
 /**
- * Roll accounts into the headline figures.
+ * Fold the daily rows into one bucket per provider.
  *
- * Accounts with no credit entries are EXCLUDED from every total: an untracked
- * account has no balance, and counting its zero would report "you have $0 left"
- * for something nobody has entered yet.
+ * This is OUR side of the comparison: what the app recorded. The money LEFT
+ * comes from the vendor's own reading (`AiBalanceCheck.vendor_value_usd`) and
+ * is never computed from these numbers — that was the old hand-entered model,
+ * which drifted from reality the moment anyone topped up without recording it,
+ * and on 2026-09-27 was showing Anthropic at -$0.21 while the console held
+ * $99.34.
  */
-export function summarizeAccounts(balances: AiAccountBalance[]): AccountTotals {
-  const tracked = balances.filter((b) => b.entry_count > 0);
-  return {
-    remaining: tracked.reduce((s, b) => s + b.remaining_usd, 0),
-    credited: tracked.reduce((s, b) => s + b.credited_usd, 0),
-    spent: tracked.reduce((s, b) => s + b.spent_usd, 0),
-    trackedCount: tracked.length,
-    untrackedCount: balances.length - tracked.length,
-    anyUpperBound: tracked.some((b) => b.remaining_is_upper_bound),
-    lowCount: tracked.filter((b) => b.is_low).length,
-  };
+export function summarizeProviderSpend(rows: AiSpendRow[], days = 30): Record<string, ProviderSpend> {
+  const out: Record<string, ProviderSpend> = {};
+  for (const r of rows) {
+    const b = (out[r.provider] ??= { cost: 0, calls: 0, unpricedCalls: 0, perDay: 0 });
+    b.cost += r.cost_usd ?? 0;
+    b.calls += r.calls;
+    b.unpricedCalls += r.unpriced_calls;
+  }
+  const span = Math.max(1, days);
+  for (const b of Object.values(out)) b.perDay = b.cost / span;
+  return out;
 }
 
 export interface SpendBucket { cost: number; calls: number; unpriced: number }

@@ -1,7 +1,7 @@
 # PRD: AI Usage, Cost & Credit Tracking
 
 **Status:** Live
-**Last updated:** 2026-09-21
+**Last updated:** 2026-09-27
 **Related PRDs:** [internationalization.md](internationalization.md) (translation is the highest-volume AI lane), [marketing-operations.md](marketing-operations.md), [chats.md](chats.md), [copywriter-intelligence.md](copywriter-intelligence.md)
 
 ## What it is (in plain English)
@@ -76,9 +76,20 @@ app — was invisible.
 
 ### Vendor balance check (2026-09-21)
 
-- **The vendor's latest successful reading is the balance.** Hand-entered opening
-  balances are no longer the headline figure (the credit-entry tables still
-  exist; the page's top totals now come from the vendor readings).
+- **The vendor's latest successful reading is the balance.** Hand-entered
+  balances are GONE from the page entirely (2026-09-27): the totals, the
+  per-provider account cards and the alerts all read the vendor's own figure.
+  The old cards computed "opening balance minus our metered spend", which had
+  drifted to showing Anthropic at **-$0.21 left with a red LOW badge while the
+  console actually held $99.34**, Moonshot $12 too high, and a "not tracked yet,
+  enter a balance" prompt on Modal, which is postpaid and has no balance to
+  enter. `ai_credit_entries` and its RPCs still exist in the database but
+  nothing reads them; `AddCreditModal.tsx` was deleted.
+- **A card shows what only that provider can tell us**, plus our own 30-day
+  spend beside it: balance (or cycle spend, for Modal), spend and calls we
+  recorded, per-day burn, and — prepaid only — a runway derived from OUR
+  metered burn and labelled as the estimate it is. Unpriced calls make the
+  runway optimistic, and the card says so.
 - **Prepaid vs postpaid.** `ai_provider_accounts.billing_mode`. Prepaid accounts
   (Anthropic, DeepSeek, Moonshot, fal) report money LEFT: spend = the balance
   falling, a rise = a top-up. Modal is postpaid: the reading is the current
@@ -134,10 +145,12 @@ app — was invisible.
 
 - Writes: `ai_usage` (append-only, one row per model call)
 - Reads/writes: `ai_price_book` (via `ai_price_set()`, admin-only)
-- Reads/writes: `ai_provider_accounts`, `ai_credit_entries` (via `ai_account_upsert()`,
-  `ai_credit_add()`, `ai_credit_delete()` — all admin-only, all SECURITY DEFINER)
-- Reads: `v_ai_usage_daily`, `v_ai_usage_unpriced`, `v_ai_account_balances`,
-  `v_ai_account_runway`, `v_ai_balance_reconciliation`
+- Reads: `ai_provider_accounts` (label, billing mode, alert thresholds)
+- `ai_credit_entries` + `ai_account_upsert()` / `ai_credit_add()` /
+  `ai_credit_delete()` are DORMANT since 2026-09-27 — the tables and RPCs are
+  intact, nothing in the app reads or writes them
+- Reads: `v_ai_usage_daily`, `v_ai_usage_unpriced`, `v_ai_balance_reconciliation`
+  (`v_ai_account_balances` / `v_ai_account_runway` are no longer read by the page)
 - Writes: `ai_provider_balance_probes` (hourly, from `/api/cron/ai-balance-probe`
   and the worker's browser probe), `ai_balance_alert_state`,
   `scheduled_whatsapp` (via `scheduled_whatsapp_enqueue`)
@@ -195,12 +208,12 @@ app — was invisible.
 | `api/_lib/__tests__/aiUsage.test.ts` | Recorder unit tests |
 | `supabase/migrations/2026-09-14_ai_credit_accounts.sql` | Accounts + credit ledger, balance/runway views, write RPCs, RLS |
 | `src/pages/Settings/AiUsagePage.tsx` | The page: balances, burn rate, spend breakdown, unpriced worklist |
-| `src/pages/Settings/components/AddCreditModal.tsx` | Opening balance / top-up / adjustment entry |
 | `supabase/migrations/2026-09-21_ai_vendor_truth_and_alerts.sql` | Vendor-truth reconciliation view, billing modes, thresholds, alert state + `ai_balance_alerts_evaluate`, Modal calibration |
 | `api/_lib/aiBalance.ts` + `api/cron/ai-balance-probe.ts` | DeepSeek / Moonshot / fal balance APIs, hourly |
 | `worker/src/lib/balanceBrowserProbe.ts` | Anthropic console + Modal usage page via Browserbase (cookie secrets; Modal needs `MODAL_WORKSPACE`) |
 | `src/lib/aiUsage/client.ts` | Browser client + the pure aggregation helpers |
 | `src/lib/aiUsage/__tests__/aggregation.test.ts` | Tests for the page's arithmetic |
+| `summarizeProviderSpend` in `src/lib/aiUsage/client.ts` | Per-provider 30-day spend + per-day burn behind the account cards |
 
 ## Open questions / known limitations
 
@@ -226,6 +239,9 @@ app — was invisible.
 - **Spend is attributed by PROVIDER, not by key.** v1 allows exactly one active
   account per provider (a unique partial index enforces it). Two Anthropic keys
   billed separately would need per-key attribution on `ai_usage` first.
+- **Live-tested for 6 days (2026-09-21 → 27):** 48/48 hourly readings per
+  provider, all five verdicts correct, and exactly ONE WhatsApp sent in total
+  (Modal over budget) — no repeat storm.
 - **The authenticated page view has not been eyeballed by Claude.** The admin
   guard requires an AAL2 session (TOTP), which Claude cannot and should not
   obtain, so the page was verified by rendering it without a backend (both

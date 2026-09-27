@@ -1,18 +1,17 @@
 import { useMemo, useState } from 'react';
 import {
-  Wallet, AlertTriangle, Loader2, Plus, Info,
+  Wallet, AlertTriangle, Loader2, Info,
   RefreshCw, ChevronDown, Check,
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import type { ToastType } from '@/types';
 import BackToSettings from './components/BackToSettings';
-import AddCreditModal from './components/AddCreditModal';
 import {
   useAiUsage, setModelPrice, usd, usdPrecise, formatTokens,
-  summarizeSpend,
+  summarizeSpend, summarizeProviderSpend,
   areaLabel, PROVIDER_LABELS,
-  type AiAccountBalance, type AiUnpricedModel, type AiBalanceCheck,
+  type AiUnpricedModel, type AiBalanceCheck, type ProviderSpend,
 } from '@/lib/aiUsage/client';
 
 /**
@@ -32,12 +31,12 @@ import {
 export default function AiUsagePage() {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
-  const { balances, runway, spend, unpriced, checks, loading, error, reload } = useAiUsage(30);
-  const [creditFor, setCreditFor] = useState<AiAccountBalance | null>(null);
+  const { spend, unpriced, checks, loading, error, reload } = useAiUsage(30);
 
   const vendor = useMemo(() => summarizeVendor(checks), [checks]);
 
   const spend30 = useMemo(() => summarizeSpend(spend), [spend]);
+  const byProvider = useMemo(() => summarizeProviderSpend(spend, 30), [spend]);
 
   if (loading) {
     return (
@@ -138,29 +137,29 @@ export default function AiUsagePage() {
       )}
 
       {/* ── Accounts ─────────────────────────────────────────────── */}
+      {/* Every figure here is the VENDOR's, read hourly. Until 2026-09-27 these
+          cards showed an opening balance somebody typed in, minus our metered
+          spend — which had drifted so far that Anthropic showed -$0.21 "left"
+          and a red LOW badge while the console actually held $99.34. */}
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-bold text-charcoal">
+        <h2 className="mb-1 text-sm font-bold text-charcoal">
           {isAr ? 'الحسابات' : 'Accounts'}
         </h2>
-        {balances.length === 0 ? (
+        <p className="mb-3 text-xs text-charcoal/50">
+          {isAr
+            ? 'الأرقام مقروءة من كل مزوّد مباشرة — لا يُدخل أحد رصيدًا يدويًا.'
+            : "Read from each provider directly — nobody types a balance in."}
+        </p>
+        {checks.length === 0 ? (
           <div className="rounded-xl border border-dashed border-sand/50 bg-white px-4 py-8 text-center text-sm text-charcoal/45">
-            {isAr
-              ? 'لا توجد حسابات. تُنشأ تلقائيًا لكل مزوّد عند تطبيق الترحيل.'
-              : 'No accounts. One is created per provider when the migration runs.'}
+            {isAr ? 'لا توجد حسابات مزوّدين.' : 'No provider accounts.'}
           </div>
         ) : (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {balances.map((b) => (
-            <AccountCard
-              key={b.id}
-              account={b}
-              runwayDays={runway[b.id]?.days_remaining ?? null}
-              dailyBurn={runway[b.id]?.avg_daily_usd ?? 0}
-              isAr={isAr}
-              onAddCredit={() => setCreditFor(b)}
-            />
-          ))}
-        </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {checks.map((c) => (
+              <AccountCard key={c.provider} check={c} spend={byProvider[c.provider]} isAr={isAr} />
+            ))}
+          </div>
         )}
       </section>
 
@@ -249,14 +248,6 @@ export default function AiUsagePage() {
         </div>
       </section>
 
-      {creditFor && (
-        <AddCreditModal
-          account={creditFor}
-          hasHistory={creditFor.entry_count > 0}
-          onClose={() => setCreditFor(null)}
-          onSaved={reload}
-        />
-      )}
     </div>
   );
 }
@@ -491,105 +482,130 @@ function EmptyNote({ isAr }: { isAr: boolean }) {
   );
 }
 
+/**
+ * One provider, as the provider itself reports it.
+ *
+ * Prepaid accounts show what is LEFT and how long that lasts at the current
+ * burn; Modal is postpaid, so it shows what this billing cycle has cost so far
+ * and there is nothing to run out of. Runway is deliberately derived from OUR
+ * metered spend (the only per-day figure we have) and is labelled as an
+ * estimate — the balance above it is not an estimate, it is the vendor's.
+ */
 function AccountCard({
-  account, runwayDays, dailyBurn, isAr, onAddCredit,
+  check, spend, isAr,
 }: {
-  account: AiAccountBalance;
-  runwayDays: number | null;
-  dailyBurn: number;
+  check: AiBalanceCheck;
+  spend: ProviderSpend | undefined;
   isAr: boolean;
-  onAddCredit: () => void;
 }) {
-  const meta = PROVIDER_LABELS[account.provider];
-  const tracked = account.entry_count > 0;
-  const pct = account.pct_used ?? 0;
+  const meta = PROVIDER_LABELS[check.provider];
+  const copy = VERDICT_COPY[check.verdict] ?? VERDICT_COPY.no_reading;
+  const postpaid = check.billing_mode === 'postpaid';
+  const value = check.vendor_value_usd;
+  const perDay = spend?.perDay ?? 0;
+  // Runway only means something for a balance that can run out, and only once
+  // there is spend to divide by.
+  const runwayDays = !postpaid && value !== null && value > 0 && perDay > 0
+    ? Math.floor(value / perDay)
+    : null;
+  const hot = check.verdict === 'LOW_BALANCE' || check.verdict === 'OVER_BUDGET';
+  const unpricedCalls = spend?.unpricedCalls ?? 0;
 
   return (
-    <div
-      className={`flex flex-col rounded-xl border bg-white p-4 ${
-        account.is_low ? 'border-amber-300 ring-1 ring-amber-200' : 'border-sand/30'
-      }`}
-    >
+    <div className={`flex flex-col rounded-xl border bg-white p-4 ${hot ? 'border-red-300 ring-1 ring-red-200' : 'border-sand/30'}`}>
       <div className="mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate text-sm font-bold text-charcoal">{account.label}</div>
-          <div className="truncate text-[11px] text-charcoal/40">{meta?.billing ?? account.provider}</div>
+          <div className="truncate text-sm font-bold text-charcoal">
+            {meta ? (isAr ? meta.ar : meta.en) : check.label}
+          </div>
+          <div className="truncate text-[11px] text-charcoal/40">{meta?.billing ?? check.provider}</div>
         </div>
-        {account.is_low && (
-          <span className="shrink-0 rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
-            {isAr ? 'منخفض' : 'Low'}
-          </span>
-        )}
+        <span className={`shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-bold ${TONE_CLASS[copy.tone]}`}>
+          {isAr ? copy.ar : copy.en}
+        </span>
       </div>
 
-      {!tracked ? (
-        <div className="flex flex-1 flex-col items-start justify-center gap-2 rounded-lg bg-cream px-3 py-5">
-          <p className="text-xs leading-relaxed text-charcoal/55">
-            {isAr
-              ? 'لم يبدأ التتبّع. أدخل الرصيد الحالي ليُخصم منه الاستهلاك من الآن فصاعدًا.'
-              : 'Not tracked yet. Enter the balance this account holds now and spend will be subtracted from it onward.'}
-          </p>
-          <Button onClick={onAddCredit} className="!px-3 !py-1.5 !text-xs">
-            <Plus size={13} />
-            {isAr ? 'إدخال الرصيد' : 'Set opening balance'}
-          </Button>
+      {value === null ? (
+        <div className="flex flex-1 items-center rounded-lg bg-cream px-3 py-5 text-xs leading-relaxed text-charcoal/55">
+          {check.verdict === 'unsupported'
+            ? (isAr
+                ? 'لا يوفّر هذا المزوّد طريقة لقراءة الرصيد، فلا يمكن فحصه تلقائيًا.'
+                : 'This provider offers no way to read the balance, so it cannot be checked automatically.')
+            : (isAr
+                ? 'تعذّرت قراءة الرقم من المزوّد. هذا ليس «صفر» — راجع حالة الفحص أدناه.'
+                : 'We could not read the figure from the provider. This is not "zero" — see the check status below.')}
         </div>
       ) : (
         <>
-          <div className="mb-1 flex items-baseline gap-1.5">
-            <span className="font-mono text-2xl font-bold tabular-nums text-charcoal">
-              {usd(account.remaining_usd)}
+          <div className="mb-2 flex items-baseline gap-1.5">
+            <span className={`font-mono text-2xl font-bold tabular-nums ${hot ? 'text-red-700' : 'text-charcoal'}`}>
+              {usd(value)}
             </span>
-            <span className="text-xs text-charcoal/45">{isAr ? 'متبقٍ' : 'left'}</span>
-          </div>
-
-          {account.remaining_is_upper_bound && (
-            <div className="mb-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-amber-700">
-              <Info size={12} className="mt-0.5 shrink-0" />
-              <span>
-                {isAr
-                  ? `حد أعلى: ${account.unpriced_calls.toLocaleString('en-US')} نداء مُسجَّل بلا سعر، فالمتبقي الحقيقي أقل.`
-                  : `Upper bound: ${account.unpriced_calls.toLocaleString('en-US')} recorded calls have no price, so the real figure is lower.`}
-              </span>
-            </div>
-          )}
-
-          <div className="mb-2 h-2 overflow-hidden rounded-full bg-cream">
-            <div
-              className={`h-full rounded-full ${pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-copper'}`}
-              style={{ width: `${Math.min(100, Math.max(pct, 1))}%` }}
-            />
+            <span className="text-xs text-charcoal/45">
+              {postpaid
+                ? (isAr ? 'هذه الدورة' : 'this cycle')
+                : (isAr ? 'متبقٍ' : 'left')}
+            </span>
           </div>
 
           <dl className="mt-auto grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-            <Row label={isAr ? 'أُضيف' : 'Loaded'} value={usd(account.credited_usd)} />
-            <Row label={isAr ? 'أُنفق' : 'Spent'} value={usd(account.spent_usd)} />
             <Row
-              label={isAr ? 'يوميًا' : 'Per day'}
-              value={dailyBurn > 0 ? usdPrecise(dailyBurn) : '—'}
+              label={isAr ? 'أُنفق (٣٠ يومًا)' : 'Spent (30d)'}
+              value={spend ? usdPrecise(spend.cost) : '—'}
+            />
+            <Row label={isAr ? 'يوميًا' : 'Per day'} value={perDay > 0 ? usdPrecise(perDay) : '—'} />
+            <Row
+              label={isAr ? 'نداءات' : 'Calls'}
+              value={spend ? spend.calls.toLocaleString('en-US') : '—'}
             />
             <Row
-              label={isAr ? 'يكفي' : 'Runway'}
+              label={postpaid ? (isAr ? 'حد التنبيه' : 'Alert at') : (isAr ? 'يكفي' : 'Runway')}
               value={
-                runwayDays == null
-                  ? '—'
-                  : isAr ? `${runwayDays.toLocaleString('en-US')} يومًا` : `${runwayDays.toLocaleString('en-US')} days`
+                postpaid
+                  ? (check.spend_alert_threshold === null ? '—' : usd(check.spend_alert_threshold))
+                  : runwayDays === null
+                    ? '—'
+                    : isAr ? `${runwayDays.toLocaleString('en-US')} يومًا` : `${runwayDays.toLocaleString('en-US')} days`
               }
-              tone={runwayDays != null && runwayDays < 14 ? 'warn' : 'default'}
+              tone={!postpaid && runwayDays !== null && runwayDays < 14 ? 'warn' : 'default'}
             />
           </dl>
 
-          <button
-            onClick={onAddCredit}
-            className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-lg border border-sand/40 px-3 py-1.5 text-xs font-bold text-charcoal/70 transition hover:bg-cream"
-          >
-            <Plus size={13} />
-            {isAr ? 'تسجيل رصيد' : 'Record credit'}
-          </button>
+          {unpricedCalls > 0 && (
+            <div className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-amber-700">
+              <Info size={12} className="mt-0.5 shrink-0" />
+              <span>
+                {isAr
+                  ? `${unpricedCalls.toLocaleString('en-US')} نداء بلا سعر، فإنفاقنا المسجَّل حد أدنى ومدة الكفاية تقدير متفائل.`
+                  : `${unpricedCalls.toLocaleString('en-US')} calls have no price, so our recorded spend is a floor and the runway is optimistic.`}
+              </span>
+            </div>
+          )}
         </>
       )}
+
+      <div className="mt-3 border-t border-sand/25 pt-2 text-[11px] text-charcoal/40">
+        {check.vendor_value_at
+          ? (isAr ? `آخر قراءة: ${timeAgo(check.vendor_value_at, true)}` : `last read ${timeAgo(check.vendor_value_at, false)}`)
+          : (isAr ? 'لا توجد قراءة بعد' : 'no reading yet')}
+        {check.probe_status === 'error' && (
+          <span className="ms-1 text-amber-700">
+            {isAr ? '· آخر محاولة فشلت' : '· last attempt failed'}
+          </span>
+        )}
+      </div>
     </div>
   );
+}
+
+/** "3 hours ago" in either language, from an ISO timestamp. */
+function timeAgo(iso: string, isAr: boolean): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 60) return isAr ? `قبل ${mins} دقيقة` : `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return isAr ? `قبل ${hours} ساعة` : `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return isAr ? `قبل ${days} يومًا` : `${days}d ago`;
 }
 
 function Row({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'warn' }) {
