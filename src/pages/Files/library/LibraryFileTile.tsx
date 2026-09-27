@@ -16,11 +16,14 @@ import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import type { BusinessFileRow, FileDocumentTypeRow } from '@/types';
 import LibraryBadges from './LibraryBadges';
+import ThumbImg from '../components/ThumbImg';
 
 interface Props {
   file: BusinessFileRow;
   types: FileDocumentTypeRow[];
   thumbUrl?: string | null;
+  /** Original image — loaded only if the thumbnail fails. */
+  fullUrl?: string | null;
   /** Highlighted as the detail-panel subject. */
   active: boolean;
   /** In the multi-select set. */
@@ -32,7 +35,7 @@ interface Props {
   onToggle: (f: BusinessFileRow, additive: boolean) => void;
 }
 
-export default function LibraryFileTile({ file, types, thumbUrl, active, selected, selectionActive, onOpen, onToggle }: Props) {
+export default function LibraryFileTile({ file, types, thumbUrl, fullUrl, active, selected, selectionActive, onOpen, onToggle }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const Icon = kindIcon[file.kind];
@@ -81,12 +84,7 @@ export default function LibraryFileTile({ file, types, thumbUrl, active, selecte
       </span>
       <div className={`relative h-32 flex items-center justify-center ${accent.bg}`}>
         {thumbUrl ? (
-          <img
-            src={thumbUrl}
-            alt=""
-            loading="lazy"
-            className="w-full h-full object-cover"
-          />
+          <ThumbImg src={thumbUrl} fallbackSrc={fullUrl} className="w-full h-full object-cover" />
         ) : (
           <Icon size={30} className={accent.fg} aria-hidden />
         )}

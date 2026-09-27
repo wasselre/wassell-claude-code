@@ -37,6 +37,8 @@ interface Props {
   links: Map<string, PageLinkSummary[]>;
   linksLoading: boolean;
   thumbs: Record<string, string>;
+  /** Original-size URLs — each tile's fallback when its thumbnail fails. */
+  fullUrls?: Record<string, string>;
   grouping: LibraryGrouping;
   layout: LibraryLayout;
   /** The detail-panel subject. */
@@ -116,7 +118,7 @@ function buildSections(
 }
 
 export default function LibraryResults({
-  rows, types, facets, links, linksLoading, thumbs, grouping, layout,
+  rows, types, facets, links, linksLoading, thumbs, fullUrls, grouping, layout,
   selectedId, selectedIds, onOpen, onToggle, gridRef, onGridMouseDown, marquee,
   onDrillDown, page, pageSize, total, onPage,
 }: Props) {
@@ -200,6 +202,7 @@ export default function LibraryResults({
                   file={f}
                   types={types}
                   thumbUrl={thumbs[f.id] ?? null}
+                  fullUrl={fullUrls?.[f.id] ?? null}
                   active={selectedId === f.id}
                   selected={selectedIds.has(f.id)}
                   selectionActive={selectedIds.size > 0}

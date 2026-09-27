@@ -29,7 +29,8 @@ import {
   bulkAddSubjects, createDocumentType, errorText, listFileVocabularies, peekEnrichment,
   updateFileMetadata, type EnrichmentPeek,
 } from '@/lib/files/library';
-import { signViewUrls } from '@/lib/files/client';
+import { signThumbUrls } from '@/lib/files/client';
+import ThumbImg from '../components/ThumbImg';
 import { kindAccent, kindIcon } from '@/lib/files/format';
 import { linkableModels, recordTitle } from '@/lib/documents/links';
 import type { AppModel, AppRecord, FileDocumentTypeRow, FileRow, FileVocabDimension, FileVocabRow } from '@/types';
@@ -83,6 +84,7 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
   const [editing, setEditing] = useState<string | null>(null);
   /** Signed thumbnails for image files. */
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [fullUrls, setFullUrls] = useState<Record<string, string>>({});
   /** The file open in the full previewer. */
   const [preview, setPreview] = useState<FileRow | null>(null);
 
@@ -107,8 +109,10 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
     if (imageIds.length === 0) { setThumbs({}); return; }
     let cancelled = false;
     void (async () => {
-      try { const map = await signViewUrls(imageIds); if (!cancelled) setThumbs(map); }
-      catch { if (!cancelled) setThumbs({}); }
+      try {
+        const { thumb, full } = await signThumbUrls(imageIds);
+        if (!cancelled) { setThumbs(thumb); setFullUrls(full); }
+      } catch { if (!cancelled) { setThumbs({}); setFullUrls({}); } }
     })();
     return () => { cancelled = true; };
   }, [files]);
@@ -506,7 +510,7 @@ export default function PostUploadModal({ files, types, onDismiss, onApplied }: 
                     aria-label={t('files.actions.preview')}
                     className="shrink-0 w-9 h-9 rounded-md overflow-hidden border border-sand/30 flex items-center justify-center">
                     {thumb
-                      ? <img src={thumb} alt="" loading="lazy" className="w-full h-full object-cover" />
+                      ? <ThumbImg src={thumb} fallbackSrc={fullUrls[f.id]} className="w-full h-full object-cover" />
                       : <span className={`w-full h-full flex items-center justify-center ${accent.bg}`}><Icon size={15} className={accent.fg} aria-hidden /></span>}
                   </button>
                   <input

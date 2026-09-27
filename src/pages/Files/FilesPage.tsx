@@ -19,7 +19,7 @@ import {
   roleSatisfies,
   searchDrive,
   signDownloadUrl,
-  signViewUrls,
+  signThumbUrls,
   type DriveSearchResult,
 } from '@/lib/files/client';
 import { formatBytes } from '@/lib/files/format';
@@ -96,6 +96,8 @@ export default function FilesPage({ forceShared = false }: Props) {
   /** fileId → signed thumbnail URL, batch-signed for all image files in one
    *  request whenever the file list changes (replaces per-tile signing). */
   const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
+  /** fileId → original-size URL; a tile's fallback when its thumbnail fails. */
+  const [fullUrls, setFullUrls] = useState<Record<string, string>>({});
   /** id → caller's effective role, batch-resolved per view so the UI shows the
    *  right edit/delete/share affordances for cascade/direct grantees (not just
    *  uploaders). RLS remains the authoritative gate. */
@@ -267,12 +269,17 @@ export default function FilesPage({ forceShared = false }: Props) {
     const imageIds = displayFiles.filter((f) => f.kind === 'image').map((f) => f.id);
     if (imageIds.length === 0) {
       setThumbUrls({});
+      setFullUrls({});
       return;
     }
     let cancelled = false;
-    void signViewUrls(imageIds)
-      .then((map) => {
-        if (!cancelled) setThumbUrls(map);
+    // Small server-transformed thumbnails, not the 2–14 MB originals.
+    void signThumbUrls(imageIds)
+      .then(({ thumb, full }) => {
+        if (!cancelled) {
+          setThumbUrls(thumb);
+          setFullUrls(full);
+        }
       })
       .catch(() => {
         // surfaceError already toasted; cards fall back to the icon tile.
@@ -895,6 +902,7 @@ export default function FilesPage({ forceShared = false }: Props) {
                     canEdit={canEditFile(f)}
                     canDelete={canDeleteFile(f)}
                     thumbUrl={f.kind === 'image' ? thumbUrls[f.id] ?? null : undefined}
+                    fullUrl={f.kind === 'image' ? fullUrls[f.id] ?? null : undefined}
                     selected={selection.isSelected('file', f.id)}
                     selectionActive={selection.totalSelected > 0}
                     onSelectClick={(e) => onCardClick({ kind: 'file', id: f.id }, e)}

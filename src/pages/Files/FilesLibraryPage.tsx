@@ -48,7 +48,7 @@ import {
   deleteFileView, listFileViews, saveFileView, systemView, viewStateFromRow,
 } from '@/lib/files/views';
 import { activeFilterCount, decodeLibraryUrl, encodeLibraryUrl } from '@/lib/files/libraryUrl';
-import { getFile, signDownloadUrl, signViewUrls } from '@/lib/files/client';
+import { getFile, signDownloadUrl, signThumbUrls } from '@/lib/files/client';
 import { useMarqueeSelection } from './useMarqueeSelection';
 import FilesTabs from './components/FilesTabs';
 import FilePreviewModal from './components/FilePreviewModal';
@@ -202,19 +202,23 @@ export default function FilesLibraryPage({ basePath = '/files', defaultView = nu
   }, []);
 
   // ── Thumbnails: ONE batch sign for the whole visible slice ──────────────
+  // Tiles get a SMALL server-transformed thumbnail (320px) — signing the
+  // originals meant every tile downloaded a 2–14 MB PNG. `fullUrls` is the
+  // original, used by the detail panel and as the tile's on-error fallback.
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [fullUrls, setFullUrls] = useState<Record<string, string>>({});
   useEffect(() => {
     const imageIds = rows.filter((r) => r.kind === 'image').map((r) => r.id);
-    if (imageIds.length === 0) { setThumbs({}); return; }
+    if (imageIds.length === 0) { setThumbs({}); setFullUrls({}); return; }
     let cancelled = false;
     void (async () => {
       try {
-        const map = await signViewUrls(imageIds);
-        if (!cancelled) setThumbs(map);
+        const { thumb, full } = await signThumbUrls(imageIds);
+        if (!cancelled) { setThumbs(thumb); setFullUrls(full); }
       } catch {
         // Thumbnails are decoration. Tiles fall back to the kind icon, and
-        // signViewUrls has already surfaced the failure.
-        if (!cancelled) setThumbs({});
+        // signThumbUrls has already surfaced the failure.
+        if (!cancelled) { setThumbs({}); setFullUrls({}); }
       }
     })();
     return () => { cancelled = true; };
@@ -598,6 +602,7 @@ export default function FilesLibraryPage({ basePath = '/files', defaultView = nu
                     links={links}
                     linksLoading={linksLoading}
                     thumbs={thumbs}
+                    fullUrls={fullUrls}
                     grouping={grouping}
                     layout={layout}
                     selectedId={selected?.id ?? null}
@@ -621,7 +626,7 @@ export default function FilesLibraryPage({ basePath = '/files', defaultView = nu
               <LibraryDetailPanel
                 file={selected}
                 types={types}
-                thumbUrl={thumbs[selected.id] ?? null}
+                thumbUrl={fullUrls[selected.id] ?? thumbs[selected.id] ?? null}
                 onClose={() => setSelected(null)}
                 onSaved={onRowSaved}
                 onOpenPreview={(id) => void openPreview(id)}

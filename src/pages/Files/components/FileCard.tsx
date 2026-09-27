@@ -6,6 +6,7 @@ import { kindAccent, kindIcon, formatBytes } from '@/lib/files/format';
 import { useAppStore } from '@/stores/appStore';
 import { signViewUrl } from '@/lib/files/client';
 import TileMenu from './TileMenu';
+import ThumbImg from './ThumbImg';
 
 interface Props {
   file: FileRow;
@@ -18,6 +19,8 @@ interface Props {
    *  undefined to make the card self-fetch lazily (back-compat for any caller
    *  that doesn't batch). */
   thumbUrl?: string | null;
+  /** Original image — loaded only if the parent-managed thumbnail fails. */
+  fullUrl?: string | null;
   /** Currently selected in the bulk-select UI. */
   selected: boolean;
   /** True if anything is selected — switches plain click from "preview" to
@@ -60,6 +63,7 @@ export default function FileCard({
   onCompress,
   compressing,
   thumbUrl,
+  fullUrl,
 }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -129,11 +133,11 @@ export default function FileCard({
       {/* Thumb area */}
       <div className={`aspect-[4/3] flex items-center justify-center relative ${accent.bg}`}>
         {file.kind === 'image' && shownThumb ? (
-          <img
+          <ThumbImg
             src={shownThumb}
+            fallbackSrc={parentManaged ? fullUrl : null}
             alt={file.original_name}
             className="absolute inset-0 w-full h-full object-cover"
-            loading="lazy"
           />
         ) : (
           <Icon size={40} className={accent.fg} />

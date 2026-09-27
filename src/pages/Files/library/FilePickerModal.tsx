@@ -16,7 +16,7 @@ import Modal from '@/components/ui/Modal';
 import type { BusinessFileRow, FileDocumentTypeRow, FileRow, LibraryFilters } from '@/types';
 import type { AspectFamily } from '@/types/files';
 import { errorText, listDocumentTypes, rightsBadgeFor, searchBusinessFiles } from '@/lib/files/library';
-import { signViewUrls, uploadFile } from '@/lib/files/client';
+import { signThumbUrls, uploadFile } from '@/lib/files/client';
 import { useAppStore } from '@/stores/appStore';
 import LibraryFileTile from './LibraryFileTile';
 import PostUploadModal from './PostUploadModal';
@@ -114,6 +114,7 @@ export default function FilePickerModal({
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<BusinessFileRow[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [fullUrls, setFullUrls] = useState<Record<string, string>>({});
   const [types, setTypes] = useState<FileDocumentTypeRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -170,9 +171,11 @@ export default function FilePickerModal({
   // Batch-sign image thumbnails for the visible slice — same as the library page.
   useEffect(() => {
     const ids = rows.filter((r) => r.kind === 'image').map((r) => r.id);
-    if (ids.length === 0) { setThumbs({}); return; }
+    if (ids.length === 0) { setThumbs({}); setFullUrls({}); return; }
     let alive = true;
-    signViewUrls(ids).then((m) => { if (alive) setThumbs(m); }).catch(() => { if (alive) setThumbs({}); });
+    signThumbUrls(ids)
+      .then(({ thumb, full }) => { if (alive) { setThumbs(thumb); setFullUrls(full); } })
+      .catch(() => { if (alive) { setThumbs({}); setFullUrls({}); } });
     return () => { alive = false; };
   }, [rows]);
 
@@ -271,6 +274,7 @@ export default function FilePickerModal({
                     file={f}
                     types={types}
                     thumbUrl={thumbs[f.id] ?? null}
+                    fullUrl={fullUrls[f.id] ?? null}
                     active={false}
                     selected={false}
                     selectionActive={false}
