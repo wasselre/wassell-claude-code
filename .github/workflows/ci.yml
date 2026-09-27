@@ -31,6 +31,17 @@ jobs:
           cache: npm
       - name: Install (root)
         run: npm ci
+      # The root vitest run covers worker/ too, and the worker is a SEPARATE
+      # package — its dependencies are not in the root lockfile. Since
+      # 2026-09-27 that is load-bearing: worker/src/repairFileMediaMeta.ts
+      # imports `sharp` (a worker dependency), so without this step the test
+      # file fails to LOAD and the whole job goes red with an error that names
+      # an unrelated test — main was broken for hours that way. Install the
+      # worker's deps here or stop running its tests in this job; do not leave
+      # the run half-provisioned.
+      - name: Install (worker — the root vitest run includes its tests)
+        working-directory: worker
+        run: npm ci
       - name: Service-client factory audit
         run: npm run check:service-clients
       - name: Typecheck + build (tsc -b, tsconfig.api.json, vite)
