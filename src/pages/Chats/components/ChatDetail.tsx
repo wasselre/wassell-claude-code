@@ -16,6 +16,7 @@ const ProjectsUnitsBrowser = lazy(() => import('./ProjectsUnitsBrowser'));
 const ClientDetailPage = lazy(() => import('@/pages/Clients/ClientDetailPage'));
 const RecordFormModal = lazy(() => import('@/pages/Records/components/RecordFormModal'));
 const ProjectUnitsModal = lazy(() => import('@/pages/Followups/components/ProjectUnitsModal'));
+const ProjectDetailPage = lazy(() => import('@/pages/Projects/ProjectDetailPage'));
 import type { FinderSession } from '@/pages/Followups/components/SuggestedProjectsView';
 import { saveClientOption } from '@/lib/matching/clientOptions';
 import { chatPdfFromClient } from '@/lib/projects/sendPdfToChat';
@@ -171,6 +172,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const addToast = useAppStore((s) => s.addToast);
   const allProjectsModel = useMemo(() => models.find((m) => m.name === 'all_projects') ?? null, [models]);
   const [unitsProject, setUnitsProject] = useState<{ id: string; name: string } | null>(null);
+  const [detailsProjectId, setDetailsProjectId] = useState<string | null>(null);
   const [savingOptionId, setSavingOptionId] = useState<string | null>(null);
   const chatPdf = useMemo(() => chatPdfFromClient(linkedClient), [linkedClient]);
 
@@ -188,7 +190,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       clientLinked: !!clientLinkId,
       saved: preferredProjectIds.includes(projectId),
       saving: savingOptionId === projectId,
-      onDetails: () => navigate(`/model/all_projects/${projectId}`),
+      onDetails: () => setDetailsProjectId(projectId),
       onUnits: () => setUnitsProject({ id: projectId, name: resolveProjectName(projectId) }),
       onAddOption: () => {
         if (!clientLinkId) return;
@@ -214,7 +216,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         })();
       },
     }),
-    [clientLinkId, preferredProjectIds, savingOptionId, navigate, resolveProjectName, addToast, isAr],
+    [clientLinkId, preferredProjectIds, savingOptionId, resolveProjectName, addToast, isAr],
   );
 
 
@@ -766,6 +768,21 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       {showProjectsBrowser && (
         <Suspense fallback={<OverlayFallback />}>
           <ProjectsUnitsBrowser clientId={clientLinkId} chatWid={chatWid} onClose={() => setShowProjectsBrowser(false)} />
+        </Suspense>
+      )}
+
+      {/* Project-message "Details" button → the rich project page as an in-chat
+          overlay (embedded mode: recordId + onClose), NOT a route change — the
+          conversation stays mounted underneath. Same as the finder's source view. */}
+      {detailsProjectId && (
+        <Suspense fallback={<OverlayFallback />}>
+          <div className="fixed inset-0 z-[60] overflow-y-auto bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
+            <ProjectDetailPage
+              recordId={detailsProjectId}
+              modelName="all_projects"
+              onClose={() => setDetailsProjectId(null)}
+            />
+          </div>
         </Suspense>
       )}
 
