@@ -111,6 +111,25 @@ export function isOfferableSocialItem(
   return file.origin !== 'social_intake' || file.kind === 'video';
 }
 
+/**
+ * OUR designs never go to a customer over WhatsApp (operator, 2026-09-27).
+ *
+ * A `design` is a finished marketing poster — the project name, price and offer
+ * baked into the image. The customer gets the branded brochure PDF and clean
+ * renders, not the poster. Applies to BOTH send surfaces because both build
+ * their sendable set here: the human ProjectFilePicker AND the WhatsApp bot's
+ * auto-selection (`api/_lib/aiSendProject.ts`). `isOfferableSocialItem` already
+ * hid designs we COLLECTED from competitors; this hides the ones WE made.
+ * A second, independent gate in `/api/whatsapp/send-media-batch` catches the
+ * human "send saved gallery" paths that send file ids without passing through
+ * this picker.
+ */
+export function isSendableCategory(
+  file: Pick<BusinessFileRow, 'primary_category'>,
+): boolean {
+  return file.primary_category !== 'design';
+}
+
 /** A document reads as a brochure when its name says so (AR «بروشور»/«كتيّب» or
  *  EN «brochure»). Name is the STRONGEST signal — it's what the rep titled it. */
 const BROCHURE_NAME_RE = /بروشور|كتي(?:ّ)?ب|brochure/i;
@@ -136,6 +155,7 @@ export function buildPickerItems(entries: PickerSource[], externalVideoUrls: str
     seen.add(e.file.id);
     if (!isSendable(e.file)) continue;
     if (!isOfferableSocialItem(e.file)) continue;
+    if (!isSendableCategory(e.file)) continue;
     const name = e.file.title || e.file.original_name || e.file.id;
     const group = groupOfKind(e.file.kind);
     out.push({

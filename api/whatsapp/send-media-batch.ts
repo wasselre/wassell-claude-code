@@ -145,11 +145,20 @@ async function runBatch(req: Request): Promise<Response> {
     const isUrl = (s: string) => /^https?:\/\//i.test(s);
     const fileIds = [...new Set(refs.filter((r) => !isUrl(r) && isFileIdShape(r)))];
     const signedById: Record<string, string> = {};
+    // OUR designs never reach a customer over WhatsApp (operator, 2026-09-27) —
+    // a design is a finished marketing poster (project name/price/offer baked in);
+    // the customer gets the brochure PDF + clean renders, not the poster. The
+    // human picker already hides them (projectFilePicker.isSendableCategory), but
+    // the "send saved gallery" paths (StartChatModal / TemplatePickerModal /
+    // ProjectMessageComposeStep) send file ids WITHOUT the picker, so this is the
+    // independent server-side gate that catches them. Excluded, not failed — it's
+    // a policy drop, not a delivery error.
+    const designIds = new Set<string>();
     if (fileIds.length > 0) {
       const jwtClient = getJwtClient(req);
       const { data, error } = await jwtClient
         .from('files')
-        .select('id, storage_bucket, storage_path')
+        .select('id, storage_bucket, storage_path, primary_category')
         .in('id', fileIds);
       if (error) return jsonError(500, `file lookup failed: ${error.message}`);
       // Scheduled sends: WAHA fetches the bytes AT DELIVERY time, so the signed
@@ -157,7 +166,8 @@ async function runBatch(req: Request): Promise<Response> {
       const ttlSeconds = baseDeliverMs != null
         ? Math.min(604_800, Math.max(3_600, Math.ceil((baseDeliverMs - Date.now()) / 1000) + 86_400))
         : 3_600;
-      for (const row of (data ?? []) as Array<{ id: string; storage_bucket: string; storage_path: string }>) {
+      for (const row of (data ?? []) as Array<{ id: string; storage_bucket: string; storage_path: string; primary_category: string | null }>) {
+        if (row.primary_category === 'design') { designIds.add(row.id); continue; }
         try {
           signedById[row.id] = await signFileUrl(row.storage_bucket, row.storage_path, ttlSeconds);
         } catch {
@@ -166,13 +176,22 @@ async function runBatch(req: Request): Promise<Response> {
       }
     }
 
+    // Drop design refs from the batch entirely (a policy exclusion, not a
+    // failure). If a gallery was ALL designs the batch is now empty — that is
+    // the intended "no images, just the text/brochure" outcome, returned as
+    // sent:0, not an error.
+    const sendRefs = refs.filter((r) => !designIds.has(r));
+    if (designIds.size > 0) {
+      console.log(`[send-media-batch] excluded ${refs.length - sendRefs.length} design file(s) from the send (policy: no designs over WhatsApp)`);
+    }
+
     // ── Sequential fan-out, preserving gallery order. Best-effort per item:
     //    one failure is tallied and the rest still send (same contract as the
     //    old client loop). ──
     let sent = 0;
     let failed = 0;
     let firstError: string | null = null;
-    for (const [index, ref] of refs.entries()) {
+    for (const [index, ref] of sendRefs.entries()) {
       const url = isUrl(ref) ? ref : signedById[ref];
       try {
         if (!url) throw new Error('ref is neither a URL nor a viewable CRM file');
@@ -198,18 +217,19 @@ async function runBatch(req: Request): Promise<Response> {
         if (!firstError) {
           firstError = err instanceof HaberchatError || err instanceof Error ? err.message : String(err);
         }
-        console.error(`[send-media-batch] item ${index + 1}/${refs.length} failed:`, err);
+        console.error(`[send-media-batch] item ${index + 1}/${sendRefs.length} failed:`, err);
       }
     }
 
     // lastDeliverAt: when the batch went through the delivery queue, the moment
     // the LAST item is due — the browser keeps the conversation's send lane
     // held until then so a later send-now (a units PDF) queues behind it.
-    const lastDeliverAt = baseDeliverMs != null
-      ? new Date(baseDeliverMs + refs.length * staggerMs).toISOString()
+    const lastDeliverAt = baseDeliverMs != null && sendRefs.length > 0
+      ? new Date(baseDeliverMs + sendRefs.length * staggerMs).toISOString()
       : undefined;
     return jsonOk({
-      sent, failed, total: refs.length,
+      sent, failed, total: sendRefs.length,
+      ...(designIds.size > 0 ? { excludedDesigns: refs.length - sendRefs.length } : {}),
       ...(firstError ? { firstError } : {}),
       ...(lastDeliverAt ? { lastDeliverAt } : {}),
     });

@@ -191,12 +191,14 @@ describe('social intake offers videos only (operator, 2026-09-15)', () => {
     ], []);
     expect(items.map((i) => i.ref)).toEqual(['their-video']);
   });
-  it('leaves OUR own designs and photos alone', () => {
+  it('drops OUR own designs but keeps our photos (operator, 2026-09-27)', () => {
+    // A design is a finished marketing poster (price/offer baked in); the
+    // customer gets the brochure PDF + clean renders, not the poster.
     const items = buildPickerItems([
       entry('our-design', 'image', { origin: 'user_upload', primary_category: 'design' } as Partial<BusinessFileRow>),
-      entry('our-photo', 'image', { origin: 'marketing_intake' } as Partial<BusinessFileRow>),
+      entry('our-photo', 'image', { origin: 'marketing_intake', primary_category: 'raw_photo' } as Partial<BusinessFileRow>),
     ], []);
-    expect(items.map((i) => i.ref)).toEqual(['our-design', 'our-photo']);
+    expect(items.map((i) => i.ref)).toEqual(['our-photo']);
   });
   it('still drops a collected video whose rights forbid sending', () => {
     const items = buildPickerItems([
