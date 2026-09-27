@@ -17,7 +17,7 @@
  *
  * Routed endpoints (writing/translation — one-shot text in → text/JSON out):
  *   /api/client-summary, /api/translate, /api/transliterate-name, /api/doc-assist,
- *   /api/project-ai, /api/templates/listing-message, /api/templates/posts-content,
+ *   /api/project-ai, /api/templates/listing-message,
  *   supabase/functions/project-details-ai-v2 (own copy — Deno can't import this).
  *
  * NOT routed (agentic tool-loops, vision, matching — different architecture):

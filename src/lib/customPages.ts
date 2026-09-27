@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { BarChart3, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench, Briefcase } from 'lucide-react';
+import { BarChart3, LineChart, UserCheck, ListChecks, Compass, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench, Briefcase } from 'lucide-react';
 import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 
 /**
@@ -40,7 +40,6 @@ export type CustomPageId =
   | 'my_tasks'
   | 'sales_manager'
   | 'market_intelligence'
-  | 'posts_content'
   | 'marketing_intelligence'
   | 'marketing_management'
   | 'financing_calculator'
@@ -190,20 +189,9 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     archived: MARKET_LISTINGS_ARCHIVED,
   },
   {
-    id: 'posts_content',
-    route: '/marketing/posts',
-    label_ar: 'كاتب المحتوى',
-    label_en: 'Content Writer',
-    icon: Megaphone,
-    // Opt-in: writes marketing copy against live project data and spends model
-    // tokens, so an admin grants it per profile in Settings → Profiles.
-    default_access: 'admin',
-  },
-  {
     // Competitor MARKETING intelligence — distinct from 'market_intelligence'
-    // (listing/price data) and from 'posts_content' (writes OUR copy). This one
-    // only OBSERVES competitors, hence Radar rather than another Megaphone.
-    // Arabic keeps the first pair apart: ذكاء التسويق here vs ذكاء السوق there.
+    // (listing/price data). This one only OBSERVES competitors, hence Radar.
+    // Arabic keeps the pair apart: ذكاء التسويق here vs ذكاء السوق there.
     id: 'marketing_management',
     // Points at the Marketing WORKSPACE, which lives outside the Sales shell.
     // Following this link leaves the Sales workspace entirely — that is the

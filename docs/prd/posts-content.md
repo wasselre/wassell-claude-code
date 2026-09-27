@@ -1,7 +1,15 @@
-# Posts Content Writer — كاتب المحتوى
+# Posts Content Writer — كاتب المحتوى  · **DELETED 2026-09-27**
 
-**Last updated:** 2026-07-27
-**Route:** `/marketing/posts` · **Page id:** `posts_content` · **Default access:** admin (grantable per profile in Settings → Profiles)
+> **This feature has been removed** (architecture cleanup D02/D03). The
+> `/marketing/posts` page, the `posts_content` custom-page entry, the
+> `src/pages/PostsContent/*` components, and the `posts_content` + `posts_batches`
+> models (with their 35 records) no longer exist. The four `pair:*` translation-twin
+> policies for `posts_content` were removed; `chat_templates`' twins are untouched.
+> Migration: `supabase/migrations/2026-09-27_delete_posts_content_batches_d02_d03.sql`
+> (backups `_backup_posts_*_20260927`). Everything below is retained for history only.
+
+**Last updated:** 2026-09-27 (marked deleted; content frozen at 2026-07-27)
+**Route:** ~~`/marketing/posts`~~ (removed) · **Page id:** ~~`posts_content`~~ (removed) · **Default access:** admin
 
 ## What it is
 

@@ -109,7 +109,6 @@ const MarketingCapacitySettingsPage = lazy(() => import('@/pages/Marketing/compo
 const ProjectFinderPage = lazy(() => import('@/pages/ProjectFinder/ProjectFinderPage'));
 const GeoReviewPage = lazy(() => import('@/pages/GeoReview/GeoReviewPage'));
 const FinancingPage = lazy(() => import('@/pages/Financing/FinancingPage'));
-const PostsContentPage = lazy(() => import('@/pages/PostsContent/PostsContentPage'));
 const FilesPage = lazy(() => import('@/pages/Files/FilesPage'));
 const FilesRoot = lazy(() => import('@/pages/Files/FilesRoot'));
 const FilesAiReviewPage = lazy(() => import('@/pages/Files/FilesAiReviewPage'));
@@ -448,7 +447,6 @@ export default function App() {
               page deep-link straight into a pre-filled scenario. */}
           <Route path="/financing" element={<RequirePageAccess pageId="financing_calculator"><FinancingPage /></RequirePageAccess>} />
           {/* Marketing content writer — project-grounded social/brochure posts. */}
-          <Route path="/marketing/posts" element={<RequirePageAccess pageId="posts_content"><PostsContentPage /></RequirePageAccess>} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
           {/* Full-page Suggested Projects finder, scoped to a follow-up (same tab;
