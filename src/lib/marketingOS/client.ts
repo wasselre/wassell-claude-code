@@ -1836,6 +1836,8 @@ export interface MosAssetLink {
   /** `final_square` (1:1 feed) / `final_vertical` (9:16 story·reels·status)
    *  are the two design SLOTS; plain `final` is the legacy single approved file. */
   role: 'source' | 'final' | 'reference' | 'final_square' | 'final_vertical';
+  /** When the file was linked — present on the row screens' read (2026-09-27). */
+  created_at?: string | null;
 }
 
 /** Any approved-design role — the slots or the legacy single final. */
@@ -3475,7 +3477,12 @@ export interface TeamKpiDay {
 
 /** The counters shared by the team total and each person. */
 export interface TeamKpiCounts {
+  /** Every open task held — today's and those already held for coming days. */
   open_now: number;
+  /** Open tasks whose plan day is today or earlier (overdue included). */
+  open_today: number;
+  /** Open tasks already held for a coming day. open_today + open_later = open_now. */
+  open_later: number;
   late_now: number;
   blocked_now: number;
   due_today: number;

@@ -36,6 +36,8 @@ import { formatBytes } from '../lib/upload';
 import { num, pct } from '../lib/format';
 import { Pill } from './kit';
 import { IconTrash } from './icons';
+import SendBackNotice from './SendBackNotice';
+import { latestSendBack, redesignedSince } from '../lib/sendBack';
 import {
   CaptionBlock, DesignBrief, MissingCard, PostLines, PostShell, ReadinessMeter, RowTimeline,
   SLOTS, SLOT_META, SlotFrame, slotsFilled, slotsOfMember,
@@ -85,6 +87,16 @@ export default function RowDesign({
   ]);
 
   const { filled, total } = slotsFilled(view);
+
+  /*
+   * A round-2 batch is back here because a reviewer asked for a change. The
+   * slots are all still FILLED with round 1's files, so "ready" alone would
+   * read as done — the posts the reviewer named are tagged «مطلوب تعديله»
+   * until a new design lands on them after the note (2026-09-27).
+   */
+  const sendBack = latestSendBack(view);
+  const stillToFix = (sendBack?.posts ?? [])
+    .filter((p) => p.index >= 0 && !redesignedSince(view.links, p.memberId, sendBack?.review.closed_at ?? null));
 
   /**
    * The same answer the engine will give, read off the SAME pinned step. It is
@@ -252,6 +264,8 @@ export default function RowDesign({
         </div>
       </div>
 
+      <SendBackNotice detail={view} isAr={isAr} />
+
       {brief}
 
       {signError && (
@@ -287,6 +301,8 @@ export default function RowDesign({
           {view.members.map((m, i) => {
             const slots = slotsOfMember(view, m.id);
             const missingHere = slots.filter((s) => !s.link).length;
+            const named = sendBack?.posts.find((p) => p.memberId === m.id) ?? null;
+            const fixed = named ? redesignedSince(view.links, m.id, sendBack?.review.closed_at ?? null) : false;
             return (
               <PostShell
                 key={m.id}
@@ -294,8 +310,14 @@ export default function RowDesign({
                 index={i}
                 total={view.members.length}
                 isAr={isAr}
-                tone={missingHere > 0 ? 'gap' : 'ok'}
-                right={
+                tone={missingHere > 0 || (named && !fixed) ? 'gap' : 'ok'}
+                right={named ? (
+                  <Pill tone={fixed ? 'go' : 'late'}>
+                    {fixed
+                      ? (isAr ? 'عُدّل بعد الملاحظة ✓' : 'Changed after the note ✓')
+                      : (isAr ? 'مطلوب تعديله' : 'Needs changes')}
+                  </Pill>
+                ) : (
                   <Pill tone={missingHere === 0 ? 'go' : 'late'}>
                     {missingHere === 0
                       ? (isAr ? 'الخانتان جاهزتان' : 'both slots ready')
@@ -303,7 +325,7 @@ export default function RowDesign({
                         ? `ينقصه ${num(missingHere, true)} من ٢`
                         : `${missingHere} of 2 missing`}
                   </Pill>
-                }
+                )}
               >
                 <div
                   style={{
@@ -422,6 +444,13 @@ export default function RowDesign({
       <div className="card">
         <div className="card-b" style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <ReadinessMeter filled={filled} total={total} isAr={isAr} />
+          {stillToFix.length > 0 && (
+            <div style={{ fontSize: 12, color: 'var(--late)', flexBasis: '100%' }}>
+              {isAr
+                ? `لم يُرفع تصميم جديد بعد ملاحظة المراجِع: ${stillToFix.map((p) => `المنشور ${num(p.index + 1, true)}`).join('، ')}`
+                : `No new design yet for ${stillToFix.map((p) => `post ${p.index + 1}`).join(', ')} since the reviewer's note.`}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {canAct && view.task ? (
               <button

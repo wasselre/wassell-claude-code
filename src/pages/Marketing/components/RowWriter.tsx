@@ -44,6 +44,7 @@ import {
 } from '@/lib/marketingOS/rowClient';
 import { useWorkspace } from '../MarketingWorkspace';
 import { MissingCard, PostShell, RowTimeline } from './RowParts';
+import SendBackNotice from './SendBackNotice';
 import { dayLabel, fullDate, num } from '../lib/format';
 import WritingFields, { postWritingState } from './WritingFields';
 
@@ -333,6 +334,9 @@ export default function RowWriter({
           <RowTimeline steps={detail.steps} currentKey={task?.step_id ?? null} isAr={isAr} />
         </div>
       </div>
+
+      {/* Why the row is back here, when a reviewer sent it back (2026-09-27). */}
+      <SendBackNotice detail={detail} isAr={isAr} />
 
       {/* ── the resolved brief — ORGANIC lane only (D7), mounted by the
              caller because the month's notes are the caller's to hold. ─── */}

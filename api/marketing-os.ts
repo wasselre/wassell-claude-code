@@ -5846,7 +5846,9 @@ export default async function handler(req: Request): Promise<Response> {
           // show a slot as filled by a file the engine no longer counts — and
           // the pane's readiness would disagree with the refusal.
           allIds.length > 0
-            ? sb.from('mos_asset_links').select('asset_id, content_id, role')
+            // created_at (2026-09-27): the row screens mark a post whose design
+            // was replaced after a send-back as fixed («عُدّل ✓»).
+            ? sb.from('mos_asset_links').select('asset_id, content_id, role, created_at')
                 .in('content_id', allIds).is('superseded_at', null).limit(400)
             : Promise.resolve({ data: [], error: null }),
           memberIds.length > 0
@@ -5939,7 +5941,7 @@ export default async function handler(req: Request): Promise<Response> {
           item.campaign_id
             ? sb.from('mos_campaigns').select('kind').eq('id', item.campaign_id).maybeSingle()
             : Promise.resolve({ data: null, error: null }),
-          sb.from('mos_asset_links').select('asset_id, content_id, role')
+          sb.from('mos_asset_links').select('asset_id, content_id, role, created_at')
             .eq('content_id', contentId).is('superseded_at', null).limit(100),
           sb.from('mos_content_approvals')
             .select('id, content_id, step_key, round, approved_by_user_id, approved_at, writing_hash, design_hash, caption_hash, package_hash')

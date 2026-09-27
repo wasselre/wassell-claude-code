@@ -25,7 +25,8 @@ import { useWorkspace } from '../MarketingWorkspace';
 import { Empty, LoadError, Skeleton } from './kit';
 import { num, pct, shortDate } from '../lib/format';
 import {
-  dayLevel, dayTitle, fullDays, hoursLabel, onTimeRate, personName, rateTone, sortPeople,
+  bucketLabel, dayLevel, dayTitle, fullDays, hoursLabel, onTimeRate, personName, rateTone, round1,
+  sortPeople, todayLoads,
   type LoadLevel, type RateTone,
 } from '../lib/teamKpis';
 
@@ -131,9 +132,19 @@ export default function TeamKpiPanel({
               </div>
             </div>
             <div className={`stat${team.late_now > 0 ? ' alert' : ''}`}>
-              <div className="k">{isAr ? 'مفتوحة الآن' : 'Open now'}</div>
-              <div className="v">{num(team.open_now, isAr)}</div>
-              <div className="d">{openDetail(team.late_now, team.due_today, team.blocked_now, isAr)}</div>
+              <div className="k">{isAr ? 'مهام اليوم' : 'Tasks for today'}</div>
+              <div className="v">{num(team.open_today, isAr)}</div>
+              <div className="d">
+                {[
+                  isAr ? `متأخرة ${num(team.late_now, true)}` : `${num(team.late_now, false)} late`,
+                  team.open_later > 0
+                    ? (isAr ? `لأيام قادمة: ${num(team.open_later, true)}` : `for coming days: ${num(team.open_later, false)}`)
+                    : null,
+                  team.blocked_now > 0
+                    ? (isAr ? `معلّقة ${num(team.blocked_now, true)}` : `${num(team.blocked_now, false)} blocked`)
+                    : null,
+                ].filter(Boolean).join(' · ')}
+              </div>
             </div>
             <div className="stat">
               <div className="k">{isAr ? 'مدة الإنجاز' : 'Time to finish'}</div>
@@ -154,7 +165,7 @@ export default function TeamKpiPanel({
             <div className="tk-list">
               <div className="tk-row tk-head">
                 <div>{isAr ? 'الشخص' : 'Person'}</div>
-                <div>{isAr ? 'مفتوحة الآن' : 'Open now'}</div>
+                <div>{isAr ? 'اليوم' : 'Today'}</div>
                 <div>{isAr ? 'أُنجزت' : 'Finished'}</div>
                 <div>{isAr ? 'في الوقت' : 'On time'}</div>
                 <div>{isAr ? 'مدة الإنجاز' : 'Time to finish'}</div>
@@ -178,8 +189,8 @@ export default function TeamKpiPanel({
           </div>
           <div className="tk-foot">
             {isAr
-              ? 'تُحسب المهمة لمن أُسندت إليه، أيًّا كان من أغلقها. المتأخرة: ما سُجّل عليه إنذار تأخير أو أُنجز بعد موعده. مدة الإنجاز من تسليم المهمة للشخص إلى إنجازها. النشر لا يُحسب مهمة.'
-              : 'A task counts for the person it was assigned to, whoever closed it. Late means it earned a lateness strike or was finished after its deadline. Time to finish runs from hand-off to done. Publishing does not count as a task.'}
+              ? '«اليوم»: ما حُجز للشخص اليوم مقابل حدّه اليومي. «مُسندة»: المهام المُسندة للشخص الآن، ومنها ما هو لأيام قادمة. تُحسب المهمة لمن أُسندت إليه، أيًّا كان من أغلقها. المتأخرة: ما سُجّل عليه إنذار تأخير أو أُنجز بعد موعده. مدة الإنجاز من تسليم المهمة للشخص إلى إنجازها. النشر لا يُحسب مهمة.'
+              : '"Today" is the work booked for the person today against their daily limit. "Assigned" counts every task the person holds now, including those for coming days. A task counts for the person it was assigned to, whoever closed it. Late means it earned a lateness strike or was finished after its deadline. Time to finish runs from hand-off to done. Publishing does not count as a task.'}
           </div>
         </div>
       )}
@@ -187,12 +198,11 @@ export default function TeamKpiPanel({
   );
 }
 
-function openDetail(late: number, today: number, blocked: number, isAr: boolean): string {
-  const parts: string[] = [];
-  parts.push(isAr ? `متأخرة ${num(late, true)}` : `${num(late, false)} late`);
-  if (today > 0) parts.push(isAr ? `تستحق اليوم ${num(today, true)}` : `${num(today, false)} due today`);
-  if (blocked > 0) parts.push(isAr ? `معلّقة ${num(blocked, true)}` : `${num(blocked, false)} blocked`);
-  return parts.join(' · ');
+/** «٧ من ٧» / "7 of 7" — booked units against the daily limit. */
+function ofLimit(units: number, capacity: number, isAr: boolean): string {
+  return isAr
+    ? `${num(round1(units), true)} من ${num(capacity, true)}`
+    : `${num(round1(units), false)} of ${num(capacity, false)}`;
 }
 
 function PersonRow({
@@ -214,6 +224,19 @@ function PersonRow({
     .join(' · ');
 
   const open = onOpen ? () => onOpen(p.user_id) : undefined;
+  // Today against the daily limit — the number the operator sets («٧ في اليوم»).
+  const loads = todayLoads(p.days);
+  const main = loads[0];
+  const over = Boolean(main && (main.capacity <= 0 ? main.units > 0 : main.units > main.capacity + 1e-6));
+  const lateLine = [
+    p.late_now > 0 ? (isAr ? `متأخرة ${num(p.late_now, true)}` : `${num(p.late_now, false)} late`) : null,
+    p.blocked_now > 0 ? (isAr ? `معلّقة ${num(p.blocked_now, true)}` : `${num(p.blocked_now, false)} blocked`) : null,
+  ].filter(Boolean).join(' · ');
+  const assigned = p.open_now > 0
+    ? (isAr
+      ? `مُسندة: ${num(p.open_now, true)}${p.open_later > 0 ? ` · لأيام قادمة: ${num(p.open_later, true)}` : ''}`
+      : `Assigned: ${num(p.open_now, false)}${p.open_later > 0 ? ` · for coming days: ${num(p.open_later, false)}` : ''}`)
+    : (isAr ? 'لا مهام مُسندة' : 'Nothing assigned');
 
   return (
     <div className={`tk-row tk-person${open ? ' click' : ''}`} onClick={open}>
@@ -236,13 +259,18 @@ function PersonRow({
       </div>
 
       <Cell
-        label={isAr ? 'مفتوحة الآن' : 'Open now'}
-        value={num(p.open_now, isAr)}
-        sub={p.late_now > 0 || p.due_today > 0 || p.blocked_now > 0
-          ? openDetail(p.late_now, p.due_today, p.blocked_now, isAr)
-          : (isAr ? 'لا متأخر' : 'None late')}
-        subTone={p.late_now > 0 ? 't-late' : undefined}
-      />
+        label={isAr ? 'اليوم' : 'Today'}
+        value={main ? ofLimit(main.units, main.capacity, isAr) : '—'}
+        valueTone={over ? 't-late' : undefined}
+        sub={assigned}
+      >
+        {loads.slice(1).map((l) => (
+          <div key={l.bucket} className="tk-s">
+            {bucketLabel(l.bucket, isAr)} {ofLimit(l.units, l.capacity, isAr)}
+          </div>
+        ))}
+        {lateLine && <div className="tk-s t-late">{lateLine}</div>}
+      </Cell>
       <Cell
         label={isAr ? 'أُنجزت' : 'Finished'}
         value={num(p.done, isAr)}

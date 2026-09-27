@@ -64,6 +64,23 @@ export function dayLevel(d: TeamKpiDay): LoadLevel {
   return 'light';
 }
 
+/**
+ * Today's booked work against the daily limit, fullest bucket first — what
+ * «اليوم ٧ من ٧» shows. Buckets with nothing booked today are dropped unless
+ * nothing is booked at all, in which case the first bucket still shows its
+ * limit («٠ من ١٠»). Empty when the person has no bucket in the strip.
+ */
+export function todayLoads(days: TeamKpiDay[]): Array<{ bucket: string; units: number; capacity: number }> {
+  const today = days[0];
+  if (!today || today.loads.length === 0) return [];
+  const use = (l: { units: number; capacity: number }): number => (
+    l.capacity > 0 ? l.units / l.capacity : (l.units > EPS ? Number.POSITIVE_INFINITY : 0)
+  );
+  const sorted = [...today.loads].sort((a, b) => use(b) - use(a) || b.units - a.units);
+  const booked = sorted.filter((l) => l.units > EPS);
+  return booked.length > 0 ? booked : sorted.slice(0, 1);
+}
+
 /** Days in the strip at the limit, and days past it. */
 export function fullDays(days: TeamKpiDay[]): { full: number; over: number } {
   let full = 0;

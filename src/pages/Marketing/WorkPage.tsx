@@ -298,7 +298,7 @@ function RowCardRows({
               </span>
             ))}
             {task.round > 1 && (
-              <> · {isAr ? `الجولة ${num(task.round, true)}` : `round ${task.round}`}</>
+              <> · {isAr ? `الجولة ${num(task.round, true)} · أُعيدت للتعديل` : `round ${task.round} · sent back for changes`}</>
             )}
           </div>
         </td>
@@ -481,7 +481,7 @@ function QueueGroup({
                           <span className="ltr">{r.ref}</span> · {typeLabel(r.content_type_key)}
                           {r.project_id && <> · <ProjectLink projectIds={[r.project_id]} variant="link" /></>}
                           {task && task.round > 1 && (
-                            <> · {isAr ? `الجولة ${num(task.round, true)}` : `round ${task.round}`}</>
+                            <> · {isAr ? `الجولة ${num(task.round, true)} · أُعيدت للتعديل` : `round ${task.round} · sent back for changes`}</>
                           )}
                         </div>
                       </td>

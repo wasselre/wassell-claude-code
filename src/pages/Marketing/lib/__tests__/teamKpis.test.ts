@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  dayLevel, dayTitle, fullDays, hoursLabel, onTimeRate, personName, rateTone, sortPeople,
+  dayLevel, dayTitle, fullDays, hoursLabel, onTimeRate, personName, rateTone, sortPeople, todayLoads,
 } from '../teamKpis';
 import type { TeamKpiDay, TeamKpiPerson } from '@/lib/marketingOS/client';
 
@@ -16,7 +16,7 @@ const day = (over: Partial<TeamKpiDay> = {}): TeamKpiDay => ({
 
 const person = (over: Partial<TeamKpiPerson>): TeamKpiPerson => ({
   user_id: 'u-0000000000', name_ar: null, name_en: null, roles: [],
-  open_now: 0, late_now: 0, blocked_now: 0, due_today: 0,
+  open_now: 0, open_today: 0, open_later: 0, late_now: 0, blocked_now: 0, due_today: 0,
   done: 0, done_late: 0, done_no_deadline: 0, median_hours: null,
   strikes: 0, booked_items: 0, booked_units: 0, days: [],
   ...over,
@@ -91,6 +91,37 @@ describe('how full a day is', () => {
     expect(dayTitle(day({ off: true }), false)).toBe('Mon Sep 28 — Day off');
     expect(dayTitle(day(), false)).toBe('Mon Sep 28 — Nothing booked');
     expect(dayTitle(d, true)).toBe('الاثنين ٢٨ سبتمبر — إنتاج ٧ من ٧');
+  });
+});
+
+describe('today against the daily limit', () => {
+  it('reads سارة on 27 Sep as 7 of 7 — the number the operator set, not the 12 tasks she holds', () => {
+    const days = [day({ day: '2026-09-27', loads: [{ bucket: 'post', units: 7, capacity: 7 }] })];
+    expect(todayLoads(days)).toEqual([{ bucket: 'post', units: 7, capacity: 7 }]);
+  });
+
+  it('puts the fuller bucket first and drops buckets with nothing booked today', () => {
+    const days = [day({
+      loads: [
+        { bucket: 'approvals', units: 0, capacity: 20 },
+        { bucket: 'post', units: 4, capacity: 10 },
+      ],
+    })];
+    expect(todayLoads(days)).toEqual([{ bucket: 'post', units: 4, capacity: 10 }]);
+    const both = [day({
+      loads: [
+        { bucket: 'approvals', units: 18, capacity: 20 },
+        { bucket: 'post', units: 5, capacity: 10 },
+      ],
+    })];
+    expect(todayLoads(both).map((l) => l.bucket)).toEqual(['approvals', 'post']);
+  });
+
+  it('still shows the limit when nothing is booked today, and nothing without a bucket', () => {
+    const idle = [day({ loads: [{ bucket: 'approvals', units: 0, capacity: 20 }] })];
+    expect(todayLoads(idle)).toEqual([{ bucket: 'approvals', units: 0, capacity: 20 }]);
+    expect(todayLoads([day()])).toEqual([]);
+    expect(todayLoads([])).toEqual([]);
   });
 });
 
