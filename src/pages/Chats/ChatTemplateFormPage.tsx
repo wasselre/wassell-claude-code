@@ -319,6 +319,11 @@ export default function ChatTemplateFormPage() {
           project_image_file_ids: projectImageIds,
           images: listingImages,
           videos: listingVideos,
+          // A human edited this template → mark it MANUAL so the daily
+          // auto-picker maintainer (api/cron/build-project-templates) never
+          // overwrites the rep's curation. Auto-built templates carry
+          // media_source:'auto'; a rep save flips it to 'manual' permanently.
+          media_source: 'manual',
         },
         created_at: existing?.created_at ?? now,
         updated_at: now,
