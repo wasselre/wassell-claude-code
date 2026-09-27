@@ -47,6 +47,16 @@ Wassell is a Saudi Arabian real-estate company. Arabic is the primary language, 
   review screen still counts it. Editing the field (any generation bump) or
   calling `translation_unit_unblock(kind, entity, path)` puts it back in the queue.
   Listed in `v_translation_blocked`.
+- **Variant roles follow the source language (2026-09-27).** Each field has an
+  Arabic row and an English row; one is the SOURCE and the other is the
+  translation. When the system re-detects a field's language and the answer
+  changes, those labels used to stay as they were — so the app kept translating
+  into a row it then refused to save, while the other row sat "pending" forever.
+  One client's name did that every 15 minutes for a month with no error
+  recorded. The worker now straightens the labels whenever they disagree with
+  the detected language, leaves a correct field untouched (so nothing is
+  re-translated or re-billed), never rewrites a row a human owns, and re-queues
+  the field so the work it just created actually happens.
 - **Links travel as placeholders (2026-09-27).** The protected-fact guard refuses
   any translation that lost a URL or a number — correct, but its URL pattern
   (`\S+`) also swallowed the punctuation AFTER a link, so "(<link>)، ويضم"

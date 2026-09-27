@@ -100,6 +100,10 @@ jobs:
       # (1,232 wasted calls before it was caught).
       - name: Translation retry cap
         run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-09-27_translation_retry_cap.sql
+      # 2026-09-27: variant roles must follow the source language when it flips.
+      # Applied by name for the same reason as the cap above; smoke 14 asserts it.
+      - name: Translation variant role repair
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/migrations/2026-09-27_translation_variant_role_repair.sql
       - name: Smoke assertions
         run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/tests/ci/smoke_translation.sql
 

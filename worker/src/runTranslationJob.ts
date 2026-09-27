@@ -184,6 +184,20 @@ export async function runTranslationJob({ supabase, env, job }: Ctx): Promise<Re
         sourceLang === 'ar' ? 'ar' : sourceLang === 'en' ? 'en' : null;
       await ensureVariants(supabase, job.entityId, policy.field_path, sourceSide, targets, 'pending');
 
+      // ensureVariants can CREATE a row but never CORRECT one (ignoreDuplicates
+      // — deliberate, so a re-run cannot reset a translated variant to pending
+      // and pay for it twice). That also froze `role`, which is not a per-run
+      // detail: it says which side is the source. When a field's detected
+      // language flips, the roles must follow, or the pair is stranded — the
+      // activate RPC only updates a row with role='target', so every
+      // translation is discarded while the stale 'target' on the other side
+      // keeps the unit dirty. That ran for a month on one client's name.
+      // Touches ONLY rows whose role is wrong, so it is free on a healthy field.
+      const { error: repairErr } = await supabase.rpc('translation_variant_repair_roles', {
+        p_kind: 'record', p_entity: job.entityId, p_path: policy.field_path, p_source_lang: sourceSide,
+      });
+      if (repairErr) throw new Error(`variant role repair failed (${policy.field_path}): ${repairErr.message}`);
+
       if (raw.length > MANUAL_REVIEW_BYTES) {
         await supabase.from('translation_variants')
           .update({ state: 'failed', last_error: 'manual_review:oversized' })

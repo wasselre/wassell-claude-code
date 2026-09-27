@@ -675,7 +675,24 @@ One human entry → automatic generation + persistence of BOTH languages → bot
    `[[L0]]` placeholders and restore the bytes before the guard runs — so the
    guard passes because the link genuinely survived, never because it was
    weakened. A DROPPED placeholder is still a failure.
-10. **Migration gotchas:** (a) PostGIS/frozen-table RPCs need `SET check_function_bodies = off` so the CI ephemeral DB (no PostGIS, minimal fixture) can create them; (b) guard data-fixes on frozen tables (`districts`, etc.) with `to_regclass` — CI doesn't have them; (c) NEVER call `digest` inside the records capture trigger (search_path); the trigger uses a stub `source_rev`, the worker computes the real sha. CI validates every `2026-09-0*` migration against `postgres:17` via `.github/workflows/ci.yml` `db-migrations` + `supabase/tests/ci/smoke_translation.sql` (smokes 1–13).
+10. **Variant ROLES must follow the source language (added 2026-09-27,
+   `supabase/migrations/2026-09-27_translation_variant_role_repair.sql`).**
+   `ensureVariants` upserts with `ignoreDuplicates: true` — right for `state`
+   (a re-run must not reset a translated variant to pending and re-bill it) but
+   it also froze `role`, which says WHICH SIDE IS THE SOURCE. When a field's
+   detected language flips, the rows kept their old roles, and
+   `translation_variant_activate` only updates `role='target' AND machine_owned`
+   — so every translation was DISCARDED (it returns false, which the worker
+   reads as "the source moved on", so not even an error was recorded) while the
+   stale `target` on the other side kept the unit dirty. One client's name did
+   that every 15 minutes from 31 August to 27 September. The worker now calls
+   `translation_variant_repair_roles` after `ensureVariants`; it rewrites ONLY
+   rows whose role is wrong (a healthy field costs nothing), **never touches a
+   `machine_owned = false` row** (a human owns that text — it surfaces as a
+   blocked unit instead), and **marks the unit dirty when it changed something**
+   (a repair that leaves a pending target on a clean unit creates work the
+   reconcile will never sweep). Smoke 14 asserts all four properties.
+11. **Migration gotchas:** (a) PostGIS/frozen-table RPCs need `SET check_function_bodies = off` so the CI ephemeral DB (no PostGIS, minimal fixture) can create them; (b) guard data-fixes on frozen tables (`districts`, etc.) with `to_regclass` — CI doesn't have them; (c) NEVER call `digest` inside the records capture trigger (search_path); the trigger uses a stub `source_rev`, the worker computes the real sha. CI validates every `2026-09-0*` migration against `postgres:17` via `.github/workflows/ci.yml` `db-migrations` + `supabase/tests/ci/smoke_translation.sql` (smokes 1–13).
 
 ## Marketing OS capabilities are DATA (added 2026-08-06)
 

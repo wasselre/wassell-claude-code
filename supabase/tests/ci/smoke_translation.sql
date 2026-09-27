@@ -407,3 +407,84 @@ BEGIN
 
   RAISE NOTICE 'W1 smoke 13 (translation retry cap): passed';
 END $$;
+
+-- 14) Variant roles follow the source language (2026-09-27). `ensureVariants`
+--     cannot correct an existing row, so when a field's detected language flips
+--     the ar/en roles stay as they were. `translation_variant_activate` only
+--     updates a row with role='target', so every translation is discarded while
+--     the stale 'target' on the other side keeps the unit dirty — a provider
+--     call every 15 minutes, no error, no progress, for a month on one client's
+--     name. The repair must fix the inverted pair, leave a HEALTHY pair
+--     untouched (or it would re-translate and re-bill the whole table), never
+--     touch a human-owned row, and mark the unit dirty so the work it just
+--     created actually gets done.
+DO $$
+DECLARE v_model uuid; v_flip uuid; v_ok uuid; v_human uuid; v_fixed int; v_rev uuid;
+BEGIN
+  INSERT INTO models (name, schema) VALUES ('smoke_variant_roles', '{"sections":[]}'::jsonb)
+  RETURNING id INTO v_model;
+
+  -- (a) an INVERTED pair: the unit says Arabic is the source, the rows disagree.
+  INSERT INTO records (model_id, data) VALUES (v_model, '{"f":"منيرة"}') RETURNING id INTO v_flip;
+  INSERT INTO translation_units (resource_kind, entity_id, field_path, model_id, source_lang, generation, dirty, source_rev)
+  VALUES ('record', v_flip, 'f', v_model, 'ar', 2, false, 'stub');
+  INSERT INTO translation_variants (resource_kind, entity_id, field_path, lang, role, state, generation, machine_owned)
+  VALUES ('record', v_flip, 'f', 'ar', 'target', 'pending', 1, true),
+         ('record', v_flip, 'f', 'en', 'source', 'source', NULL, true);
+
+  v_fixed := translation_variant_repair_roles('record', v_flip, 'f', 'ar');
+  IF v_fixed <> 2 THEN
+    RAISE EXCEPTION 'SMOKE 14a failed: expected 2 rows repaired, got %', v_fixed;
+  END IF;
+  IF (SELECT role FROM translation_variants WHERE entity_id = v_flip AND lang = 'ar') <> 'source'
+     OR (SELECT role FROM translation_variants WHERE entity_id = v_flip AND lang = 'en') <> 'target' THEN
+    RAISE EXCEPTION 'SMOKE 14b failed: roles did not follow the source language';
+  END IF;
+  IF (SELECT state FROM translation_variants WHERE entity_id = v_flip AND lang = 'en') <> 'pending' THEN
+    RAISE EXCEPTION 'SMOKE 14c failed: the new target is not pending, so it will never be translated';
+  END IF;
+  IF NOT (SELECT dirty FROM translation_units WHERE entity_id = v_flip) THEN
+    RAISE EXCEPTION 'SMOKE 14d failed: unit left CLEAN with a pending target — the reconcile only sweeps dirty units, so that translation would never be produced';
+  END IF;
+
+  -- (b) a HEALTHY pair must not be touched: re-running the repair over the whole
+  --     table must not reset translations and re-bill every field.
+  INSERT INTO records (model_id, data) VALUES (v_model, '{"f":"نص"}') RETURNING id INTO v_ok;
+  INSERT INTO translation_units (resource_kind, entity_id, field_path, model_id, source_lang, generation, dirty, source_rev)
+  VALUES ('record', v_ok, 'f', v_model, 'ar', 1, false, 'stub');
+  -- A displayed target must carry its revision (tg_translation_variants_guard
+  -- enforces it), so the fixture has to be realistic or it fails before the
+  -- assertion it is meant to make.
+  INSERT INTO translation_revisions (resource_kind, entity_id, field_path, lang, generation, source_rev, source_lang, translated_text, origin, status)
+  VALUES ('record', v_ok, 'f', 'en', 1, 'stub', 'ar', 'Text', 'ai', 'active') RETURNING id INTO v_rev;
+  INSERT INTO translation_variants (resource_kind, entity_id, field_path, lang, role, state, generation, machine_owned, display_text, active_revision_id)
+  VALUES ('record', v_ok, 'f', 'ar', 'source', 'source', NULL, true, NULL, NULL),
+         ('record', v_ok, 'f', 'en', 'target', 'translated', 1, true, 'Text', v_rev);
+
+  v_fixed := translation_variant_repair_roles('record', v_ok, 'f', 'ar');
+  IF v_fixed <> 0 THEN
+    RAISE EXCEPTION 'SMOKE 14e failed: a healthy pair was rewritten (% rows) — every field would be re-translated', v_fixed;
+  END IF;
+  IF (SELECT display_text FROM translation_variants WHERE entity_id = v_ok AND lang = 'en') IS DISTINCT FROM 'Text'
+     OR (SELECT dirty FROM translation_units WHERE entity_id = v_ok) THEN
+    RAISE EXCEPTION 'SMOKE 14f failed: a healthy pair lost its translation or was marked dirty';
+  END IF;
+
+  -- (c) a HUMAN-owned row is never reclassified behind the operator's back.
+  INSERT INTO records (model_id, data) VALUES (v_model, '{"f":"يدوي"}') RETURNING id INTO v_human;
+  INSERT INTO translation_units (resource_kind, entity_id, field_path, model_id, source_lang, generation, dirty, source_rev)
+  VALUES ('record', v_human, 'f', v_model, 'ar', 2, false, 'stub');
+  INSERT INTO translation_revisions (resource_kind, entity_id, field_path, lang, generation, source_rev, source_lang, translated_text, origin, status)
+  VALUES ('record', v_human, 'f', 'ar', 1, 'stub', 'en', 'نص بشري', 'human', 'active') RETURNING id INTO v_rev;
+  INSERT INTO translation_variants (resource_kind, entity_id, field_path, lang, role, state, generation, machine_owned, display_text, active_revision_id)
+  VALUES ('record', v_human, 'f', 'ar', 'target', 'approved', 1, false, 'نص بشري', v_rev);
+
+  v_fixed := translation_variant_repair_roles('record', v_human, 'f', 'ar');
+  IF v_fixed <> 0
+     OR (SELECT role FROM translation_variants WHERE entity_id = v_human AND lang = 'ar') <> 'target'
+     OR (SELECT display_text FROM translation_variants WHERE entity_id = v_human AND lang = 'ar') <> 'نص بشري' THEN
+    RAISE EXCEPTION 'SMOKE 14g failed: a human-owned row was rewritten by the machine repair';
+  END IF;
+
+  RAISE NOTICE 'W1 smoke 14 (variant role repair): passed';
+END $$;
