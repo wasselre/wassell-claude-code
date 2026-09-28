@@ -36,6 +36,7 @@ export type CustomPageId =
   | 'sw_clients'
   | 'sw_work_queue'
   | 'sw_whatsapp'
+  | 'sw_unanswered'
   | 'my_clients'
   | 'my_tasks'
   | 'sales_manager'
@@ -144,6 +145,17 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_ar: 'واتساب — المبيعات',
     label_en: 'WhatsApp (Sales)',
     icon: MessageSquareText,
+    default_access: 'all',
+    hidden_from_sidebar: true,
+  },
+  {
+    // D38/D46 — unanswered requests: unmet demand, sending a request to the
+    // offices of the requested districts, and saving what they offer.
+    id: 'sw_unanswered',
+    route: '/sales-workspace/requests',
+    label_ar: 'الطلبات غير المجابة',
+    label_en: 'Unanswered Requests',
+    icon: ClipboardListIcon,
     default_access: 'all',
     hidden_from_sidebar: true,
   },

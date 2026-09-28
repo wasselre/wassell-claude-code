@@ -37,6 +37,22 @@ export default function SalesManagerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientsModel, followupsModel, models, records]);
 
+  // Unanswered requests: open count + open search tasks past their due date.
+  const requestStats = useMemo(() => {
+    const reqModel = models.find((mm) => mm.name === 'unanswered_requests');
+    const taskModel = models.find((mm) => mm.name === 'sales_tasks');
+    const open = (reqModel ? records[reqModel.id] ?? [] : []).filter(
+      (r) => !['fulfilled', 'client_dropped'].includes(String((r.data as Record<string, unknown>).request_status ?? 'received')),
+    ).length;
+    const overdue = (taskModel ? records[taskModel.id] ?? [] : []).filter((task) => {
+      const d = task.data as Record<string, unknown>;
+      const st = typeof d.task_status === 'string' && d.task_status ? d.task_status : 'open';
+      const due = Date.parse(String(d.due_date ?? ''));
+      return (st === 'open' || st === 'in_progress') && Number.isFinite(due) && due < now;
+    }).length;
+    return { open, overdue };
+  }, [models, records, now]);
+
   const m = useMemo(() => {
     // Retired clients (and their follow-ups) are excluded from every manager
     // metric — they don't count until the client messages us again.
@@ -101,6 +117,17 @@ export default function SalesManagerPage() {
         <Stat label={isAr ? 'متابعات متأخرة' : 'Overdue'} value={m.overdue} tone={m.overdue > 0 ? 'warn' : 'neutral'} icon={<Clock size={18} />} />
         <Stat label={isAr ? 'متابعات مفتوحة' : 'Open Follow-ups'} value={m.openFollowups} tone="neutral" />
         <Stat label={isAr ? 'أُكملت (30 يومًا)' : 'Completed (30d)'} value={m.completed30d} tone="neutral" hint={isAr ? `${m.completedLate} متأخرة` : `${m.completedLate} late`} />
+      </div>
+
+      {/* Unanswered requests (D38) — clients we could not match yet. */}
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+        <button type="button" onClick={() => navigate('/sales-workspace/requests')} className="block w-full text-start">
+          <Stat label={isAr ? 'طلبات غير مجابة مفتوحة' : 'Open unanswered requests'} value={requestStats.open} tone="neutral"
+            hint={isAr ? 'اضغط لفتح الطلبات' : 'click to open requests'} />
+        </button>
+        <button type="button" onClick={() => navigate('/sales-workspace/requests')} className="block w-full text-start">
+          <Stat label={isAr ? 'بحث متأخر' : 'Overdue searches'} value={requestStats.overdue} tone={requestStats.overdue > 0 ? 'warn' : 'neutral'} icon={<Clock size={18} />} />
+        </button>
       </div>
 
       {/* No-next-action drill (D16) — the clients behind the headline stat. */}

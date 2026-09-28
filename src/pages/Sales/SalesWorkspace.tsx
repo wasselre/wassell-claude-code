@@ -25,7 +25,7 @@
  */
 import { useMemo } from 'react';
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
-import { BarChart3, UserCheck, ListChecks, MessageSquareText } from 'lucide-react';
+import { BarChart3, UserCheck, ListChecks, MessageSquareText, SearchX } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanAccessPage } from '@/hooks/usePermission';
 import type { CustomPageId } from '@/lib/customPages';
@@ -34,8 +34,9 @@ import MyClientsPage from './MyClientsPage';
 import MyTasksPage from './MyTasksPage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import SalesToolsMenu from './components/SalesToolsMenu';
+import UnansweredRequestsSection from './requests/UnansweredRequestsSection';
 
-type SectionKey = 'overview' | 'clients' | 'work-queue' | 'whatsapp';
+type SectionKey = 'overview' | 'clients' | 'work-queue' | 'whatsapp' | 'requests';
 
 interface SectionDef {
   key: SectionKey;
@@ -50,6 +51,7 @@ const SECTIONS: SectionDef[] = [
   { key: 'clients', pageId: 'sw_clients', icon: UserCheck, ar: 'العملاء', en: 'Clients' },
   { key: 'work-queue', pageId: 'sw_work_queue', icon: ListChecks, ar: 'قائمة العمل', en: 'Work Queue' },
   { key: 'whatsapp', pageId: 'sw_whatsapp', icon: MessageSquareText, ar: 'واتساب', en: 'WhatsApp' },
+  { key: 'requests', pageId: 'sw_unanswered', icon: SearchX, ar: 'الطلبات غير المجابة', en: 'Unanswered Requests' },
 ];
 
 export default function SalesWorkspace() {
@@ -57,21 +59,23 @@ export default function SalesWorkspace() {
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language) === 'ar';
 
-  // Per-section access — hooks called unconditionally (fixed set of 4).
+  // Per-section access — hooks called unconditionally (fixed set of 5).
   const canOverview = useCanAccessPage('sw_overview');
   const canClients = useCanAccessPage('sw_clients');
   const canWorkQueue = useCanAccessPage('sw_work_queue');
   const canWhatsApp = useCanAccessPage('sw_whatsapp');
+  const canRequests = useCanAccessPage('sw_unanswered');
   const accessByKey: Record<SectionKey, boolean> = {
     overview: canOverview,
     clients: canClients,
     'work-queue': canWorkQueue,
     whatsapp: canWhatsApp,
+    requests: canRequests,
   };
 
   const visibleSections = useMemo(
     () => SECTIONS.filter((s) => accessByKey[s.key]),
-    [canOverview, canClients, canWorkQueue, canWhatsApp],
+    [canOverview, canClients, canWorkQueue, canWhatsApp, canRequests],
   );
 
   const requested = (params.section as SectionKey | undefined) ?? undefined;
@@ -118,6 +122,7 @@ export default function SalesWorkspace() {
       {active === 'clients' && <MyClientsPage />}
       {active === 'work-queue' && <MyTasksPage />}
       {active === 'whatsapp' && <ChatsSplitPage />}
+      {active === 'requests' && <UnansweredRequestsSection />}
 
       {active === null && (
         <div className="card p-10 text-center text-charcoal/50 text-sm">

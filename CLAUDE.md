@@ -589,6 +589,46 @@ the dormant machinery accurately; none of it runs while archived.
 5. **Secrets are referenced, never pasted into steps** (`{{portal.login_password}}`). Recipes and required_fields are stored in record data and rendered to reps in error messages.
 6. **Screenshots live in the PRIVATE `portal-registrations` bucket** and reach the SPA only as signed URLs from the API — they show customer PII on third-party portals.
 
+## Office outreach (unanswered requests → WhatsApp to offices) (added 2026-09-28)
+
+The Sales Workspace «الطلبات غير المجابة» tab sends a client's unmet request to
+the real-estate offices in the client's districts, and records what they offer as
+ordinary units / projects. Messages ride `scheduled_whatsapp_jobs`
+(`reference='office_outreach:<id>'`); everything else is in
+`supabase/migrations/2026-09-28_office_outreach.sql`. PRD:
+`docs/prd/unanswered-requests.md`.
+
+**Hard rules — never violate:**
+1. **A dedicated line only.** `office_outreach_settings.device_id` is NULL
+   (sending OFF) until an admin sets a line that exists for this purpose. Never
+   default it to the `sales` or `wassel_ops` line — a ban there takes down the
+   business's main WhatsApp. The settings modal warns for exactly this.
+2. **The ramp is DATA, and the database enforces it.** Per-day caps and random
+   gaps come from `office_outreach_settings.ramp` by line age; business hours,
+   the 14-day recontact gap and the low-reply halving live in
+   `office_outreach_enqueue`. Don't add a client-side send path that skips it,
+   and don't shorten gaps without re-reading the research in the PRD (WhatsApp's
+   2025 cap on unanswered messages to non-contacts; 463 = shadow restriction).
+3. **Never retry a 463/475.** The scheduled-WhatsApp worker already fails a 463
+   once; the `scheduled_whatsapp_office_outreach_sync` trigger then pauses the
+   line 24 h, cancels its queued office messages and halves the next day's cap.
+   Retrying a restriction is how a restriction becomes a ban.
+4. **No links in office messages** (`containsLink` in
+   `src/lib/officeOutreach/message.ts`), and keep the «إيقاف» opt-out line.
+   A reply of «إيقاف» writes `office_do_not_contact`; never remove an entry from
+   it in code.
+5. **The reply trigger on `chat_messages` must never fail the insert** — it
+   catches and `RAISE WARNING`s, because losing an inbound customer message to
+   a bookkeeping error is far worse than missing one reply stamp.
+6. **Candidates page past 1,000 rows.** A city-wide match returns thousands;
+   `fetchCandidates` pages with `.range()` over a TOTAL order (final `id`
+   tie-break). Never cut to the first page silently.
+7. **Creating a project re-queues Marketing attribution** (the
+   `records_rescore_on_project_*` triggers → `mkt_enqueue_attribution_rerun`,
+   ~3,500 jobs). Keep that function set-based: its old per-row loop took 68 s
+   and made every project save from the app time out (2026-09-14 → 2026-09-28).
+   Test projects therefore queue real jobs — cancel them when you clean up.
+
 ## Chat auto-read (WhatsApp → geography + preference proposals) (added 2026-09-27)
 
 Client-linked WhatsApp chats are read ON THEIR OWN: a per-minute cron

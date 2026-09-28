@@ -9,6 +9,7 @@
  *   - Financing calculator  → /financing
  *   - New WhatsApp chat     → StartChatModal
  *   - New client            → /model/clients/new
+ *   - Unanswered request    → LogRequestFlow (client search → LogUnansweredRequestModal)
  *
  * Each item shows only when the user may already do it — model create
  * permission, custom-page access, or WhatsApp-tab access. Nothing here grants
@@ -16,7 +17,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Wrench, ChevronDown, Search, CalendarPlus, MapPin, Compass, Calculator, MessageCirclePlus, UserPlus, type LucideIcon } from 'lucide-react';
+import { Wrench, ChevronDown, Search, CalendarPlus, MapPin, Compass, Calculator, MessageCirclePlus, UserPlus, SearchX, type LucideIcon } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { usePermission, useCanAccessPage } from '@/hooks/usePermission';
 import Modal from '@/components/ui/Modal';
@@ -25,8 +26,9 @@ import ClientSearch from './ClientSearch';
 import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointmentModal';
 import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import StartChatModal from '@/pages/Chats/components/StartChatModal';
+import LogRequestFlow from '@/pages/Sales/requests/LogRequestFlow';
 
-type OpenTool = 'search' | 'appointment' | 'visit' | 'chat' | null;
+type OpenTool = 'search' | 'appointment' | 'visit' | 'chat' | 'request' | null;
 
 interface ToolItem {
   key: string;
@@ -56,6 +58,7 @@ export default function SalesToolsMenu() {
   const canFinder = useCanAccessPage('project_finder');
   const canFinancing = useCanAccessPage('financing_calculator');
   const canWhatsApp = useCanAccessPage('sw_whatsapp');
+  const canLogRequest = usePermission(modelId('unanswered_requests'), 'create');
 
   // Close the menu on an outside click or Escape.
   useEffect(() => {
@@ -80,6 +83,7 @@ export default function SalesToolsMenu() {
     { key: 'financing', icon: Calculator, ar: 'حاسبة التمويل', en: 'Financing calculator', show: canFinancing, run: () => navigate('/financing') },
     { key: 'chat', icon: MessageCirclePlus, ar: 'محادثة واتساب جديدة', en: 'New WhatsApp chat', show: canWhatsApp, run: () => setOpenTool('chat') },
     { key: 'new-client', icon: UserPlus, ar: 'عميل جديد', en: 'New client', show: !!clientsId && canCreateClient, run: () => navigate('/model/clients/new') },
+    { key: 'request', icon: SearchX, ar: 'تسجيل طلب غير مجاب', en: 'Log an unanswered request', show: canLogRequest, run: () => setOpenTool('request') },
   ].filter((i) => i.show);
 
   if (items.length === 0) return null;
@@ -154,6 +158,8 @@ export default function SalesToolsMenu() {
       )}
 
       {openTool === 'chat' && <StartChatModal onClose={close} />}
+
+      {openTool === 'request' && <LogRequestFlow onClose={close} />}
     </div>
   );
 }

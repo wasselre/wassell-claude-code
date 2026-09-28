@@ -1,0 +1,119 @@
+# PRD: Unanswered Requests (الطلبات غير المجابة) + Office Outreach
+
+**Status:** Live (sending to offices stays OFF until an admin sets a dedicated WhatsApp line)
+**Last updated:** 2026-09-28 (Created. New 5th Sales Workspace tab «الطلبات غير المجابة» at `/sales-workspace/requests`; a request can be sent over WhatsApp to the real-estate offices of the client's requested districts, under database-enforced sending rules; what offices offer is saved as ordinary units / projects and added to the client's options.)
+**Related PRDs:** [sales-process.md](sales-process.md) (the «طلب غير مجاب» stage, the request record, the search task and its workflows — this PRD does not repeat them), [sales-rep-workspace.md](sales-rep-workspace.md) (the Sales Workspace shell + Tools menu), [chats.md](chats.md) (the chat header pill, WhatsApp lines, the scheduled-message queue), [projects-units.md](projects-units.md) (units / projects created from offers), [clients.md](clients.md) (client location preferences + Client Options), [access-control.md](access-control.md)
+
+## What it is (in plain English)
+When a client wants something we don't have, the rep records an «unanswered request» (the lifecycle side of that — the client's stage, the suspended follow-ups, the weekly search task — is described in [sales-process.md](sales-process.md)). This PRD covers the place where those requests are **worked**: a tab inside the Sales Workspace that shows every open request, what clients are asking for that we lack, and — inside each request — a way to send the ask to the real-estate offices in the districts the client wants, one short WhatsApp message per office. When an office replies with something, the rep saves it as a unit or project in the CRM with one form, and it goes straight into the client's options. Sending is paced and capped by the database so a new WhatsApp number is not banned for cold messaging.
+
+## Why it exists
+Before this, an unanswered request was a note and a reminder. The actual search — phoning offices one by one — happened outside the app, left no trace, and the "what are clients asking for that we can't supply" picture never existed. This tab turns the unmet demand into a visible list, lets one rep reach dozens of local offices without hand-typing messages, and keeps every office reply and every offer linked to the request that produced it.
+
+## Key behaviors
+
+### The tab
+- **Where:** the fifth Sales Workspace tab, «الطلبات غير المجابة / Unanswered Requests», route `/sales-workspace/requests`. It is its own access id (`sw_unanswered`), open to everyone by default and hidden from the sidebar (reached through the workspace tabs), togglable per profile in Settings → Profiles like the other workspace tabs.
+- **Who sees what:** a rep sees requests assigned to them, created by them, or for clients they own. Managers/admins see all requests and get a «طلباتي / كل الطلبات» (mine / all) switch, defaulting to all. The database's normal record permissions still decide what can be loaded at all.
+- **Line status badge** at the top tells everyone whether office sending is possible right now: not set up (sending off), paused because WhatsApp restricted the line, warming up (with the day sending starts), or ready with today's office limit.
+- **Four cards:** open requests; requests where an option was found this month; clients who dropped out; and open requests whose next search task is overdue.
+- **Unmet demand** (shown when there are open requests): the most-asked areas, unit types and budget bands across open requests (top 8 each, budget bands: up to 1M / 1–2M / 2–3M / over 3M) — the "what we need to source" list.
+- **List** with an Open / Closed / All filter (closed = option found or client dropped). Each row shows the client, the request status, how many days it has been open, the next search date (red when overdue), the ask in one line, the rep's own note, the budget, and office counts (sent · scheduled · replied).
+- Admins also get a «إعدادات الإرسال / Sending settings» button.
+
+### Logging a request
+- «تسجيل طلب غير مجاب / Log an unanswered request» appears in the tab header and in the Sales Workspace **Tools** menu. In Tools it only shows for users allowed to create unanswered-request records.
+- Both open the same two-step flow: find the client (by name or phone), then the existing "Nothing fits" request form. That form creates only the request — the existing workflow then moves the client and opens the search task (see [sales-process.md](sales-process.md)).
+
+### Inside a request
+- **The ask:** the client's name, links to the client profile and to the open search task («سجّل النتيجة» — record the result), and one line built from the client's preferences (unit types, requested districts, city, budget, bedrooms, area) plus the rep's note.
+- **Which offices qualify** (open requests only): offices whose stored district is one of the client's **included** districts, minus any district the client **excluded**. An optional «أضف مكاتب نفس المدينة» switch adds every office in the same city (the client's own city plus the cities of the requested districts). One office per phone number. Offices that replied to us before are listed first, then district matches, then named offices.
+- **Selection:** district matches that are eligible are pre-ticked; city matches must be picked by hand (a city can mean thousands of offices). An office cannot be picked if it asked us to stop, already has this request, or was messaged in the last 14 days and never replied. Each row carries its flags: «ردّ سابقاً» (replied before), «لا يراسَل» (do not contact), «أُرسل له» (already in this request), «رُوسل مؤخراً» (messaged recently). "Select all eligible" and "Clear" shortcuts.
+- **All offices load; the list shows 100 at a time** with an explicit «يُعرض X من Y — عرض المزيد» (showing X of Y — show more). Nothing is silently cut: the full list is fetched even past the database's 1,000-row response limit.
+- **Message preview:** the text the first selected office will get. Each office gets one of four wordings (greeting, intro and closing question rotate), fixed per office, so neighbouring offices don't receive identical text. Every message ends by asking the office to reply «إيقاف» if it does not want requests from us. Messages never contain links; if the rep's request note contains a link, sending is blocked with a message asking to remove it. The message is capped at 600 characters (the note at 160).
+- **Confirm step** before anything is queued: how many offices, the sending hours, today's limit and roughly how many days sending will take, and a reminder that a WhatsApp restriction stops sending automatically.
+- **After sending:** a toast with the number scheduled and the time of the last message, plus a second toast grouping any offices the database skipped by reason. The request moves to «يتم التواصل مع المكاتب» (offices contacted) if it was still at received / offices-selected, and gets a history line with the time window.
+- **Cancel pending:** «إلغاء N لم تُرسل بعد» cancels every message for this request that has not gone out yet.
+- **Offices messaged:** one row per office with its state (scheduled at / sent, awaiting reply / replied at / failed / cancelled), the first 300 characters of the reply, and the failure reason when there is one. Replies arrive automatically; the conversation with the office continues in WhatsApp under «أخرى» (Other).
+- **Offerings** saved from offices for this request, each clickable to the unit or project; **History** shows the request's update lines, newest first.
+
+### Sending rules (all enforced in the database, not the browser)
+- **A dedicated WhatsApp line only.** Nothing sends until an admin picks a line and the date it was paired. The settings screen warns in red if the chosen line is the main sales line and in amber if it is the operations line.
+- **Warm-up by line age** (default schedule, editable): days 0–3 → no sending; from day 4 → 10 offices/day, 10–20 minutes apart; from day 7 → 25/day, 6–12 minutes apart; from day 14 → 40/day, 4–8 minutes apart. Gaps are random within the range and never under 1 minute.
+- **Business hours:** 9:00–21:00 Riyadh by default. Messages that would fall outside are moved to the next morning (with a small random offset). The first message is at least 2 minutes out and always after the line's last already-scheduled office message.
+- **Daily cap** counts every scheduled or sent office message on that line for the day, across all reps. Two reps sending at once cannot double-book the same slots.
+- **14-day gap per office phone** (editable), across all requests — unless that office has replied to us before.
+- **Poor reply rate halves the cap:** when at least 20 messages were sent in the last 7 days and fewer than 20% got a reply.
+- **Circuit breaker:** if WhatsApp answers a message with its "too much new-contact outreach" (463), "capped" (475) or our own cold-outreach-lock error — even on a message the worker only retried — the database pauses office sending for 24 hours, cancels every still-queued office message on that line, and halves the cap through the next day. An admin can «استئناف الآن» (resume now) from the settings.
+- **Opt-out:** an office reply containing «إيقاف» / «ايقاف» / "stop" / «لا ترسل» / «لا تراسل» / «لا تتواصل» / «إلغاء الاشتراك» puts that phone on the do-not-contact list permanently.
+- Messages ride the existing scheduled WhatsApp queue (the same one as scheduled chat messages); no new worker job. Each queued message is tied back to its outreach row by a reference of the form `office_outreach:<id>`, and the queue's sent / failed / cancelled states are copied onto the outreach row.
+- **Replies:** every inbound WhatsApp message is checked against office phones we have messaged (by canonical phone). A match stamps the reply time and a preview on that office's outreach rows. A failure here is logged and never blocks the incoming message.
+
+### Saving what an office offers («إضافة عرض من مكتب»)
+- Available from a replied office's row («إضافة عرض») or generally («إضافة عرض من مكتب»), for users who can create units or projects. The office is chosen from the offices this request was sent to, or "no specific office".
+- **Five kinds**, each button disabled when the user lacks the needed create permission:
+  1. **Unit in an existing project** — pick the project, describe the unit.
+  2. **Project** — a new project with no unit details.
+  3. **Project + unit.**
+  4. **Project + unit list** — add as many units as needed.
+  5. **Standalone office unit** — a unit that belongs to no project, marked «وحدة من مكتب» (office unit), with its own location picked on the same country → region → city → district geography as projects.
+- Project fields asked: name (required), type, unit types, location. Unit fields: type (required), bedrooms, area, total price, floor, notes. New units are saved as available.
+- Every record created carries the source office and the source request, so offers can always be traced back.
+- Each new unit (and its project, if any) is added to the client's options through the same engine as the Project Finder and chat; a project with no unit is added on its own. If that step is refused or fails (e.g. the client had eliminated this unit before), the rep gets a red toast saying the offer was saved but not added to the options, instead of a success message.
+- The request moves to «تم حصر العروض» (offers identified) if it was still at received / offices-selected / offices-contacted, and gets a history line naming the office and what was offered.
+- Saves run step by step; if one fails, the rep is told that nothing after the failed step was saved.
+
+### Other surfaces
+- **Sales Workspace → Overview** (the manager page) has a second row of cards: «طلبات غير مجابة مفتوحة» (open requests) and «بحث متأخر» (overdue searches). Both open this tab.
+- **Chat header:** when the chat's client has an open request, an amber «طلب بحث مفتوح» (open search request) pill sits next to «ملف العميل», so nobody pitches stock we already know doesn't fit. Clicking it opens this tab.
+
+## User flows
+1. **Log and send:** Sales Workspace → «الطلبات غير المجابة» → «تسجيل طلب غير مجاب» → pick the client → describe the ask → Save. Open the new request → the district offices appear, eligible ones pre-ticked → read the preview → «إرسال الطلب إلى N مكتب» → confirm. The request shows the offices as scheduled; over the following days they flip to sent.
+2. **An office answers:** the row turns «ردّ» with the reply text → «إضافة عرض» → pick the kind (e.g. project + unit) → fill the fields → Save. The unit and project now exist, sit in the client's options, and the request shows «تم حصر العروض».
+3. **Close the search:** the rep records the result on the search task (found / still searching / client dropped); the workflow moves the client and the request (see [sales-process.md](sales-process.md)).
+4. **Admin setup:** «إعدادات الإرسال» → choose the dedicated line → set the pairing date → optionally adjust hours, the 14-day gap and the ramp → Save. The badge shows «تهيئة الرقم» until the ramp's first sending day, then «خط المكاتب جاهز».
+5. **Restricted line:** WhatsApp answers 463/475 → sending pauses 24 h, queued office messages are cancelled, the badge and the request show the pause. Admin can resume early from the settings.
+6. **Empty / blocked states:** no districts on the client → "add the requested districts on the client profile first"; no offices in those districts → suggestion to include the city; line not set / warming up / paused → an amber explanation and the send button disabled (the list can still be prepared); request note with a link → red warning, send disabled; requests model not loaded → "not available" card.
+
+## Data touched
+- **New tables** (`supabase/migrations/2026-09-28_office_outreach.sql`):
+  - `office_outreach` — one row per (request, office): office phone and name, line, message body, status (queued / sent / failed / cancelled), scheduled / sent / replied times, reply preview, error, the linked scheduled-message job. Readable by anyone who can see the request; written only by the database functions.
+  - `office_outreach_settings` — a single row: the dedicated line, pairing date, sending hours, re-contact days, the ramp, the low-reply thresholds, and the pause / half-cap state. Readable by all signed-in users; changed only through the admin save function.
+  - `office_do_not_contact` — phones that asked us to stop.
+- **Database functions:** `office_outreach_candidates` (qualified offices + flags; given a total order so paging never skips or repeats — `2026-09-28_office_outreach_candidates_order.sql`), `office_outreach_enqueue`, `office_outreach_cancel`, `office_outreach_line_status`, `office_outreach_settings_save` (admin only). Refusals come back with stable keys (no line, warming up, paused, admin only, …) that the app turns into sentences.
+- **Triggers:** on the scheduled WhatsApp queue (copy status onto the outreach row + the circuit breaker) and on incoming chat messages (reply stamp + opt-out).
+- **Writes:** `scheduled_whatsapp_jobs` (one per office message); `records.data` of `unanswered_requests` (`request_status`, `request_updates` history lines); new `units` and `all_projects` records; `client_property_options` via the shared option engine.
+- **New fields:** `units.unit_source` (in a project / office unit), `units.source_office_id`, `units.source_request_id`, `units.office_unit_location` (its location picker levels copied from the projects' location field by `2026-09-28_office_unit_location_levels.sql`); `all_projects.source_office_id`, `all_projects.source_request_id`.
+- **Reads:** `unanswered_requests`, `clients` (preferences, `location_items`, owner), `sales_tasks` (search task due dates), `real_estate_offices` (name, mobile number, location), district / city geography, `whatsapp_numbers`.
+
+## Key files
+| File | What it does |
+|---|---|
+| `src/pages/Sales/requests/UnansweredRequestsSection.tsx` | The tab: scope switch, line badge, four cards, unmet demand, filter, list |
+| `src/pages/Sales/requests/RequestDetailModal.tsx` | One request: the ask, office selection + preview + confirm + send / cancel, outreach timeline, offerings, history |
+| `src/pages/Sales/requests/OfficeOfferModal.tsx` | «إضافة عرض من مكتب» — the five offer kinds, record creation, client options, request status + history |
+| `src/pages/Sales/requests/OutreachSettingsModal.tsx` | Admin sending settings: line, pairing date, hours, re-contact gap, ramp, resume now |
+| `src/pages/Sales/requests/LogRequestFlow.tsx` | Client search → the existing request form (used by the tab and Tools) |
+| `src/pages/Sales/requests/OpenRequestPill.tsx` | «طلب بحث مفتوح» pill for the chat header |
+| `src/pages/Sales/requests/requestData.ts` | Pure helpers: open / closed, the client's requested places, the ask facts, offerings per request |
+| `src/lib/officeOutreach/message.ts` | The office message: four rotating wordings, the one-line ask, opt-out line, length caps, link detection |
+| `src/lib/officeOutreach/client.ts` | Calls to the outreach database functions (paged past 1,000 rows) + refusal / skip-reason texts |
+| `src/pages/Clients/components/LogUnansweredRequestModal.tsx` | The existing request form reused by the log flow |
+| `src/lib/matching/saveUnitOption.ts` | `saveUnitToClient` / `saveProjectToClient` — the shared client-options engine used for offers |
+| `src/pages/Sales/SalesWorkspace.tsx` | Hosts the tab (section `requests`) |
+| `src/lib/customPages.ts` | `sw_unanswered` access id (route, default all, hidden from sidebar) |
+| `src/pages/Sales/components/SalesToolsMenu.tsx` | Tools item «تسجيل طلب غير مجاب» |
+| `src/pages/Sales/SalesManagerPage.tsx` | Open-requests / overdue-searches cards |
+| `src/pages/Chats/components/ChatDetail.tsx` | Mounts the open-request pill in the chat header |
+| `supabase/migrations/2026-09-28_office_outreach.sql` | Tables, RLS, functions, triggers, circuit breaker, the new unit / project fields |
+| `supabase/migrations/2026-09-28_office_outreach_candidates_order.sql` | Total order on the candidate list so paging is exact |
+| `supabase/migrations/2026-09-28_office_unit_location_levels.sql` | Gives the office-unit location field the same geography levels as projects |
+
+## Open questions / known limitations
+- **Offer saves are not all-or-nothing.** A failure part-way leaves the records saved before it (e.g. a project without its units); the rep is told, but has to finish by hand.
+- **Offices are matched on their stored district only.** Offices with no district (or a district outside the client's list) are reachable only through the city switch. A client with no requested districts reaches no offices until districts are added.
+- **A reply is matched by phone, not by request.** When an office has been messaged about several requests and not yet replied, its next message stamps all of them as replied, and the preview on each is the same text.
+- **Opt-out is keyword-based.** A reply that merely mentions one of the stop words is treated as an opt-out (safe direction — we message them less, not more); a differently worded refusal is not caught.
+- **The overdue-searches card on the manager page counts every overdue open sales task** (not only those of open requests, and regardless of rep), so it can differ from the tab's own overdue card, which is scoped and per request.
+- **WhatsApp's own monthly limit on messages to people who never replied is unpublished**, so the ramp is a best estimate; the circuit breaker is the safety net.
+- The unmet-demand chips and the chat pill are computed from records already loaded in the browser, so they reflect only what the user is allowed to see.

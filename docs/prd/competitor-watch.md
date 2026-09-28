@@ -1,7 +1,7 @@
 # PRD: Competitor Watch (مرصد المنافسين)
 
 **Status:** Live (all five surfaces: Content Library + Agents & runs, Content pipeline, Storage, Companies)
-**Last updated:** 2026-09-27 (**Relationships follow the project records** — a project's marketer in the CRM now becomes its marketer here automatically, and stale copies are retired; see `mkt_project_organizations` under «Data touched».) Also 2026-09-27 (**Companies surface rebuilt around the marketing read** — type, channels, cadence, format mix, dominant message, offers, projects and districts per competitor; «آخر نشاط» was our scrape time and is now «آخر نشر», theirs.) Previously 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
+**Last updated:** 2026-09-28 (**Creating a project works again.** The attribution catch-up that runs inside every project insert (`mkt_enqueue_attribution_rerun`) took 68 s and timed the save out, so no project could be created from the app since ~2026-09-14; rewritten set-based, now 165 ms with the same jobs queued.) | 2026-09-27 (**Relationships follow the project records** — a project's marketer in the CRM now becomes its marketer here automatically, and stale copies are retired; see `mkt_project_organizations` under «Data touched».) Also 2026-09-27 (**Companies surface rebuilt around the marketing read** — type, channels, cadence, format mix, dominant message, offers, projects and districts per competitor; «آخر نشاط» was our scrape time and is now «آخر نشر», theirs.) Previously 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
 
 > A NEW, from-scratch workspace that succeeds the **Marketing Intelligence**
 > page (`marketing-intelligence.md`), built because the operator found that page
@@ -99,6 +99,15 @@ that study the corpus (how competitors write posts, script reels, price offers).
   do not touch the name or developer (unit rollups) never fire it — verified
   live: inserting a test project for أكدال enqueued exactly its 47 posts, a
   no-op update on ربوة الرمز enqueued nothing.
+- **The catch-up must stay fast, because it runs inside the project save
+  (fixed 2026-09-28).** `mkt_enqueue_attribution_rerun` used to loop over
+  ~3,500 posts and, for each one, scan all ~70k collection jobs to check
+  whether one was already in flight — measured 68 s. The app's save gives up
+  long before that, so **no project could be created from the app from about
+  2026-09-14** (the last successful create was 2026-09-07): the save failed and
+  rolled back. It is now one set-based pass (collect in-flight posts once, then
+  insert every missing job in one statement): 165 ms, same jobs queued
+  (`supabase/migrations/2026-09-28_attribution_rerun_set_based.sql`).
 - **Into the Files system (2026-09-13).** Once a post has a project, its
   stored photos/videos are registered as `files` rows and linked to that
   project (derived origin `social`), so they show on the project's Files tab,
@@ -245,6 +254,7 @@ Reads, plus two admin writes (`attribution_set`, `attribution_rerun`).
 | `src/pages/CompetitorWatch/watch.css` | Scoped `.cw-root` design system (control-room; Fraunces + IBM Plex, copper/cream/charcoal) |
 | `src/lib/customPages.ts` / `src/App.tsx` | Page registration (`competitor_watch`, `/competitor-watch`, admin default) |
 | `supabase/migrations/2026-09-13_01_attribution_rebuild.sql` | Lock columns, `mkt_attribution_set`, review-through-lock, reset-auto, developer-relationship sync triggers, evidence package fields, rerun enqueue, `mkt_attribution_health`, Library lock/strength/unknown fields |
+| `supabase/migrations/2026-09-28_attribution_rerun_set_based.sql` | `mkt_enqueue_attribution_rerun` rewritten set-based (68 s → 165 ms) so the project-insert trigger no longer times out the save |
 | `worker/src/marketing/pipeline.ts` | `attributeCaption` — full-name phrase first, exclusions, `strength`; `GENERIC_TOKENS`; `projectNameVariants` |
 | `worker/src/marketing/content/attributionContext.ts` | Shared loader: live catalog, common tokens, brand + place exclusions, `publisherProjects` (relationship table ∪ developer field) |
 | `worker/src/marketing/content/enrich.ts` | `narrowProjects` → candidates with `strength` / `ambiguous` (`enrich-v2`) |

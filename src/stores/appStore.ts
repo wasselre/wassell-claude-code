@@ -626,7 +626,13 @@ async function replayPendingWrites(): Promise<{
           if (!error) ok = true;
           else console.error(`[pendingQueue] replay record_save (frozen) failed:`, error.message);
         } else {
-          const { error } = await supabase.from('records').upsert(w.row);
+          // A NEW record is queued with `version: null` (serializeRecord), and
+          // sending that null explicitly overrides the column's NOT NULL default
+          // — the replay failed with 23502 every time and the record was dropped
+          // after MAX_REPLAY_ATTEMPTS. Omit a null version so the default applies.
+          const { version, ...rest } = w.row as { version?: number | null };
+          const row = version == null ? rest : w.row;
+          const { error } = await supabase.from('records').upsert(row);
           if (!error) ok = true;
           else console.error(`[pendingQueue] replay record_upsert failed:`, error.message);
         }

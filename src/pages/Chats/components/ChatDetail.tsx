@@ -36,6 +36,7 @@ import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointment
 import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import StudyJobCard from './StudyJobCard';
 import GeoPrefCard from './GeoPrefCard';
+import OpenRequestPill from '@/pages/Sales/requests/OpenRequestPill';
 import ChatToolsMenu from './ChatToolsMenu';
 import ChatTaskBar from './ChatTaskBar';
 import type { ChatOutcomeSuggestion } from '@/lib/chatSuggestions/client';
@@ -475,6 +476,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   // inside the mobile bottom sheet — ONE source of truth, no duplicated markup.
   const crmActionProps = {
     isAr,
+    clientId: clientLinkId,
     matchedContact,
     matchedAdvertiser,
     matchedAdvertiserName,
@@ -1018,6 +1020,7 @@ const DETAIL_CHIP_STYLES: Record<ClientPrefDetailChip['kind'], string> = {
  */
 function CrmActions({
   isAr,
+  clientId,
   matchedContact,
   matchedAdvertiser,
   matchedAdvertiserName,
@@ -1044,6 +1047,7 @@ function CrmActions({
   close,
 }: {
   isAr: boolean;
+  clientId: string | null;
   matchedContact: AppRecord | null;
   matchedAdvertiser: AppRecord | null;
   matchedAdvertiserName: string | null;
@@ -1137,6 +1141,7 @@ function CrmActions({
             <User size={12} />
             {isAr ? 'ملف العميل' : 'Client profile'}
           </button>
+          <OpenRequestPill clientId={clientId} className={pad} />
           <button
             onClick={run(onClientOptions)}
             className={`inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 ${pad} font-medium text-copper transition-colors hover:bg-copper/10`}
