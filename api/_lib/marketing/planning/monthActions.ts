@@ -1245,6 +1245,8 @@ export interface MonthReportProject {
   clicks: number;
   meta_leads: number;
   our_leads: number;
+  /** Of `our_leads`, how many came with no ad ID (campaign read off the greeting). */
+  our_leads_inferred: number;
   cost_per_lead: number | null;
   attributed_clients: number;
   qualified_clients: number;
@@ -1345,10 +1347,12 @@ export async function monthReport(ctx: PlanCtx): Promise<Response> {
     ? metrics.projects as Array<Record<string, unknown>> : [];
   const leadTotals: ProjectLeadTotals[] = leadsRes.totals;
   const leadsOf = new Map<string, number>();
+  const inferredOf = new Map<string, number>();
   let unattributedLeads = 0;
   for (const t of leadTotals) {
     if (!t.projectId) { unattributedLeads += t.leads; continue; }
     leadsOf.set(t.projectId, (leadsOf.get(t.projectId) ?? 0) + t.leads);
+    inferredOf.set(t.projectId, (inferredOf.get(t.projectId) ?? 0) + t.inferredLeads);
   }
 
   const plannedPosts = new Map<string, number>();
@@ -1380,6 +1384,7 @@ export async function monthReport(ctx: PlanCtx): Promise<Response> {
       clicks: num(m.clicks),
       meta_leads: num(m.meta_leads),
       our_leads: ourLeads,
+      our_leads_inferred: inferredOf.get(id) ?? 0,
       // Cost per lead is spend ÷ OUR leads (§3.6), never Meta's own count. With
       // no leads it is NULL, never Infinity and never 0 — both of those read as
       // a number and this is the absence of one.
@@ -1411,6 +1416,7 @@ export async function monthReport(ctx: PlanCtx): Promise<Response> {
 
   const totals = asRecord(metrics.totals);
   const ourLeadsTotal = projects.reduce((a, p) => a + p.our_leads, 0);
+  const ourLeadsInferredTotal = projects.reduce((a, p) => a + p.our_leads_inferred, 0);
   const spendTotal = projects.reduce((a, p) => a + p.spend, 0);
 
   return jsonOk({
@@ -1428,6 +1434,7 @@ export async function monthReport(ctx: PlanCtx): Promise<Response> {
     totals: {
       ...totals,
       our_leads: ourLeadsTotal,
+      our_leads_inferred: ourLeadsInferredTotal,
       cost_per_lead: ourLeadsTotal > 0 ? Math.round((spendTotal / ourLeadsTotal) * 100) / 100 : null,
       posts_planned: plannedRows.filter((r) => r.purpose !== 'paid').length,
       creatives_planned: plannedRows.filter((r) => r.purpose === 'paid').length,

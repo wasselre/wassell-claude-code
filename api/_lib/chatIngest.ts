@@ -112,13 +112,25 @@ async function findRowByHash(id: string, flow: 'in' | 'out'): Promise<string | n
  * chat_messages.meta once the ad record is created. We store this on the message
  * (immutable — the browser never rewrites chat_messages) rather than the chats
  * record, whose `data` blob the SPA store rewrites and would clobber.
+ *
+ * An ad lead WITHOUT an ad ID (`ad_id_missing`, see extractAdReferral) cannot
+ * be resolved to an ad. Its campaign is inferred instead from the greeting the
+ * ad's WhatsApp buttons send («مهتم بمشروع X»), via mos_infer_ad_from_greeting:
+ * `resolved` then carries the campaign/execution/project with `ad_id: null` and
+ * `inferred: true`, or stays null when the text names no single live campaign.
+ * Per-ad counts group on `resolved.ad_id`, so an inferred lead never reaches
+ * one ad's numbers.
  */
 export async function attachAdResolution(
   ad: Record<string, unknown> | null,
+  opts: { body?: string | null } = {},
 ): Promise<Record<string, unknown> | null> {
   if (!ad) return null;
   const adId = ad.ad_id;
-  if (typeof adId !== 'string' || !adId) return { ...ad, resolved: null };
+  if (typeof adId !== 'string' || !adId) {
+    if (ad.ad_id_missing !== true) return { ...ad, resolved: null };
+    return { ...ad, resolved: await inferAdFromGreeting(opts.body ?? null) };
+  }
   const supa = getServiceSupabase();
   let resolved: Record<string, unknown> | null = null;
   try {
@@ -133,6 +145,26 @@ export async function attachAdResolution(
     console.error('[chatIngest] mos_resolve_ad threw:', err instanceof Error ? err.message : String(err));
   }
   return { ...ad, resolved };
+}
+
+/**
+ * The campaign an ad-origin message with no ad ID most likely came from, read
+ * off its greeting. Null when there is no text, the text names no live
+ * campaign, or it names more than one — never a guess between two.
+ */
+async function inferAdFromGreeting(body: string | null): Promise<Record<string, unknown> | null> {
+  if (!body || !body.trim()) return null;
+  try {
+    const { data, error } = await getServiceSupabase().rpc('mos_infer_ad_from_greeting', { p_body: body });
+    if (error) {
+      console.error('[chatIngest] mos_infer_ad_from_greeting failed:', error.message);
+      return null;
+    }
+    return data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : null;
+  } catch (err) {
+    console.error('[chatIngest] mos_infer_ad_from_greeting threw:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
 }
 
 /**

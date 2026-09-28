@@ -11,6 +11,7 @@ export interface AcquisitionTouch {
   occurred_at: string;
   touch_type: 'first' | 'last';
   channel: string;
+  /** 'inferred' = WhatsApp sent no ad ID; the campaign was read off the greeting and no ad is named. */
   source: string;
   note: string | null;
   platform: string | null;

@@ -37,6 +37,12 @@ export default function MonthNumbers({
   const un = report.unattributed;
   const unSpend = un.spend ?? 0;
   const hist = report.unattributed_history;
+  // Leads WhatsApp sent without an ad ID: counted for the project, never for an
+  // ad, and always labelled so a guess never passes as a measurement.
+  const inferredTotal = t.our_leads_inferred ?? 0;
+  const inferredTitle = isAr
+    ? 'لم يرسل واتساب رقم الإعلان — نُسب العميل إلى حملة المشروع من رسالته الأولى، ولا يُحسب لإعلان بعينه'
+    : 'WhatsApp sent no ad ID — the lead is credited to the project’s campaign from its first message, never to a single ad';
 
   return (
     <div className="card">
@@ -68,6 +74,13 @@ export default function MonthNumbers({
               {isAr
                 ? `محادثات واتساب فتحها الإعلان · ميتا تقول ${num(t.meta_leads ?? 0, true)}`
                 : `WhatsApp conversations the ad opened · Meta reports ${num(t.meta_leads ?? 0, false)}`}
+              {inferredTotal > 0 && (
+                <span title={inferredTitle}>
+                  {isAr
+                    ? ` · منها ${num(inferredTotal, true)} بلا رقم إعلان`
+                    : ` · ${num(inferredTotal, false)} with no ad ID`}
+                </span>
+              )}
             </div>
           </div>
           <div className="stat">
@@ -117,7 +130,16 @@ export default function MonthNumbers({
                   <td className="ttl">{p.project_name ?? p.project_id.slice(0, 8)}</td>
                   <td className="num">{money(p.spend, isAr)}</td>
                   <td className="num">{num(p.impressions, isAr)}</td>
-                  <td className="num">{num(p.our_leads, isAr)}</td>
+                  <td className="num">
+                    {num(p.our_leads, isAr)}
+                    {(p.our_leads_inferred ?? 0) > 0 && (
+                      <span className="mth-tiny" title={inferredTitle}>
+                        {isAr
+                          ? ` (${num(p.our_leads_inferred ?? 0, true)} بلا رقم إعلان)`
+                          : ` (${num(p.our_leads_inferred ?? 0, false)} no ad ID)`}
+                      </span>
+                    )}
+                  </td>
                   <td className="num">{p.cost_per_lead !== null ? sar1(p.cost_per_lead, isAr) : '—'}</td>
                   <td>
                     {p.attributed_clients > 0

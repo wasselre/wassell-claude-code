@@ -38,6 +38,15 @@
  * UTC-stamped message by a Riyadh-dated spend row is a three-hour shear that
  * moves late-evening leads into the wrong day.
  *
+ * LEADS WITHOUT AN AD ID (2026-09-28). WhatsApp sometimes marks a message as
+ * coming from our ad but leaves out the card that names the ad. The webhook
+ * keeps it as `meta.ad.ad_id_missing` and, when the greeting names one live
+ * campaign, `meta.ad.resolved` carries that campaign with `ad_id: null` and
+ * `inferred: true`. Such a lead is NEVER one ad's lead — `ourLeadsForAds`
+ * filters on `resolved.ad_id`, so it cannot reach the weekly ranking — but it
+ * IS its project's lead: `ourLeadsByProject` counts it, and reports how many of
+ * a project's leads were inferred (`inferredLeads`) so the guess stays visible.
+ *
  * NOTE: `worker/src/marketing/ourLeads.ts` is a VERBATIM COPY of this file —
  * the Fly worker is a standalone npm package (`rootDir: src`) and cannot
  * import from `api/_lib` (same posture as `worker/src/imageGen.ts`). Change
@@ -192,7 +201,113 @@ export interface ProjectLeadTotals {
   projectId: string | null;
   campaignId: string | null;
   leads: number;
+  /** How many of `leads` came WITHOUT an ad ID — campaign read off the greeting. */
+  inferredLeads: number;
   adRowIds: string[];
+}
+
+/** One conversation that came from an ad WhatsApp did not name (see header). */
+export interface InferredLead {
+  conversationKey: string;
+  /** Riyadh civil date (YYYY-MM-DD) of the opening marked message. */
+  day: string;
+  at: string;
+  campaignId: string | null;
+  executionId: string | null;
+}
+
+/**
+ * Every conversation whose opening message came from an ad with NO ad ID and
+ * whose campaign was inferred, one row per conversation at its earliest such
+ * message. Same window semantics and loud errors as `ourLeadsForAds`.
+ */
+export async function inferredLeads(
+  sb: SupabaseClient, window: OurLeadsWindow = {},
+): Promise<{ leads: InferredLead[]; error: string | null }> {
+  const since = window.since ? `${window.since}T00:00:00.000Z` : null;
+  const until = window.until ? `${window.until}T23:59:59.999Z` : null;
+  let q = sb.from('chat_messages')
+    .select('id, chat_wid, conversation_record_id, date, created_at, meta')
+    .eq('flow', 'in')
+    .eq('meta->ad->resolved->>inferred', 'true');
+  if (since) q = q.gte('date', new Date(Date.parse(since) - 86_400_000).toISOString());
+  if (until) q = q.lte('date', new Date(Date.parse(until) + 86_400_000).toISOString());
+  const res = await q;
+  if (res.error) {
+    return { leads: [], error: `chat_messages inferred-lead read failed: ${res.error.code ?? ''} ${res.error.message}`.trim() };
+  }
+  const first = new Map<string, InferredLead>();
+  for (const r of (res.data ?? []) as AttributedMessageRow[]) {
+    const ad = (r.meta?.ad ?? null) as Record<string, unknown> | null;
+    const resolved = (ad && typeof ad === 'object' ? ad.resolved : null) as Record<string, unknown> | null;
+    if (!resolved || typeof resolved !== 'object' || resolved.inferred !== true) continue;
+    const at = str(r.date) ?? str(r.created_at);
+    if (!at) continue;
+    const conversationKey = str(r.chat_wid) ?? str(r.conversation_record_id) ?? r.id;
+    const lead: InferredLead = {
+      conversationKey, day: riyadhDay(at), at,
+      campaignId: str(resolved.campaign_id), executionId: str(resolved.execution_id),
+    };
+    const prev = first.get(conversationKey);
+    if (!prev || Date.parse(lead.at) < Date.parse(prev.at)) first.set(conversationKey, lead);
+  }
+  return { leads: [...first.values()], error: null };
+}
+
+/**
+ * The per-project buckets, pure. Ad leads resolve ad → execution → campaign →
+ * project; inferred leads name their campaign (else execution) and resolve on
+ * from there. One conversation counts once per bucket, so a conversation that
+ * has BOTH a tagged message and an inferred one is one lead — and it is not an
+ * inferred one, because an ad did name it.
+ */
+export function bucketProjectLeads(
+  adLeads: OurLead[],
+  inferred: InferredLead[],
+  lookups: {
+    execOfAd: Map<string, string>;
+    campaignOfExec: Map<string, string | null>;
+    projectOfCampaign: Map<string, string | null>;
+  },
+  window: OurLeadsWindow = {},
+): ProjectLeadTotals[] {
+  const inWindow = (day: string): boolean =>
+    !(window.since && day < window.since) && !(window.until && day > window.until);
+  const buckets = new Map<string, {
+    projectId: string | null; campaignId: string | null;
+    convs: Set<string>; tagged: Set<string>; ads: Set<string>;
+  }>();
+  const bucketOf = (campaignId: string | null) => {
+    const projectId = campaignId ? lookups.projectOfCampaign.get(campaignId) ?? null : null;
+    const key = `${projectId ?? ''}::${campaignId ?? ''}`;
+    let b = buckets.get(key);
+    if (!b) { b = { projectId, campaignId, convs: new Set(), tagged: new Set(), ads: new Set() }; buckets.set(key, b); }
+    return b;
+  };
+
+  for (const l of adLeads) {
+    if (!inWindow(l.day)) continue;
+    const execId = lookups.execOfAd.get(l.adRowId) ?? null;
+    const b = bucketOf(execId ? lookups.campaignOfExec.get(execId) ?? null : null);
+    b.convs.add(l.conversationKey);
+    b.tagged.add(l.conversationKey);
+    b.ads.add(l.adRowId);
+  }
+  for (const l of inferred) {
+    if (!inWindow(l.day)) continue;
+    const campaignId = l.campaignId ?? (l.executionId ? lookups.campaignOfExec.get(l.executionId) ?? null : null);
+    bucketOf(campaignId).convs.add(l.conversationKey);
+  }
+
+  return [...buckets.values()]
+    .map((b) => ({
+      projectId: b.projectId,
+      campaignId: b.campaignId,
+      leads: b.convs.size,
+      inferredLeads: [...b.convs].filter((c) => !b.tagged.has(c)).length,
+      adRowIds: [...b.ads],
+    }))
+    .sort((a, b) => b.leads - a.leads);
 }
 
 /**
@@ -203,6 +318,9 @@ export interface ProjectLeadTotals {
  * for any execution linked to its campaign afterwards — which is exactly what
  * `meta_link_execution` does). The chain below is re-derived on every read.
  *
+ * Includes the leads WITHOUT an ad ID whose campaign was inferred (see the
+ * header), counted in `leads` and reported again in `inferredLeads`.
+ *
  * A `projectId` of null is the fail-loud bucket: spend whose campaign carries
  * no project. It is returned, never dropped.
  */
@@ -212,15 +330,28 @@ export async function ourLeadsByProject(
   const adsRes = await sb.from('mos_execution_ads').select('id, execution_id').is('archived_at', null);
   if (adsRes.error) return { totals: [], error: `mos_execution_ads read failed: ${adsRes.error.message}` };
   const ads = (adsRes.data ?? []) as Array<{ id: string; execution_id: string }>;
-  if (ads.length === 0) return { totals: [], error: null };
 
-  const execIds = [...new Set(ads.map((a) => a.execution_id).filter(Boolean))];
-  const execRes = await sb.from('mos_campaign_executions').select('id, campaign_id').in('id', execIds);
-  if (execRes.error) return { totals: [], error: `mos_campaign_executions read failed: ${execRes.error.message}` };
-  const execs = (execRes.data ?? []) as Array<{ id: string; campaign_id: string | null }>;
-  const campaignOfExec = new Map(execs.map((e) => [e.id, e.campaign_id]));
+  const inf = await inferredLeads(sb, window);
+  if (inf.error) return { totals: [], error: inf.error };
+  if (ads.length === 0 && inf.leads.length === 0) return { totals: [], error: null };
 
-  const campaignIds = [...new Set(execs.map((e) => e.campaign_id).filter((x): x is string => !!x))];
+  const execIds = [...new Set([
+    ...ads.map((a) => a.execution_id),
+    ...inf.leads.map((l) => l.executionId),
+  ].filter((x): x is string => !!x))];
+  const campaignOfExec = new Map<string, string | null>();
+  if (execIds.length > 0) {
+    const execRes = await sb.from('mos_campaign_executions').select('id, campaign_id').in('id', execIds);
+    if (execRes.error) return { totals: [], error: `mos_campaign_executions read failed: ${execRes.error.message}` };
+    for (const e of (execRes.data ?? []) as Array<{ id: string; campaign_id: string | null }>) {
+      campaignOfExec.set(e.id, e.campaign_id);
+    }
+  }
+
+  const campaignIds = [...new Set([
+    ...campaignOfExec.values(),
+    ...inf.leads.map((l) => l.campaignId),
+  ].filter((x): x is string => !!x))];
   const projectOfCampaign = new Map<string, string | null>();
   if (campaignIds.length > 0) {
     const cRes = await sb.from('mos_campaigns').select('id, project_id').in('id', campaignIds);
@@ -234,22 +365,8 @@ export async function ourLeadsByProject(
   if (error) return { totals: [], error };
 
   const execOfAd = new Map(ads.map((a) => [a.id, a.execution_id]));
-  const buckets = new Map<string, { projectId: string | null; campaignId: string | null; convs: Set<string>; ads: Set<string> }>();
-  for (const l of leads) {
-    if (window.since && l.day < window.since) continue;
-    if (window.until && l.day > window.until) continue;
-    const execId = execOfAd.get(l.adRowId) ?? null;
-    const campaignId = execId ? campaignOfExec.get(execId) ?? null : null;
-    const projectId = campaignId ? projectOfCampaign.get(campaignId) ?? null : null;
-    const key = `${projectId ?? ''}::${campaignId ?? ''}`;
-    let b = buckets.get(key);
-    if (!b) { b = { projectId, campaignId, convs: new Set(), ads: new Set() }; buckets.set(key, b); }
-    b.convs.add(l.conversationKey);
-    b.ads.add(l.adRowId);
-  }
-
-  const totals = [...buckets.values()]
-    .map((b) => ({ projectId: b.projectId, campaignId: b.campaignId, leads: b.convs.size, adRowIds: [...b.ads] }))
-    .sort((a, b) => b.leads - a.leads);
-  return { totals, error: null };
+  return {
+    totals: bucketProjectLeads(leads, inf.leads, { execOfAd, campaignOfExec, projectOfCampaign }, window),
+    error: null,
+  };
 }

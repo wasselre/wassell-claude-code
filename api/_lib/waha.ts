@@ -307,6 +307,11 @@ export type WahaAdReferral = {
   conversion_source: string | null;// contextInfo.conversionSource, e.g. 'FB_Ads'
   ad_title: string | null;         // externalAdReply.title
   captured_at: string;             // ISO timestamp we saw it
+  // Set ONLY when WhatsApp said the message came from an ad but sent no
+  // externalAdReply card, so there is no ad ID (see extractAdReferral).
+  ad_id_missing?: true;
+  entry_point_source?: string | null; // contextInfo.entryPointConversionSource, e.g. 'ctwa_ad'
+  ctwa_payload?: string | null;       // contextInfo.ctwaPayload — opaque; kept in case Meta can ever resolve it
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -326,30 +331,67 @@ function nonEmptyStr(v: unknown): string | null {
  * for a media lead), so we scan each child node for a `contextInfo.
  * externalAdReply` rather than hard-coding one type. Falls back to lowercase
  * keys so a future engine swap (WEBJS/NOWEB flatten differently) still works.
+ *
+ * AD ORIGIN WITHOUT THE CARD (2026-09-28). WhatsApp sometimes marks a message
+ * as coming from our ad — `entryPointConversionSource: 'ctwa_ad'`,
+ * `conversionSource: 'FB_Ads'` — but leaves out `externalAdReply`, the block
+ * that carries the ad ID. Measured: chat 966500700283, 28 Sep, an Instagram
+ * lead for ريا النخيل sent the same greeting from the same ad as a tagged lead
+ * three hours earlier, minus the card. Returning null for that dropped the
+ * ad-origin mark too, so no client was created and marketing never counted it.
+ * Such a message now returns a referral with `ad_id: null, ad_id_missing: true`
+ * — an ad lead whose ad is unknown. It is never credited to a single ad.
  */
 export function extractAdReferral(msg: WahaMessageRaw): WahaAdReferral | null {
   const message = asRecord(msg._data?.Message) ?? asRecord(msg._data?.RawMessage);
   if (!message) return null;
+  let adOrigin: Record<string, unknown> | null = null;
   for (const node of Object.values(message)) {
     const ctx = asRecord(asRecord(node)?.contextInfo);
     if (!ctx) continue;
     const ext = asRecord(ctx.externalAdReply);
-    if (!ext) continue;
-    const adId = nonEmptyStr(ext.sourceID) ?? nonEmptyStr(ext.sourceId);
-    const clid = nonEmptyStr(ext.ctwaClid);
-    if (!adId && !clid) continue; // externalAdReply with no usable identity — skip
-    return {
-      ad_id: adId,
-      ctwa_clid: clid,
-      source_app: nonEmptyStr(ext.sourceApp),
-      source_url: nonEmptyStr(ext.sourceURL) ?? nonEmptyStr(ext.sourceUrl),
-      source_type: nonEmptyStr(ext.sourceType),
-      conversion_source: nonEmptyStr(ctx.conversionSource),
-      ad_title: nonEmptyStr(ext.title),
-      captured_at: new Date().toISOString(),
-    };
+    const adId = ext ? (nonEmptyStr(ext.sourceID) ?? nonEmptyStr(ext.sourceId)) : null;
+    const clid = ext ? nonEmptyStr(ext.ctwaClid) : null;
+    if (ext && (adId || clid)) {
+      return {
+        ad_id: adId,
+        ctwa_clid: clid,
+        source_app: nonEmptyStr(ext.sourceApp),
+        source_url: nonEmptyStr(ext.sourceURL) ?? nonEmptyStr(ext.sourceUrl),
+        source_type: nonEmptyStr(ext.sourceType),
+        conversion_source: nonEmptyStr(ctx.conversionSource),
+        ad_title: nonEmptyStr(ext.title),
+        captured_at: new Date().toISOString(),
+      };
+    }
+    // A card anywhere in the message wins over a bare mark, so keep scanning.
+    if (!adOrigin && isAdOrigin(ctx)) adOrigin = ctx;
   }
-  return null;
+  if (!adOrigin) return null;
+  return {
+    ad_id: null,
+    ctwa_clid: null,
+    source_app: nonEmptyStr(adOrigin.entryPointConversionApp),
+    source_url: null,
+    // Unknown: sourceType lives on the card WhatsApp did not send.
+    source_type: null,
+    conversion_source: nonEmptyStr(adOrigin.conversionSource),
+    ad_title: null,
+    captured_at: new Date().toISOString(),
+    ad_id_missing: true,
+    entry_point_source: nonEmptyStr(adOrigin.entryPointConversionSource),
+    ctwa_payload: nonEmptyStr(adOrigin.ctwaPayload),
+  };
+}
+
+/**
+ * WhatsApp's own "this came from an ad" mark. `ctwa_ad` is the click-to-
+ * WhatsApp entry point; `FB_Ads` is the conversion source Meta stamps on the
+ * same messages (seen alone on a duplicate copy of a tagged message, 18 Sep).
+ * Either one is enough — our number is the destination of our ads only.
+ */
+function isAdOrigin(ctx: Record<string, unknown>): boolean {
+  return ctx.entryPointConversionSource === 'ctwa_ad' || ctx.conversionSource === 'FB_Ads';
 }
 
 // ─── Sessions (devices) ──────────────────────────────────────────────

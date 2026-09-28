@@ -219,17 +219,19 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // so it is NOT a safe home for attribution). We resolve the Paid Ads chain here
   // too; resolved stays null until the ad exists, then mos_reresolve_first_touch
   // back-fills it onto this same meta.
-  const adReferral = flow === 'in' && !isOps ? extractAdReferral(p) : null;
-  const adMeta = adReferral ? await attachAdResolution(adReferral) : null;
-
+  //
   // Text body. WAHA's top-level `p.body` comes through EMPTY for some inbound
   // messages (observed on @lid first-contacts on the NOWEB engine, 2026-09) —
   // the customer's text was silently lost and the bot then replied to nothing.
   // Fall back to the raw decoded message (`_data.Message`/`RawMessage`). We LOG
   // the exact field we recovered from — and, when we recover nothing from an
   // empty-body TEXT message, the available raw keys — so the shape stays
-  // diagnosable if a new message layout appears.
+  // diagnosable if a new message layout appears. Recovered BEFORE the ad
+  // resolution: an ad lead without an ad ID is attributed from this text.
   const recovered = recoverWahaText(p);
+  const adReferral = flow === 'in' && !isOps ? extractAdReferral(p) : null;
+  const adMeta = adReferral ? await attachAdResolution(adReferral, { body: recovered?.text ?? null }) : null;
+
   if (flow === 'in' && !(p.body ?? '').trim()) {
     if (recovered) {
       console.log(`[waha-webhook] recovered empty inbound body from ${recovered.field} id=${p.id} chat=${chatWid}`);
@@ -328,16 +330,26 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // Fire-safe: any failure is logged and never blocks ingest (the message is
   // already stored). Idempotent server-side (find-or-create + one row per ad),
   // and gated on isNew so a retried webhook doesn't re-run it needlessly.
+  //
+  // An ad lead WITHOUT an ad ID (2026-09-28) is onboarded too: WhatsApp said it
+  // came from our ad, so it reaches sales like any other ad lead. Its ledger
+  // row is written only when the greeting pointed at one live campaign
+  // (source 'inferred', no ad); otherwise the client is created and tagged with
+  // no attribution row, since there is no campaign to name.
   const resolvedAd =
     adMeta && typeof adMeta.resolved === 'object' && adMeta.resolved !== null
       ? (adMeta.resolved as Record<string, unknown>)
       : null;
-  if (flow === 'in' && isNew && counterpartyPhone && resolvedAd && !isOps) {
+  const adWithoutId = adMeta?.ad_id_missing === true;
+  if (flow === 'in' && isNew && counterpartyPhone && (resolvedAd || adWithoutId) && !isOps) {
+    if (adWithoutId) {
+      console.log(`[waha-webhook] ad lead without an ad ID chat=${chatWid} entry=${String(adMeta?.entry_point_source ?? '')} campaign=${resolvedAd ? String(resolvedAd.campaign_id ?? '') : 'not inferred'}`);
+    }
     try {
       const pushName = p._data?.Info?.PushName ?? null;
       const { error } = await getServiceSupabase().rpc('mos_capture_ad_acquisition', {
         p_phone: counterpartyPhone,
-        p_resolved: resolvedAd,
+        p_resolved: resolvedAd ?? {},
         p_occurred_at: date,
         p_suggested_name: pushName,
       });

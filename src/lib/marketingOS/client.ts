@@ -2935,7 +2935,8 @@ export interface MosAttribution {
   ad_id: string | null;
   touch_type: 'first' | 'last';
   occurred_at: string;
-  source: 'lead_form' | 'manual' | 'import';
+  /** 'inferred' — an ad lead WhatsApp sent without its ad ID; campaign read off the greeting, no ad. */
+  source: 'lead_form' | 'manual' | 'import' | 'inferred';
   note: string | null;
   supersedes_id: string | null;
   created_by_user_id: string | null;
@@ -4202,6 +4203,8 @@ export interface MosMonthReportProject {
   clicks: number;
   meta_leads: number;
   our_leads: number;
+  /** Of `our_leads`, how many came with no ad ID — the campaign was read off the greeting. */
+  our_leads_inferred?: number;
   cost_per_lead: number | null;
   attributed_clients: number;
   qualified_clients: number;
@@ -4241,7 +4244,7 @@ export interface MosMonthReport {
     attributed_clients?: number; qualified_clients?: number; ungraded_clients?: number;
     posts_published?: number; releases_published?: number;
     ads_active?: number; ads_paused?: number;
-    our_leads: number; cost_per_lead: number | null;
+    our_leads: number; our_leads_inferred?: number; cost_per_lead: number | null;
     posts_planned: number; creatives_planned: number; general_planned: number;
     budget_total: number;
   };

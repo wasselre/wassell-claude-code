@@ -173,6 +173,14 @@ function AcquisitionRow({
             {touch.ad_set_name && <span className="text-charcoal/40"> · {touch.ad_set_name}</span>}
           </div>
         )}
+        {touch.source === 'inferred' && (
+          <div className="text-charcoal/60">
+            {tr(
+              'لم يرسل واتساب رقم الإعلان — الحملة مستنتجة من أول رسالة للعميل',
+              'WhatsApp sent no ad ID — the campaign was inferred from the client’s first message',
+            )}
+          </div>
+        )}
         {touch.content_title && (
           <div className="text-charcoal/60">
             {tr('المحتوى', 'Content')}: <span className="text-charcoal/80">{touch.content_title}</span>
