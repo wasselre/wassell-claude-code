@@ -28,6 +28,10 @@
  *   - A lead missing a required field (e.g. no phone) gets a FAILED job row
  *     naming the field, so the gap shows in the client's history instead of
  *     the lead silently never reaching the portal.
+ *   - A lead nobody owns (no client_owner, portal signs in as no CRM user) gets
+ *     ONE failed marker row (user_id NULL, result.skip_reason='no_owner') so it
+ *     shows in the history. The marker does not count as an attempt: once a
+ *     rep is assigned inside the lookback, the next tick runs it for real.
  *   - Only touches created in the last LOOKBACK_HOURS are considered, so
  *     turning a portal on never back-fills its whole history of old leads.
  *
@@ -139,15 +143,18 @@ export default async function handler(req: Request): Promise<Response> {
         if (enqueued >= MAX_ENQUEUE_PER_TICK) break;
         const base = { attribution_id: c.attribution_id, client_id: c.client_record_id, project_id: c.project_record_id, portal_id: portal.id };
 
-        // One attempt per (client, portal), ever.
+        // One attempt per (client, portal), ever. A 'no_owner' marker row is
+        // NOT an attempt: it only records that nobody owned the lead yet, so a
+        // rep assigned later (inside the lookback) still gets the real run.
         const { data: existing, error: exErr } = await svc
           .from('portal_registration_jobs')
-          .select('id')
+          .select('id, result')
           .eq('client_record_id', c.client_record_id)
-          .eq('portal_record_id', portal.id)
-          .limit(1);
+          .eq('portal_record_id', portal.id);
         if (exErr) throw new Error(`existing-job check failed: ${exErr.message}`);
-        if ((existing ?? []).length > 0) continue;
+        const existingRows = (existing ?? []) as { id: string; result: { skip_reason?: string } | null }[];
+        const hasNoOwnerMarker = existingRows.some((r) => r.result?.skip_reason === 'no_owner');
+        if (existingRows.some((r) => r.result?.skip_reason !== 'no_owner')) continue;
 
         if (portal.otp_channel && portal.otp_channel !== 'none' && !portal.otp_whatsapp_relay) {
           const reason = `portal "${portal.name}" needs a ${portal.otp_channel} code and has no WhatsApp code relay — it cannot run unattended; turn otp_whatsapp_relay on or auto_register off`;
@@ -172,6 +179,27 @@ export default async function handler(req: Request): Promise<Response> {
         if (!jobOwner) {
           const reason = `client ${c.client_record_id} has no owner and portal "${portal.name}" signs in as no CRM user — no one to own the run`;
           console.error(`[portal-auto-register] ${reason}`);
+          // Leave ONE visible marker in the client's portal history (not one
+          // per tick). It has no user_id — there is no one to put there — and
+          // does not block a later run once a rep is assigned (see above).
+          if (!hasNoOwnerMarker) {
+            const { error: insErr } = await svc.from('portal_registration_jobs').insert({
+              portal_record_id: portal.id,
+              client_record_id: c.client_record_id,
+              project_record_id: c.project_record_id,
+              user_id: null,
+              status: 'failed',
+              lead_data: {},
+              result: { skip_reason: 'no_owner' },
+              error_message:
+                `لم يُسجَّل العميل تلقائياً — لا يوجد مندوب مسؤول عن العميل. إن عُيّن مندوب خلال ${LOOKBACK_HOURS} ساعات من وصول العميل سيُسجَّل تلقائياً، وإلا سجّله يدوياً من زر «التسجيل في البوابة».\n` +
+                `Automatic registration skipped — the client has no sales rep assigned. Assign one within ${LOOKBACK_HOURS} hours of the lead arriving and it registers automatically; otherwise register manually from the button.`,
+              origin: 'auto',
+              attribution_id: c.attribution_id,
+              finished_at: new Date().toISOString(),
+            });
+            if (insErr) throw new Error(`no-owner row insert failed: ${insErr.message}`);
+          }
           results.push({ ...base, outcome: { status: 'failed', reason } });
           continue;
         }

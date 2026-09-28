@@ -128,7 +128,7 @@ export default async function handler(req: Request): Promise<Response> {
           .order('created_at', { ascending: false })
           .limit(20);
         const portalNames = new Map<string, string>();
-        const histRows = (hist ?? []) as { id: string; portal_record_id: string; project_record_id: string | null; status: string; error_message: string | null; created_at: string; finished_at: string | null; user_id: string; origin: string | null }[];
+        const histRows = (hist ?? []) as { id: string; portal_record_id: string; project_record_id: string | null; status: string; error_message: string | null; created_at: string; finished_at: string | null; user_id: string | null; origin: string | null }[];
         const missing = [...new Set(histRows.map((h) => h.portal_record_id))].filter((id) => !portals.some((p) => p.id === id));
         for (const p of portals) portalNames.set(p.id, p.name);
         if (missing.length) {
