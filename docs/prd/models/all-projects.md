@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-20
+**Last updated (from DB):** 2026-09-28
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **10** (1 base, 9 non-base)
-- Fields: **71**
+- Fields: **73**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 1
@@ -45,6 +45,8 @@
 | `unit_types` | Unit Types / أنواع الوحدات | Multi-select | no | half | yes | 13 options · multi |
 | `preferred_amenities` | Preferred Amenities / المرافق | Multi-select | no | half | no | 41 options · multi |
 | `status_checked_at` | Status Last Checked / آخر تحقق من الحالة | Date | no | half | no |  |
+| `source_office_id` | Source Office / المكتب المصدر | Lookup | no | half | no | → Real Estate Offices |
+| `source_request_id` | Source Request / طلب العميل المصدر | Lookup | no | half | no | → Unanswered Requests |
 
 **Field details:**
 
@@ -140,6 +142,14 @@
   - API value `padel_court` → "Padel Court" / "ملعب بادل" · color `#B8734F`
   - API value `children_play_area` → "Children's Play Area" / "منطقة ألعاب أطفال" · color `#B8734F`
   - API value `ملعب-اسكواش` → "Squash Court" / "ملعب اسكواش" · color `#7C9A6B`
+- **Source Office / المكتب المصدر** (`source_office_id`, type `lookup`):
+  - target model: Real Estate Offices
+  - shows field: `office_name`
+  - multiple: no
+- **Source Request / طلب العميل المصدر** (`source_request_id`, type `lookup`):
+  - target model: Unanswered Requests
+  - shows field: `request_notes`
+  - multiple: no
 
 ### 2. Location & Geo / الموقع والإحداثيات  _(color #B8734F)_
 

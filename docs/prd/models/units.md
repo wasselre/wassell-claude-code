@@ -5,7 +5,7 @@
 # Model: Units / الوحدات  `units`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-07
+**Last updated (from DB):** 2026-09-28
 **Model id:** `7ca3014d-f658-418e-9c53-2d279c97f009`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **8** (1 base, 7 non-base)
-- Fields: **48**
+- Fields: **52**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -38,6 +38,9 @@
 | `building_number` | Building Number / رقم العمارة | Text | no | half | no |  |
 | `block` | Block / البلك | Text | no | half | yes |  |
 | `developer_unit_code` | Developer Unit Code / رمز الوحدة لدى المطور | Text | no | half | yes |  |
+| `unit_source` | Unit Source / مصدر الوحدة | Dropdown | no | half | no | 2 options |
+| `source_office_id` | Source Office / المكتب المصدر | Lookup | no | half | no | → Real Estate Offices |
+| `source_request_id` | Source Request / طلب العميل المصدر | Lookup | no | half | no | → Unanswered Requests |
 
 **Field details:**
 
@@ -51,6 +54,17 @@
   - multiple: no
 - **Unit Code / كود الوحدة** (`unit_code`, type `auto_id`):
   - format: `U-0000` · starts at 1
+- **Unit Source / مصدر الوحدة** (`unit_source`, type `dropdown`) — options:
+  - API value `project` → "In a project" / "ضمن مشروع" · color `#B8734F`
+  - API value `office` → "Office unit" / "وحدة من مكتب" · color `#8E4E3A`
+- **Source Office / المكتب المصدر** (`source_office_id`, type `lookup`):
+  - target model: Real Estate Offices
+  - shows field: `office_name`
+  - multiple: no
+- **Source Request / طلب العميل المصدر** (`source_request_id`, type `lookup`):
+  - target model: Unanswered Requests
+  - shows field: `request_notes`
+  - multiple: no
 
 ### 2. Availability & Pricing / التوفر والسعر  _(color #B8734F)_
 
@@ -198,6 +212,7 @@
 | `project_location` | Project location / موقع المشروع | Mirror | no | half | no | computed mirror |
 | `location_url` | Location URL / الموقع | Mirror | no | full | no | computed mirror |
 | `street_width` | Street Width / حجم الشارع | Text | no | half | yes |  |
+| `office_unit_location` | Office Unit Location / موقع وحدة المكتب | location | no | full | no |  |
 
 **Field details:**
 
