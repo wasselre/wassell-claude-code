@@ -30,6 +30,9 @@ import type { Zone } from './texts.js';
 const MEDIA_SPACING_S = 4;
 /** A handoff line is not repeated within this window (the rep is still told). */
 const REPEAT_WINDOW_MS = 30 * 60_000;
+/** A new conversation answers messages from this long before it started (the
+ *  message that started it arrives seconds earlier; 5 min pulled in unrelated ones). */
+const START_WINDOW_MS = 90_000;
 
 const SYSTEM_KINDS = ['reaction', 'call_log', 'e2e_notification', 'notification', 'notification_template', 'gp2', 'protocol', 'ciphertext', 'revoked'];
 
@@ -153,7 +156,7 @@ export async function runAgentTurn(
 
   // ── What did the customer say since our last turn? ─────────────────────
   // First turn: include the message that started the conversation.
-  const sinceIso = conv.last_turn_at ?? new Date(new Date(conv.created_at).getTime() - 5 * 60_000).toISOString();
+  const sinceIso = conv.last_turn_at ?? new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString();
   let turns: ChatTurn[]; let newestCustomerAt: string | null; let deviceId: string | null; let newCustomerText: string;
   let lastOursAt: string | null = null;
   if (sim) {
@@ -351,7 +354,10 @@ async function runBrainTurn(
 ): Promise<TurnResult> {
   const { chatWid, conv, dryRun } = a;
   const slots: Slots = { ...conv.slots };
-  const lang: Lang = /[؀-ۿ]/.test(a.newCustomerText) ? 'ar' : /[A-Za-z]{2,}/.test(a.newCustomerText) ? 'en' : (slots.lang ?? 'ar');
+  // The language of the customer's LATEST message (a burst may mix; live test:
+  // an English opener was answered in Arabic because an older Arabic line counted).
+  const latest = [...a.turns].reverse().find((t) => t.who === 'customer' && t.isNew)?.text ?? a.newCustomerText;
+  const lang: Lang = /[؀-ۿ]/.test(latest) ? 'ar' : /[A-Za-z]{2,}/.test(latest) ? 'en' : (slots.lang ?? 'ar');
   slots.lang = lang;
 
   // The lead passed on the ad's project when they asked for OTHER projects.
@@ -410,7 +416,7 @@ async function runBrainTurn(
     {
       chatWid, lang, turns: a.turns, stateLines, sentProjectIds: conv.sent_project_ids,
       // The conversation started ~5 min before created_at (the message that started it).
-      conversationStartedAt: new Date(new Date(conv.created_at).getTime() - 5 * 60_000).toISOString(),
+      conversationStartedAt: new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString(),
       excludeProjectIds: exclude, knownProjectIds: knownIds, narrowTurns: slots.narrow_turns ?? 0,
     },
     {

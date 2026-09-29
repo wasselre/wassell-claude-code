@@ -59,7 +59,7 @@ export interface CatalogSearch {
   /** How many of OUR projects fit, after every filter. */
   total: number;
   /** What had to be widened to find anything: null = exact. */
-  relaxed: null | 'unit_type' | 'specs_and_budget' | 'area';
+  relaxed: null | 'unit_type' | 'specs_and_budget' | 'budget' | 'area';
   /** The best few (Finder order), with selling facts. */
   projects: CatalogProject[];
   /** How the WHOLE fitting set splits — the brain narrows on these. */
@@ -311,7 +311,7 @@ export async function searchProjects(
 
   const beds = criteria.bedrooms_min ?? null;
   const budget = criteria.budget_max ?? null;
-  const fit = (o: Partial<FitCheck>): FitCheck => ({ types, strictType: false, checkType: true, bedroomsMin: beds, budgetMax: budget, ...o });
+  const fit = (o: Partial<FitCheck>): FitCheck => ({ types, strictType: false, checkType: true, bedroomsMin: beds, budgetMax: budget, requireKnownPrice: true, ...o });
 
   // Ladder: exact (type listed) → type unrecorded → any type → widened specs →
   // outside the requested area. Each rung only if the previous found nothing.
@@ -326,6 +326,9 @@ export async function searchProjects(
       areaOnly: true, relaxed: 'specs_and_budget',
     });
   }
+  // Nothing within the budget → what we DO have, above it (said honestly —
+  // live test: a 500k villa ask got a villa of unknown price).
+  if (budget) ladder.push({ check: fit({ budgetMax: null }), areaOnly: true, relaxed: 'budget' });
   if (zoneKnown) ladder.push({ check: fit({}), areaOnly: false, relaxed: 'area' });
 
   let fits: Array<{ master: Master; m: FinderMatch; inArea: boolean }> = [];

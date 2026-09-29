@@ -77,6 +77,8 @@ export interface FitCheck {
   checkType: boolean;
   bedroomsMin: number | null;
   budgetMax: number | null;
+  /** With a budget: an unknown available price does NOT count as within it. */
+  requireKnownPrice?: boolean;
 }
 
 /**
@@ -101,7 +103,7 @@ export function projectFits(data: Record<string, unknown>, f: FitCheck): boolean
   }
   if (f.budgetMax) {
     const price = range(data.available_price_range);
-    if (price.min !== null && price.min > f.budgetMax) return false;
+    if (price.min === null ? f.requireKnownPrice === true : price.min > f.budgetMax) return false;
   }
   return true;
 }

@@ -66,6 +66,8 @@ export function groundedNumbers(sources: unknown[]): Set<number> {
     const r = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
     out.add(n);
     out.add(r(n, 0));
+    // «120 متر» for 120.6 m² — reps drop decimals either way.
+    out.add(Math.floor(n)); out.add(Math.ceil(n));
     if (Math.abs(n) >= 1000) {
       out.add(Math.round(n / 1000));
       out.add(Math.floor(n / 1000));
