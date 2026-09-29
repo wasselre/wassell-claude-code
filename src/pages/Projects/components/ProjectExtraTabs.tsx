@@ -221,21 +221,27 @@ export function CustomerDemandTab({ view, isAr }: { view: ProjectView; isAr: boo
   );
 }
 
-// ── Website tab (bridge; is_public is the sole publish authority) ────────────
+// ── Website tab ──────────────────────────────────────────────────────────────
+//
+// Publishing is NOT a switch here. `all_projects.is_public` is forced by the
+// records_enforce_our_projects_public trigger to "this project is in Our
+// Projects" on every save (2026-06-30_our_projects_drive_website.sql), so the
+// switch this tab used to show saved a value the database immediately
+// overwrote — it looked off while the project stayed on the site. The tab now
+// states the truth and links to where it is actually decided.
 
 export function WebsiteTab({
-  view, record, portfolioRecord, isAr, onSaveMaster, onSavePortfolio,
+  view, record, portfolioRecord, isAr, onSavePortfolio,
 }: {
   view: ProjectView;
   record: AppRecord;
   portfolioRecord: AppRecord | undefined;
   isAr: boolean;
-  onSaveMaster: (data: Record<string, unknown>) => Promise<void>;
   onSavePortfolio?: (data: Record<string, unknown>) => Promise<void>;
 }) {
   const navigate = useNavigate();
   const d = (record.data ?? {}) as Record<string, unknown>;
-  const [isPublic, setIsPublic] = useState(d.is_public === true);
+  const isPublic = d.is_public === true;
   const [order, setOrder] = useState(asFiniteNumber(portfolioRecord?.data?.website_display_order)?.toString() ?? '');
   const [busy, setBusy] = useState(false);
 
@@ -243,11 +249,6 @@ export function WebsiteTab({
   const audit = auditProject(view, isAr);
   const blockers = audit.blockingWebsite;
 
-  const savePublic = async (next: boolean) => {
-    setBusy(true);
-    setIsPublic(next);
-    try { await onSaveMaster({ is_public: next }); } finally { setBusy(false); }
-  };
   const saveOrder = async () => {
     if (!onSavePortfolio) return;
     setBusy(true);
@@ -257,28 +258,41 @@ export function WebsiteTab({
   return (
     <div className="space-y-4 max-w-2xl">
       <div className="card p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="font-bold text-charcoal inline-flex items-center gap-1.5">{isPublic ? <Eye size={15} className="text-green-600" /> : <EyeOff size={15} className="text-charcoal/40" />} {isAr ? 'منشور على الموقع' : 'Published on website'}</div>
-            <div className="text-xs text-charcoal/45 mt-0.5">{isAr ? 'هذا هو مفتاح النشر الوحيد.' : 'This is the only publishing switch.'}</div>
-          </div>
-          <button
-            role="switch"
-            aria-checked={isPublic}
-            disabled={busy}
-            onClick={() => savePublic(!isPublic)}
-            className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${isPublic ? 'bg-green-500' : 'bg-charcoal/20'} disabled:opacity-50`}
-          >
-            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${isPublic ? 'start-6' : 'start-0.5'}`} />
-          </button>
+        <div className="font-bold text-charcoal inline-flex items-center gap-1.5">
+          {isPublic ? <Eye size={15} className="text-green-600" /> : <EyeOff size={15} className="text-charcoal/40" />}
+          {isPublic ? (isAr ? 'منشور على الموقع' : 'On the website') : (isAr ? 'غير منشور على الموقع' : 'Not on the website')}
         </div>
+        <div className="text-xs text-charcoal/50 mt-1 leading-relaxed">
+          {isAr
+            ? 'يظهر المشروع على الموقع إذا كان ضمن «مشاريعنا»، ويختفي عند إزالته منها.'
+            : 'A project is on the website while it is in Our Projects, and leaves it when removed from there.'}
+        </div>
+        {isPublic && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            <a
+              href={`https://wassel.re/project?id=${record.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-copper hover:underline"
+            >
+              <ExternalLink size={13} /> {isAr ? 'فتح صفحة المشروع على الموقع' : 'Open the project page'}
+            </a>
+            <button
+              type="button"
+              onClick={() => navigate(`/settings/project-details/${record.id}`)}
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-copper hover:underline"
+            >
+              <ImageIcon size={13} /> {isAr ? 'صور الصفحة ورقم الواتساب' : 'Page photos and WhatsApp number'}
+            </button>
+          </div>
+        )}
       </div>
 
       {onSavePortfolio && (
         <div className="card p-4 flex items-end gap-3">
           <label className="text-sm flex-1">
             <span className="text-charcoal/60 block mb-1">{isAr ? 'ترتيب العرض على الموقع' : 'Website display order'}</span>
-            <input type="number" className="form-input text-sm" value={order} onChange={(e) => setOrder(e.target.value)} onBlur={saveOrder} />
+            <input type="number" className="form-input text-sm" value={order} disabled={busy} onChange={(e) => setOrder(e.target.value)} onBlur={saveOrder} />
           </label>
         </div>
       )}

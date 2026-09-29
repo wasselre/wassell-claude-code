@@ -142,8 +142,8 @@ export default function ProjectDetailsListPage() {
           </h1>
           <p className="text-sm text-charcoal/50 mt-0.5 leading-relaxed">
             {isAr
-              ? 'صفحات التفاصيل التي أعددتها للمشاريع المنشورة على الموقع.'
-              : "Detail pages you've configured for projects published on the website."}
+              ? 'صورة الواجهة ومعرض الصور ورقم الواتساب لصفحات المشاريع المنشورة على الموقع.'
+              : 'Hero image, photo gallery and WhatsApp number for the project pages on the website.'}
           </p>
         </div>
         {!noPublic && (

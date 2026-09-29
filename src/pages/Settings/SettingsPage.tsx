@@ -198,8 +198,8 @@ const CARDS: SettingsCard[] = [
   {
     titleAr: 'تفاصيل المشاريع',
     titleEn: 'Project Details Pages',
-    descAr: 'تخصيص صفحة التفاصيل لكل مشروع — صور، مميزات، معالم قريبة، مستشار، ولون مميّز',
-    descEn: 'Per-project detail pages — images, features, nearby landmarks, agent, and accent color',
+    descAr: 'صورة الواجهة ومعرض الصور ورقم الواتساب لصفحة كل مشروع على الموقع',
+    descEn: 'Hero image, photo gallery and WhatsApp number for each project page on the website',
     icon: LayoutTemplate,
     color: '#C4754A',
     bg: '#C4754A14',

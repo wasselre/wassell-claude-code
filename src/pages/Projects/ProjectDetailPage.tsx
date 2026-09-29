@@ -353,10 +353,6 @@ export default function ProjectDetailPage(
         {tab === 'website' && (view && record ? (
           <WebsiteTab
             view={view} record={record} portfolioRecord={isPortfolio ? portfolioRecord : undefined} isAr={isAr}
-            onSaveMaster={async (data) => {
-              const res = await saveRecord({ ...record, data: { ...record.data, ...data } });
-              addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
-            }}
             onSavePortfolio={isPortfolio && portfolioRecord ? async (data) => {
               const res = await saveRecord({ ...portfolioRecord, data: { ...portfolioRecord.data, ...data } });
               addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
