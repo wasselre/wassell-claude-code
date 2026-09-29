@@ -40,6 +40,8 @@ import OpenRequestPill from '@/pages/Sales/requests/OpenRequestPill';
 import ChatToolsMenu from './ChatToolsMenu';
 import ChatTaskBar from './ChatTaskBar';
 import type { ChatOutcomeSuggestion } from '@/lib/chatSuggestions/client';
+import { useChatOutcomeSuggestion } from '../lib/useChatOutcomeSuggestion';
+import type { AiTab } from '../lib/aiSuggestions';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 import { clientActiveOptionRefs } from '@/lib/matching/clientOptionIndex';
@@ -321,6 +323,15 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       }
       return next;
     });
+  const expandHeader = () => {
+    setHeaderCollapsed(false);
+    try {
+      localStorage.setItem('wassell_chat_header_collapsed', '0');
+    } catch (err) {
+      // Private mode / blocked storage: the choice just isn't remembered.
+      console.error('[ChatDetail] could not persist header state:', err);
+    }
+  };
   // Mobile-only: the CRM actions live in a bottom sheet (keeps the header
   // compact so the thread owns the screen), and conversation-state actions
   // (status / Done / Reopen) live in a ⋯ overflow menu.
@@ -395,8 +406,18 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     if (rows.length === 0) return null;
     return rows.slice().sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())[0];
   }, [activeWaFollowup, followupsModel, records, clientLinkId]);
-  // Completion modal opened from the task bar (never resolves the chat).
+  // Completion modal opened from the task bar / the AI card (never resolves the chat).
   const [taskOutcome, setTaskOutcome] = useState<{ suggestion: ChatOutcomeSuggestion | null; preselect: boolean } | null>(null);
+  const recordTaskOutcome = useCallback(
+    (suggestion: ChatOutcomeSuggestion | null, preselect: boolean) => setTaskOutcome({ suggestion, preselect }),
+    [],
+  );
+  // The AI's suggested outcome for activeTask — loaded ONCE here and shared by
+  // the AI card's «النتائج» tab and the task bar's chip (one subscription).
+  const outcomeSuggestion = useChatOutcomeSuggestion(clientLinkId, activeTask ?? null);
+  // A pending "show this tab" request for the AI card (the task bar's chip).
+  const [aiCardTab, setAiCardTab] = useState<AiTab | null>(null);
+  const clearAiCardTab = useCallback(() => setAiCardTab(null), []);
 
   // Resolve-or-prompt: closing a chat with an active WhatsApp follow-up opens
   // the completion popup instead of silently resolving. Reopen / archive and
@@ -688,20 +709,40 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           Hidden when the header is collapsed (desktop focus-the-chat mode). */}
       {clientLinkId && !collapsedHeader && <StudyJobCard chatRecordId={recordId} />}
 
-      {/* Geography confirm card — where the customer wants to buy (and not),
-          read from THIS chat; the rep's tap saves it to the client's location
-          preferences. Client-linked chats only; hidden with the header. */}
-      {clientLinkId && chatWid && !collapsedHeader && <GeoPrefCard key={`${clientLinkId}:${chatWid}`} clientId={clientLinkId} chatWid={chatWid} />}
+      {/* AI suggestions card — two tabs: the client's preferences read from
+          THIS chat and the calls (the rep's tap saves them to the client), and
+          the AI's suggested outcome of the current follow-up. Client-linked
+          chats only; hidden with the header. */}
+      {clientLinkId && chatWid && !collapsedHeader && (
+        <GeoPrefCard
+          key={`${clientLinkId}:${chatWid}`}
+          clientId={clientLinkId}
+          chatWid={chatWid}
+          task={activeTask ?? null}
+          outcome={outcomeSuggestion}
+          onRecordOutcome={recordTaskOutcome}
+          openTab={aiCardTab}
+          onOpenTabHandled={clearAiCardTab}
+        />
+      )}
 
-      {/* The client's open follow-up + the AI's suggested outcome, where the rep
-          works. Stays visible when the header is collapsed: recording the
-          outcome is the one CRM step every conversation needs. */}
+      {/* The client's open follow-up, where the rep works; a chip points to the
+          AI's suggested outcome in the card above. Stays visible when the
+          header is collapsed: recording the outcome is the one CRM step every
+          conversation needs. */}
       {clientLinkId && activeTask && (
         <ChatTaskBar
           key={clientLinkId}
-          clientId={clientLinkId}
           task={activeTask}
-          onRecordOutcome={(suggestion, preselect) => setTaskOutcome({ suggestion, preselect })}
+          live={outcomeSuggestion.live}
+          onRecordOutcome={recordTaskOutcome}
+          onShowSuggestion={() => {
+            // No card without a chat id — open the completion modal with the
+            // suggestion instead, so the rep's choice still reaches the ledger.
+            if (!chatWid) { recordTaskOutcome(outcomeSuggestion.live, false); return; }
+            if (collapsedHeader) expandHeader();
+            setAiCardTab('outcome');
+          }}
         />
       )}
 

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { num } from '@/pages/Marketing/lib/format';
 
 /**
- * The «تفضيلات العميل» card's header strip + slider: one pill per slide (icon,
+ * The «تفضيلات العميل» tab of the «اقتراحات الذكاء الاصطناعي» card — its strip + slider: one pill per slide (icon,
  * short label, item count; the active one filled copper), ‹ › arrows and
  * «١ / ٤», then a horizontal scroll-snap container with one slide per topic —
  * so touch swipe works natively and the card stays short above the chat.
@@ -40,17 +40,38 @@ interface Props {
   hideSlides?: boolean;
   /** Rendered under the slider for the active slide (the chat places' map). */
   below?: (activeKey: string | null) => ReactNode;
+  /** The slide to start on (e.g. the one in view before the rep switched tabs). */
+  initialKey?: string | null;
+  /** Told whenever the slide in view changes. */
+  onActiveChange?: (key: string | null) => void;
   isAr: boolean;
 }
 
-export default function PrefCardSlider({ slides, lead, tail, emptyLine, notices, hideSlides, below, isAr }: Props) {
+export default function PrefCardSlider({
+  slides, lead, tail, emptyLine, notices, hideSlides, below, initialKey, onActiveChange, isAr,
+}: Props) {
   const { t } = useTranslation();
   const scroller = useRef<HTMLDivElement>(null);
   const slideEls = useRef(new Map<string, HTMLDivElement>());
-  const [activeKey, setActiveKey] = useState<string | null>(slides[0]?.key ?? null);
+  const [activeKey, setActiveKey] = useState<string | null>(
+    initialKey && slides.some((s) => s.key === initialKey) ? initialKey : slides[0]?.key ?? null,
+  );
 
   const keysSig = slides.map((s) => s.key).join('|');
   const showSlides = slides.length > 0 && !hideSlides;
+
+  const onActiveChangeRef = useRef(onActiveChange);
+  onActiveChangeRef.current = onActiveChange;
+  useEffect(() => { onActiveChangeRef.current?.(activeKey); }, [activeKey]);
+
+  // Starting on a slide other than the first: jump there without animating.
+  const startedAt = useRef(activeKey);
+  useEffect(() => {
+    const key = startedAt.current;
+    const root = scroller.current;
+    const el = key ? slideEls.current.get(key) : undefined;
+    if (root && el && el.offsetLeft !== 0) root.scrollTo({ left: el.offsetLeft });
+  }, []);
 
   // Keep the active key valid when the slide list changes.
   useEffect(() => {
@@ -99,7 +120,7 @@ export default function PrefCardSlider({ slides, lead, tail, emptyLine, notices,
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
         {lead}
         {slides.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-1" role="tablist" aria-label={t('chats.prefs.card_title')}>
+          <div className="flex flex-wrap items-center gap-1" role="tablist" aria-label={t('chats.ai.tab_prefs')}>
             {slides.map((s) => {
               const active = s.key === activeKey && showSlides;
               const Icon = s.icon === 'places' ? MapPin : SlidersHorizontal;

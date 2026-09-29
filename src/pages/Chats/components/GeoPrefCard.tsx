@@ -1,11 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { MapPin, Loader2, ChevronUp, ChevronDown, RefreshCw, AlertTriangle, Map as MapIcon, Mic } from 'lucide-react';
+import { MapPin, Loader2, ChevronUp, ChevronDown, RefreshCw, AlertTriangle, Map as MapIcon, Mic, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import { pruneGeoExpression, type PrunableExpression } from '@/lib/geo/pruneGeoExpression';
 import { shouldAutoRead } from '@/lib/geo/geoCardAutoRead';
-import { dateTimeShort } from '@/pages/Marketing/lib/format';
+import { dateTimeShort, num } from '@/pages/Marketing/lib/format';
+import type { AppRecord } from '@/types';
+import type { ChatOutcomeSuggestion } from '@/lib/chatSuggestions/client';
 import { callJson, HttpError } from '../lib/cardHttp';
 import { usePrefFieldFormat } from '../lib/usePrefFieldFormat';
 import ChatSpecsSlide, { type PrefsCardDTO } from './PrefSuggestionsSection';
@@ -13,6 +15,9 @@ import { CallPlacesSlide, CallSpecsSlide } from './CallAuditSection';
 import PlaceTiles from './PlaceTiles';
 import PrefCardSlider, { type SliderSlide } from './PrefCardSlider';
 import { SlideBody, SlideDoneView, SlideFooter } from './SlideParts';
+import OutcomeSuggestionSlide from './OutcomeSuggestionSlide';
+import { AI_TABS, defaultAiTab, type AiTab } from '../lib/aiSuggestions';
+import type { ChatOutcomeSuggestionState } from '../lib/useChatOutcomeSuggestion';
 import { buildGeoRows, GEO_OPEN, type GeoCardDTO, type GeoRow } from '../lib/geoRows';
 import {
   buildCardSlides, callDayMonth, mergeDoneSlides,
@@ -22,9 +27,17 @@ import {
 const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
 
 /**
- * «تفضيلات العميل» — the preference confirm card (geography + specs/budget) inside a client-linked WhatsApp chat.
+ * «اقتراحات الذكاء الاصطناعي» — the AI card inside a client-linked WhatsApp chat
+ * (2026-09-29; it was «تفضيلات العميل» until then). Two tabs in its header:
+ *   - «تفضيلات العميل» — the preference confirm slider (geography + specs/budget), below;
+ *   - «النتائج» — the AI's suggested outcome of the current follow-up
+ *     (OutcomeSuggestionSlide). Its data comes from ChatDetail
+ *     (useChatOutcomeSuggestion — loaded once per chat, shared with the task bar).
+ * Each tab's badge counts what is left to act on; the card opens on the first
+ * tab with something (aiSuggestions.defaultAiTab) and then keeps the rep's
+ * choice. The task bar's chip asks for «النتائج» through `openTab`.
  *
- * Since 2026-09-29 the card is a SLIDER of small topic cards (cardSlides.ts):
+ * The preferences tab: since 2026-09-29 it is a SLIDER of small topic cards (cardSlides.ts):
  * one slide per thing the rep can still act on — the chat's places, the chat's
  * specs, and per call (newest first) the call audit's places and specs — each
  * a grid of tiles with its own «احفظ المحدد (n)» / «تجاهل». The strip on top
@@ -61,7 +74,21 @@ interface ReadResultDTO {
 const OPEN = GEO_OPEN;
 const COMPACT_BTN = '!px-2.5 !py-0.5 !text-[11px] !rounded-full !gap-1';
 
-export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; chatWid: string }) {
+interface Props {
+  clientId: string;
+  chatWid: string;
+  /** The client's current follow-up (the «النتائج» tab's task), or null. */
+  task: AppRecord | null;
+  /** The AI's suggested outcome for `task` (useChatOutcomeSuggestion in ChatDetail). */
+  outcome: ChatOutcomeSuggestionState;
+  /** Open the completion modal — same contract as the task bar's. */
+  onRecordOutcome: (suggestion: ChatOutcomeSuggestion | null, preselect: boolean) => void;
+  /** A request to show a tab (un-collapses the card); acknowledged via onOpenTabHandled. */
+  openTab?: AiTab | null;
+  onOpenTabHandled?: () => void;
+}
+
+export default function GeoPrefCard({ clientId, chatWid, task, outcome, onRecordOutcome, openTab, onOpenTabHandled }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
   const { t } = useTranslation();
@@ -89,6 +116,22 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
     try { localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0'); } catch (err) { console.error('[GeoPrefCard] could not persist collapse state:', err); }
     setCollapsed(v);
   };
+
+  // The tab the rep chose (component state: per chat, for this visit). Until
+  // they choose, the card shows the default once both tabs have loaded.
+  const [chosenTab, setChosenTab] = useState<AiTab | null>(null);
+  // The slide in view on the preferences tab, so switching tabs doesn't lose it.
+  const prefSlideKey = useRef<string | null>(null);
+
+  // The task bar's chip: open the card on «النتائج».
+  useEffect(() => {
+    if (!openTab) return;
+    if (collapsed) setCollapsedPersist(false);
+    setChosenTab(openTab);
+    onOpenTabHandled?.();
+    // Only a new request should act; collapsed / the callbacks are read as they are now.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTab]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -212,18 +255,30 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
 
   const status = card?.status ?? null;
 
+  // The tabs' badges: what is left to act on in each.
+  const prefCount = slides.filter((s) => !s.done).length;
+  const outcomeCount = outcome.live ? 1 : 0;
+  const counts: Record<AiTab, number> = { prefs: prefCount, outcome: outcomeCount };
+  // Settle the default once both tabs have loaded; from then on it is the rep's.
+  const prefsLoaded = !loading || !!card;
+  useEffect(() => {
+    if (chosenTab || !prefsLoaded || !outcome.loaded) return;
+    setChosenTab(defaultAiTab(prefCount, outcomeCount));
+  }, [chosenTab, prefsLoaded, outcome.loaded, prefCount, outcomeCount]);
+  const tab: AiTab = chosenTab ?? defaultAiTab(prefCount, outcomeCount);
+
   if (collapsed) {
     return (
       <div className="px-3 pt-1 shrink-0">
         <button
           onClick={() => setCollapsedPersist(false)}
           className="w-full flex items-center justify-center gap-1 rounded-md border border-sand/60 bg-cream/40 py-0.5 text-[10px] text-charcoal/45 hover:text-copper hover:border-copper/40 transition-colors"
-          title={t('chats.prefs.card_show')}
+          title={t('chats.ai.card_show')}
         >
           <ChevronDown size={11} />
-          <MapPin size={10} />
-          {t('chats.prefs.card_title')}
-          {freshSlides.length > 0 ? <span className="text-copper font-bold">•</span> : null}
+          <Sparkles size={10} />
+          {t('chats.ai.card_title')}
+          {freshSlides.length > 0 || outcomeCount > 0 ? <span className="text-copper font-bold">•</span> : null}
         </button>
       </div>
     );
@@ -262,10 +317,11 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
     || (!!card.stale && status !== 'none' && !card.graded)
   );
 
-  const lead = (
-    <>
-      <MapPin size={14} className="text-copper shrink-0" />
-      <span className="text-[12px] font-bold text-chocolate whitespace-nowrap">{t('chats.prefs.card_title')}</span>
+  // The card's own header: icon, title, voice-note badge, the two tabs, collapse.
+  const header = (
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+      <Sparkles size={14} className="text-copper shrink-0" />
+      <span className="text-[12px] font-bold text-chocolate whitespace-nowrap">{t('chats.ai.card_title')}</span>
       {(card?.prefs?.unread_voice_notes ?? 0) > 0 && (
         <span
           className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
@@ -275,20 +331,54 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
           {card?.prefs?.unread_voice_notes}
         </span>
       )}
-    </>
+      <div
+        className="inline-flex items-center rounded-full border border-sand bg-cream/40 p-0.5"
+        role="tablist"
+        aria-label={t('chats.ai.card_title')}
+      >
+        {AI_TABS.map((k) => {
+          const active = k === tab;
+          return (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setChosenTab(k)}
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold transition-colors ${
+                active ? 'bg-copper text-white' : 'text-charcoal/70 hover:text-copper'
+              }`}
+            >
+              <span className="whitespace-nowrap">{t(k === 'prefs' ? 'chats.ai.tab_prefs' : 'chats.ai.tab_outcome')}</span>
+              <span
+                className={`rounded-full px-1 text-[9.5px] leading-4 ${
+                  active ? 'bg-white/25 text-white' : counts[k] > 0 ? 'bg-copper/15 text-copper' : 'bg-sand/50 text-chocolate'
+                }`}
+              >
+                {num(counts[k], isAr)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="ms-auto flex items-center gap-1.5">
+        <button
+          onClick={() => setCollapsedPersist(true)}
+          className="text-charcoal/30 hover:text-copper transition-colors"
+          title={t('chats.ai.card_hide')}
+          aria-label={t('chats.ai.card_hide')}
+        >
+          <ChevronUp size={14} />
+        </button>
+      </div>
+    </div>
   );
 
+  // The preferences tab's strip end: loading, read / re-read.
   const tail = (
     <>
       {loading && card && <Loader2 size={12} className="animate-spin text-copper" />}
       {slides.length > 0 && card && !analyzing && (status === 'none' ? readButton : rereadWithSlides ? rereadButton(true) : null)}
-      <button
-        onClick={() => setCollapsedPersist(true)}
-        className="text-charcoal/30 hover:text-copper transition-colors"
-        title={t('chats.prefs.card_hide')}
-      >
-        <ChevronUp size={14} />
-      </button>
     </>
   );
 
@@ -426,26 +516,43 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
       {/* Each slide caps its own height (~260 px) so the whole card stays well
           under the chat; the outer cap only matters when the map is open. */}
       <div className="rounded-xl border border-sand bg-white px-3 py-2 max-h-[70vh] overflow-y-auto overscroll-contain">
-        <PrefCardSlider
-          slides={sliderSlides}
-          lead={lead}
-          tail={tail}
-          emptyLine={emptyLine}
-          notices={notices}
-          hideSlides={analyzing || !!loadError}
-          below={(activeKey) => {
-            const s = slides.find((x) => x.key === activeKey);
-            if (!showMap || !s || s.kind !== 'chat-places' || s.done || rows.length === 0) return null;
-            return (
-              <div className="mt-2">
-                <Suspense fallback={<Loader2 size={14} className="animate-spin text-copper" />}>
-                  <GeoPrefMap items={mapItems} isAr={isAr} height={220} />
-                </Suspense>
-              </div>
-            );
-          }}
-          isAr={isAr}
-        />
+        {header}
+        <div className="mt-1.5" role="tabpanel">
+          {tab === 'outcome' ? (
+            <OutcomeSuggestionSlide
+              key={outcome.live?.id ?? 'none'}
+              live={outcome.live}
+              task={task}
+              dismissing={outcome.dismissing}
+              onDismiss={() => void outcome.dismiss()}
+              onRecordOutcome={onRecordOutcome}
+              isAr={isAr}
+            />
+          ) : (
+            <PrefCardSlider
+              slides={sliderSlides}
+              lead={null}
+              tail={tail}
+              emptyLine={emptyLine}
+              notices={notices}
+              hideSlides={analyzing || !!loadError}
+              below={(activeKey) => {
+                const s = slides.find((x) => x.key === activeKey);
+                if (!showMap || !s || s.kind !== 'chat-places' || s.done || rows.length === 0) return null;
+                return (
+                  <div className="mt-2">
+                    <Suspense fallback={<Loader2 size={14} className="animate-spin text-copper" />}>
+                      <GeoPrefMap items={mapItems} isAr={isAr} height={220} />
+                    </Suspense>
+                  </div>
+                );
+              }}
+              initialKey={prefSlideKey.current}
+              onActiveChange={(k) => { prefSlideKey.current = k; }}
+              isAr={isAr}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
