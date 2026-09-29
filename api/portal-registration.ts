@@ -15,6 +15,13 @@
  *   POST { action:'input', job_id, value }   → the rep typed the OTP
  *   POST { action:'cancel', job_id }         → stop the run, close the browser
  *
+ * Per-client registrations (the client's «البوابات» tab — api/_lib/portalRegistrations.ts):
+ *   GET  ?registrations_for=<client uuid>
+ *        → { registrations: [...one row per portal, with history], portals: [...] }
+ *   POST { action:'registration_update', registration_id, our_status?, portal_status?, portal_ref?, notes? }
+ *   POST { action:'registration_add', client_id, portal_id, our_status?, portal_status?, portal_ref?, notes?, project_name? }
+ *   POST { action:'status_check', portal_id } → 202 { job_id } (one code refreshes the whole portal)
+ *
  * ENQUEUE-ONLY: a registration takes 1–5 minutes (sign-in, the rep's OTP, the
  * form). Nothing here waits for the browser — same rule as every other worker
  * queue in this repo. The worker pauses on `request_input` steps and reads the
@@ -39,6 +46,10 @@ import {
   type Svc, type Rec,
   str, parseFields, checkRecipe, loadRecord, resolvePortals, wakeWorker,
 } from './_lib/leadPortals.js';
+import {
+  listClientRegistrations, loadRegistration, updateRegistration, addRegistration,
+  requestStatusCheck, RegistrationInputError,
+} from './_lib/portalRegistrations.js';
 
 export const config = { runtime: 'edge' };
 
@@ -91,6 +102,12 @@ export default async function handler(req: Request): Promise<Response> {
     try {
       if (req.method === 'GET') {
         const url = new URL(req.url);
+        const regsFor = url.searchParams.get('registrations_for');
+        if (regsFor !== null) {
+          if (!UUID_RE.test(regsFor)) return jsonError(400, 'invalid registrations_for');
+          await assertCanAccessRecord(req, regsFor, 'api:portal-registration');
+          return jsonOk(await listClientRegistrations(svc, regsFor));
+        }
         const jobId = url.searchParams.get('job_id');
         if (jobId) {
           if (!UUID_RE.test(jobId)) return jsonError(400, 'invalid job_id');
@@ -230,12 +247,50 @@ export default async function handler(req: Request): Promise<Response> {
           return jsonOk({ ok: ok === true });
         }
 
+        if (body.action === 'registration_update') {
+          const b = body as typeof body & { registration_id?: string; our_status?: unknown; portal_status?: unknown; portal_ref?: unknown; notes?: unknown };
+          if (!UUID_RE.test(b.registration_id ?? '')) return jsonError(400, 'registration_id is required');
+          const reg = await loadRegistration(svc, b.registration_id!);
+          if (!reg) return jsonError(404, 'registration not found');
+          await assertCanAccessRecord(req, reg.client_record_id, 'api:portal-registration');
+          const row = await updateRegistration(svc, reg, {
+            our_status: b.our_status, portal_status: b.portal_status, portal_ref: b.portal_ref, notes: b.notes,
+          }, user.userId);
+          return jsonOk({ registration: row });
+        }
+
+        if (body.action === 'registration_add') {
+          const b = body as typeof body & { our_status?: unknown; portal_status?: unknown; portal_ref?: unknown; notes?: unknown; project_name?: unknown };
+          const clientId = b.client_id ?? '';
+          const portalId = b.portal_id ?? '';
+          if (!UUID_RE.test(clientId)) return jsonError(400, 'client_id is required');
+          if (!UUID_RE.test(portalId)) return jsonError(400, 'portal_id is required');
+          await assertCanAccessRecord(req, clientId, 'api:portal-registration');
+          if (!(await loadRecord(svc, portalId))) return jsonError(404, 'portal not found');
+          const row = await addRegistration(svc, {
+            client_id: clientId, portal_id: portalId, our_status: b.our_status, portal_status: b.portal_status,
+            portal_ref: b.portal_ref, notes: b.notes, project_name: b.project_name,
+          }, user.userId);
+          return jsonOk({ registration: row }, 201);
+        }
+
+        if (body.action === 'status_check') {
+          const portalId = body.portal_id ?? '';
+          if (!UUID_RE.test(portalId)) return jsonError(400, 'portal_id is required');
+          const portal = await loadRecord(svc, portalId);
+          if (!portal) return jsonError(404, 'portal not found');
+          const jobId = await requestStatusCheck(svc, portal, user.userId);
+          console.log(`[portal-registration] status check job=${jobId} portal=${portalId} user=${user.userId}`);
+          return jsonOk({ job_id: jobId }, 202);
+        }
+
         return jsonError(400, 'unknown action');
       }
 
       return jsonError(405, `Method ${req.method} not allowed`);
     } catch (err) {
       if (err instanceof AuthError) return jsonError(err.status, err.message);
+      if (err instanceof RegistrationInputError) return jsonError(err.status, err.message);
       return jsonError(500, err instanceof Error ? err.message : String(err));
     }
   });

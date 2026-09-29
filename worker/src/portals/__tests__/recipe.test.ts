@@ -7,6 +7,8 @@ import {
   RecipeInterrupt,
   type RecipeRuntime,
   type RecipeStep,
+  jsonPath,
+  toCollectedRow,
 } from '../recipe';
 
 // Every locator is "visible" so an if_visible takes its `then` branch — the
@@ -69,3 +71,34 @@ describe('runSteps error wrapping', () => {
     expect((err as RecipeError).outcome).toBeUndefined();
   });
 });
+
+describe('collect_rows helpers (portal status checks)', () => {
+  // Shape copied from Al Ramz's Inertia `data-page` (props.clients paginator).
+  const alRamzStep = {
+    fields: { ref: 'id', name: 'name', phone: 'phone', status: 'status' },
+    ref_prefix: '#',
+    status_labels: { new: 'جديد', open: 'مفتوح', lost: 'خسارة' },
+  };
+
+  it('walks a dot path through the page JSON', () => {
+    const page = { props: { clients: { data: [{ id: 1 }], last_page: 3 } } };
+    expect(jsonPath(page, 'props.clients.last_page')).toBe(3);
+    expect(jsonPath(page, 'props.clients.data')).toEqual([{ id: 1 }]);
+    expect(jsonPath(page, 'props.missing.x')).toBeUndefined();
+  });
+
+  it('maps a portal row: numeric id gets the prefix, code gets the portal label', () => {
+    expect(toCollectedRow({ id: 14157, name: 'Fahad', phone: '575126007', status: 'new' }, alRamzStep)).toEqual({
+      ref: '#14157', name: 'Fahad', phone: '575126007', status_code: 'new', status_label: 'جديد',
+    });
+  });
+
+  it('keeps an unknown status code as its own label instead of dropping it', () => {
+    expect(toCollectedRow({ id: 2, status: 'won' }, alRamzStep).status_label).toBe('won');
+  });
+
+  it('missing fields come back null, never "undefined" strings', () => {
+    expect(toCollectedRow({}, alRamzStep)).toEqual({ ref: null, name: null, phone: null, status_code: null, status_label: null });
+  });
+});
+

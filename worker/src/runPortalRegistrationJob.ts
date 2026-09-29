@@ -46,10 +46,15 @@ import {
 /** Shape of a claimed portal_registration_jobs row (the columns we use). */
 export interface PortalRegistrationJob {
   id: string;
+  /** 'register' (one client into a portal) or 'status_check' (read the
+   *  portal's client list and refresh every registration's portal status). */
+  kind: 'register' | 'status_check';
   portalRecordId: string;
-  clientRecordId: string;
+  /** NULL on a status check — it covers the whole portal. */
+  clientRecordId: string | null;
   projectRecordId: string | null;
-  userId: string;
+  /** NULL on a status check — nobody owns it; its code goes through the relay. */
+  userId: string | null;
   leadData: Record<string, unknown>;
   loginPhone: string | null;
   attempts: number;
@@ -149,10 +154,15 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
     loadRecord(supabase, job.projectRecordId),
   ]);
   if (!portal) throw new RecipeError('بطاقة البوابة غير موجودة', 'Portal record not found');
-  if (!client) throw new RecipeError('بطاقة العميل غير موجودة', 'Client record not found');
+  const isCheck = job.kind === 'status_check';
+  if (!client && !isCheck) throw new RecipeError('بطاقة العميل غير موجودة', 'Client record not found');
   const pd = portal.data ?? {};
   if (pd.is_active === false) throw new RecipeError('هذه البوابة غير نشطة', 'This portal is inactive');
-  const steps: RecipeStep[] = parseRecipe(pd.recipe); // throws a RecipeError BEFORE we pay for a browser
+  if (isCheck && (pd.status_recipe == null || str(pd.status_recipe).trim() === '')) {
+    throw new RecipeError('لا توجد خطوات لفحص الحالات في هذه البوابة', 'This portal has no status-check recipe');
+  }
+  // Both throw a RecipeError BEFORE we pay for a browser.
+  const steps: RecipeStep[] = parseRecipe(isCheck ? pd.status_recipe : pd.recipe);
 
   const portalScope = {
     name: str(pd.name),
@@ -166,8 +176,8 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
   const relay = job.origin === 'auto' && pd.otp_whatsapp_relay === true;
   const lead: Record<string, unknown> = { ...job.leadData };
   if (lead.project_name == null && project) lead.project_name = str(project.data?.project_name);
-  if (lead.name == null) lead.name = str(client.data?.client_name);
-  if (lead.phone == null) lead.phone = str(client.data?.phone_number);
+  if (lead.name == null && client) lead.name = str(client.data?.client_name);
+  if (lead.phone == null && client) lead.phone = str(client.data?.phone_number);
 
   // ── Row helpers (all RPCs no-op once the row is no longer live) ──────────
   const rpc = async (fn: string, args: Record<string, unknown>): Promise<boolean> => {
@@ -200,6 +210,9 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
   };
   const clientName = str(lead.name) || 'العميل';
   const projectLabel = str(lead.project_name) ? ` — مشروع «${str(lead.project_name)}»` : '';
+  /** What this run is for, in the relay messages ("to register X" / "to check statuses"). */
+  const purposeAr = isCheck ? 'لفحص حالات عملائنا' : `لتسجيل العميل «${clientName}»${projectLabel}`;
+  const subjectAr = isCheck ? 'فحص حالات عملائنا' : `تسجيل العميل «${clientName}»`;
 
   const assertLive = async () => {
     const row = await readRow();
@@ -252,7 +265,7 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       log(`awaiting input "${step.key}"`);
       const waitMin = Math.round((step.timeout_s ?? DEFAULT_INPUT_TIMEOUT_S) / 60);
       await relayNotify(
-        `🔐 وصلك الآن رمز تحقق من «${portalScope.name}» لتسجيل العميل «${clientName}»${projectLabel}.
+        `🔐 وصلك الآن رمز تحقق من «${portalScope.name}» ${purposeAr}.
 ` +
         `أرسل لي الرمز هنا${step.length ? ` (${step.length} أرقام)` : ''} خلال ${waitMin} دقائق.`,
       );
@@ -284,7 +297,7 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       scope: {
         lead,
         portal: portalScope,
-        client: client.data ?? {},
+        client: client?.data ?? {},
         project: project?.data ?? {},
         input: {},
         vars: {},
@@ -294,10 +307,31 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       screenshot,
       requestInput,
       checkCancelled: assertLive,
+      collected: isCheck ? [] : undefined,
     };
 
-    await progress('running', 'جارٍ تنفيذ خطوات التسجيل…', 'Running the registration steps…');
+    await progress('running',
+      isCheck ? 'جارٍ قراءة قائمة العملاء في البوابة…' : 'جارٍ تنفيذ خطوات التسجيل…',
+      isCheck ? 'Reading the portal client list…' : 'Running the registration steps…');
     await runSteps(steps, rt);
+
+    if (isCheck) {
+      const rows = rt.collected ?? [];
+      const { data: summary, error: syncErr } = await supabase.rpc('portal_status_sync_apply', {
+        p_job_id: job.id, p_rows: rows,
+      });
+      if (syncErr) throw new Error(`portal_status_sync_apply failed: ${syncErr.message}`);
+      const sum = (summary ?? {}) as { rows?: number; matched?: number; created?: number; unmatched?: number; changed?: { client?: string; from?: string; to?: string }[] };
+      const changed = sum.changed ?? [];
+      log(`status check: ${rows.length} rows, ${sum.matched ?? 0} matched, ${sum.created ?? 0} new, ${changed.length} changed`);
+      await relayNotify(
+        `✅ فُحصت حالات عملائنا في «${portalScope.name}»: ${sum.matched ?? 0} عميلاً مطابقاً من ${rows.length}` +
+        (changed.length
+          ? `، تغيّر منها ${changed.length}:\n` + changed.map((c) => `• ${c.client ?? '—'}: «${c.from ?? '—'}» ← «${c.to ?? '—'}»`).join('\n')
+          : '، لا تغييرات.'),
+      );
+      return { outcome: 'status_check', portal_name: portalScope.name, ...sum };
+    }
 
     await progress('finishing', 'جارٍ حفظ الإثبات…', 'Saving the proof…');
     await screenshot('done');
@@ -319,9 +353,9 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       actor_user_id: job.userId,
       target_model_id: (clientsModel as { id: string } | null)?.id ?? null,
       target_record_id: job.clientRecordId,
-      target_label: str(client.data?.client_name) || null,
-      summary_ar: `تم تسجيل العميل «${str(client.data?.client_name)}» في بوابة «${portalScope.name}»${lead.project_name ? ` — مشروع «${str(lead.project_name)}»` : ''}`,
-      summary_en: `Registered client "${str(client.data?.client_name)}" in portal "${portalScope.name}"${lead.project_name ? ` — project "${str(lead.project_name)}"` : ''}`,
+      target_label: str(client?.data?.client_name) || null,
+      summary_ar: `تم تسجيل العميل «${str(client?.data?.client_name)}» في بوابة «${portalScope.name}»${lead.project_name ? ` — مشروع «${str(lead.project_name)}»` : ''}`,
+      summary_en: `Registered client "${str(client?.data?.client_name)}" in portal "${portalScope.name}"${lead.project_name ? ` — project "${str(lead.project_name)}"` : ''}`,
       details: { job_id: job.id, portal_record_id: job.portalRecordId, project_record_id: job.projectRecordId, final_url: page.url() },
       status: 'success',
     });
@@ -343,12 +377,14 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       log(`code never arrived → ${String(parked)}`);
       if (parked === 'parked') {
         await relayNotify(
-          `⏳ انتهت صلاحية الرمز ولم يُسجَّل العميل «${clientName}» في «${portalScope.name}» بعد.
+          `⏳ انتهت صلاحية الرمز ولم يكتمل ${subjectAr} في «${portalScope.name}» بعد.
 ` +
           'متى ما كنت متاحاً أرسل لي أي رسالة هنا، وسأطلب رمزاً جديداً فوراً.',
         );
       } else if (parked === 'failed') {
-        await relayNotify(`❌ أوقفت محاولات تسجيل العميل «${clientName}» في «${portalScope.name}» — لم يصل الرمز بعد عدة محاولات. سجّله يدوياً من زر «التسجيل في البوابة».`);
+        await relayNotify(isCheck
+          ? `❌ أوقفت محاولات ${subjectAr} في «${portalScope.name}» — لم يصل الرمز بعد عدة محاولات. سيُعاد الفحص في موعده القادم.`
+          : `❌ أوقفت محاولات ${subjectAr} في «${portalScope.name}» — لم يصل الرمز بعد عدة محاولات. سجّله يدوياً من زر «التسجيل في البوابة».`);
       }
       return { outcome: 'parked', park_result: parked };
     }
@@ -370,9 +406,9 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
           actor_user_id: job.userId,
           target_model_id: (clientsModel as { id: string } | null)?.id ?? null,
           target_record_id: job.clientRecordId,
-          target_label: str(client.data?.client_name) || null,
-          summary_ar: `بوابة «${portalScope.name}» أفادت أن العميل «${str(client.data?.client_name)}» مسجّل مسبقاً لدى وسيط آخر${lead.project_name ? ` — مشروع «${str(lead.project_name)}»` : ''}`,
-          summary_en: `Portal "${portalScope.name}" says client "${str(client.data?.client_name)}" is already registered by another broker${lead.project_name ? ` — project "${str(lead.project_name)}"` : ''}`,
+          target_label: str(client?.data?.client_name) || null,
+          summary_ar: `بوابة «${portalScope.name}» أفادت أن العميل «${str(client?.data?.client_name)}» مسجّل مسبقاً لدى وسيط آخر${lead.project_name ? ` — مشروع «${str(lead.project_name)}»` : ''}`,
+          summary_en: `Portal "${portalScope.name}" says client "${str(client?.data?.client_name)}" is already registered by another broker${lead.project_name ? ` — project "${str(lead.project_name)}"` : ''}`,
           details: { job_id: job.id, portal_record_id: job.portalRecordId, project_record_id: job.projectRecordId },
           status: 'success',
         });
@@ -383,7 +419,7 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
     }
     if (relay) {
       const reason = err instanceof RecipeError ? err.ar : (err as Error).message;
-      await relayNotify(`❌ تعذّر تسجيل العميل «${clientName}» في «${portalScope.name}»: ${reason}`);
+      await relayNotify(`❌ تعذّر ${subjectAr} في «${portalScope.name}»: ${reason}`);
     }
     // Capture what the portal showed when it went wrong, then rethrow so the
     // loop marks the job failed with the bilingual message.

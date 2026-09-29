@@ -184,3 +184,113 @@ export function pickErrorLine(message: string | null | undefined, isAr: boolean)
   if (lines.length >= 2) return isAr ? lines[0]! : lines[1]!;
   return lines[0] ?? '';
 }
+
+// ── Per-client registrations (the client's «البوابات» tab) ────────────────────
+
+export type RegistrationOurStatus = 'not_registered' | 'registering' | 'registered' | 'already_registered' | 'failed';
+export const REGISTRATION_OUR_STATUSES: RegistrationOurStatus[] = [
+  'not_registered', 'registering', 'registered', 'already_registered', 'failed',
+];
+
+export interface RegistrationEvent {
+  id: string;
+  registration_id: string;
+  kind: 'run' | 'status_check' | 'status_change' | 'found_in_portal' | 'manual_edit' | 'created';
+  our_status: string | null;
+  portal_status: string | null;
+  summary_ar: string;
+  summary_en: string;
+  job_id: string | null;
+  created_at: string;
+}
+
+export interface ClientPortalRegistration {
+  id: string;
+  client_record_id: string;
+  portal_record_id: string;
+  our_status: RegistrationOurStatus;
+  /** Label exactly as the portal shows it (e.g. «جديد»). */
+  portal_status: string | null;
+  portal_status_code: string | null;
+  portal_status_changed_at: string | null;
+  portal_ref: string | null;
+  project_names: string[];
+  /** What the portal was told (its own project names). */
+  registered_as: string[];
+  registered_at: string | null;
+  registered_via: 'auto' | 'manual_run' | 'manual_entry' | 'portal_sync' | null;
+  last_checked_at: string | null;
+  notes: string | null;
+  updated_at: string;
+  events: RegistrationEvent[];
+}
+
+export interface RegistrationPortal {
+  id: string;
+  name: string;
+  is_active: boolean;
+  can_check_status: boolean;
+  last_check: { status: string; finished_at: string | null; created_at: string; error_message: string | null } | null;
+}
+
+export async function fetchClientRegistrations(
+  clientId: string,
+): Promise<{ registrations: ClientPortalRegistration[]; portals: RegistrationPortal[] }> {
+  const res = await fetch(`/api/portal-registration?registrations_for=${encodeURIComponent(clientId)}`, {
+    headers: await authHeader(),
+  });
+  if (!res.ok) return readError(res);
+  const body = (await res.json()) as { registrations?: ClientPortalRegistration[]; portals?: RegistrationPortal[] };
+  return { registrations: body.registrations ?? [], portals: body.portals ?? [] };
+}
+
+export async function updateClientRegistration(
+  registrationId: string,
+  patch: { our_status?: RegistrationOurStatus; portal_status?: string | null; portal_ref?: string | null; notes?: string | null },
+): Promise<void> {
+  const res = await fetch('/api/portal-registration', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ action: 'registration_update', registration_id: registrationId, ...patch }),
+  });
+  if (!res.ok) return readError(res);
+}
+
+export async function addClientRegistration(input: {
+  clientId: string;
+  portalId: string;
+  ourStatus: RegistrationOurStatus;
+  portalStatus?: string | null;
+  portalRef?: string | null;
+  projectName?: string | null;
+  notes?: string | null;
+}): Promise<void> {
+  const res = await fetch('/api/portal-registration', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({
+      action: 'registration_add',
+      client_id: input.clientId,
+      portal_id: input.portalId,
+      our_status: input.ourStatus,
+      portal_status: input.portalStatus ?? null,
+      portal_ref: input.portalRef ?? null,
+      project_name: input.projectName ?? null,
+      notes: input.notes ?? null,
+    }),
+  });
+  if (!res.ok) return readError(res);
+}
+
+/** One status check for the whole portal — the ops WhatsApp asks for ONE code. */
+export async function requestPortalStatusCheck(portalId: string): Promise<{ jobId: string }> {
+  const res = await fetch('/api/portal-registration', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ action: 'status_check', portal_id: portalId }),
+  });
+  if (!res.ok) return readError(res);
+  const j = (await res.json()) as { job_id?: string };
+  if (!j.job_id) throw new Error('status check enqueued but job_id missing');
+  return { jobId: j.job_id };
+}

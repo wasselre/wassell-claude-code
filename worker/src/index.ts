@@ -2548,9 +2548,10 @@ async function claimAndRunOnePortal(): Promise<boolean> {
   const rows = (data ?? []) as Array<{
     id: string;
     portal_record_id: string;
-    client_record_id: string;
+    client_record_id: string | null;
     project_record_id: string | null;
-    user_id: string;
+    user_id: string | null;
+    kind: string | null;
     lead_data: Record<string, unknown> | null;
     login_phone: string | null;
     attempts: number;
@@ -2560,6 +2561,7 @@ async function claimAndRunOnePortal(): Promise<boolean> {
   const row = rows[0]!;
   const job: PortalRegistrationJob = {
     id: row.id,
+    kind: row.kind === 'status_check' ? 'status_check' : 'register',
     portalRecordId: row.portal_record_id,
     clientRecordId: row.client_record_id,
     projectRecordId: row.project_record_id,
@@ -2570,7 +2572,7 @@ async function claimAndRunOnePortal(): Promise<boolean> {
     origin: row.origin ?? 'manual',
   };
   console.log(
-    `[worker] claimed portal job=${job.id} portal=${job.portalRecordId} client=${job.clientRecordId} attempts=${job.attempts}`,
+    `[worker] claimed portal job=${job.id} kind=${job.kind} portal=${job.portalRecordId} client=${job.clientRecordId ?? '-'} attempts=${job.attempts}`,
   );
 
   try {

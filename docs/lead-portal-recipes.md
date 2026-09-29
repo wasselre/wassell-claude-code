@@ -97,6 +97,7 @@ an unescaped dot is parsed as a class and the step fails with a bare
 | `if_visible` | target, `timeout_ms?`, `then?: [...]`, `else?: [...]` | Branch (e.g. "already registered" dialog). |
 | `phase` | `ar`, `en` | Progress label shown to the rep. |
 | `fail` | `ar`, `en`, optional `outcome` | Stop with a message. With `"outcome": "already_registered"` the run is NOT a failure: it ends as its own status `already_registered` (the portal answered that the client is another broker's) — sky-blue «مسجّل لدى وسيط آخر» on the chat card, an activity-log line on the client, «ℹ️» on the ops WhatsApp, no retry button. It is the only outcome so far (`RECIPE_OUTCOMES` in `recipe.ts`); an unknown value fails the step. |
+| `collect_rows` | `url` (with `{{page}}`), `source: "inertia"`, `rows_path`, `last_page_path`, `fields {ref,name,phone,status}`, optional `ref_prefix`, `status_labels`, `max_pages` (200) | **Status checks only.** Reads the portal's own client list page by page from the page's embedded Inertia JSON (`#app[data-page]`) — the portal's data, not its table markup. More pages than `max_pages` fails loudly; it never silently reads a partial list. |
 | `set` | `key`, `value` | Store a value in `{{vars.key}}`. |
 
 ### Example — phone + OTP sign-in, then a lead form
@@ -127,6 +128,28 @@ an unescaped dot is parsed as a class and the step fails with a bare
     "error_ar": "لم يظهر تأكيد التسجيل من البوابة", "error_en": "The portal did not confirm the registration" }
 ]
 ```
+
+## `status_recipe` — the daily status check
+
+A portal can also carry a **`status_recipe`** (same JSON language) and
+**`status_sync_enabled: true`**. The status-check job (`portal_registration_jobs.kind =
+'status_check'`, no client) replays it: sign in (copy the sign-in steps from `recipe` —
+a code comes through the same operations-WhatsApp relay), then ONE `collect_rows`
+step over the portal's client list. The rows go to `portal_status_sync_apply()`, which
+matches them to our clients by canonical phone and refreshes each client's
+«البوابات» row (portal status, portal ref), creating rows for clients found in the
+portal but never recorded. It runs daily at 12:00 Riyadh (`/api/cron/portal-status-sync`)
+and on «تحديث الحالات». Al Ramz example (its list is Laravel + Inertia):
+
+```json
+{ "do": "collect_rows", "url": "https://brokerportal.alramzre.com/user/clients?page={{page}}",
+  "source": "inertia", "rows_path": "props.clients.data", "last_page_path": "props.clients.last_page",
+  "fields": { "ref": "id", "name": "name", "phone": "phone", "status": "status" }, "ref_prefix": "#",
+  "status_labels": { "new": "جديد", "open": "مفتوح", "qualified": "مؤهل", "disqualified": "مرفوض", "won": "ربح", "lost": "خسارة" } }
+```
+
+A portal without a `status_recipe` is simply never checked; its portal status is
+edited by hand on the client's tab.
 
 ## Writing a recipe for a new portal
 

@@ -94,6 +94,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/portal-status-sync",
+      "schedule": "0 9 * * *"
+    },
+    {
       "path": "/api/cron/chat-auto-read",
       "schedule": "* * * * *"
     }

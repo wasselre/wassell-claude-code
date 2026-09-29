@@ -1,7 +1,7 @@
 import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import { useMemo, useState } from 'react';
 import { useParams, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, LayoutGrid, SlidersHorizontal, ListChecks, Clock, MessageCircle, Phone, Link2, FileText, LineChart } from 'lucide-react';
+import { ArrowLeft, LayoutGrid, SlidersHorizontal, ListChecks, Clock, MessageCircle, Phone, Link2, FileText, LineChart, Globe } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanViewRecord, useCanEditRecord } from '@/hooks/usePermission';
 import { phoneFieldSlugs } from '@/lib/haberchat/normalize';
@@ -26,17 +26,19 @@ import DetailKpiRow from './components/DetailKpiRow';
 import OverviewTab from './components/tabs/OverviewTab';
 import PreferencesTab from './components/tabs/PreferencesTab';
 import ClientOptionsTab from './components/tabs/ClientOptionsTab';
+import ClientPortalsTab from './components/tabs/ClientPortalsTab';
 import TimelineTab from './components/tabs/TimelineTab';
 import SalesNotesTab from './components/tabs/SalesNotesTab';
 import MarketTab from './components/tabs/MarketTab';
 
-type TabKey = 'overview' | 'preferences' | 'market' | 'options' | 'timeline' | 'whatsapp' | 'calls' | 'related' | 'notes';
+type TabKey = 'overview' | 'preferences' | 'market' | 'options' | 'portals' | 'timeline' | 'whatsapp' | 'calls' | 'related' | 'notes';
 
 const ALL_TABS: { key: TabKey; label_ar: string; label_en: string; icon: typeof LayoutGrid }[] = [
   { key: 'overview', label_ar: 'نظرة عامة', label_en: 'Overview', icon: LayoutGrid },
   { key: 'preferences', label_ar: 'التفضيلات', label_en: 'Preferences', icon: SlidersHorizontal },
   { key: 'market', label_ar: 'سوق العميل', label_en: 'Their Market', icon: LineChart },
   { key: 'options', label_ar: 'الخيارات', label_en: 'Options', icon: ListChecks },
+  { key: 'portals', label_ar: 'البوابات', label_en: 'Portals', icon: Globe },
   { key: 'timeline', label_ar: 'الجدول الزمني', label_en: 'Timeline', icon: Clock },
   { key: 'whatsapp', label_ar: 'واتساب', label_en: 'WhatsApp', icon: MessageCircle },
   { key: 'calls', label_ar: 'المكالمات', label_en: 'Calls', icon: Phone },
@@ -101,7 +103,11 @@ export default function ClientDetailPage({ clientId, onClose }: { clientId?: str
   );
   const view = useMemo(() => (client ? resolveClientView(client, ctx) : null), [client, ctx]);
 
-  const [activeTab, setActiveTab] = useState<TabKey>('overview');
+  // `?tab=portals` (the rep's portal-status alert links here) opens that tab.
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    const t = searchParams.get('tab');
+    return TABS.some((x) => x.key === t) ? (t as TabKey) : 'overview';
+  });
   const [showFollowupModal, setShowFollowupModal] = useState(false);
   const [showApptModal, setShowApptModal] = useState(false);
   const { openWhatsApp, whatsAppModals } = useClientWhatsApp();
@@ -236,6 +242,7 @@ export default function ClientDetailPage({ clientId, onClose }: { clientId?: str
             }}
           />
         )}
+        {activeTab === 'portals' && <ClientPortalsTab client={client} isAr={isAr} canEdit={canEdit} />}
         {activeTab === 'timeline' && <TimelineTab view={view} ctx={ctx} isAr={isAr} />}
         {activeTab === 'whatsapp' && <WhatsAppHistoryPanel clientId={client.id} chrome="card" />}
         {activeTab === 'calls' && <CallHistoryPanel phones={phones} chrome="card" />}

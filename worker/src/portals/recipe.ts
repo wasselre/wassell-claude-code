@@ -80,12 +80,75 @@ export type RecipeStep =
   | ({ do: 'assert'; timeout_ms?: number; error_ar?: string; error_en?: string } & Target)
   | ({ do: 'if_visible'; timeout_ms?: number; then?: RecipeStep[]; else?: RecipeStep[] } & Target)
   | { do: 'phase'; ar: string; en: string }
+  /** Read the portal's own client list (status checks). Visits `url` for page
+   *  1..last and reads the page's embedded Inertia JSON (`#app[data-page]`),
+   *  so it follows the portal's DATA, not its table markup. */
+  | CollectRowsStep
   /** `outcome` turns the stop into a recorded ANSWER instead of a failure —
    *  e.g. the portal says the client is already another broker's. */
   | { do: 'fail'; ar: string; en: string; outcome?: RecipeOutcome }
   | { do: 'set'; key: string; value: string };
 
 // ── Errors ──────────────────────────────────────────────────────────────────
+
+/** One client as the portal lists it (status checks). */
+export interface CollectedRow {
+  ref: string | null;
+  name: string | null;
+  phone: string | null;
+  status_code: string | null;
+  status_label: string | null;
+}
+
+export interface CollectRowsStep {
+  do: 'collect_rows';
+  /** Page URL; `{{page}}` is replaced by the page number (1, 2, …). */
+  url: string;
+  /** Only 'inertia' today: JSON in the `data-page` attribute of `#app`. */
+  source: 'inertia';
+  /** Dot path inside the page JSON to the row array, e.g. `props.clients.data`. */
+  rows_path: string;
+  /** Dot path to the last page number, e.g. `props.clients.last_page`. */
+  last_page_path: string;
+  /** Row field → portal JSON key, e.g. { ref: "id", phone: "phone", status: "status" }. */
+  fields: { ref?: string; name?: string; phone?: string; status?: string };
+  /** Prepended to the ref (Al Ramz shows its ids as "#14157"). */
+  ref_prefix?: string;
+  /** Portal status code → the label the portal shows, e.g. { new: "جديد" }. */
+  status_labels?: Record<string, string>;
+  /** Safety ceiling — more pages than this FAILS loudly (never a silent cut). Default 200. */
+  max_pages?: number;
+}
+
+/** Walk a dot path through parsed JSON. */
+export function jsonPath(value: unknown, path: string): unknown {
+  let cur: unknown = value;
+  for (const key of path.split('.').filter(Boolean)) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
+}
+
+/** Map one portal JSON row onto a CollectedRow (pure — unit-tested). */
+export function toCollectedRow(raw: unknown, step: Pick<CollectRowsStep, 'fields' | 'ref_prefix' | 'status_labels'>): CollectedRow {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const text = (k?: string): string | null => {
+    if (!k) return null;
+    const v = o[k];
+    if (v == null || v === '') return null;
+    return typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : null;
+  };
+  const ref = text(step.fields.ref);
+  const code = text(step.fields.status);
+  return {
+    ref: ref == null ? null : `${step.ref_prefix ?? ''}${ref}`,
+    name: text(step.fields.name),
+    phone: text(step.fields.phone),
+    status_code: code,
+    status_label: code == null ? null : (step.status_labels?.[code] ?? code),
+  };
+}
 
 /** Named results a `fail` step can end a run with instead of a plain failure. */
 export type RecipeOutcome = 'already_registered';
@@ -215,7 +278,7 @@ export function renderTemplate(input: string, scope: TemplateScope): string {
 
 const KNOWN_STEPS = new Set([
   'goto', 'fill', 'type', 'fill_otp', 'click', 'select', 'check', 'press', 'wait', 'wait_for', 'wait_for_url',
-  'request_input', 'screenshot', 'assert', 'if_visible', 'phase', 'fail', 'set',
+  'request_input', 'screenshot', 'assert', 'if_visible', 'phase', 'fail', 'set', 'collect_rows',
 ]);
 
 /** Parse the `recipe` field (JSON text or an already-parsed array). Throws a
@@ -282,6 +345,9 @@ export interface RecipeRuntime {
   requestInput: (step: Extract<RecipeStep, { do: 'request_input' }>) => Promise<string>;
   /** Throws RecipeCancelledError if the rep cancelled meanwhile. */
   checkCancelled: () => Promise<void>;
+  /** Where `collect_rows` puts what it read. Absent on a registration run,
+   *  where a `collect_rows` step is a recipe mistake and fails loudly. */
+  collected?: CollectedRow[];
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -470,6 +536,48 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
     }
     case 'set': {
       scope.vars[step.key] = r(step.value);
+      return;
+    }
+    case 'collect_rows': {
+      if (!rt.collected) {
+        throw new RecipeError('خطوة collect_rows تعمل في فحص الحالات فقط', 'collect_rows only runs in a status check', index);
+      }
+      if (step.source !== 'inertia') {
+        throw new RecipeError(`مصدر غير مدعوم في collect_rows: ${String(step.source)}`, `Unsupported collect_rows source: ${String(step.source)}`, index);
+      }
+      const maxPages = step.max_pages ?? 200;
+      let last = 1;
+      for (let n = 1; n <= last; n++) {
+        await rt.checkCancelled();
+        const url = r(step.url).replace(/\{\{\s*page\s*\}\}/g, String(n));
+        rt.log(`collect_rows page ${n}${last > 1 ? `/${last}` : ''} ${url}`);
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT_MS });
+        const attr = await page.locator('#app').getAttribute('data-page', { timeout: DEFAULT_TIMEOUT_MS });
+        if (!attr) throw new RecipeError('لم أجد بيانات الصفحة (data-page)', 'The page has no data-page JSON', index);
+        let data: unknown;
+        try {
+          data = JSON.parse(attr);
+        } catch (err) {
+          throw new RecipeError('بيانات الصفحة ليست JSON صالحاً', `data-page is not valid JSON: ${(err as Error).message}`, index);
+        }
+        const rows = jsonPath(data, step.rows_path);
+        if (!Array.isArray(rows)) {
+          throw new RecipeError(`لم أجد قائمة العملاء في ${step.rows_path}`, `No row array at ${step.rows_path}`, index);
+        }
+        for (const row of rows) rt.collected.push(toCollectedRow(row, step));
+        if (n === 1) {
+          const lp = Number(jsonPath(data, step.last_page_path));
+          last = Number.isFinite(lp) && lp >= 1 ? Math.floor(lp) : 1;
+          if (last > maxPages) {
+            throw new RecipeError(
+              `قائمة البوابة ${last} صفحة — أكثر من الحد ${maxPages}؛ ارفع max_pages`,
+              `Portal list has ${last} pages — over the ${maxPages} ceiling; raise max_pages`,
+              index,
+            );
+          }
+        }
+      }
+      rt.log(`collect_rows read ${rt.collected.length} rows over ${last} page(s)`);
       return;
     }
   }
