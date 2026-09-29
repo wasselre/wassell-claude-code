@@ -109,6 +109,7 @@ const FilesLibraryPage = lazy(() => import('@/pages/Files/FilesLibraryPage'));
 const DocumentEditorPage = lazy(() => import('@/pages/Documents/DocumentEditorPage'));
 const PublicShareFilePage = lazy(() => import('@/pages/PublicShare/PublicShareFilePage'));
 const RateVisitPage = lazy(() => import('@/pages/PublicRate/RateVisitPage'));
+const BrokerPortalPage = lazy(() => import('@/pages/BrokerPortal/BrokerPortalPage'));
 const SalesConsultantApplicationPage = lazy(() => import('@/pages/Careers/SalesConsultantApplicationPage'));
 const JobApplicationsPage = lazy(() => import('@/pages/Careers/JobApplicationsPage'));
 // Private, per-candidate pre-interview experience (public link, no auth, RTL).
@@ -309,12 +310,22 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/** Public pages that need neither the CRM store nor the app's language. */
+function isSelfContainedPublicPath(): boolean {
+  return window.location.pathname.startsWith('/brokers/');
+}
+
 export default function App() {
   const initialize = useAppStore((s) => s.initialize);
   const bindAuth = useAppStore((s) => s.bindAuth);
   const language = useAppStore((s) => s.language);
 
   useEffect(() => {
+    // The public broker portal is fed entirely by its own anonymous endpoint.
+    // Booting the CRM store there would run the full records load as an anon
+    // visitor (RLS-filtered to nothing, and slow enough to time out into a red
+    // "Server sync failed" toast in front of an outside broker).
+    if (isSelfContainedPublicPath()) return;
     // bindAuth FIRST so initialize() sees the correct authEmail when resolving
     // the current user. Both are idempotent — safe on re-renders.
     void (async () => {
@@ -324,6 +335,8 @@ export default function App() {
   }, [bindAuth, initialize]);
 
   useEffect(() => {
+    // The broker portal owns <html dir/lang> (its language lives in the URL).
+    if (isSelfContainedPublicPath()) return;
     document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
     document.documentElement.lang = language;
   }, [language]);
@@ -350,6 +363,9 @@ export default function App() {
         <Route path="/public/dashboard/:token" element={<PublicDashboardRetired />} />
         <Route path="/share/:token" element={<PublicShareFilePage />} />
         <Route path="/rate/:token" element={<RateVisitPage />} />
+        {/* Public broker portal: one developer's projects, units, plans and
+            marketing library for outside brokers (token in broker_portals). */}
+        <Route path="/brokers/:token" element={<BrokerPortalPage />} />
         {/* Public job-application landing (ad traffic). No auth, no layout,
             fully Arabic/RTL. Private applicant files are handled server-side. */}
         <Route path="/careers/sales-consultant" element={<SalesConsultantApplicationPage />} />
