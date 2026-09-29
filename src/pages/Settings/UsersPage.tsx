@@ -14,6 +14,7 @@ import { useSettingsEmbedded } from './components/settingsEmbed';
 import type { Role, User, UserRoleAssignment, StoreMutationReason } from '@/types';
 import { grantRole, type MosPathRole } from '@/lib/marketingOS/client';
 import { chatAccessLevel, CHAT_ACCESS_LABELS } from '@/lib/whatsappAccessLevel';
+import { normalizeStaffPhone } from '@/lib/users/staffPhone';
 
 /** Marketing roles in the Marketing workspace's own order (senior → hands-on). */
 const MARKETING_ROLE_ORDER = ['mos_ceo', 'mos_marketing_manager', 'mos_ops_supervisor', 'mos_writer', 'mos_montage'];
@@ -39,6 +40,8 @@ export default function UsersPage() {
   const [editing, setEditing] = useState<User | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [profileId, setProfileId] = useState('');
   const [roleAssignments, setRoleAssignments] = useState<UserRoleAssignment[]>([]);
   // "Preview app as another profile" grant — deliberately OFF by default.
@@ -95,6 +98,8 @@ export default function UsersPage() {
     setEditing(null);
     setName('');
     setEmail('');
+    setPhone('');
+    setPhoneError(null);
     setProfileId(profiles[0]?.id ?? '');
     setRoleAssignments([]);
     setCanPreviewProfiles(false);
@@ -106,6 +111,8 @@ export default function UsersPage() {
     setEditing(user);
     setName(isAr ? user.name_ar : user.name_en);
     setEmail(user.email);
+    setPhone(user.phone ?? '');
+    setPhoneError(null);
     setProfileId(user.profile_id);
     // Deep-copy so local edits don't mutate store state
     setRoleAssignments(user.role_assignments.map((ra) => ({ role_id: ra.role_id, field_values: { ...ra.field_values } })));
@@ -115,6 +122,11 @@ export default function UsersPage() {
 
   const handleSave = async () => {
     if (!name.trim() || !email.trim() || !profileId) return;
+    const ph = normalizeStaffPhone(phone);
+    if (!ph.ok) {
+      setPhoneError(isAr ? ph.reason_ar : ph.reason_en);
+      return;
+    }
     // User display names are proper nouns ("Mohamed", "محمد"). We do NOT
     // auto-translate them — translating "Mohamed" to "محمد" or vice-versa
     // is a transliteration choice the user owns. New users get the typed
@@ -129,6 +141,7 @@ export default function UsersPage() {
       id: editing?.id ?? uuid(),
       ...labels,
       email: trimmedEmail,
+      phone: ph.value,
       profile_id: profileId,
       role_assignments: roleAssignments,
       is_active: editing?.is_active ?? true,
@@ -395,6 +408,17 @@ export default function UsersPage() {
             type="email"
             dir="ltr"
           />
+          <div>
+            <Input
+              label={isAr ? 'رقم الجوال' : 'Mobile number'}
+              value={phone}
+              onChange={(e) => { setPhone(e.target.value); setPhoneError(null); }}
+              type="tel"
+              dir="ltr"
+              placeholder="05XXXXXXXX"
+            />
+            {phoneError && <p className="mt-1 text-xs text-red-600">{phoneError}</p>}
+          </div>
           {/* Invite toggle — only meaningful for new users and only when auth
               is actually configured. Supabase's OTP call needs a live backend. */}
           {!editing && isAuthAvailable() && (

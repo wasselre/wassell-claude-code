@@ -11,6 +11,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
+import { normalizeStaffPhone } from '@/lib/users/staffPhone';
 import { useTranslation } from 'react-i18next';
 import Button from '@/components/ui/Button';
 import NotificationSettings from '@/components/NotificationSettings';
@@ -36,6 +37,8 @@ export default function ProfilePage() {
 
   const [nameAr, setNameAr] = useState(me?.name_ar ?? '');
   const [nameEn, setNameEn] = useState(me?.name_en ?? '');
+  const [phone, setPhone] = useState(me?.phone ?? '');
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
 
   const [password, setPassword] = useState('');
@@ -85,15 +88,23 @@ export default function ProfilePage() {
   const handleNameSave = (e: FormEvent) => {
     e.preventDefault();
     if (savingName) return;
+    const ph = normalizeStaffPhone(phone);
+    if (!ph.ok) {
+      setPhoneError(isAr ? ph.reason_ar : ph.reason_en);
+      return;
+    }
+    setPhoneError(null);
     setSavingName(true);
     const result = saveUser({
       ...me,
       name_ar: nameAr.trim(),
       name_en: nameEn.trim(),
+      phone: ph.value,
       updated_at: new Date().toISOString(),
     });
     setSavingName(false);
     if (result.ok) {
+      setPhone(ph.value ?? '');
       addToast(t('toast.saved'), 'success');
     } else {
       addToast(t('toast.error'), 'error');
@@ -211,10 +222,32 @@ export default function ProfilePage() {
                 className="form-input"
               />
             </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-charcoal/60 mb-1 block">
+                {isAr ? 'رقم الجوال' : 'Mobile number'}
+              </label>
+              <input
+                type="tel"
+                dir="ltr"
+                value={phone}
+                placeholder="05XXXXXXXX"
+                onChange={(e) => { setPhone(e.target.value); setPhoneError(null); }}
+                className="form-input"
+              />
+              {phoneError ? (
+                <p className="mt-1 text-xs text-red-600">{phoneError}</p>
+              ) : (
+                <p className="mt-1 text-xs text-charcoal/50">
+                  {isAr
+                    ? 'يصلك عليه تنبيه واتساب من رقم العمليات عند تغيّر حالة عميلك في بوابات المطورين.'
+                    : 'The operations WhatsApp line alerts you here when a client of yours changes status in a developer portal.'}
+                </p>
+              )}
+            </div>
           </div>
           <Button
             type="submit"
-            disabled={savingName || (nameAr === me.name_ar && nameEn === me.name_en)}
+            disabled={savingName || (nameAr === me.name_ar && nameEn === me.name_en && phone === (me.phone ?? ''))}
           >
             {savingName && <Loader2 size={14} className="animate-spin" />}
             {isAr ? 'حفظ' : 'Save'}

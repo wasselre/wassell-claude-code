@@ -2136,6 +2136,11 @@ export interface User {
    * key off this column so unbound users see an empty workspace until bound.
    */
   auth_uid?: string | null;
+  /** The person's own mobile, E.164 with plus ("+9665XXXXXXXX"). The
+   *  operations WhatsApp line messages them here (portal-status alerts) and
+   *  portal forms prefill it as `user.phone`. Normalised by
+   *  src/lib/users/staffPhone.ts. Null / absent = not given yet. */
+  phone?: string | null;
   profile_id: string;
   role_assignments: UserRoleAssignment[];
   is_active: boolean;
