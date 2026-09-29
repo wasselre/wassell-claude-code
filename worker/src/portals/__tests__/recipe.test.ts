@@ -9,6 +9,7 @@ import {
   type RecipeStep,
   jsonPath,
   toCollectedRow,
+  withPage,
 } from '../recipe';
 
 // Every locator is "visible" so an if_visible takes its `then` branch — the
@@ -99,6 +100,15 @@ describe('collect_rows helpers (portal status checks)', () => {
 
   it('missing fields come back null, never "undefined" strings', () => {
     expect(toCollectedRow({}, alRamzStep)).toEqual({ ref: null, name: null, phone: null, status_code: null, status_label: null });
+  });
+});
+
+describe('withPage (collect_rows page URLs)', () => {
+  // Regression 2026-09-29: the template renderer ran first, treated {{page}}
+  // as an unknown path and blanked it — every request went to "?page=".
+  it('puts the page number in before templating can blank it', () => {
+    expect(withPage('https://riva.sa/broker/leads?page={{page}}', 2)).toBe('https://riva.sa/broker/leads?page=2');
+    expect(withPage('https://x/y?page={{ page }}&s=1', 3)).toBe('https://x/y?page=3&s=1');
   });
 });
 

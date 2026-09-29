@@ -104,13 +104,23 @@ export interface CollectRowsStep {
   do: 'collect_rows';
   /** Page URL; `{{page}}` is replaced by the page number (1, 2, …). */
   url: string;
-  /** Only 'inertia' today: JSON in the `data-page` attribute of `#app`. */
-  source: 'inertia';
-  /** Dot path inside the page JSON to the row array, e.g. `props.clients.data`. */
-  rows_path: string;
-  /** Dot path to the last page number, e.g. `props.clients.last_page`. */
-  last_page_path: string;
-  /** Row field → portal JSON key, e.g. { ref: "id", phone: "phone", status: "status" }. */
+  /**
+   * 'inertia' — JSON in the `data-page` attribute of `#app` (Laravel + Inertia,
+   *             e.g. Al Ramz): `rows_path` + `last_page_path`, and `fields`
+   *             are JSON keys.
+   * 'table'   — a plain HTML table (e.g. Riva's Livewire «طلباتي»):
+   *             `rows_selector` picks the rows and `fields` are CSS selectors
+   *             INSIDE a row. Pages are walked until one comes back empty or
+   *             repeats the previous page (a portal that clamps ?page=99).
+   */
+  source: 'inertia' | 'table';
+  /** inertia: dot path inside the page JSON to the row array, e.g. `props.clients.data`. */
+  rows_path?: string;
+  /** inertia: dot path to the last page number, e.g. `props.clients.last_page`. */
+  last_page_path?: string;
+  /** table: CSS selector for one row, e.g. `table tbody tr`. */
+  rows_selector?: string;
+  /** Row field → JSON key (inertia) or CSS selector inside the row (table). */
   fields: { ref?: string; name?: string; phone?: string; status?: string };
   /** Prepended to the ref (Al Ramz shows its ids as "#14157"). */
   ref_prefix?: string;
@@ -119,6 +129,30 @@ export interface CollectRowsStep {
   /** Safety ceiling — more pages than this FAILS loudly (never a silent cut). Default 200. */
   max_pages?: number;
 }
+
+/** Put the page number into a collect_rows URL. Runs BEFORE renderTemplate,
+ *  which would otherwise treat `{{page}}` as an unknown path and blank it. */
+export function withPage(url: string, n: number): string {
+  return url.replace(/\{\{\s*page\s*\}\}/g, String(n));
+}
+
+type RawTableRow = { ref: string; name: string; phone: string; status: string };
+/**
+ * Runs INSIDE the portal page (Playwright serialises it). Built from a string
+ * on purpose: a bundler that wraps named inner functions (esbuild keepNames ⇒
+ * `__name(...)`) would ship a helper the page does not have, and the step dies
+ * with "__name is not defined". A string body has nothing to wrap.
+ */
+const READ_TABLE_ROWS = new Function('trs', 'f', `
+  return trs.map(function (tr) {
+    function pick(sel) {
+      if (!sel) return '';
+      var el = tr.querySelector(sel);
+      return el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+    }
+    return { ref: pick(f.ref), name: pick(f.name), phone: pick(f.phone), status: pick(f.status) };
+  });
+`) as (trs: unknown[], f: CollectRowsStep['fields']) => RawTableRow[];
 
 /** Walk a dot path through parsed JSON. */
 export function jsonPath(value: unknown, path: string): unknown {
@@ -542,14 +576,56 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
       if (!rt.collected) {
         throw new RecipeError('خطوة collect_rows تعمل في فحص الحالات فقط', 'collect_rows only runs in a status check', index);
       }
-      if (step.source !== 'inertia') {
-        throw new RecipeError(`مصدر غير مدعوم في collect_rows: ${String(step.source)}`, `Unsupported collect_rows source: ${String(step.source)}`, index);
-      }
       const maxPages = step.max_pages ?? 200;
+      if (step.source === 'table') {
+        if (!step.rows_selector) throw new RecipeError('collect_rows (table) يحتاج rows_selector', 'collect_rows (table) needs rows_selector', index);
+        let prevSig = '';
+        for (let n = 1; ; n++) {
+          if (n > maxPages) {
+            throw new RecipeError(
+              `قائمة البوابة أطول من ${maxPages} صفحة؛ ارفع max_pages`,
+              `Portal list runs past ${maxPages} pages; raise max_pages`,
+              index,
+            );
+          }
+          await rt.checkCancelled();
+          const url = r(withPage(step.url, n));
+          rt.log(`collect_rows page ${n} ${url}`);
+          await page.goto(url, { waitUntil: 'networkidle', timeout: DEFAULT_TIMEOUT_MS });
+          const raw = await page.$$eval(step.rows_selector, READ_TABLE_ROWS, step.fields);
+          // Drop "no results" / spacer rows (Riva's «لا توجد طلبات بعد» sits in
+          // the first cell). A real lead row has a phone — the very thing the
+          // sync matches on, so a phoneless row could never be used anyway.
+          const rows = raw.filter((x) => /\d{6,}/.test(x.phone.replace(/\D/g, '')));
+          const sig = rows.map((x) => x.ref || x.phone).join('|');
+          if (rows.length === 0 || sig === prevSig) break;
+          prevSig = sig;
+          for (const x of rows) {
+            rt.collected.push({
+              ref: x.ref ? `${step.ref_prefix ?? ''}${x.ref}` : null,
+              name: x.name || null,
+              phone: x.phone || null,
+              status_code: x.status || null,
+              status_label: x.status ? (step.status_labels?.[x.status] ?? x.status) : null,
+            });
+          }
+        }
+        rt.log(`collect_rows read ${rt.collected.length} rows`);
+        return;
+      }
+      if (step.source !== 'inertia' || !step.rows_path || !step.last_page_path) {
+        throw new RecipeError(
+          `collect_rows: مصدر غير مدعوم أو ناقص (${String(step.source)})`,
+          `collect_rows: unsupported or incomplete source (${String(step.source)}) — inertia needs rows_path + last_page_path`,
+          index,
+        );
+      }
+      const rowsPath = step.rows_path;
+      const lastPagePath = step.last_page_path;
       let last = 1;
       for (let n = 1; n <= last; n++) {
         await rt.checkCancelled();
-        const url = r(step.url).replace(/\{\{\s*page\s*\}\}/g, String(n));
+        const url = r(withPage(step.url, n));
         rt.log(`collect_rows page ${n}${last > 1 ? `/${last}` : ''} ${url}`);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: DEFAULT_TIMEOUT_MS });
         const attr = await page.locator('#app').getAttribute('data-page', { timeout: DEFAULT_TIMEOUT_MS });
@@ -560,13 +636,13 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
         } catch (err) {
           throw new RecipeError('بيانات الصفحة ليست JSON صالحاً', `data-page is not valid JSON: ${(err as Error).message}`, index);
         }
-        const rows = jsonPath(data, step.rows_path);
+        const rows = jsonPath(data, rowsPath);
         if (!Array.isArray(rows)) {
-          throw new RecipeError(`لم أجد قائمة العملاء في ${step.rows_path}`, `No row array at ${step.rows_path}`, index);
+          throw new RecipeError(`لم أجد قائمة العملاء في ${rowsPath}`, `No row array at ${rowsPath}`, index);
         }
         for (const row of rows) rt.collected.push(toCollectedRow(row, step));
         if (n === 1) {
-          const lp = Number(jsonPath(data, step.last_page_path));
+          const lp = Number(jsonPath(data, lastPagePath));
           last = Number.isFinite(lp) && lp >= 1 ? Math.floor(lp) : 1;
           if (last > maxPages) {
             throw new RecipeError(

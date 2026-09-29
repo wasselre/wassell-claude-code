@@ -97,7 +97,7 @@ an unescaped dot is parsed as a class and the step fails with a bare
 | `if_visible` | target, `timeout_ms?`, `then?: [...]`, `else?: [...]` | Branch (e.g. "already registered" dialog). |
 | `phase` | `ar`, `en` | Progress label shown to the rep. |
 | `fail` | `ar`, `en`, optional `outcome` | Stop with a message. With `"outcome": "already_registered"` the run is NOT a failure: it ends as its own status `already_registered` (the portal answered that the client is another broker's) — sky-blue «مسجّل لدى وسيط آخر» on the chat card, an activity-log line on the client, «ℹ️» on the ops WhatsApp, no retry button. It is the only outcome so far (`RECIPE_OUTCOMES` in `recipe.ts`); an unknown value fails the step. |
-| `collect_rows` | `url` (with `{{page}}`), `source: "inertia"`, `rows_path`, `last_page_path`, `fields {ref,name,phone,status}`, optional `ref_prefix`, `status_labels`, `max_pages` (200) | **Status checks only.** Reads the portal's own client list page by page from the page's embedded Inertia JSON (`#app[data-page]`) — the portal's data, not its table markup. More pages than `max_pages` fails loudly; it never silently reads a partial list. |
+| `collect_rows` | `url` (with `{{page}}`), `source`, `fields {ref,name,phone,status}`, optional `ref_prefix`, `status_labels`, `max_pages` (200). `source: "inertia"` + `rows_path` + `last_page_path` (fields = JSON keys); `source: "table"` + `rows_selector` (fields = CSS selectors inside a row) | **Status checks only.** Reads the portal's own client list page by page. `inertia` reads the page's embedded JSON (`#app[data-page]`, Al Ramz); `table` reads a plain HTML table (Riva's Livewire «طلباتي») and walks `?page=1,2,…` until a page has no rows or repeats the last one. A row without a phone is dropped (empty-state rows). More pages than `max_pages` fails loudly — never a silent partial list. |
 | `set` | `key`, `value` | Store a value in `{{vars.key}}`. |
 
 ### Example — phone + OTP sign-in, then a lead form
@@ -146,6 +146,15 @@ and on «تحديث الحالات». Al Ramz example (its list is Laravel + Ine
   "source": "inertia", "rows_path": "props.clients.data", "last_page_path": "props.clients.last_page",
   "fields": { "ref": "id", "name": "name", "phone": "phone", "status": "status" }, "ref_prefix": "#",
   "status_labels": { "new": "جديد", "open": "مفتوح", "qualified": "مؤهل", "disqualified": "مرفوض", "won": "ربح", "lost": "خسارة" } }
+```
+
+Riva example (a Livewire table, no code at sign-in — its check needs nobody):
+
+```json
+{ "do": "collect_rows", "url": "https://riva.sa/broker/leads?page={{page}}", "source": "table",
+  "rows_selector": "table tbody tr",
+  "fields": { "ref": "td:nth-child(1)", "name": "td:nth-child(2) > div:nth-child(1)",
+              "phone": "td:nth-child(2) [dir='ltr']", "status": "td:nth-child(6) span" } }
 ```
 
 A portal without a `status_recipe` is simply never checked; its portal status is
