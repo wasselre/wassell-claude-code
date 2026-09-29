@@ -240,20 +240,11 @@ export default async function handler(req: Request): Promise<Response> {
           continue;
         }
 
-        const { data: jobId, error: enqErr } = await svc.rpc('portal_registration_job_enqueue', {
-          p_portal_record_id: portal.id,
-          p_client_record_id: c.client_record_id,
-          p_project_record_id: c.project_record_id,
-          p_user_id: jobOwner,
-          p_lead_data: lead,
-          p_login_phone: portal.login_phone,
-        });
-        if (enqErr || !jobId) throw new Error(`enqueue failed: ${enqErr?.message ?? 'no job id'}`);
         // The phone owner has not answered an earlier code request for this
         // portal → wait with the others; their next reply restarts every one.
-        let parkedAt: string | null = null;
+        let parked = false;
         if (portal.otp_whatsapp_relay) {
-          const { data: parked, error: parkErr } = await svc
+          const { data: parkedRows, error: parkErr } = await svc
             .from('portal_registration_jobs')
             .select('id')
             .eq('portal_record_id', portal.id)
@@ -261,22 +252,24 @@ export default async function handler(req: Request): Promise<Response> {
             .eq('status', 'queued')
             .limit(1);
           if (parkErr) console.error(`[portal-auto-register] parked check failed: ${parkErr.message}`);
-          if ((parked ?? []).length > 0) parkedAt = new Date().toISOString();
+          parked = (parkedRows ?? []).length > 0;
         }
-        const { error: tagErr } = await svc
-          .from('portal_registration_jobs')
-          .update({
-            origin: 'auto',
-            attribution_id: c.attribution_id,
-            ...(parkedAt ? {
-              parked_at: parkedAt,
-              phase: 'parked',
-              phase_ar: 'بانتظار الرد على واتساب العمليات لطلب رمز جديد',
-              phase_en: 'Waiting for a reply on the ops WhatsApp to request a new code',
-            } : {}),
-          })
-          .eq('id', jobId as string);
-        if (tagErr) console.error(`[portal-auto-register] tagging job=${jobId} as auto failed: ${tagErr.message}`);
+        // origin / attribution / parked are written IN the insert. They used to
+        // be set by a second UPDATE, and a worker claiming in that gap ran the
+        // job as 'manual' — no WhatsApp code request, just a timeout (2026-09-29).
+        const { data: jobId, error: enqErr } = await svc.rpc('portal_registration_job_enqueue', {
+          p_portal_record_id: portal.id,
+          p_client_record_id: c.client_record_id,
+          p_project_record_id: c.project_record_id,
+          p_user_id: jobOwner,
+          p_lead_data: lead,
+          p_login_phone: portal.login_phone,
+          p_origin: 'auto',
+          p_attribution_id: c.attribution_id,
+          p_parked: parked,
+        });
+        if (enqErr || !jobId) throw new Error(`enqueue failed: ${enqErr?.message ?? 'no job id'}`);
+        const parkedAt = parked;
 
         console.log(`[portal-auto-register] ${parkedAt ? 'parked' : 'queued'} job=${jobId} portal=${portal.id} client=${c.client_record_id} project=${c.project_record_id}`);
         results.push({ ...base, outcome: { status: 'queued', job_id: jobId as string } });
