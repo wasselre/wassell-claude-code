@@ -30,8 +30,22 @@
  * suggestion to the customer's own reply — but when it still emits one with
  * `speaker='agent'`, nothing downstream checked the speaker. Such a mention is
  * demoted to `preference_role='none'`: kept for the record, never on the map.
+ *
+ * RULE 3 (CALLS ONLY — the call audit, 2026-09-29) — on a call, a place is the
+ * customer's only if the customer's OWN turns contain it. The extractor sets
+ * `speaker` per mention from MODEL output, so a salesperson's «عندنا مشروع في
+ * النرجس» can come back labelled 'client' — exactly how the preference quotes
+ * went wrong (3 of 14 quoted the salesperson). {@link applyCallSpeakerGuard}
+ * demotes any non-agent mention whose `mention_span` (folded like the
+ * preference quotes, `normalizeForQuote`) is not in a `speaker==='client'` turn
+ * to `preference_role='none'`. Deterministic, applied BEFORE rules 1–2 (so a
+ * demoted mention can never be promoted by RULE 1), in BOTH extract and
+ * review-only runs (chatCard.ts `evidenceForReview`). Chats are untouched:
+ * their turns are labelled by the message direction, not by a model.
  */
 import type { Evidence } from './ontology.js';
+import type { Conversation } from './extractor.js';
+import { customerSaidIt } from '../clientPrefs/quoteMatch.js';
 
 const OWN_PURCHASE_ROLES: ReadonlySet<Evidence['holder_role']> = new Set(['buyer', 'co_decision_maker', 'beneficiary_occupant']);
 
@@ -49,6 +63,27 @@ export function isQuestionAsInterest(e: Evidence): boolean {
 /** True when RULE 2 demotes this mention: only the salesperson said it. */
 export function isAgentOnlyMention(e: Evidence): boolean {
   return e.speaker === 'agent' && (e.preference_role === 'positive' || e.preference_role === 'negative');
+}
+
+/**
+ * True when RULE 3 demotes this mention on a CALL: not the salesperson's (the
+ * model said client / unknown), it could draw (role is not already 'none'), and
+ * its words are nowhere in the customer's own turns.
+ */
+export function isNotCustomersOnCall(e: Evidence, conversation: Conversation): boolean {
+  if (conversation.channel !== 'call') return false;
+  if (e.speaker === 'agent' || e.preference_role === 'none') return false;
+  return !customerSaidIt(conversation, e.mention_span || null);
+}
+
+/**
+ * RULE 3 — the call speaker guard. For a CALL conversation, returns NEW objects
+ * for the demoted mentions (`preference_role='none'`); any other channel gets
+ * an unchanged copy (same mention objects). Never mutates.
+ */
+export function applyCallSpeakerGuard(evidence: readonly Evidence[], conversation: Conversation): Evidence[] {
+  if (conversation.channel !== 'call') return [...evidence];
+  return evidence.map((e) => (isNotCustomersOnCall(e, conversation) ? { ...e, preference_role: 'none' } : e));
 }
 
 /** Apply every company rule. Returns NEW objects for changed mentions; never mutates. */

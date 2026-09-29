@@ -3,15 +3,13 @@ import { MapPin, Loader2, ChevronUp, ChevronDown, RefreshCw, Check, AlertTriangl
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
-import {
-  type Placement, type LocationItemDTO, type VerifierResultDTO, type DistrictInfo,
-} from '@/pages/GeoGrade/lib/shared';
-import { placementLine, verifierMentionLine } from '@/pages/GeoGrade/lib/placementLine';
 import { pruneGeoExpression, type PrunableExpression } from '@/lib/geo/pruneGeoExpression';
 import { shouldAutoRead } from '@/lib/geo/geoCardAutoRead';
 import { callJson, HttpError } from '../lib/cardHttp';
 import PrefSuggestionsSection, { type PrefsCardDTO } from './PrefSuggestionsSection';
 import CallAuditSection from './CallAuditSection';
+import GeoLineGroups from './GeoLineGroups';
+import { buildGeoRows, GEO_OPEN, GEO_SAVED, type GeoCardDTO, type GeoRow } from '../lib/geoRows';
 
 const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
 
@@ -34,36 +32,14 @@ const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
  *
  * The CALL AUDIT's proposals for this client (preferences the customer said on
  * a Hatif call that are EMPTY on the client) render just above the chat's own
- * preference section (CallAuditSection) and save fill-empty-only.
+ * preference section (CallAuditSection) and save fill-empty-only. Since
+ * 2026-09-29 each call block also carries the PLACES the audit read from the
+ * call (only proposed for a client with no places; the save refuses once the
+ * client has places). Both the chat's lines and a call's lines render through
+ * the shared GeoLineGroups / buildGeoRows.
  */
 
-type CardStatus =
-  | 'none' | 'empty'
-  | 'pending' | 'confirmed' | 'edited' | 'rejected' | 'applied' | 'superseded' | 'must_confirm';
-
-interface CardProposal {
-  id: string;
-  version: number | null;
-  status: string;
-  proposed_action: string;
-  expression: PrunableExpression;
-  by_evidence: Record<string, Placement>;
-  items: LocationItemDTO[];
-  items_by_evidence: Record<string, LocationItemDTO[]>;
-  verifier: VerifierResultDTO | null;
-}
-
-interface ChatCardDTO {
-  status: CardStatus;
-  checkpoint_id: string | null;
-  proposal: CardProposal | null;
-  mentions: Array<{ evidence_id: string; mention_span: string; preference_role: string }>;
-  names: Record<string, DistrictInfo>;
-  analyzed_at: string | null;
-  stale: boolean;
-  graded: boolean;
-  can_reanalyze: boolean;
-  customer_messages: number;
+interface ChatCardDTO extends GeoCardDTO {
   prefs: PrefsCardDTO;
 }
 
@@ -73,18 +49,8 @@ interface ReadResultDTO {
   prefs: { ran: boolean; proposalId?: string | null; fields?: number; error?: string };
 }
 
-interface Row {
-  evidenceId: string;
-  span: string;
-  placement: Placement;
-  line: { text: string; tone: 'ok' | 'none' | 'warn' };
-  /** Unresolved placements are bare names, not real places — never saved. */
-  savable: boolean;
-  doubt: string | null;
-}
-
-const SAVED = new Set(['confirmed', 'edited', 'applied']);
-const OPEN = new Set(['pending', 'must_confirm']);
+const SAVED = GEO_SAVED;
+const OPEN = GEO_OPEN;
 
 export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; chatWid: string }) {
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -173,29 +139,9 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card, loading, analyzing]);
 
-  const rows: Row[] = useMemo(() => {
-    const p = card?.proposal;
-    if (!card || !p) return [];
-    const doubts = new Map((p.verifier?.mentions ?? []).map((m) => [m.evidence_id, m]));
-    const out: Row[] = [];
-    for (const m of card.mentions) {
-      const placement = p.by_evidence[m.evidence_id];
-      if (!placement) continue; // nothing on the map for this mention — nothing to save
-      const v = doubts.get(m.evidence_id);
-      const vl = v ? verifierMentionLine(v, isAr) : null;
-      out.push({
-        evidenceId: m.evidence_id,
-        span: m.mention_span,
-        placement,
-        line: placementLine(placement, m.preference_role, card.names, isAr),
-        savable: placement.resolved,
-        doubt: vl && vl.tone === 'warn' ? vl.text : null,
-      });
-    }
-    return out;
-  }, [card, isAr]);
+  const rows: GeoRow[] = useMemo(() => buildGeoRows(card, isAr), [card, isAr]);
 
-  const ticked = (r: Row) => r.savable && !unticked.has(r.evidenceId);
+  const ticked = (r: GeoRow) => r.savable && !unticked.has(r.evidenceId);
   const tickedRows = rows.filter(ticked);
   const mapItems = useMemo(() => {
     const p = card?.proposal;
@@ -272,6 +218,7 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
           {t('chats.prefs.card_title')}
           {(status && OPEN.has(status) && rows.length > 0) || card?.prefs?.proposal?.status === 'pending'
             || (card?.prefs?.call_proposals ?? []).some((p) => p.status === 'pending')
+            || (card?.prefs?.call_geo ?? []).some((g) => g.card.proposal?.id === g.proposal_id && OPEN.has(g.card.proposal.status))
             ? <span className="text-copper font-bold">•</span>
             : null}
         </button>
@@ -291,46 +238,9 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
     </button>
   );
 
-  const include = rows.filter((r) => r.placement.polarity === 'include');
-  const exclude = rows.filter((r) => r.placement.polarity === 'exclude');
   const open = !!status && OPEN.has(status);
   const saved = !!status && SAVED.has(status);
   const missed = card?.proposal?.verifier?.missed ?? [];
-
-  const rowView = (r: Row, withBox: boolean) => (
-    <li key={r.evidenceId} className="flex items-start gap-2">
-      {withBox ? (
-        <input
-          type="checkbox"
-          className="mt-1 accent-copper shrink-0"
-          checked={ticked(r)}
-          disabled={!r.savable || saving}
-          onChange={() => toggle(r.evidenceId)}
-          aria-label={r.span}
-        />
-      ) : (
-        <Check size={12} className="mt-1 shrink-0 text-green-600" />
-      )}
-      <div className="min-w-0 flex-1">
-        <p className={`text-[12px] leading-snug ${ticked(r) || !withBox ? 'text-charcoal' : 'text-charcoal/40 line-through'}`}>
-          <span className="font-bold text-chocolate" dir="auto">«{r.span}»</span>
-          {' — '}
-          <span className={r.line.tone === 'warn' ? 'text-amber-700' : ''}>{r.line.text}</span>
-        </p>
-        {!r.savable && withBox && (
-          <p className="text-[10.5px] text-amber-700">{isAr ? 'لن يُحفظ — لم يُحدَّد مكان حقيقي' : 'Will not be saved — no real place was picked'}</p>
-        )}
-        {r.doubt && <p className="text-[10.5px] text-amber-700" dir={isAr ? 'rtl' : 'ltr'}>{r.doubt}</p>}
-      </div>
-    </li>
-  );
-
-  const group = (title: string, list: Row[], withBox: boolean, tone: string) => list.length > 0 && (
-    <div className="mt-1.5">
-      <p className={`text-[11px] font-bold ${tone}`}>{title}</p>
-      <ul className="mt-0.5 space-y-1">{list.map((r) => rowView(r, withBox))}</ul>
-    </div>
-  );
 
   return (
     <div className="px-3 pt-2 shrink-0" dir={isAr ? 'rtl' : 'ltr'}>
@@ -429,8 +339,7 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
                 {status === 'must_confirm' && (
                   <p className="mt-1 text-[10.5px] text-amber-700">{isAr ? 'عُلِّمت: تحتاج تأكيد العميل أولًا' : 'Marked: the customer must confirm first'}</p>
                 )}
-                {group(isAr ? 'يريد' : 'Wants', include, true, 'text-emerald-700')}
-                {group(isAr ? 'لا يريد' : 'Does not want', exclude, true, 'text-red-700')}
+                <GeoLineGroups rows={rows} withBox isTicked={ticked} onToggle={toggle} disabled={saving} isAr={isAr} />
                 {missed.length > 0 && (
                   <p className="mt-1 text-[10.5px] text-charcoal/45">
                     {isAr ? 'قد يكون العميل ذكر أيضًا: ' : 'The customer may also have mentioned: '}
@@ -460,8 +369,7 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
             {saved && (
               <>
                 <p className="mt-1 text-[11px] font-bold text-green-700">{isAr ? '✓ حُفظت في تفضيلات العميل' : '✓ Saved to the client’s preferences'}</p>
-                {group(isAr ? 'يريد' : 'Wants', include, false, 'text-emerald-700')}
-                {group(isAr ? 'لا يريد' : 'Does not want', exclude, false, 'text-red-700')}
+                <GeoLineGroups rows={rows} withBox={false} isTicked={ticked} onToggle={toggle} disabled isAr={isAr} />
                 <div className="mt-1.5 flex items-center gap-2">
                   {card.stale && !card.graded && reread()}
                   {rows.length > 0 && (
@@ -495,9 +403,10 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
             )}
 
             {/* Preferences the customer said on a call but the client does not have (call audit) */}
-            {(card.prefs?.call_proposals ?? []).length > 0 && (
+            {((card.prefs?.call_proposals ?? []).length > 0 || (card.prefs?.call_geo ?? []).length > 0) && (
               <CallAuditSection
                 proposals={card.prefs.call_proposals ?? []}
+                geo={card.prefs.call_geo ?? []}
                 onReload={load}
                 skippedById={callSkipped}
                 onSaved={onCallSaved}

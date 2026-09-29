@@ -677,11 +677,15 @@ PRDs: `docs/prd/geo-preference-ability.md`, `docs/prd/chats.md`.
 Calls are NOT read for a live card (the rep logs during/after the call). The one
 call feature is an AUDIT of what the customer said that the salesperson forgot
 to put on the client. After its chat reads (which are unchanged and always run
-first), the same cron — while ≥ 60 s of its budget remains — lists finished
+first), the same cron — while ≥ 120 s of its budget remains (60 s before
+places were added) — lists finished
 calls with `call_audit_candidates` (> 20 s, diarized words, ≥ 1 h after
 hang-up, last 60 days, linked to an existing client) and runs `auditCall`
-(`api/_lib/clientPrefs/callAudit.ts`) on them one at a time. Migration:
-`2026-09-29_01_call_pref_audit.sql`.
+(`api/_lib/clientPrefs/callAudit.ts`) on them one at a time. Migrations:
+`2026-09-29_01_call_pref_audit.sql`, `2026-09-29_02_call_audit_geo.sql` (places).
+Each audit has TWO passes over ONE gathered conversation: preferences (the six
+fields) and PLACES (geography, through the chat card's own
+`analyzeChatConversation` — never a fork).
 
 1. **NEVER overwrite — fill-empty-only, at proposal AND at save time.** The
    audit proposes only fields EMPTY on the client (`emptyOnlySuggestions`); a
@@ -706,11 +710,42 @@ hang-up, last 60 days, linked to an existing client) and runs `auditCall`
    («أنتِ تبحثين عن شقة…», «أبديت اهتمامك تملك وحدة…»); with the guard the
    backfill went from 6 cards / 14 fields to 3 cards / 9 fields, all customer
    words. Never loosen it to "the prompt says so" — the guard is the guarantee.
-5. **No geography from calls** in this version — districts are dropped.
+5. **Places from calls ONLY for a client with NO places** (2026-09-29_02). The
+   preference extractor's districts are still dropped; geography comes from the
+   geography pipeline, and only when `parseLocationItems(location_items)` is
+   empty (else `skipped/has_places`). The SAVE re-checks it:
+   `/api/geo-preference/review` treats a proposal whose id is a
+   `call_pref_audit.geo_proposal_id` as fill-empty-only and refuses with 409
+   `client_has_places` — decided on the FRESH row inside `recordSaveWithRetry`
+   (`buildGeoApplyData`), before the proposal is touched, so it stays pending
+   for the rep to dismiss. Chat geo proposals keep the union exactly. Don't
+   "simplify" a call geo save into the union path.
 6. A call proposal is a `client_pref_proposals` row with `source='call'`,
    `call_id`, `call_at`, `trigger='call_audit'`, stored under
    `chat_wid = 'call:' || call_id` (one pending per call). The chat card's chat
    `proposal` never picks it up (it filters on the chat's real wid).
+7. **Call speaker guard (company RULE 3, calls only).** The geo extractor sets
+   `speaker` from MODEL output, so a salesperson's «عندنا مشروع في النرجس» can
+   come back as 'client' — the same failure as rule 4. `applyCallSpeakerGuard`
+   (companyRules.ts) demotes any non-agent mention whose `mention_span`
+   (normalised like rule 4) is not in a `speaker==='client'` turn to role
+   `none`. It runs via `evidenceForReview` (chatCard.ts) in BOTH the extract and
+   the review-only path — a re-review over stored call evidence is guarded too.
+   Chats are untouched (their speakers come from the message direction).
+8. **Only audit-minted geo proposals are shown.** The card lists
+   `call_pref_audit.geo_proposal_id` rows only (pending, or decided in the last
+   24 h) — NEVER the leftover calibration proposals on the same calls. The
+   geography pass records the proposal THIS run minted
+   (`AnalyzeOutcome.minted_proposal_id`), not the checkpoint's newest proposal.
+9. **The two passes share one lease.** A fresh call: `call_audit_claim`, both
+   passes, `call_audit_geo_finish` (while still `running`) BEFORE
+   `call_audit_finish`. A call whose preference audit is already terminal but
+   whose geo pass never ran / failed gets a GEO-ONLY pass
+   (`call_audit_candidates.needs_prefs=false` → `call_audit_geo_claim`, which
+   only takes a `done`/`skipped` row with no live lease) that never re-runs the
+   preference extractor and never touches the preference result. `geo_attempts`
+   caps the geo pass at 3 (bumped by the geo claim, or by the geo finish inside
+   the preference lease).
 
 ## Listing photo mirror (Aqar → our bucket) (added 2026-07-29)
 

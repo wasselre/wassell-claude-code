@@ -2,8 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   auditCall, emptyOnlySuggestions, customerSaidIt, callProposalKey, CALL_AUDIT_LEASE_SECONDS,
-  type CallAuditDeps, type CallAuditFinish,
+  type CallAuditDeps, type CallAuditFinish, type CallGeoFinish,
 } from '../callAudit.js';
+import type { AnalyzeOutcome } from '../../geoPreference/chatCard.js';
 import type { Conversation } from '../../geoPreference/extractor.js';
 import type { PrefSuggestion, PreferenceExtraction } from '../../prefExtract.js';
 import type { NewPrefProposalRow } from '../extractChatPrefs.js';
@@ -29,6 +30,8 @@ function fakeDeps(over: Partial<CallAuditDeps> = {}, said: Record<string, PrefSu
 }) {
   const finishes: CallAuditFinish[] = [];
   const inserts: NewPrefProposalRow[] = [];
+  const geoFinishes: CallGeoFinish[] = [];
+  const order: string[] = [];
   const deps: CallAuditDeps = {
     claim: vi.fn(async () => true),
     finish: vi.fn(async (_id: string, f: CallAuditFinish) => { finishes.push(f); return true; }),
@@ -38,9 +41,24 @@ function fakeDeps(over: Partial<CallAuditDeps> = {}, said: Record<string, PrefSu
       output: { suggestions: said, districts: ['النرجس'] }, model: 'deepseek-chat', isFallback: false,
     })),
     insertProposal: vi.fn(async (row: NewPrefProposalRow) => { inserts.push(row); return { proposalId: 'prop-1', superseded: 0 }; }),
+    geoClaim: vi.fn(async () => true),
+    geoFinish: vi.fn(async (_id: string, f: CallGeoFinish) => { geoFinishes.push(f); order.push('geoFinish'); return true; }),
+    analyzeGeo: vi.fn(async () => geoOutcome({ minted_proposal_id: 'geo-1', mode: 'extract' })),
     ...over,
   };
-  return { deps, finishes, inserts };
+  // Record the order of the two finishes (the geo result must land inside the lease).
+  const finishImpl = deps.finish;
+  deps.finish = vi.fn(async (id: string, f: CallAuditFinish) => { order.push('finish'); return finishImpl(id, f); });
+  return { deps, finishes, inserts, geoFinishes, order };
+}
+
+/** A minimal AnalyzeOutcome (only mode + minted_proposal_id matter to the audit). */
+function geoOutcome(over: Partial<AnalyzeOutcome>): AnalyzeOutcome {
+  return {
+    status: 'pending', checkpoint_id: 'cp', proposal: null, mentions: [], names: {}, analyzed_at: null,
+    stale: false, graded: false, can_reanalyze: true, customer_messages: 0,
+    mode: 'extract', minted_proposal_id: null, ...over,
+  };
 }
 
 describe('emptyOnlySuggestions', () => {

@@ -27,6 +27,13 @@
  * never writes a client. The chat reads above are unchanged and always run
  * first.
  *
+ * PLACES from calls (2026-09-29_02): the same audit also runs the geography
+ * pipeline on the call — only for a client with NO places. Each candidate says
+ * which passes are due (`needs_prefs`, `needs_geo`); a call whose preference
+ * audit is already terminal gets a GEO-ONLY pass that never re-runs the
+ * preference extractor. An older candidate shape (no `needs_*` columns — the
+ * migration is not applied) runs the preference pass only.
+ *
  * Auth: Bearer $CRON_SECRET or ?secret= (same as the other crons). `?dryRun=1`
  * returns the selection only — no read, no write. Always 200 with a counts
  * body so Vercel never marks the cron failed; every failure is ALSO
@@ -37,7 +44,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { selectDueChats, type ReadCandidate } from '../_lib/clientPrefs/dueSelection.js';
 import { readChatForClient, type ReadChatResult } from '../_lib/clientPrefs/readChat.js';
-import { auditCall } from '../_lib/clientPrefs/callAudit.js';
+import { auditCall, type CallAuditStatus } from '../_lib/clientPrefs/callAudit.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
 
@@ -45,8 +52,12 @@ const SERVICE_NAME = 'api:cron-chat-auto-read';
 const TIME_BUDGET_MS = 240_000;
 const PARALLELISM = 2;
 const CANDIDATE_LIMIT = 50;
-/** No call audit STARTS after TIME_BUDGET_MS - this (one audit can take ~a minute). */
-const CALL_AUDIT_RESERVE_MS = 60_000;
+/**
+ * No call audit STARTS after TIME_BUDGET_MS - this. One audit is the
+ * preference extractor plus a geography read (extraction + verifier), so up to
+ * ~2 minutes; 240 s - 120 s keeps a late start inside the 300 s limit.
+ */
+const CALL_AUDIT_RESERVE_MS = 120_000;
 const CALL_CANDIDATE_LIMIT = 20;
 
 interface CallCandidate {
@@ -54,6 +65,20 @@ interface CallCandidate {
   client_id: string;
   hangup_time: string;
   duration_seconds: number;
+  /** Absent on the pre-2026-09-29_02 function ⇒ preference pass only. */
+  needs_prefs?: boolean;
+  needs_geo?: boolean;
+}
+
+const GEO_COUNT: Record<CallAuditStatus, 'geo_done' | 'geo_skipped' | 'geo_failed'> = {
+  done: 'geo_done', skipped: 'geo_skipped', failed: 'geo_failed',
+};
+
+/** PURE: which passes a candidate row asks for. The old shape (no needs_* columns) ⇒ prefs only, no geo. */
+export function candidatePasses(c: CallCandidate): { needsPrefs: boolean; needsGeo: boolean } {
+  const newShape = typeof c.needs_prefs === 'boolean' || typeof c.needs_geo === 'boolean';
+  if (!newShape) return { needsPrefs: true, needsGeo: false };
+  return { needsPrefs: c.needs_prefs === true, needsGeo: c.needs_geo === true };
 }
 
 function nodeToWebRequest(nodeReq: IncomingMessage): Request {
@@ -178,7 +203,11 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   await Promise.all(Array.from({ length: Math.min(PARALLELISM, queue.length) }, () => worker()));
 
   // Call audit: after the chat reads, sequentially, within what is left of the budget.
-  const calls = { candidates: 0, done: 0, skipped: 0, failed: 0, proposals: 0, deferred: 0 };
+  // done / skipped / failed / proposals = the PREFERENCE pass; geo_* = the places pass.
+  const calls = {
+    candidates: 0, geo_only: 0, done: 0, skipped: 0, failed: 0, proposals: 0, not_claimed: 0,
+    geo_done: 0, geo_skipped: 0, geo_failed: 0, geo_proposals: 0, deferred: 0,
+  };
   const callDeadline = TIME_BUDGET_MS - CALL_AUDIT_RESERVE_MS;
   if (Date.now() - startedAt < callDeadline) {
     const callRes = await loadCallCandidates(sb, new Date());
@@ -188,16 +217,28 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       calls.candidates = callRes.rows.length;
       for (const c of callRes.rows) {
         if (Date.now() - startedAt >= callDeadline) { calls.deferred += 1; continue; }
+        const passes = candidatePasses(c);
+        if (!passes.needsPrefs) calls.geo_only += 1;
         // auditCall never throws for an audit failure (it records + returns
         // 'failed'); a throw here is the claim RPC itself failing.
         try {
           const r = await auditCall(sb, {
             callId: c.call_id, clientId: c.client_id, hangupAt: c.hangup_time,
+            needsPrefs: passes.needsPrefs, needsGeo: passes.needsGeo,
             log: (m) => console.log(m),
           });
-          calls[r.status] += 1;
-          if (r.proposalId) calls.proposals += 1;
-          if (r.status === 'failed') errors.push(`call ${c.call_id}: ${r.reason ?? 'failed'}`);
+          if (r.reason === 'not_claimed') {
+            calls.not_claimed += 1;
+          } else if (r.prefsRan) {
+            calls[r.status] += 1;
+            if (r.proposalId) calls.proposals += 1;
+            if (r.status === 'failed') errors.push(`call ${c.call_id}: ${r.reason ?? 'failed'}`);
+          }
+          if (r.geo) {
+            calls[GEO_COUNT[r.geo.status]] += 1;
+            if (r.geo.proposalId) calls.geo_proposals += 1;
+            if (r.geo.status === 'failed') errors.push(`call ${c.call_id} geo: ${r.geo.reason ?? 'failed'}`);
+          }
         } catch (err) {
           const msg = `call ${c.call_id}/${c.client_id}: ${err instanceof Error ? err.message : String(err)}`;
           console.error('[chat-auto-read] call audit failed:', msg);

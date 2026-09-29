@@ -7,6 +7,9 @@ import { extractPreferences } from '../../prefExtract.js';
 import { PREF_SLUG_ORDER } from '../../../../src/lib/clientPrefs/mergePrefs.js';
 import { isEmptyValue } from '../../../../src/lib/salesProcess/valueEqual.js';
 import { auditCall } from '../callAudit.js';
+import { loadChatCard } from '../../geoPreference/chatCard.js';
+import { placementSentence } from '../../geoPreference/placementText.js';
+import { candidatePasses } from '../../../cron/chat-auto-read.js';
 
 /**
  * OPERATIONAL, READ-ONLY dry run (RUN_CALLAUDIT=1): "what did customers say on a
@@ -24,6 +27,13 @@ import { auditCall } from '../callAudit.js';
  * `client_pref_proposals` (source 'call') + `call_pref_audit` ledger rows,
  * NEVER the client. Needs migration 2026-09-29_01 applied. A call already in
  * the ledger (done / skipped) is not re-audited.
+ *
+ * PLACES (needs 2026-09-29_02): each candidate also gets the places pass when
+ * `needs_geo` — a call whose preference audit is already done gets a GEO-ONLY
+ * pass (the preference extractor is NOT re-run). Prints, per call, the places
+ * outcome and every proposed line as a placement sentence, so the geo lines can
+ * be inspected before deploy. Writes geo evidence / checkpoint / proposal (the
+ * geography pipeline's own tables) + the ledger's geo columns, NEVER the client.
  */
 
 try {
@@ -100,15 +110,56 @@ describe.skipIf(!process.env.RUN_CALLAUDIT || !process.env.CALLAUDIT_APPLY || !U
       p_now: new Date().toISOString(), p_grace: '60 minutes', p_window: `${DAYS} days`, p_limit: 500,
     });
     if (error) throw new Error(`call_audit_candidates: ${error.message}`);
-    const rows = (data ?? []) as Array<{ call_id: string; client_id: string; hangup_time: string; duration_seconds: number }>;
-    const tally = { candidates: rows.length, done: 0, skipped: 0, failed: 0, proposals: 0, missed_fields: 0 };
+    const rows = (data ?? []) as Array<{
+      call_id: string; client_id: string; hangup_time: string; duration_seconds: number;
+      needs_prefs?: boolean; needs_geo?: boolean;
+    }>;
+    const tally = {
+      candidates: rows.length, geo_only: 0, done: 0, skipped: 0, failed: 0, not_claimed: 0, proposals: 0, missed_fields: 0,
+      geo_done: 0, geo_skipped: 0, geo_failed: 0, geo_proposals: 0, geo_lines: 0,
+    };
     for (const c of rows) {
+      const passes = candidatePasses(c);
+      if (!passes.needsPrefs) tally.geo_only += 1;
       const r = await auditCall(supabase, {
-        callId: c.call_id, clientId: c.client_id, hangupAt: c.hangup_time, log: (m) => console.log(m),
+        callId: c.call_id, clientId: c.client_id, hangupAt: c.hangup_time,
+        needsPrefs: passes.needsPrefs, needsGeo: passes.needsGeo, log: (m) => console.log(m),
       });
-      tally[r.status] += 1;
-      if (r.proposalId) tally.proposals += 1;
-      tally.missed_fields += r.missed.length;
+      if (r.reason === 'not_claimed') tally.not_claimed += 1;
+      else if (r.prefsRan) {
+        tally[r.status] += 1;
+        if (r.proposalId) tally.proposals += 1;
+        tally.missed_fields += r.missed.length;
+      }
+
+      // The places pass: its outcome, and — when it proposed places — every
+      // line as the rep will read it (placement sentences).
+      if (!r.geo) {
+        console.log(`[CALLAUDIT/apply] call ${c.call_id} places: not due`);
+        continue;
+      }
+      if (r.geo.status === 'done') tally.geo_done += 1;
+      else if (r.geo.status === 'skipped') tally.geo_skipped += 1;
+      else tally.geo_failed += 1;
+      console.log(`[CALLAUDIT/apply] call ${c.call_id} client=${c.client_id} places: ${r.geo.status}${r.geo.reason ? `/${r.geo.reason}` : ''} mode=${r.geo.mode ?? '-'} proposal=${r.geo.proposalId ?? '-'}`);
+      if (!r.geo.proposalId) continue;
+      tally.geo_proposals += 1;
+      const card = await loadChatCard(supabase, c.client_id, c.call_id);
+      const p = card.proposal;
+      if (!p || p.id !== r.geo.proposalId) {
+        console.log(`   (the call's newest geo proposal is not the one the audit minted: ${p?.id ?? 'none'})`);
+        continue;
+      }
+      const names = Object.fromEntries(Object.entries(card.names).map(([k, v]) => [k, { name_ar: v.name_ar, city: v.city }]));
+      for (const m of card.mentions) {
+        const pl = p.by_evidence[m.evidence_id];
+        if (pl) {
+          tally.geo_lines += 1;
+          console.log(`   geo «${m.mention_span}» — ${placementSentence(pl, names)}`);
+        } else {
+          console.log(`   (not drawn: «${m.mention_span}» role=${m.preference_role})`);
+        }
+      }
     }
     console.log(`[CALLAUDIT/apply] ${JSON.stringify(tally)}`);
   }, 1_800_000);

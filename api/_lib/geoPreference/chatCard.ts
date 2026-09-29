@@ -29,6 +29,7 @@ import { remapExtractionIds } from './backfillRunner.js';
 import { makeSupabaseBackfillDeps } from './backfillPorts.js';
 import { placementsByEvidence, isUuid, type Placement } from './placementText.js';
 import { geoPreferenceToLocationItems } from '../../geo-preference/review.js';
+import { applyCallSpeakerGuard } from './companyRules.js';
 import { pruneGeoExpression } from '../../../src/lib/geo/pruneGeoExpression.js';
 import type { LocationItem } from '../../../src/lib/geo/locationItems.js';
 
@@ -95,6 +96,12 @@ export type AnalyzeMode = 'extract' | 're_review';
 export interface AnalyzeOutcome extends ChatCard {
   /** What ran: a full extraction, a review-only rerun, or nothing (cool-down). */
   mode: AnalyzeMode | 'skipped_recent';
+  /**
+   * The proposal THIS run minted (null = the gate said 'ignore', or nothing ran).
+   * Not the same as `proposal`, which is the checkpoint's NEWEST proposal of any
+   * status — after an 'ignore' that can be an older, superseded one.
+   */
+  minted_proposal_id: string | null;
 }
 
 /** An error with the HTTP status the endpoint should answer with. */
@@ -146,6 +153,21 @@ export function computeStale(checkpointCreatedAt: string | null, newestCustomerM
 /** Remove every `geo:<dropped id>` ref; drop emptied clauses and groups. PURE. */
 export function pruneExpression(expr: GeoPreference, dropEvidenceIds: string[]): GeoPreference {
   return pruneGeoExpression(expr, dropEvidenceIds);
+}
+
+/**
+ * The evidence the review (and the verifier) sees for this conversation: on a
+ * CALL, the call speaker guard (companyRules.ts RULE 3) first demotes every
+ * mention the customer's own turns do not contain; a chat is passed through
+ * untouched. PURE. Applied in BOTH the extract and the review-only path, so a
+ * re-review over stored call evidence is guarded too. The stored evidence rows
+ * are never changed.
+ */
+export function evidenceForReview(evidence: Evidence[], conversation: Conversation): { evidence: Evidence[]; demoted: string[] } {
+  if (conversation.channel !== 'call') return { evidence, demoted: [] };
+  const guarded = applyCallSpeakerGuard(evidence, conversation);
+  const demoted = guarded.filter((e, i) => e !== evidence[i]).map((e) => e.id);
+  return { evidence: guarded, demoted };
 }
 
 /** The later of two ISO timestamps (either may be null). */
@@ -318,6 +340,17 @@ async function readNames(supabase: SupabaseClient, byEvidence: Record<string, Pl
     const { data, error } = await supabase.from('districts').select('id, name_ar, name_en, city_name_ar').in('id', [...districtIds]);
     if (error) throw new Error(`chat card: districts read failed: ${error.message}`);
     for (const d of (data ?? []) as Row[]) names[s(d.id)] = { name_ar: s(d.name_ar), name_en: s(d.name_en), city: s(d.city_name_ar) };
+    // A uuid that is not a district is a whole CITY or REGION placement
+    // («in Riyadh», «Dammam»). Without this lookup the card printed the raw
+    // uuid to the rep (seen 2026-09-29 on an English call).
+    const unnamed = [...districtIds].filter((id) => !names[id]);
+    for (const table of ['cities', 'regions'] as const) {
+      const still = unnamed.filter((id) => !names[id]);
+      if (!still.length) break;
+      const { data: rows, error: e2 } = await supabase.from(table).select('id, name_ar, name_en').in('id', still);
+      if (e2) throw new Error(`chat card: ${table} read failed: ${e2.message}`);
+      for (const r of (rows ?? []) as Row[]) names[s(r.id)] = { name_ar: s(r.name_ar), name_en: s(r.name_en), city: '' };
+    }
   }
   if (elementIds.size) {
     const { data, error } = await supabase.from('geo_elements').select('external_id, name_ar, name_en').in('external_id', [...elementIds]);
@@ -484,7 +517,7 @@ export async function analyzeChatConversation(
   const current = await loadChatCard(supabase, clientId, chatWid, { now: nowFn });
   if (current.status !== 'none' && !current.can_reanalyze) {
     log(`[geo-chat-card] client=${clientId} chat=${chatWid} read ${current.analyzed_at} — within cool-down, skipped`);
-    return { ...current, mode: 'skipped_recent' };
+    return { ...current, mode: 'skipped_recent', minted_proposal_id: null };
   }
 
   const given = opts.conversation && opts.conversation.id === chatWid && opts.conversation.turns.length > 0 ? opts.conversation : null;
@@ -506,22 +539,28 @@ export async function analyzeChatConversation(
     hasProtectedEvidence,
   });
 
-  if (mode === 're_review' && cp) {
-    await runReReview(supabase, deps, clientId, conversation, cp, evRows, log);
-  } else {
-    await runExtract(supabase, deps, clientId, conversation, cp, log);
-  }
+  const minted_proposal_id = mode === 're_review' && cp
+    ? await runReReview(supabase, deps, clientId, conversation, cp, evRows, log)
+    : await runExtract(supabase, deps, clientId, conversation, cp, log);
 
   const card = await loadChatCard(supabase, clientId, chatWid, { now: nowFn });
-  return { ...card, mode };
+  return { ...card, mode, minted_proposal_id };
 }
 
-/** Review-only rerun over the stored evidence (no LLM extraction; evidence + checkpoint ids kept). */
+/** Log the call speaker guard's demotions (nothing for a chat). */
+function logGuard(log: (m: string) => void, clientId: string, conversation: Conversation, demoted: string[]): void {
+  if (demoted.length === 0) return;
+  log(`[geo-chat-card] client=${clientId} call=${conversation.id} speaker guard: ${demoted.length} mention(s) not in the customer's own words → role none (${demoted.join(',')})`);
+}
+
+/** Review-only rerun over the stored evidence (no LLM extraction; evidence + checkpoint ids kept). Returns the minted proposal id. */
 async function runReReview(
   supabase: SupabaseClient, deps: BackfillDeps, clientId: string, conversation: Conversation,
   cp: CheckpointRow, evRows: Row[], log: (m: string) => void,
-): Promise<void> {
-  const evidence = evRows.map(rowToEvidence);
+): Promise<string | null> {
+  const guarded = evidenceForReview(evRows.map(rowToEvidence), conversation);
+  const evidence = guarded.evidence;
+  logGuard(log, clientId, conversation, guarded.demoted);
   const { data: relRows, error: relErr } = await supabase
     .from('geo_pref_relations').select('*').eq('conversation_id', conversation.id ?? '').eq('origin', 'model');
   if (relErr) throw new Error(`chat card: relations read failed: ${relErr.message}`);
@@ -554,13 +593,14 @@ async function runReReview(
     await linkSuperseded(supabase, older, proposalId);
     if (deps.verify) await deps.verify(conversation, evidence, proposalId);
   }
+  return proposalId;
 }
 
-/** The backfill's per-conversation path: extract → persist → remap → review → verify. */
+/** The backfill's per-conversation path: extract → persist → remap → review → verify. Returns the minted proposal id. */
 async function runExtract(
   supabase: SupabaseClient, deps: BackfillDeps, clientId: string, conversation: Conversation,
   cp: CheckpointRow | null, log: (m: string) => void,
-): Promise<void> {
+): Promise<string | null> {
   // Capture the open proposals BEFORE persisting: persistExtraction deletes the
   // old checkpoint and their checkpoint_id becomes NULL (FK ON DELETE SET NULL).
   const older = cp ? await readPendingProposalIds(supabase, cp.id) : [];
@@ -572,6 +612,10 @@ async function runExtract(
     checkpointId = persisted.checkpointId;
     if (persisted.idMap) ({ evidence, relations } = remapExtractionIds(evidence, relations, persisted.idMap));
   }
+  // The STORED rows keep the model's reading; only the review (and verifier) see the guarded one.
+  const guarded = evidenceForReview(evidence, conversation);
+  evidence = guarded.evidence;
+  logGuard(log, clientId, conversation, guarded.demoted);
   const ctx = await deps.buildRunContext(clientId, evidence.length);
   if (checkpointId) ctx.checkpoint_id = checkpointId;
   const result = await deps.runReviewFirst(evidence, relations, ctx, { proposals: deps.proposals });
@@ -582,4 +626,5 @@ async function runExtract(
   await markSuperseded(supabase, older.filter((id) => id !== proposalId), proposalId);
   log(`[geo-chat-card] client=${clientId} chat=${conversation.id} mode=extract decision=${result.decision} evidence=${evidence.length} proposal=${proposalId ?? 'none'} superseded=${older.length}`);
   if (proposalId && deps.verify) await deps.verify(conversation, evidence, proposalId);
+  return proposalId;
 }

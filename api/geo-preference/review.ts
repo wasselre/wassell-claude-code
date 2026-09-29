@@ -348,6 +348,33 @@ export interface ClientWriteResult {
   after: LocationItem[];
 }
 
+/** The 409 error a call-audit geo save answers when the client has places. The chat card keys its message on it. */
+export const CLIENT_HAS_PLACES = 'client_has_places';
+
+export interface ApplyOptions {
+  /**
+   * FILL-EMPTY-ONLY (a proposal the CALL AUDIT minted): write only when the
+   * client has NO places — decided on the FRESH row inside the versioned write.
+   * A client with places ⇒ ReviewError(409, CLIENT_HAS_PLACES), nothing written.
+   * false (chat proposals) ⇒ today's union, unchanged.
+   */
+  onlyIfNoPlaces: boolean;
+}
+
+/**
+ * PURE — the new client `data` for a geo apply, built on the FRESH row. A chat
+ * proposal unions its items onto the current `location_items` (never removes).
+ * A call-audit proposal (`onlyIfNoPlaces`) refuses when the fresh row already
+ * has places: the call must never replace or add to places a rep has saved.
+ */
+export function buildGeoApplyData(
+  freshData: Record<string, unknown>, items: LocationItem[], opts: ApplyOptions,
+): Record<string, unknown> {
+  const existing = parseLocationItems(freshData.location_items);
+  if (opts.onlyIfNoPlaces && existing.length > 0) throw new ReviewError(409, CLIENT_HAS_PLACES);
+  return { ...freshData, location_items: mergeLocationItems(existing, items) };
+}
+
 /**
  * The LOGICAL audit record. The HTTP `insertAudit` port maps it onto the physical
  * append-only `geo_pref_review_audit` columns (proposal_id, reviewer, action,
@@ -384,8 +411,17 @@ export interface ProposalPatch {
  */
 export interface ReviewDeps {
   getProposal(id: string): Promise<ProposalRow | null>;
-  /** The ONLY write to a client's location preferences. Returns before/after. */
-  applyToClient(clientId: string, items: LocationItem[]): Promise<ClientWriteResult>;
+  /**
+   * The ONLY write to a client's location preferences. Returns before/after.
+   * With `onlyIfNoPlaces` it must build on the fresh row via buildGeoApplyData
+   * (refusing with 409 CLIENT_HAS_PLACES when the client has places).
+   */
+  applyToClient(clientId: string, items: LocationItem[], opts: ApplyOptions): Promise<ClientWriteResult>;
+  /**
+   * Did the CALL AUDIT mint this proposal (call_pref_audit.geo_proposal_id)?
+   * Then its save is fill-empty-only. Optional: absent ⇒ false (tests, chats).
+   */
+  isCallAuditProposal?(proposalId: string): Promise<boolean>;
   updateProposal(id: string, patch: ProposalPatch, expectedStatus: string): Promise<void>;
   insertAudit(row: AuditRow): Promise<void>;
   /** Access gate for the apply branch; throw to deny. Optional (tests omit it). */
@@ -464,7 +500,11 @@ export async function applyReview(deps: ReviewDeps, input: ReviewInput): Promise
 
   if (isApply) {
     const items = geoPreferenceToLocationItems(expressionAfter);
-    const res = await deps.applyToClient(proposal.client_id, items);
+    // A call-audit proposal is fill-empty-only; the check itself runs on the
+    // fresh row inside the write (a refusal throws 409 before the proposal is
+    // touched, so it stays pending for the rep to dismiss).
+    const onlyIfNoPlaces = deps.isCallAuditProposal ? await deps.isCallAuditProposal(proposal.id) : false;
+    const res = await deps.applyToClient(proposal.client_id, items, { onlyIfNoPlaces });
     before = res.before;
     after = res.after;
     applied = true;
@@ -561,7 +601,13 @@ export default async function handler(req: Request): Promise<Response> {
       async assertCanApply(clientId) {
         await assertCanAccessRecord(req, clientId, SERVICE_NAME);
       },
-      async applyToClient(clientId, items) {
+      async isCallAuditProposal(id) {
+        const { data, error } = await service
+          .from('call_pref_audit').select('call_id').eq('geo_proposal_id', id).limit(1);
+        if (error) throw new ReviewError(500, `call audit lookup failed: ${error.message}`);
+        return (data ?? []).length > 0;
+      },
+      async applyToClient(clientId, items, opts) {
         // Read the current client record for the audit "before" snapshot.
         const { data: cur, error: readErr } = await service
           .from('records')
@@ -571,16 +617,16 @@ export default async function handler(req: Request): Promise<Response> {
         if (readErr) throw new ReviewError(500, `client read failed: ${readErr.message}`);
         if (!cur) throw new ReviewError(404, `client ${clientId} not found`);
         const before = parseLocationItems((cur.data as Record<string, unknown> | null)?.location_items);
+        if (opts.onlyIfNoPlaces && before.length > 0) throw new ReviewError(409, CLIENT_HAS_PLACES);
         const after = mergeLocationItems(before, items);
         // Write through the approved versioned RPC. recordSaveWithRetry re-reads
         // the fresh row each attempt and unions our items onto the CURRENT
-        // location_items — never wiping a concurrent manual edit.
+        // location_items — never wiping a concurrent manual edit. A call-audit
+        // proposal re-checks "no places" on that fresh row (buildGeoApplyData
+        // throws 409, which recordSaveWithRetry propagates without saving).
         await recordSaveWithRetry(service, {
           recordId: clientId,
-          build: (freshData) => {
-            const existing = parseLocationItems(freshData.location_items);
-            return { ...freshData, location_items: mergeLocationItems(existing, items) };
-          },
+          build: (freshData) => buildGeoApplyData(freshData, items, opts),
         });
         return { before, after };
       },

@@ -6,6 +6,7 @@ import Button from '@/components/ui/Button';
 import { PREF_FIELD_KINDS, PREF_SLUG_ORDER, isSameAsSaved } from '@/lib/clientPrefs/mergePrefs';
 import { callJson, HttpError } from '../lib/cardHttp';
 import { usePrefFieldFormat } from '../lib/usePrefFieldFormat';
+import type { GeoCardDTO } from '../lib/geoRows';
 
 /**
  * «تفضيلات العميل من المحادثة» — the preference half of the in-chat card.
@@ -66,6 +67,19 @@ export interface PrefsCardDTO {
   current_values: Record<string, unknown>;
   /** The call audit's proposals for this client (optional: an older API build omits it). */
   call_proposals?: CallProposalDTO[];
+  /** The call audit's PLACES for this client (optional: an older API build omits it). */
+  call_geo?: CallGeoDTO[];
+}
+
+/** The places the call audit read from one call (api/_lib/clientPrefs/card.ts PrefsCardCallGeo). */
+export interface CallGeoDTO {
+  call_id: string;
+  call_at: string | null;
+  /** The geo proposal the audit minted — the card's proposal is shown only when it IS this one. */
+  proposal_id: string;
+  card: GeoCardDTO;
+  /** FRESH: the client has places now ⇒ saving is refused (fill-empty-only). */
+  has_places: boolean;
 }
 
 interface Props {
