@@ -27,6 +27,38 @@ export interface PublishAssetMeta {
   size_bytes?: number | null;
   duration_seconds?: number | null;
   aspect_ratio?: string | null;
+  /**
+   * The platform receives a platform-sized COPY of this image, not the file
+   * itself (see `isRenderableImage`), so the file's own byte size is not what
+   * the platform checks. Set by the caller that knows how the file is sent.
+   */
+  rendered?: boolean;
+}
+
+/**
+ * Images go out as a copy no larger than this box (2026-09-29). A designer's
+ * master is typically 3375×3375 or 3375×6000 and 9–18 MB; bundle.social rejects
+ * an Instagram image wider than 1920 px and Instagram caps images at 8 MB, so
+ * the masters themselves could never be posted. The copy is made on the fly by
+ * Supabase Storage (a signed URL with a transform), keeps the aspect ratio
+ * (`contain`) and the format, and leaves the approved file untouched — a 1:1
+ * master becomes 1080×1080, a 9:16 master 1080×1920. Measured on the 24 Sep
+ * يمام بارك 14 designs: 9.45 MB → 1.13 MB and 17.75 MB → 1.94 MB.
+ */
+export const RENDITION_BOX = { width: 1080, height: 1920 } as const;
+
+/**
+ * Is this asset sent as a rendition? Only a stored image file can be resized on
+ * the fly: a legacy link-only asset (`url`) is fetched as-is, and video/audio/
+ * documents are never touched.
+ */
+export function isRenderableImage(asset: {
+  kind: string; mime_type?: string | null; file_id?: string | null; url?: string | null;
+}): boolean {
+  if (asset.kind !== 'photo' && asset.kind !== 'design') return false;
+  if (asset.url || !asset.file_id) return false;
+  const mime = (asset.mime_type ?? '').toLowerCase();
+  return mime === '' || /^image\/(jpe?g|png|webp)$/.test(mime);
 }
 
 export interface RuleIssue {
@@ -198,14 +230,21 @@ export function preflightPublishSet(
   let anySizeUnknown = false;
   assets.forEach((asset, idx) => {
     const video = isVideoKind(asset.kind);
-    const size = typeof asset.size_bytes === 'number' && asset.size_bytes > 0 ? asset.size_bytes : null;
+    // A rendered image reaches the platform as a ≤1080 px copy, so the master's
+    // byte size says nothing about what the platform will check. Treat it as
+    // "not the platform's number" rather than as a violation.
+    const size = asset.rendered === true
+      ? null
+      : (typeof asset.size_bytes === 'number' && asset.size_bytes > 0 ? asset.size_bytes : null);
     const dur = typeof asset.duration_seconds === 'number' && asset.duration_seconds > 0
       ? asset.duration_seconds : null;
     const mime = (asset.mime_type ?? '').toLowerCase();
     // «الملف ٣:» prefix only when there is more than one file to point at.
     const at = n > 1 ? `الملف ${idx + 1}: ` : '';
     const atEn = n > 1 ? `File ${idx + 1}: ` : '';
-    if (size === null) anySizeUnknown = true;
+    // A rendered image's size is KNOWN to be small (it is resized first), so it
+    // is not an unverified size — only a genuinely unrecorded one warns.
+    if (size === null && asset.rendered !== true) anySizeUnknown = true;
 
     // Universal: bundle fetches by URL — 1 GB ceiling regardless of platform.
     if (size !== null && size > FROM_URL_MAX_BYTES) {

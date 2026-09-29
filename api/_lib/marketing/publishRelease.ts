@@ -45,7 +45,9 @@ import {
   type BundleConfig, BundleApiError, isBundlePlatform, platformAcceptsKind,
   buildPlatformData, uploadFromUrl, createPost, deletePost,
 } from './bundleSocial.js';
-import { preflightPublishSet } from '../../../src/lib/marketingOS/platformRules.js';
+import {
+  preflightPublishSet, isRenderableImage, RENDITION_BOX,
+} from '../../../src/lib/marketingOS/platformRules.js';
 import { makeServiceClient } from '../serviceClient.js';
 import { enqueueWasselReadsOnPublish } from './creative/onPublished.js';
 import {
@@ -183,7 +185,14 @@ export async function publishPublication(
   // WRITING being empty, not on `mos_publications.caption` being empty, so the
   // 10 pre-cutover drafts (legacy path, captionRequired=false) are untouched.
   // A story passes with no caption by design.
-  const flight = preflightPublishSet(platform, assets, finalCaption, { captionRequired });
+  // A stored image goes out as a ≤1080 px copy (see resolveUrl), so the rules
+  // judge that copy, not the designer's master.
+  const flight = preflightPublishSet(
+    platform,
+    assets.map((a) => ({ ...a, rendered: isRenderableImage(a) })),
+    finalCaption,
+    { captionRequired },
+  );
   const blockers = flight.issues.filter((i) => i.level === 'block');
   if (blockers.length > 0) {
     const detail = blockers.map((b) => `${b.ar} / ${b.en}`).join('  •  ');
@@ -199,6 +208,13 @@ export async function publishPublication(
   // Resolve each file to a URL bundle can fetch (public legacy URL
   // verbatim, or a 1h signed URL — bundle fetches server-side right after
   // handoff, but its fetch can queue; 300s left no slack).
+  //
+  // A stored image is signed as a RESIZED copy (2026-09-29): the designers'
+  // masters are 3375 px and up to 18 MB, and bundle.social refuses an
+  // Instagram image wider than 1920 px («Instagram Post image width must be at
+  // most 1920» — measured on the 24 Sep يمام بارك 14 posts). Supabase resizes
+  // on the fly inside RENDITION_BOX, keeping the aspect and the format; the
+  // approved file itself is never changed, so the approval hashes still hold.
   const svc = makeServiceClient('api:marketing-os');
   const resolveUrl = async (a: AssetRow): Promise<string> => {
     if (a.url) return a.url;
@@ -210,7 +226,14 @@ export async function publishPublication(
     const file = fr.data as { storage_bucket: string; storage_path: string } | null;
     if (!file) throw new Error(`file row missing for asset ${a.id}`);
     const signed = await svc.storage.from(file.storage_bucket)
-      .createSignedUrl(file.storage_path, 3600);
+      .createSignedUrl(file.storage_path, 3600, isRenderableImage(a)
+        ? {
+          transform: {
+            width: RENDITION_BOX.width, height: RENDITION_BOX.height,
+            resize: 'contain', quality: 90, format: 'origin',
+          },
+        }
+        : undefined);
     if (signed.error || !signed.data?.signedUrl) {
       throw new Error(signed.error?.message ?? 'sign failed');
     }

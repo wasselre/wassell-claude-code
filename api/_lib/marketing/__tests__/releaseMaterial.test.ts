@@ -12,7 +12,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { preflightPublishSet } from '../../../../src/lib/marketingOS/platformRules.js';
+import {
+  preflightPublishSet, isRenderableImage, RENDITION_BOX,
+} from '../../../../src/lib/marketingOS/platformRules.js';
 import {
   MANAGED_MATERIAL_RULE, RELEASE_REFUSAL, SLOT_BY_VARIANT, resolveReleaseMaterial,
 } from '../releaseMaterial.js';
@@ -34,8 +36,10 @@ interface Fixture {
   approval?: Row | null;
   designHash?: string | null;
   captionHash?: string | null;
+  /** Open steps on the content or its row (2026-09-29 gate). */
+  openTasks?: Row[];
   fail?: Partial<Record<'mos_publications' | 'mos_content' | 'workflow_versions'
-    | 'mos_asset_links' | 'mos_content_approvals', string>>;
+    | 'mos_asset_links' | 'mos_content_approvals' | 'workflow_role_tasks', string>>;
   rpcFail?: string;
 }
 
@@ -57,6 +61,7 @@ function makeClient(fx: Fixture): { sb: SupabaseClient; calls: Calls } {
       case 'workflow_versions': return { data: fx.version ?? null, error: null };
       case 'mos_asset_links': return { data: fx.links ?? [], error: null };
       case 'mos_content_approvals': return { data: fx.approval ?? null, error: null };
+      case 'workflow_role_tasks': return { data: fx.openTasks ?? [], error: null };
       default: throw new Error(`fake client: unexpected table ${table}`);
     }
   };
@@ -67,7 +72,7 @@ function makeClient(fx: Fixture): { sb: SupabaseClient; calls: Calls } {
       calls.filters.push({ table, op, args });
       return self;
     };
-    for (const op of ['select', 'eq', 'is', 'in', 'order', 'limit']) self[op] = chain(op);
+    for (const op of ['select', 'eq', 'is', 'in', 'or', 'order', 'limit']) self[op] = chain(op);
     self.maybeSingle = () => Promise.resolve(listFor(table));
     // `mos_asset_links` is awaited without `.maybeSingle()`.
     self.then = (
@@ -95,10 +100,16 @@ const managedVersion = (steps: Row[] = [{ key: 'design_review', auto_meta_ad: tr
   definition: { metadata: { key: 'post_std', managed_by: 'marketing_os', material_rule: MANAGED_MATERIAL_RULE, steps } },
 });
 const legacyVersion = (): Row => ({ definition: { metadata: { key: 'post_std', managed_by: 'marketing_os', steps: [] } } });
+const ROW = '66666666-6666-4666-8666-666666666666';
 const content = (over: Row = {}): Row => ({
   data: { caption: 'نص معتمد', hashtags: '#وصل #الرياض' },
-  workflow_version_id: VERSION, ...over,
+  workflow_version_id: VERSION, row_id: ROW, ...over,
 });
+/** A final approval whose hashes still match — what a finished post carries. */
+const approved: Partial<Fixture> = {
+  approval: { step_key: 'design_review', approved_at: '2026-09-27T11:14:43Z', design_hash: 'dh', caption_hash: 'ch' },
+  designHash: 'dh', captionHash: 'ch',
+};
 
 const run = (fx: Fixture) => {
   const { sb, calls } = makeClient(fx);
@@ -124,7 +135,7 @@ describe('the cutover boundary (D1 / D6b)', () => {
   it('the marker switches the content onto the managed path', async () => {
     const { r } = await run({
       content: content(), version: managedVersion(), placementVariant: 'feed',
-      links: [{ asset_id: SQUARE, role: 'final_square' }],
+      links: [{ asset_id: SQUARE, role: 'final_square' }], ...approved,
     });
     expect(r.mode).toBe('managed');
   });
@@ -134,7 +145,7 @@ describe('files by destination (D1)', () => {
   it('a feed post resolves the square slot and carries the approved caption', async () => {
     const { r, calls } = await run({
       content: content(), version: managedVersion(), placementVariant: 'feed',
-      links: [{ asset_id: SQUARE, role: 'final_square' }],
+      links: [{ asset_id: SQUARE, role: 'final_square' }], ...approved,
     });
     expect(r.mode).toBe('managed');
     if (r.mode !== 'managed') return;
@@ -149,7 +160,7 @@ describe('files by destination (D1)', () => {
   it('a story resolves the vertical slot and carries NO caption', async () => {
     const { r, calls } = await run({
       content: content(), version: managedVersion(), placementVariant: 'story',
-      links: [{ asset_id: VERTICAL, role: 'final_vertical' }],
+      links: [{ asset_id: VERTICAL, role: 'final_vertical' }], ...approved,
     });
     expect(r.mode).toBe('managed');
     if (r.mode !== 'managed') return;
@@ -196,10 +207,12 @@ describe('the hash check (D2)', () => {
     links: [{ asset_id: SQUARE, role: 'final_square' }],
   };
 
-  it('NO approval row falls through and publishes — 0 rows live, refusing would block everything', async () => {
+  it('NO final approval refuses — an unapproved design never posts on its date (2026-09-29)', async () => {
     const { r, calls } = await run({ ...base, approval: null });
-    expect(r.mode).toBe('managed');
-    // No approval means no hashes to compare, so no RPC round-trip either.
+    expect(r.mode).toBe('refuse');
+    if (r.mode !== 'refuse') return;
+    expect(r.reason).toBe(RELEASE_REFUSAL.NOT_APPROVED);
+    // Refused before any hash round-trip: there is nothing to compare against.
     expect(calls.rpcs).toHaveLength(0);
   });
 
@@ -276,7 +289,7 @@ describe('the hash check (D2)', () => {
 });
 
 describe('a failed read is never silently downgraded', () => {
-  for (const table of ['mos_publications', 'mos_content', 'workflow_versions', 'mos_asset_links', 'mos_content_approvals'] as const) {
+  for (const table of ['mos_publications', 'mos_content', 'workflow_versions', 'mos_asset_links', 'workflow_role_tasks', 'mos_content_approvals'] as const) {
     it(`${table} failing returns 'error', not 'legacy' and not 'managed'`, async () => {
       const { r } = await run({
         content: content(), version: managedVersion(), placementVariant: 'feed',
@@ -297,6 +310,67 @@ describe('a failed read is never silently downgraded', () => {
       rpcFail: 'no function',
     });
     expect(r.mode).toBe('error');
+  });
+});
+
+describe('nothing in production is posted (2026-09-29)', () => {
+  const base: Fixture = {
+    content: content(), version: managedVersion(), placementVariant: 'feed',
+    links: [{ asset_id: SQUARE, role: 'final_square' }], ...approved,
+  };
+
+  it('an open step on the row refuses, naming the step — the 22 Sep batch sent back for «النرجس»', async () => {
+    const { r } = await run({ ...base, openTasks: [{ step_key: 'design' }] });
+    expect(r.mode).toBe('refuse');
+    if (r.mode !== 'refuse') return;
+    expect(r.reason).toBe(RELEASE_REFUSAL.IN_PRODUCTION);
+    expect(r.en).toContain('design');
+  });
+
+  it('asks about BOTH the row and the content itself', async () => {
+    const { calls } = await run(base);
+    const or = calls.filters.find((c) => c.table === 'workflow_role_tasks' && c.op === 'or');
+    expect(String(or?.args[0])).toContain(`subject_table.eq.mos_content_rows,subject_id.eq.${ROW}`);
+    expect(String(or?.args[0])).toContain(`subject_table.eq.mos_content,subject_id.eq.${CONTENT}`);
+    const status = calls.filters.find((c) => c.table === 'workflow_role_tasks' && c.op === 'eq');
+    expect(status?.args).toEqual(['status', 'open']);
+  });
+
+  it('content with no row still checks its own steps', async () => {
+    const { calls } = await run({ ...base, content: content({ row_id: null }) });
+    const or = calls.filters.find((c) => c.table === 'workflow_role_tasks' && c.op === 'or');
+    expect(String(or?.args[0])).toBe(`and(subject_table.eq.mos_content,subject_id.eq.${CONTENT})`);
+  });
+
+  it('a finished, approved post with matching hashes goes out', async () => {
+    const { r } = await run(base);
+    expect(r.mode).toBe('managed');
+  });
+});
+
+describe('images go out as a resized copy (2026-09-29)', () => {
+  const master = { kind: 'photo', mime_type: 'image/png', size_bytes: 17_753_044, file_id: 'f1', url: null };
+
+  it('a stored image is renderable; a link-only asset, a video and a GIF are not', () => {
+    expect(isRenderableImage(master)).toBe(true);
+    expect(isRenderableImage({ ...master, kind: 'design' })).toBe(true);
+    expect(isRenderableImage({ ...master, url: 'https://x/y.png' })).toBe(false);
+    expect(isRenderableImage({ ...master, file_id: null })).toBe(false);
+    expect(isRenderableImage({ ...master, kind: 'video', mime_type: 'video/mp4' })).toBe(false);
+    expect(isRenderableImage({ ...master, mime_type: 'image/gif' })).toBe(false);
+  });
+
+  it('the 17.75 MB master is blocked as-is but passes as the copy it is sent as', () => {
+    const asIs = preflightPublishSet('instagram', [master], 'نص');
+    expect(asIs.issues.some((i) => i.level === 'block' && i.en.includes('8MB'))).toBe(true);
+    const sent = preflightPublishSet('instagram', [{ ...master, rendered: true }], 'نص');
+    expect(sent.issues.filter((i) => i.level === 'block')).toHaveLength(0);
+    // Its size is not "unrecorded" either — the copy is known to be small.
+    expect(sent.issues).toHaveLength(0);
+  });
+
+  it('the copy fits inside 1080×1920 — well under bundle.social’s 1920 px width cap', () => {
+    expect(RENDITION_BOX).toEqual({ width: 1080, height: 1920 });
   });
 });
 

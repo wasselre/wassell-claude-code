@@ -17,7 +17,9 @@
  * never claim a post is fine that the publish path would then refuse.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { preflightPublishSet, CAPTION_MAX } from '../../../../src/lib/marketingOS/platformRules.js';
+import {
+  preflightPublishSet, CAPTION_MAX, isRenderableImage,
+} from '../../../../src/lib/marketingOS/platformRules.js';
 import type { PlanCtx } from './actions.js';
 
 function json(body: unknown, status: number): Response {
@@ -98,7 +100,13 @@ async function requirements(sb: SupabaseClient, rel: ReleaseRow): Promise<{
       assets,
     };
   }
-  const flight = preflightPublishSet(rel.platform, assets, caption);
+  // Same view of the files as the publish gate: a stored image is judged as
+  // the resized copy it is sent as, not as the designer's master.
+  const flight = preflightPublishSet(
+    rel.platform,
+    assets.map((a) => ({ ...a, rendered: isRenderableImage(a) })),
+    caption,
+  );
   return {
     ok: flight.issues.every((i) => i.level !== 'block'),
     caption_max: flight.captionMax ?? CAPTION_MAX[rel.platform] ?? null,
@@ -217,6 +225,63 @@ export async function releaseMarkPublished(ctx: PlanCtx): Promise<Response> {
   if (!upd.data) return err(404, 'release not found');
 
   return ok({ release_id: id, status: 'published', external_url: url });
+}
+
+/**
+ * Move a release to a new moment — «أعد الجدولة» on the month page (2026-09-29).
+ *
+ * The sweep posts it when the new time comes (through the same approval gate),
+ * and the database clears any recorded hold in the same write. Refused once the
+ * release is already with bundle.social: that post lives on the platform now,
+ * and moving our row would only make the two disagree.
+ */
+export async function releaseReschedule(ctx: PlanCtx): Promise<Response> {
+  const id = str(ctx.body.release_id) ?? str(ctx.body.publication_id);
+  if (!id) return err(400, 'release_id is required');
+  const at = str(ctx.body.scheduled_at);
+  const when = at ? Date.parse(at) : Number.NaN;
+  if (!Number.isFinite(when)) return err(400, 'scheduled_at must be a date and time');
+  if (when < Date.now() + 2 * 60_000) {
+    return err(400, 'اختر وقتًا بعد دقيقتين على الأقل. / Pick a time at least two minutes from now.');
+  }
+
+  const upd = await ctx.sb.from('mos_publications')
+    .update({ scheduled_at: new Date(when).toISOString() })
+    .eq('id', id)
+    .in('status', ['planned', 'draft', 'scheduled'])
+    .is('bundle_post_id', null)
+    .select('id, scheduled_at')
+    .maybeSingle();
+  if (upd.error) return err(500, upd.error.message);
+  if (!upd.data) {
+    return err(409,
+      'لا يمكن إعادة جدولته: إما نُشر أو أُلغي أو أُرسل للمنصة بالفعل. / '
+      + 'Cannot reschedule: it is published, cancelled, or already with the platform.');
+  }
+  return ok({ release_id: id, scheduled_at: (upd.data as { scheduled_at: string }).scheduled_at });
+}
+
+/**
+ * Drop a release — «ألغِ» on the month page (2026-09-29). Nothing is posted and
+ * the hold goes with it. Same hand-off guard as rescheduling.
+ */
+export async function releaseCancel(ctx: PlanCtx): Promise<Response> {
+  const id = str(ctx.body.release_id) ?? str(ctx.body.publication_id);
+  if (!id) return err(400, 'release_id is required');
+  const upd = await ctx.sb.from('mos_publications')
+    .update({ status: 'cancelled' })
+    .eq('id', id)
+    .in('status', ['planned', 'draft', 'scheduled'])
+    .is('bundle_post_id', null)
+    .select('id')
+    .maybeSingle();
+  if (upd.error) return err(500, upd.error.message);
+  if (!upd.data) {
+    return err(409,
+      'لا يمكن إلغاؤه: إما نُشر أو أُلغي أو أُرسل للمنصة بالفعل. / '
+      + 'Cannot cancel: it is published, cancelled, or already with the platform.');
+  }
+  return ok({ release_id: id, status: 'cancelled' });
 }
 
 /**

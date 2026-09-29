@@ -320,6 +320,14 @@ export default function MonthPage() {
     return () => { cancelled = true; };
   }, [tense, month]);
 
+  // After a decision on a held release (publish / reschedule / cancel), re-read
+  // the report so its line disappears or changes.
+  const reloadReport = useCallback(() => {
+    fetchMonthReport(month)
+      .then((r) => setReport(r))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  }, [month]);
+
   const saveNote = useCallback(async (coord: NoteCoord, body: string) => {
     setSavingNote(true);
     try {
@@ -1064,7 +1072,10 @@ export default function MonthPage() {
             <span className="r">{num(data.exceptions.length, isAr)}</span>
           </div>
           <div className="card-b">
-            <MonthExceptions exceptions={data.exceptions} isAr={isAr} projectName={projectName} />
+            <MonthExceptions
+              exceptions={data.exceptions} isAr={isAr} projectName={projectName}
+              onChanged={() => { void load(); }}
+            />
           </div>
         </div>
 
@@ -1178,7 +1189,10 @@ export default function MonthPage() {
               <span className="r">{num(report.exceptions.length, isAr)}</span>
             </div>
             <div className="card-b">
-              <MonthExceptions exceptions={report.exceptions} isAr={isAr} projectName={projectName} />
+              <MonthExceptions
+                exceptions={report.exceptions} isAr={isAr} projectName={projectName}
+                onChanged={reloadReport}
+              />
             </div>
           </div>
 

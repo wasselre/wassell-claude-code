@@ -3734,6 +3734,16 @@ export const openReleaseTask = (
 ): Promise<{ task_id: string | null }> =>
   call('release_open_task', { release_id: releaseId, reason: reason ?? 'manual', detail: detail ?? null });
 
+/** «أعد الجدولة» — move a held release to a new moment; the sweep posts it then. */
+export const rescheduleRelease = (
+  releaseId: string, scheduledAt: string,
+): Promise<{ release_id: string; scheduled_at: string }> =>
+  call('release_reschedule', { release_id: releaseId, scheduled_at: scheduledAt });
+
+/** «ألغِ» — drop a held release; nothing is posted. */
+export const cancelRelease = (releaseId: string): Promise<{ release_id: string; status: string }> =>
+  call('release_cancel', { release_id: releaseId });
+
 export interface MosAdReadiness {
   ok: boolean;
   blockers: Array<{ code: string; label_ar: string; label_en: string }>;

@@ -65,6 +65,7 @@ import { enqueueWasselReadsOnPublish } from './_lib/marketing/creative/onPublish
 import { publishPublication } from './_lib/marketing/publishRelease.js';
 import {
   releaseGet, releaseList, releaseMarkPublished, releaseOpenTask,
+  releaseReschedule, releaseCancel,
 } from './_lib/marketing/planning/releaseActions.js';
 // ONE preview picker for every content-row endpoint (2026-09-14). Before
 // this, content_list was the only action that attached a thumbnail, so every
@@ -10510,6 +10511,16 @@ export default async function handler(req: Request): Promise<Response> {
       case 'release_open_task': {
         const gate = await requireCap(sb, 'schedule'); if (gate) return gate;
         return releaseOpenTask(planCtx(sb, body, user.userId));
+      }
+      // «أعد الجدولة» / «ألغِ» on a held release (month page, 2026-09-29).
+      // Deciding WHEN or WHETHER something goes out is a scheduling decision.
+      case 'release_reschedule': {
+        const gate = await requireCap(sb, 'schedule'); if (gate) return gate;
+        return releaseReschedule(planCtx(sb, body, user.userId));
+      }
+      case 'release_cancel': {
+        const gate = await requireCap(sb, 'schedule'); if (gate) return gate;
+        return releaseCancel(planCtx(sb, body, user.userId));
       }
 
       /* ---- the month page: one screen, two tenses (F1 + F2) ---- */

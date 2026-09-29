@@ -11,14 +11,17 @@
  *      improvement rather than a bigger pile of tasks: without it, splitting
  *      publishing out would just mean more work items for a person.
  *
- *   2. Everything else raises a publication task, through `mos_release_sweep()`
- *      — the account is not connected, the platform has no integration, the
- *      operator keeps it manual, or (below) the automatic handoff failed.
+ *   2. Everything else goes to a person, through `mos_release_sweep()` — the
+ *      switch is off, the account is not connected, the platform has no
+ *      integration, the operator keeps it manual, or (below) the automatic
+ *      handoff failed or was refused.
  *
- * A failed handoff is NEVER left silent. It opens a `publish` task carrying the
- * platform's own error, so a release that could not go out is visible work
- * rather than a row quietly sitting in `planned` forever. That is the same
- * lesson as every other silent-failure bug in this repo.
+ * A release that could not go out is NEVER left silent. Publishing tasks are
+ * off (2026-09-27, operator rule), so `mos_release_open_task` records the reason
+ * on the release instead (`mos_publications.hold_reason`, 2026-09-29) and the
+ * month page's «يحتاج قرارك» lists it with «انشر الآن / أعد الجدولة / ألغِ».
+ * Before that, the function returned NULL and 12 releases missed their dates
+ * with nobody told — the same lesson as every other silent-failure bug here.
  *
  * Idempotence is inherited, not re-invented: `publishPublication` refuses a
  * publication that already has a live bundle post unless the prior attempt is
@@ -127,12 +130,14 @@ export default async function handler(req: Request): Promise<Response> {
     .slice(0, MAX_PER_TICK);
 
   // Too old to post on its own — hand it to a person with the reason, rather
-  // than publishing something whose moment passed or leaving it silent.
+  // than publishing something whose moment passed or leaving it silent. With
+  // publishing tasks off (2026-09-27) this records a HOLD on the release, which
+  // the month page lists with «انشر الآن / أعد الجدولة / ألغِ».
   for (const r of stale) {
     const opened = await sb.rpc('mos_release_open_task', {
       p_publication_id: r.release_id,
-      p_reason: 'manual',
-      p_detail: `تجاوز موعده بأكثر من ${staleHours} ساعة — لم يُنشر آليًا. قرّر: انشره الآن أو ألغِه.`,
+      p_reason: 'stale',
+      p_detail: `تجاوز موعده بأكثر من ${staleHours} ساعة فلم يُنشر آليًا — انشره الآن أو أعد جدولته أو ألغِه.`,
     });
     if (opened.error) {
       console.error('[release-sweep] could not open the stale task', r.release_id, opened.error.message);

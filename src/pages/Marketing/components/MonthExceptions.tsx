@@ -8,20 +8,25 @@
  * collapses the publish side to ONE ranked cause per release, so a disconnected
  * account does not also appear as a publish failure.
  *
- * WHAT THIS DELIBERATELY DOES NOT DO: render a button that cannot act. The
- * decisions themselves — move the row, drop the late post, retry the ad — live
- * in the row and release surfaces, which are other groups' screens. Where a
- * destination exists today the line links to it; where it does not, the
- * decision is stated in words rather than dressed as a control that would do
- * nothing when pressed. A dead button is worse than a sentence.
+ * WHAT THIS DELIBERATELY DOES NOT DO: render a button that cannot act. Most
+ * decisions — move the row, drop the late post, retry the ad — live in the row
+ * and release surfaces, which are other groups' screens. Where a destination
+ * exists today the line links to it; where it does not, the decision is stated
+ * in words rather than dressed as a control that would do nothing when pressed.
+ * A dead button is worse than a sentence. The one exception is a HELD release
+ * (2026-09-29): «انشر الآن / أعد الجدولة / ألغِ» are real actions, taken here.
  *
  * The RPC returns Arabic text only (`label_ar` / `detail_ar`) because it is the
  * operator's own language and the only text that exists for these events — so
  * an English session still reads the exception in Arabic. That is data passing
  * through, not a hardcoded string.
  */
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { MosMonthException } from '@/lib/marketingOS/client';
+import {
+  cancelRelease, publishPublication, rescheduleRelease, type MosMonthException,
+} from '@/lib/marketingOS/client';
+import { useWorkspace } from '../MarketingWorkspace';
 import { Empty } from './kit';
 import { monthDate } from './MonthDates';
 
@@ -102,6 +107,16 @@ function decisionOf(
         href: null,
         cta: null,
       };
+    case 'publish_now_reschedule_or_cancel':
+      // A release the sweep could not post (2026-09-29). The three decisions are
+      // real controls below (ReleaseHoldActions), not a sentence.
+      return {
+        text: isAr
+          ? 'انشره الآن، أو أعد جدولته، أو ألغِه. «انشر الآن» يمرّ بفحص الاعتماد نفسه.'
+          : 'publish it now, reschedule it, or cancel it. «Publish now» passes the same approval check.',
+        href: exc.subject_id ? `/m/releases/${exc.subject_id}` : null,
+        cta: isAr ? 'افتح الإصدار' : 'Open the release',
+      };
     default:
       return { text: exc.detail_ar ?? '', href: null, cta: null };
   }
@@ -117,14 +132,114 @@ const ICONS: Record<string, string> = {
   project_sold_out: '⌂',
   capacity_breach: '≡',
   ranking_cleared_none: '≋',
+  release_held: '⏸',
 };
 
+/**
+ * «انشر الآن / أعد الجدولة / ألغِ» for one held release (2026-09-29).
+ *
+ * «انشر الآن» goes through the SAME publish path as the sweep, approval gate
+ * included — a post that is not approved, or still in production, is refused
+ * with the platform-side reason shown here, never posted. Every failure is shown
+ * in the line itself; nothing is swallowed.
+ */
+function ReleaseHoldActions({
+  releaseId, isAr, onChanged,
+}: {
+  releaseId: string;
+  isAr: boolean;
+  onChanged?: () => void;
+}) {
+  const { can } = useWorkspace();
+  const [busy, setBusy] = useState<'publish' | 'reschedule' | 'cancel' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [when, setWhen] = useState('');
+  const [confirmCancel, setConfirmCancel] = useState(false);
+
+  const canPublish = can('publish');
+  const canSchedule = can('schedule');
+  if (!canPublish && !canSchedule) return null;
+
+  const act = async (kind: 'publish' | 'reschedule' | 'cancel', fn: () => Promise<unknown>) => {
+    setBusy(kind);
+    setError(null);
+    try {
+      await fn();
+      setPicking(false);
+      setConfirmCancel(false);
+      onChanged?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="mth-row" style={{ gap: 6, flexWrap: 'wrap', marginBlockStart: 8 }}>
+      {canPublish && (
+        <button
+          type="button" className="btn btn-sm btn-p" disabled={busy !== null}
+          onClick={() => { void act('publish', () => publishPublication(releaseId)); }}
+        >
+          {busy === 'publish' ? (isAr ? 'جارٍ الإرسال…' : 'Sending…') : (isAr ? 'انشر الآن' : 'Publish now')}
+        </button>
+      )}
+      {canSchedule && !picking && (
+        <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => setPicking(true)}>
+          {isAr ? 'أعد الجدولة' : 'Reschedule'}
+        </button>
+      )}
+      {canSchedule && picking && (
+        <span className="mth-row" style={{ gap: 6 }}>
+          <input
+            id={`release-when-${releaseId}`}
+            type="datetime-local" className="inp" value={when}
+            onChange={(e) => setWhen(e.target.value)}
+            aria-label={isAr ? 'الموعد الجديد' : 'New time'}
+          />
+          <button
+            type="button" className="btn btn-sm btn-p" disabled={busy !== null || !when}
+            onClick={() => {
+              void act('reschedule', () => rescheduleRelease(releaseId, new Date(when).toISOString()));
+            }}
+          >
+            {busy === 'reschedule' ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'احفظ الموعد' : 'Save time')}
+          </button>
+          <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => setPicking(false)}>
+            {isAr ? 'تراجع' : 'Back'}
+          </button>
+        </span>
+      )}
+      {canSchedule && !confirmCancel && (
+        <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => setConfirmCancel(true)}>
+          {isAr ? 'ألغِ' : 'Cancel'}
+        </button>
+      )}
+      {canSchedule && confirmCancel && (
+        <button
+          type="button" className="btn btn-sm btn-d" disabled={busy !== null}
+          onClick={() => { void act('cancel', () => cancelRelease(releaseId)); }}
+        >
+          {busy === 'cancel'
+            ? (isAr ? 'جارٍ الإلغاء…' : 'Cancelling…')
+            : (isAr ? 'تأكيد الإلغاء — لن يُنشر' : 'Confirm — it will not post')}
+        </button>
+      )}
+      {error && <p className="why" role="alert" style={{ flexBasis: '100%', margin: 0 }}>{error}</p>}
+    </div>
+  );
+}
+
 export default function MonthExceptions({
-  exceptions, isAr, projectName,
+  exceptions, isAr, projectName, onChanged,
 }: {
   exceptions: MosMonthException[];
   isAr: boolean;
   projectName: (id: string | null | undefined) => string;
+  /** Reload the page's data after a decision was made on a line. */
+  onChanged?: () => void;
 }) {
   if (exceptions.length === 0) {
     return (
@@ -165,6 +280,9 @@ export default function MonthExceptions({
                   <Link className="btn btn-sm" to={d.href}>{d.cta}</Link>
                 )}
               </div>
+              {exc.action_hint === 'publish_now_reschedule_or_cancel' && exc.subject_id && (
+                <ReleaseHoldActions releaseId={exc.subject_id} isAr={isAr} onChanged={onChanged} />
+              )}
             </div>
           </div>
         );

@@ -49,11 +49,14 @@
  * caller means a person pressing publish on a pre-cutover draft gets exactly
  * today's behaviour, not a refusal for slots that were never going to exist.
  *
- * ── The hash check (D2, settled) ───────────────────────────────────────────
- * `mos_content_approvals` has **0 rows live**. A check written as "no matching
- * approval → refuse" would block 100% of publishing on day one. So the rule is
- * "an approval EXISTS **and** its hash differs → refuse"; an absent approval
- * falls through and the release resolves normally. The only reader in the repo
+ * ── The approval gate (2026-09-29, replaces D2's fall-through) ─────────────
+ * A managed release posts only when (1) no step is open on the content or its
+ * row, (2) a FINAL approval exists, and (3) the files and caption still hash to
+ * what that approval bound. D2 (2026-09-15) let an absent approval fall through
+ * because `mos_content_approvals` had 0 rows then; it has been recorded since
+ * 20 Sep, and the fall-through meant the sweep would post whatever sat in a
+ * slot on its date — including a design the reviewer had sent back (P-404,
+ * 22 Sep). The only reader in the repo
  * before this (`worker/src/runMetaAdJob.ts`) selected `caption_hash` and threw
  * it away — an existence check dressed as a hash check.
  *
@@ -97,6 +100,10 @@ export const RELEASE_REFUSAL = {
   APPROVAL_MISMATCH: 'approval_mismatch',
   /** The platform's own rulebook refused the resolved set (existing code). */
   PREFLIGHT_BLOCKED: 'preflight_blocked',
+  /** No final approval exists for this content (2026-09-29). */
+  NOT_APPROVED: 'not_approved',
+  /** The content's row still has an open step — sent back, or unfinished (2026-09-29). */
+  IN_PRODUCTION: 'in_production',
 } as const;
 
 export type ReleaseRefusalReason = typeof RELEASE_REFUSAL[keyof typeof RELEASE_REFUSAL];
@@ -169,9 +176,10 @@ export async function resolveReleaseMaterial(
   const rawVariant = asNonEmpty((pubRes.data as { placement_variant?: unknown } | null)?.placement_variant);
 
   const cRes = await sb.from('mos_content')
-    .select('data, workflow_version_id').eq('id', contentId).maybeSingle();
+    .select('data, workflow_version_id, row_id').eq('id', contentId).maybeSingle();
   if (cRes.error) return { mode: 'error', message: `content: ${cRes.error.message}` };
-  const cRow = cRes.data as { data?: Record<string, unknown> | null; workflow_version_id?: unknown } | null;
+  const cRow = cRes.data as
+    { data?: Record<string, unknown> | null; workflow_version_id?: unknown; row_id?: unknown } | null;
   const data = (cRow?.data ?? {}) as Record<string, unknown>;
   const copy: ContentCopy = { caption: asString(data.caption) };
 
@@ -224,6 +232,31 @@ export async function resolveReleaseMaterial(
   // ── the caption: the approved writing, never a picker. Stories get none ──
   const caption = variant === 'feed' ? copy.caption : '';
 
+  // ── still being made? (2026-09-29) ───────────────────────────────────────
+  // An open step on the content or its row means it is not finished — sent
+  // back, or never completed — and its slot can hold a design the reviewer
+  // REJECTED: the 22 Sep يمام 17 batch kept P-404's square («النرجس» for
+  // «النزهة») in its slot while the fix was still open. Nothing in production
+  // is posted, whatever its date says.
+  const rowId = asNonEmpty(cRow?.row_id);
+  const openRes = await sb.from('workflow_role_tasks')
+    .select('step_key')
+    .eq('status', 'open')
+    .or(rowId
+      ? `and(subject_table.eq.mos_content_rows,subject_id.eq.${rowId}),`
+        + `and(subject_table.eq.mos_content,subject_id.eq.${contentId})`
+      : `and(subject_table.eq.mos_content,subject_id.eq.${contentId})`)
+    .limit(1);
+  if (openRes.error) return { mode: 'error', message: `open work: ${openRes.error.message}` };
+  const openStep = asNonEmpty((openRes.data as Array<{ step_key?: unknown }> | null)?.[0]?.step_key);
+  if (openStep) {
+    return {
+      mode: 'refuse', reason: RELEASE_REFUSAL.IN_PRODUCTION,
+      ar: `المحتوى ما زال قيد العمل (الخطوة المفتوحة: ${openStep}) — يُنشر بعد اعتماده النهائي.`,
+      en: `This content is still in production (open step: ${openStep}) — it posts once finally approved.`,
+    };
+  }
+
   // ── the hash check: post what was APPROVED, or nothing ──────────────────
   const approvalRes = await sb.from('mos_content_approvals')
     .select('step_key, approved_at, design_hash, caption_hash')
@@ -235,38 +268,45 @@ export async function resolveReleaseMaterial(
   const approval = approvalRes.data as
     { step_key: string; approved_at: string | null; design_hash: string | null; caption_hash: string | null } | null;
 
-  if (approval) {
-    const liveDesign = await sb.rpc('mos_content_design_hash', { p_content_id: contentId });
-    if (liveDesign.error) return { mode: 'error', message: `design hash: ${liveDesign.error.message}` };
-    const liveCaption = await sb.rpc('mos_caption_hash', { p_text: copy.caption });
-    if (liveCaption.error) return { mode: 'error', message: `caption hash: ${liveCaption.error.message}` };
-
-    const designNow = asNonEmpty(liveDesign.data);
-    const captionNow = asNonEmpty(liveCaption.data);
-    const designWas = asNonEmpty(approval.design_hash);
-    const captionWas = asNonEmpty(approval.caption_hash);
-
-    const designMoved = designNow !== designWas;
-    // The caption hash is content-level and the approval bound the whole
-    // package, so a caption edited after approval un-approves BOTH halves of
-    // the feed/story pair — not just the half that carries text. A pair that
-    // goes out half-approved is worse than one that waits.
-    const captionMoved = captionNow !== captionWas;
-    if (designMoved || captionMoved) {
-      const whatAr = [designMoved ? 'التصميم' : null, captionMoved ? 'الكابشن' : null]
-        .filter(Boolean).join(' و');
-      const whatEn = [designMoved ? 'the design' : null, captionMoved ? 'the caption' : null]
-        .filter(Boolean).join(' and ');
-      return {
-        mode: 'refuse', reason: RELEASE_REFUSAL.APPROVAL_MISMATCH,
-        ar: `تغيّر ${whatAr} بعد الاعتماد — لن يُنشر شيء غير معتمد. أعد الاعتماد ثم أعد المحاولة.`,
-        en: `${whatEn} changed after it was approved — nothing unapproved is posted. Re-approve, then retry.`,
-      };
-    }
+  // No final approval: nothing goes out (2026-09-29). This used to fall through
+  // because approvals were not recorded yet (0 rows, 2026-09-15); they are now
+  // (58 rows over 31 content items by 28 Sep), and falling through meant an
+  // unapproved design would post on its date with nobody checking.
+  if (!approval) {
+    return {
+      mode: 'refuse', reason: RELEASE_REFUSAL.NOT_APPROVED,
+      ar: 'لم يُعتمد التصميم النهائي بعد — لا يُنشر شيء قبل الاعتماد.',
+      en: 'The final design has not been approved yet — nothing is posted before approval.',
+    };
   }
-  // No approval row at all: fall through and resolve. `mos_content_approvals`
-  // is empty in production, so refusing here would block every publish on day
-  // one (build plan §3, settled as D3).
+
+  const liveDesign = await sb.rpc('mos_content_design_hash', { p_content_id: contentId });
+  if (liveDesign.error) return { mode: 'error', message: `design hash: ${liveDesign.error.message}` };
+  const liveCaption = await sb.rpc('mos_caption_hash', { p_text: copy.caption });
+  if (liveCaption.error) return { mode: 'error', message: `caption hash: ${liveCaption.error.message}` };
+
+  const designNow = asNonEmpty(liveDesign.data);
+  const captionNow = asNonEmpty(liveCaption.data);
+  const designWas = asNonEmpty(approval.design_hash);
+  const captionWas = asNonEmpty(approval.caption_hash);
+
+  const designMoved = designNow !== designWas;
+  // The caption hash is content-level and the approval bound the whole
+  // package, so a caption edited after approval un-approves BOTH halves of
+  // the feed/story pair — not just the half that carries text. A pair that
+  // goes out half-approved is worse than one that waits.
+  const captionMoved = captionNow !== captionWas;
+  if (designMoved || captionMoved) {
+    const whatAr = [designMoved ? 'التصميم' : null, captionMoved ? 'الكابشن' : null]
+      .filter(Boolean).join(' و');
+    const whatEn = [designMoved ? 'the design' : null, captionMoved ? 'the caption' : null]
+      .filter(Boolean).join(' and ');
+    return {
+      mode: 'refuse', reason: RELEASE_REFUSAL.APPROVAL_MISMATCH,
+      ar: `تغيّر ${whatAr} بعد الاعتماد — لن يُنشر شيء غير معتمد. أعد الاعتماد ثم أعد المحاولة.`,
+      en: `${whatEn} changed after it was approved — nothing unapproved is posted. Re-approve, then retry.`,
+    };
+  }
 
   return {
     mode: 'managed', variant, assetIds, caption,
