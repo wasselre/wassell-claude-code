@@ -112,3 +112,17 @@ describe('withPage (collect_rows page URLs)', () => {
   });
 });
 
+describe('save_html', () => {
+  it('hands the label to the runtime', async () => {
+    const saved: string[] = [];
+    const rt = { ...runtime(async () => ''), saveHtml: async (l: string) => { saved.push(l); } };
+    await runSteps([{ do: 'save_html', label: 'opportunities' }] as RecipeStep[], rt);
+    expect(saved).toEqual(['opportunities']);
+  });
+
+  it('fails loudly where the runtime cannot store pages', async () => {
+    const err = await runSteps([{ do: 'save_html' }] as RecipeStep[], runtime(async () => '')).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RecipeError);
+  });
+});
+

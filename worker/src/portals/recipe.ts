@@ -77,6 +77,9 @@ export type RecipeStep =
       timeout_s?: number;
     }
   | { do: 'screenshot'; label?: string; full?: boolean }
+  /** Save the current page's HTML next to the screenshots (private bucket) —
+   *  for writing a recipe against a portal whose pages need a sign-in to see. */
+  | { do: 'save_html'; label?: string }
   | ({ do: 'assert'; timeout_ms?: number; error_ar?: string; error_en?: string } & Target)
   | ({ do: 'if_visible'; timeout_ms?: number; then?: RecipeStep[]; else?: RecipeStep[] } & Target)
   | { do: 'phase'; ar: string; en: string }
@@ -312,7 +315,7 @@ export function renderTemplate(input: string, scope: TemplateScope): string {
 
 const KNOWN_STEPS = new Set([
   'goto', 'fill', 'type', 'fill_otp', 'click', 'select', 'check', 'press', 'wait', 'wait_for', 'wait_for_url',
-  'request_input', 'screenshot', 'assert', 'if_visible', 'phase', 'fail', 'set', 'collect_rows',
+  'request_input', 'screenshot', 'save_html', 'assert', 'if_visible', 'phase', 'fail', 'set', 'collect_rows',
 ]);
 
 /** Parse the `recipe` field (JSON text or an already-parsed array). Throws a
@@ -379,6 +382,8 @@ export interface RecipeRuntime {
   requestInput: (step: Extract<RecipeStep, { do: 'request_input' }>) => Promise<string>;
   /** Throws RecipeCancelledError if the rep cancelled meanwhile. */
   checkCancelled: () => Promise<void>;
+  /** Store the page HTML as run evidence (`save_html`). Absent ⇒ the step fails loudly. */
+  saveHtml?: (label: string) => Promise<void>;
   /** Where `collect_rows` puts what it read. Absent on a registration run,
    *  where a `collect_rows` step is a recipe mistake and fails loudly. */
   collected?: CollectedRow[];
@@ -527,6 +532,11 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
       rt.log(`request_input ${step.key}`);
       const answer = await rt.requestInput(step);
       scope.input[step.key] = answer;
+      return;
+    }
+    case 'save_html': {
+      if (!rt.saveHtml) throw new RecipeError('حفظ الصفحة غير متاح هنا', 'save_html is not available here', index);
+      await rt.saveHtml(step.label ?? `page-${index + 1}`);
       return;
     }
     case 'screenshot': {

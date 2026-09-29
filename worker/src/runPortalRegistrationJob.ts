@@ -308,6 +308,17 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       requestInput,
       checkCancelled: assertLive,
       collected: isCheck ? [] : undefined,
+      saveHtml: async (label: string) => {
+        // Evidence for recipe authoring. NOT added to the screenshot list (the
+        // chat card renders that list as images); the path is logged instead.
+        const safe = label.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 40) || 'page';
+        const path = `${job.id}/${String(++shotIndex).padStart(2, '0')}-${safe}.html`;
+        const { error } = await supabase.storage.from(BUCKET).upload(path, new Blob([await page.content()], { type: 'text/html' }), {
+          contentType: 'text/html', upsert: true,
+        });
+        if (error) throw new Error(`save_html upload failed: ${error.message}`);
+        log(`saved page HTML → ${path} (${page.url()})`);
+      },
     };
 
     await progress('running',
