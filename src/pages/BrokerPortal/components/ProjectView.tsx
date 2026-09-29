@@ -11,7 +11,7 @@ import {
 import type { PortalFile, PortalProjectDetail, PortalUnit } from '../lib/api';
 import { bi, fmtDate, fmtMoney, fmtMoneyShort, fmtNum, fmtPct, fmtRange, makeT, type TKey } from '../lib/i18n';
 import { DocumentsSection, Lightbox, MediaGrid, VideosSection, fileToLightbox } from './Media';
-import UnitsSection from './UnitsSection';
+import UnitsSection, { ScheduleList } from './UnitsSection';
 
 export type TabKey = 'overview' | 'units' | 'plans' | 'photos' | 'videos' | 'library' | 'documents';
 
@@ -223,7 +223,7 @@ function Overview({ detail, isAr }: { detail: PortalProjectDetail; isAr: boolean
                     <PlanStat label={t('duringConstruction')} v={fmtPct(pl.during_construction, isAr)} />
                     <PlanStat label={t('onHandover')} v={fmtPct(pl.on_handover, isAr)} />
                   </div>
-                  {pl.schedule && <div className="mt-3 text-xs text-charcoal/70 leading-relaxed">{pl.schedule}</div>}
+                  {pl.schedule && <ScheduleList schedule={pl.schedule} isAr={isAr} />}
                 </div>
               ))}
             </div>

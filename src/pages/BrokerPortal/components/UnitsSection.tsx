@@ -29,6 +29,23 @@ export function StatusPill({ unit, isAr }: { unit: PortalUnit; isAr: boolean }) 
   );
 }
 
+/** A payment schedule ("20% عند التعاقد · 10% عند إنجاز 20% · …") as one
+ *  bullet per instalment. In Arabic the percent sign becomes «٪» so bidi keeps
+ *  it beside its number instead of flipping it to the far side. */
+export function ScheduleList({ schedule, isAr }: { schedule: string; isAr: boolean }) {
+  const steps = schedule.split(/\s*[·•|]\s*|\n+/).map((s) => s.trim()).filter(Boolean);
+  return (
+    <ul className="mt-3 space-y-1.5">
+      {steps.map((s, i) => (
+        <li key={`${i}-${s}`} className="flex items-start gap-2 text-xs text-charcoal/80 leading-relaxed">
+          <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-copper shrink-0" />
+          <span>{isAr ? s.replace(/%/g, '٪') : s}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function unitTitle(u: PortalUnit, isAr: boolean): string {
   const t = makeT(isAr);
   const parts = [bi(u.type, isAr) || t('unit')];
@@ -359,7 +376,7 @@ function UnitSheet({
                         {p.after_handover ? <PlanChip label={t('afterHandover')} pct={p.after_handover} price={unit.price} isAr={isAr} /> : null}
                       </div>
                     </div>
-                    {p.schedule && <div className="mt-2 text-xs text-charcoal/70 leading-relaxed">{p.schedule}</div>}
+                    {p.schedule && <ScheduleList schedule={p.schedule} isAr={isAr} />}
                   </div>
                 ))}
               </div>
