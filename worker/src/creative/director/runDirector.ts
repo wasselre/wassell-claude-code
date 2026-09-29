@@ -144,7 +144,10 @@ export function buildGroundingCtx(input: DirectorInput): GroundingCtx {
     orgs: [],
     projectRecord: {},
     developerName: pkg.developer_name ?? null,
-    marketerName,
+    // The director's facts never carry the project's marketers (creative/facts.ts
+    // builds them without one), so `marketerName` is always OUR brand — which the
+    // blocklist exempts anyway. No project marketer to block here.
+    marketerNames: [],
     rules: { allow_developer_name: true, marketer_name: marketerName },
   });
   const competitorMediaIds = new Set(

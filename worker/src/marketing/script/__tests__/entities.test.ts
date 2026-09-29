@@ -37,7 +37,7 @@ function blocklist() {
     ],
     projectRecord: { marketing_document: 'للتواصل مع المسوّق 0501234567 — riva.sa — رخصة فال 1200012345' },
     developerName: 'أكنان',
-    marketerName: 'ريفا العقارية',
+    marketerNames: ['ريفا العقارية'],
     rules: RULES,
   });
 }
@@ -70,6 +70,12 @@ describe('buildBlocklist', () => {
   it('blocks the developer when rules forbid naming it', () => {
     const b = buildBlocklist({ brief: { cta: '' }, exemplars: [], projectRecord: {}, developerName: 'أكنان للتطوير', rules: { ...RULES, allow_developer_name: false } });
     expect(b.some((x) => x.term === 'اكنان')).toBe(true);
+  });
+  it('blocks every marketer of the project, not only the first', () => {
+    const b = buildBlocklist({ brief: { cta: '' }, exemplars: [], projectRecord: {}, marketerNames: ['ريفا العقارية', 'راكز العقارية'], rules: RULES });
+    const terms = b.filter((x) => x.source === 'project.marketer').map((x) => x.term);
+    expect(terms).toContain('ريفا العقاريه');
+    expect(terms).toContain('راكز العقاريه');
   });
 });
 

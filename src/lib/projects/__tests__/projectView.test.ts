@@ -39,7 +39,10 @@ function makeStore(): ProjectStoreSlices {
     models: [allProjects, devModel, mktModel, cities],
     records: {
       'dev-model': [{ id: 'dev-1', model_id: 'dev-model', data: { name: 'Almajdiah' }, created_at: '', updated_at: '' } as AppRecord],
-      'mkt-model': [{ id: 'mkt-1', model_id: 'mkt-model', data: { name: 'Riva' }, created_at: '', updated_at: '' } as AppRecord],
+      'mkt-model': [
+        { id: 'mkt-1', model_id: 'mkt-model', data: { name: 'Riva' }, created_at: '', updated_at: '' } as AppRecord,
+        { id: 'mkt-2', model_id: 'mkt-model', data: { name: 'Rakez' }, created_at: '', updated_at: '' } as AppRecord,
+      ],
       'cities-model': [{ id: 'city-1', model_id: 'cities-model', data: { display_name: 'Riyadh' }, created_at: '', updated_at: '' } as AppRecord],
     },
   };
@@ -87,6 +90,19 @@ describe('resolveProjectView', () => {
     expect(v.marketer).toBe('Riva');
     expect(v.delivery.kind).toBe('off_plan');
     expect(v.delivery.handoverLabel).toEqual({ ar: 'أغسطس 2028', en: 'August 2028' });
+  });
+
+  it('resolves every marketer of a multi-marketer project', () => {
+    const store = makeStore();
+    const rec: AppRecord = {
+      id: 'p6', model_id: 'ap-model', created_at: '', updated_at: '',
+      data: { project_name: 'Shared Tower', marketer: ['mkt-1', 'mkt-2'] },
+    } as AppRecord;
+    const ar = resolveProjectView(store, rec);
+    expect(ar.marketers).toEqual(['Riva', 'Rakez']);
+    expect(ar.marketer).toBe('Riva، Rakez');
+    const en = resolveProjectView(store, rec, { isAr: false });
+    expect(en.marketer).toBe('Riva, Rakez');
   });
 
   it('reads a ready project as Ready and leaves marketer null when absent', () => {

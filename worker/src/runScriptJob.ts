@@ -20,7 +20,7 @@ import type { WorkerEnv } from './env.js';
 import { callRole, createRoleLedger, embed, hasKindPrefix, ledgerToJson, recordRoleUse, resolveRoles, type AiContext } from './ai/index.js';
 import { loadBrief } from './marketing/script/brief.js';
 import { buildBlocklist, type BlocklistInput } from './marketing/script/entities.js';
-import { buildFactsPackage, loadProjectRecord, resolveLookupName } from './marketing/script/facts.js';
+import { buildFactsPackage, loadProjectRecord, resolveLookupName, resolveLookupNames } from './marketing/script/facts.js';
 import { generateScript } from './marketing/script/generate.js';
 import type { WriterPromptInput } from './marketing/script/prompts.js';
 import { retrieveExemplars } from './marketing/script/retrieve.js';
@@ -178,7 +178,9 @@ export async function runScriptJob(
   const record = await loadProjectRecord(sb, brief.project_id);
   if (!record) throw withPrefix('facts_insufficient', `project ${brief.project_id} not found in all_projects`);
   const developerName = await resolveLookupName(sb, record.developer);
-  const marketerName = await resolveLookupName(sb, record.marketer);
+  // Every marketing company on the project — each one goes on the blocklist.
+  const marketerNames = await resolveLookupNames(sb, record.marketer);
+  const marketerName = marketerNames.length > 0 ? marketerNames.join('، ') : null;
   const facts: FactsPackage = buildFactsPackage(record, { developerName, marketerName });
   if (!facts.viable) throw withPrefix('facts_insufficient', `missing ${facts.missing.join(', ') || 'core facts'}${facts.warnings.length ? ` — ${facts.warnings.join('; ')}` : ''}`);
   for (const req of recipe.requires_facts) {
@@ -211,7 +213,7 @@ export async function runScriptJob(
   // ── validate
   await setStage(sb, job.id, 'validate');
   const orgs = v2Enabled && exemplars.length ? await loadOrgIdentifiers(sb, exemplars) : [];
-  const blocklist = buildBlocklist({ brief, exemplars, orgs, projectRecord: record, developerName, marketerName, rules });
+  const blocklist = buildBlocklist({ brief, exemplars, orgs, projectRecord: record, developerName, marketerNames, rules });
   const validatorCall: CallRole | null = v2Enabled ? call : null;
   let v = await validateScript({ brief, facts, recipe, rules, output: gen, exemplars, blocklist, callRole: validatorCall });
   let scenes = v.scenes;

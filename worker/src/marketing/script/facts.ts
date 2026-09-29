@@ -278,6 +278,22 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * Resolve a lookup value (record id or inline text) to a display name via
  * unified_records.data.name. Returns the raw text when it is not a uuid.
  */
+/**
+ * Every name in a lookup value. A project's `marketer` is multi-value since
+ * 2026-09-29 (one developer + any number of marketing companies) — resolving
+ * only the first would leave the others off the script blocklist, so a
+ * competitor's name could reach a script we publish.
+ */
+export async function resolveLookupNames(sb: SupabaseClient, value: unknown): Promise<string[]> {
+  const ids = (Array.isArray(value) ? value : [value]).filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+  const names: string[] = [];
+  for (const id of ids) {
+    const n = await resolveLookupName(sb, id);
+    if (n && !names.includes(n)) names.push(n);
+  }
+  return names;
+}
+
 export async function resolveLookupName(sb: SupabaseClient, value: unknown): Promise<string | null> {
   const v = Array.isArray(value) ? value[0] : value;
   if (typeof v !== 'string' || !v.trim()) return null;

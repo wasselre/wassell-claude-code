@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-28
+**Last updated (from DB):** 2026-09-29
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -35,12 +35,12 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `project_name` | Project Name / اسم المشروع | Text | yes | half | yes |  |
-| `developer` | Developer / المطور | Lookup | no | half | yes | → Developers |
+| `developer` | Developer / المطور | Lookup | no | half | yes | → Companies |
 | `project_id` | Project ID / معرف المشروع | Auto ID | no | half | yes | م ش### |
 | `project_type` | Project Type / نوع المشروع | Dropdown | no | half | yes | 3 options |
 | `project_status` | Project Status / حالة المشروع | Dropdown | no | half | yes | 6 options |
 | `project_classification` | Project Classification / تصنيف المشروع | Dropdown | no | half | yes | 4 options |
-| `marketer` | Marketer / المسوّق | Lookup | no | half | yes | → Marketers |
+| `marketer` | Marketers / المسوّقون | Lookup | no | half | yes | → Companies · multi |
 | `construction_status` | Construction Status / حالة الإنشاء | Dropdown | no | half | yes | 7 options |
 | `unit_types` | Unit Types / أنواع الوحدات | Multi-select | no | half | yes | 13 options · multi |
 | `preferred_amenities` | Preferred Amenities / المرافق | Multi-select | no | half | no | 41 options · multi |
@@ -53,7 +53,7 @@
 - **Project Name / اسم المشروع** (`project_name`, type `text`):
   - falls back to Project ID (`project_id`) when empty on save
 - **Developer / المطور** (`developer`, type `lookup`):
-  - target model: Developers
+  - target model: Companies
   - shows field: `name`
   - multiple: no · max in dropdown: 498
 - **Project ID / معرف المشروع** (`project_id`, type `auto_id`):
@@ -74,10 +74,10 @@
   - API value `general_project` → "General Project" / "مشروع عام" · color `#C09B5F`
   - API value `aqar_platform` → "Aqar Platform" / "منصة عقار" · color `#8E4E3A`
   - API value `riva_projects` → "Project from a Marketer" / "مشروع من مسوّق" · color `#C09B5F`
-- **Marketer / المسوّق** (`marketer`, type `lookup`):
-  - target model: Marketers
+- **Marketers / المسوّقون** (`marketer`, type `lookup`):
+  - target model: Companies
   - shows field: `name`
-  - multiple: no · max in dropdown: 500
+  - multiple: yes · max in dropdown: 500
 - **Construction Status / حالة الإنشاء** (`construction_status`, type `dropdown`) — options:
   - API value `excavation` → "Excavation" / "الحفر" · color `#8B5CF6`
   - API value `foundations` → "Foundations" / "القواعد" · color `#3B82F6`

@@ -103,7 +103,8 @@ export interface BlocklistInput {
   orgs?: Array<{ id: string | null; name_ar?: string | null; name_en?: string | null; website?: string | null; handles?: string[]; hashtags?: string[]; mentions?: string[]; ctas?: string[]; phones?: string[]; urls?: string[] }>;
   projectRecord: Record<string, unknown>;
   developerName?: string | null;
-  marketerName?: string | null;
+  /** Every company marketing the project — each is blocked from our scripts. */
+  marketerNames?: string[];
   rules: Pick<ScriptWriterRules, 'allow_developer_name' | 'marketer_name'>;
 }
 
@@ -178,8 +179,8 @@ export function buildBlocklist(input: BlocklistInput): BlockEntry[] {
     for (const u of o.urls ?? []) addPhrase(list, seen, u, 'url', src);
   }
 
-  // 2. The project's marketer + identifiers mined from its text fields.
-  if (input.marketerName) addName(input.marketerName, 'marketer', 'project.marketer');
+  // 2. The project's marketers + identifiers mined from its text fields.
+  for (const name of input.marketerNames ?? []) addName(name, 'marketer', 'project.marketer');
   if (!input.rules.allow_developer_name && input.developerName) addName(input.developerName, 'org', 'project.developer');
   const textFields = ['marketing_document', 'project_analysis', 'source_notes', 'internal_sales_notes', 'update_source_notes', 'ai_audit_notes', 'project_page_url', 'broucher_developer', 'update_source_url'];
   for (const f of textFields) {

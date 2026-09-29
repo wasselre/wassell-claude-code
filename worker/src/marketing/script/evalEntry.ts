@@ -22,7 +22,7 @@ import {
 import { loadOrgIdentifiers, loadSettings, withScriptPrefix } from '../../runScriptJob.js';
 import { buildBrief, DEFAULT_RECIPE, loadBrief, loadRecipes, type RawBrief } from './brief.js';
 import { buildBlocklist } from './entities.js';
-import { buildFactsPackage, loadProjectRecord, resolveLookupName } from './facts.js';
+import { buildFactsPackage, loadProjectRecord, resolveLookupName, resolveLookupNames } from './facts.js';
 import { generateScript } from './generate.js';
 import type { WriterPromptInput } from './prompts.js';
 import { retrieveExemplars } from './retrieve.js';
@@ -182,7 +182,8 @@ export async function runScriptEval(input: ScriptEvalInput, roleOverrides?: Scri
   // ── facts
   if (!record) throw withScriptPrefix('facts_insufficient', `project ${brief.project_id} not found in all_projects`);
   const developerName = await resolveLookupName(sb, record.developer);
-  const marketerName = await resolveLookupName(sb, record.marketer);
+  const marketerNames = await resolveLookupNames(sb, record.marketer);
+  const marketerName = marketerNames.length > 0 ? marketerNames.join('، ') : null;
   const facts: FactsPackage = buildFactsPackage(record, { developerName, marketerName });
   if (!facts.viable) throw withScriptPrefix('facts_insufficient', `missing ${facts.missing.join(', ') || 'core facts'}${facts.warnings.length ? ` — ${facts.warnings.join('; ')}` : ''}`);
   for (const req of recipe.requires_facts) {
@@ -212,7 +213,7 @@ export async function runScriptEval(input: ScriptEvalInput, roleOverrides?: Scri
 
   // ── validate
   const orgs = v2Enabled && exemplars.length ? await loadOrgIdentifiers(sb, exemplars) : [];
-  const blocklist = buildBlocklist({ brief, exemplars, orgs, projectRecord: record, developerName, marketerName, rules });
+  const blocklist = buildBlocklist({ brief, exemplars, orgs, projectRecord: record, developerName, marketerNames, rules });
   const validatorCall: CallRole | null = v2Enabled ? call : null;
   let v = await validateScript({ brief, facts, recipe, rules, output: gen, exemplars, blocklist, callRole: validatorCall });
   let scenes = v.scenes;

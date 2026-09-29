@@ -2,10 +2,10 @@
      Regenerate with: npm run sync:prds  (reads the live Supabase DB).
      The git diff of this file is the record of what changed in the app. -->
 
-# Model: Developers / المطورون  `developers`
+# Model: Companies / الشركات  `developers`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-29
 **Model id:** `11bade2c-7da9-4d00-b045-eaab37153da2`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,23 +14,24 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **6**
+- Fields: **7**
 - Section-selector field: none
-- Duplicate-check field: Developer Name (`name`)
+- Duplicate-check field: Company Name (`name`)
 - Custom buttons: 0
 
 ## Card view
-- Title: Developer Name (`name`)
+- Title: Company Name (`name`)
 - Subtitle: Phone (`phone`)
 
 ## Sections & fields
 
-### 1. Developer Info / معلومات المطور  _(base, color #8E4E3A)_
+### 1. Company Info / معلومات الشركة  _(base, color #8E4E3A)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `developer_id` | Developer ID / معرف المطور | Auto ID | no | half | yes | م ط### |
-| `name` | Developer Name / اسم المطور | Text | yes | half | yes |  |
+| `developer_id` | Company ID / معرف الشركة | Auto ID | no | half | yes | م ط### |
+| `name` | Company Name / اسم الشركة | Text | yes | half | yes |  |
+| `company_type` | Company type / نوع الشركة | Dropdown | yes | half | yes | 2 options |
 | `phone` | Phone / رقم الهاتف | Phone | no | half | yes |  |
 | `email` | Email / البريد الإلكتروني | Email | no | half | yes |  |
 | `website` | Website / الموقع الإلكتروني | URL | no | half | no |  |
@@ -38,7 +39,10 @@
 
 **Field details:**
 
-- **Developer ID / معرف المطور** (`developer_id`, type `auto_id`):
+- **Company ID / معرف الشركة** (`developer_id`, type `auto_id`):
   - format: `م ط000` · starts at 1
+- **Company type / نوع الشركة** (`company_type`, type `dropdown`) — options:
+  - API value `developer` → "Developer" / "مطوّر" · color `#B8734F`
+  - API value `marketer` → "Marketer" / "مسوّق" · color `#C09B5F`
 - **Phone / رقم الهاتف** (`phone`, type `phone`):
   - default country code `+966`

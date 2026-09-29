@@ -67,7 +67,8 @@ async function resolveOfficers(
   const { data: projRow } = await svc!.from('unified_records').select('data').eq('id', projectId).maybeSingle();
   const pdata = (projRow as Rec | null)?.data ?? {};
   const developerId = idList(pdata.developer)[0] ?? null;
-  const marketerId = idList(pdata.marketer)[0] ?? null;
+  // Several marketers per project since 2026-09-29 — an officer of ANY covers it.
+  const marketerIds = idList(pdata.marketer);
 
   const { data: offRows } = await svc!
     .from('unified_records')
@@ -91,7 +92,7 @@ async function resolveOfficers(
       coverage = 'explicit';
     } else if (projs.length === 0) {
       if (offDev && developerId && offDev === developerId) coverage = 'developer';
-      else if (offMkt && marketerId && offMkt === marketerId) coverage = 'marketer';
+      else if (offMkt && marketerIds.includes(offMkt)) coverage = 'marketer';
     }
     if (!coverage) continue;
     covering.push({ id: o.id, name: String(d.name ?? ''), phone, coverage, party });

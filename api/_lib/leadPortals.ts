@@ -230,7 +230,7 @@ export async function loadRecord(svc: Svc, id: string | null): Promise<Rec | nul
 }
 
 /** Ids of officers covering a project — the same rule as /api/whatsapp/notify-officer. */
-export async function coveringOfficerIds(svc: Svc, projectId: string, developerId: string | null, marketerId: string | null): Promise<Set<string>> {
+export async function coveringOfficerIds(svc: Svc, projectId: string, developerId: string | null, marketerIds: string[]): Promise<Set<string>> {
   const { data: m } = await svc.from('models').select('id').eq('name', 'project_officers').maybeSingle();
   const officersModelId = (m as { id: string } | null)?.id;
   if (!officersModelId) return new Set();
@@ -243,7 +243,7 @@ export async function coveringOfficerIds(svc: Svc, projectId: string, developerI
     const offDev = idList(d.developer)[0] ?? null;
     const offMkt = idList(d.marketer)[0] ?? null;
     if (projs.includes(projectId)) out.add(o.id);
-    else if (projs.length === 0 && ((offDev && offDev === developerId) || (offMkt && offMkt === marketerId))) out.add(o.id);
+    else if (projs.length === 0 && ((offDev && offDev === developerId) || (offMkt && marketerIds.includes(offMkt)))) out.add(o.id);
   }
   return out;
 }
@@ -264,8 +264,10 @@ export async function resolvePortals(
 
   const pdata = project?.data ?? {};
   const developerId = idList(pdata.developer)[0] ?? null;
-  const marketerId = idList(pdata.marketer)[0] ?? null;
-  const officerIds = project ? await coveringOfficerIds(svc, project.id, developerId, marketerId) : new Set<string>();
+  // A project can have several marketers (one developer + any number of
+  // marketing companies); a portal or officer of ANY of them covers it.
+  const marketerIds = idList(pdata.marketer);
+  const officerIds = project ? await coveringOfficerIds(svc, project.id, developerId, marketerIds) : new Set<string>();
 
   const rank: Record<PortalOption['coverage'], number> = { project: 0, officer: 1, developer: 2, marketer: 3 };
   const out: PortalOption[] = [];
@@ -275,7 +277,7 @@ export async function resolvePortals(
     if (project && idList(d.projects).includes(project.id)) coverage = 'project';
     else if (idList(d.officers).some((id) => officerIds.has(id))) coverage = 'officer';
     else if (developerId && idList(d.developer)[0] === developerId) coverage = 'developer';
-    else if (marketerId && idList(d.marketer)[0] === marketerId) coverage = 'marketer';
+    else if (idList(d.marketer).some((id) => marketerIds.includes(id))) coverage = 'marketer';
     if (!coverage) continue;
 
     const { fields, error: fieldsErr } = parseFields(d.required_fields);

@@ -5,7 +5,7 @@
 # Model: Lead portals / بوابات تسجيل العملاء  `lead_portals`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-24
+**Last updated (from DB):** 2026-09-29
 **Model id:** `1ead0000-0000-4000-8000-000000000001`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -33,8 +33,8 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `name` | Portal name / اسم البوابة | Text | yes | half | yes |  |
 | `login_url` | Login URL / رابط تسجيل الدخول | URL | yes | half | yes |  |
-| `developer` | Developer / المطور | Lookup | no | half | yes | → Developers |
-| `marketer` | Marketer / المسوّق | Lookup | no | half | yes | → Marketers |
+| `developer` | Developer / المطور | Lookup | no | half | yes | → Companies |
+| `marketer` | Marketer / المسوّق | Lookup | no | half | yes | → Companies |
 | `officers` | Officers (optional) / المسؤولون (اختياري) | Lookup | no | half | no | → Project Officers · multi |
 | `projects` | Projects (optional) / المشاريع (اختياري) | Lookup | no | half | no | → All Projects · multi |
 | `is_active` | Active / نشطة | Checkbox | no | half | yes |  |
@@ -43,11 +43,11 @@
 **Field details:**
 
 - **Developer / المطور** (`developer`, type `lookup`):
-  - target model: Developers
+  - target model: Companies
   - shows field: `name`
   - multiple: no · max in dropdown: 500
 - **Marketer / المسوّق** (`marketer`, type `lookup`):
-  - target model: Marketers
+  - target model: Companies
   - shows field: `name`
   - multiple: no · max in dropdown: 500
 - **Officers (optional) / المسؤولون (اختياري)** (`officers`, type `lookup`):

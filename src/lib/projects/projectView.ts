@@ -53,7 +53,13 @@ export interface ProjectView {
   raw: AppRecord;
   name: string | null;
   developer: string | null;
-  /** Marketer (المسوّق) lookup → Marketers.name. null when the project has none. */
+  /**
+   * Marketers (المسوّقون) — every company marketing the project besides its
+   * developer, resolved from the multi-value `marketer` lookup into the Companies
+   * list. Empty when the project has none. (Was a single value until 2026-09-29.)
+   */
+  marketers: string[];
+  /** `marketers` joined for display; null when there are none. */
   marketer: string | null;
   projectId: string | null; // auto_id (human code)
   city: string | null;
@@ -166,6 +172,12 @@ function firstId(v: unknown): string | null {
   return typeof v === 'string' && v ? v : null;
 }
 
+/** Every id in a lookup value — a multi lookup stores an array, a single one a string. */
+function allIds(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string' && x.length > 0);
+  return typeof v === 'string' && v ? [v] : [];
+}
+
 /**
  * Resolve a geography record id to its ARABIC display name.
  *
@@ -226,6 +238,19 @@ export function lookupNameLocalized(
   return lookupName(store, field, raw);
 }
 
+/** Every linked record's display name for a (possibly multi-value) lookup, in order.
+ *  A dangling id — a record that no longer exists — is skipped, not shown as blank. */
+export function lookupNamesLocalized(
+  store: ProjectStoreSlices,
+  field: ModelField | undefined,
+  raw: unknown,
+  opts: ProjectViewOpts,
+): string[] {
+  return allIds(raw)
+    .map((id) => lookupNameLocalized(store, field, id, opts))
+    .filter((n): n is string => !!n);
+}
+
 /** Geography display in the requested language; Arabic fallback when the record
  *  has no `name_en` (never a blank under an English label). */
 function geoDisplay(
@@ -270,6 +295,7 @@ export function resolveProjectView(
   const marketerField = fieldByCandidates(ap, ['marketer']);
   const projectIdField = fieldByCandidates(ap, ['project_id']);
   const confidenceField = fieldByCandidates(ap, ['data_confidence_score']);
+  const marketers = lookupNamesLocalized(store, marketerField, marketerField ? data[marketerField.name] : null, opts);
 
   return {
     id: record.id,
@@ -278,7 +304,8 @@ export function resolveProjectView(
     // geo renders localized (Arabic fallback when name_en is absent).
     name: (opts.translate?.(record.id, 'project_name', lang) ?? null) || asString(data.project_name),
     developer: lookupNameLocalized(store, developerField, developerField ? data[developerField.name] : null, opts),
-    marketer: lookupNameLocalized(store, marketerField, marketerField ? data[marketerField.name] : null, opts),
+    marketers,
+    marketer: marketers.length > 0 ? marketers.join(isAr ? '، ' : ', ') : null,
     projectId: projectIdField ? asString(data[projectIdField.name]) : null,
     city: geoDisplay(store, 'cities', firstId(loc.city), isAr),
     district: geoDisplay(store, 'districts', firstId(loc.district), isAr),

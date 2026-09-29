@@ -31,7 +31,7 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `project_id` | Project / اسم المشروع | Lookup | no | half | yes | → All Projects |
-| `developer_id` | Developer / المطور | Lookup | no | half | yes | → Developers |
+| `developer_id` | Developer / المطور | Lookup | no | half | yes | → Companies |
 | `unit_code` | Unit Code / كود الوحدة | Auto ID | no | half | yes | U-#### |
 | `unit_number` | Unit Number / رقم الوحدة في المشروع | Number | no | half | no |  |
 | `unit_model` | Unit Model / نموذج الوحدة | Text | no | half | no |  |
@@ -49,7 +49,7 @@
   - shows field: `project_name`
   - multiple: no
 - **Developer / المطور** (`developer_id`, type `lookup`):
-  - target model: Developers
+  - target model: Companies
   - shows field: `name`
   - multiple: no
 - **Unit Code / كود الوحدة** (`unit_code`, type `auto_id`):

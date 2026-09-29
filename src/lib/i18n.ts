@@ -551,7 +551,7 @@ const resources = {
       'models.all_projects': 'جميع المشاريع',
       'models.targeted_projects': 'المشاريع المستهدفة',
       'models.our_projects': 'مشاريعنا',
-      'models.developers': 'المطورون',
+      'models.developers': 'الشركات',
       'models.projects_group': 'المشاريع',
 
       // Files System (Drive-style file library)
@@ -1812,7 +1812,7 @@ const resources = {
       'models.all_projects': 'All Projects',
       'models.targeted_projects': 'Targeted Projects',
       'models.our_projects': 'Our Projects',
-      'models.developers': 'Developers',
+      'models.developers': 'Companies',
       'models.projects_group': 'Projects',
 
       // Files System (Drive-style file library)

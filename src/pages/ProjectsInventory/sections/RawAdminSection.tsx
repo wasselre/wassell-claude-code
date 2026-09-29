@@ -1,6 +1,6 @@
 /**
  * Raw Administration — gated reach to the raw supporting model tables whose
- * sidebar rows were hidden by the workspace (developers, marketers, project
+ * sidebar rows were hidden by the workspace (companies, project
  * officers, units, unit updates). These open the generic record table/form,
  * so power users keep an escape hatch (spec: supporting models stay accessible
  * "contextually or through an advanced administration area"). Access is gated
@@ -8,11 +8,13 @@
  * per-model RLS still applies on the target table.
  */
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Building2, Megaphone, UserCog, Home, RefreshCw } from 'lucide-react';
+import { ChevronRight, Building2, UserCog, Home, RefreshCw } from 'lucide-react';
 
 const TABLES: { model: string; icon: typeof Building2; ar: string; en: string }[] = [
-  { model: 'developers', icon: Building2, ar: 'المطورون', en: 'Developers' },
-  { model: 'marketers', icon: Megaphone, ar: 'المسوّقون', en: 'Marketers' },
+  // One Companies list since 2026-09-29 (model slug stays 'developers'); every
+  // company is typed developer or marketer. The old separate Marketers list is
+  // retired and nothing points at it any more, so it is not offered here.
+  { model: 'developers', icon: Building2, ar: 'الشركات', en: 'Companies' },
   { model: 'project_officers', icon: UserCog, ar: 'مسؤولو المشاريع', en: 'Project Officers' },
   { model: 'units', icon: Home, ar: 'الوحدات (جدول)', en: 'Units (table)' },
   { model: 'unit_updates', icon: RefreshCw, ar: 'تحديثات الوحدات', en: 'Unit Updates' },

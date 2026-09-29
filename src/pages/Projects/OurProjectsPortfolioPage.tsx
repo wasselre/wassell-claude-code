@@ -106,7 +106,8 @@ export default function OurProjectsPortfolioPage() {
 
   const cities = useMemo(() => [...new Set(items.map((i) => i.linked?.city).filter((x): x is string => !!x))].sort(), [items]);
   const developers = useMemo(() => [...new Set(items.map((i) => i.linked?.developer).filter((x): x is string => !!x))].sort(), [items]);
-  const marketers = useMemo(() => [...new Set(items.map((i) => i.linked?.marketer).filter((x): x is string => !!x))].sort(), [items]);
+  // A project can have several marketers — offer each company once.
+  const marketers = useMemo(() => [...new Set(items.flatMap((i) => i.linked?.marketers ?? []))].sort(), [items]);
   // Districts are scoped to the selected city (a district name only means something
   // inside its city) — so the dropdown never offers a district that can't match.
   const districts = useMemo(
@@ -127,8 +128,8 @@ export default function OurProjectsPortfolioPage() {
       if (developer && i.linked?.developer !== developer) return false;
       if (pstatus && i.status?.value !== pstatus) return false;
       if (district && i.linked?.district !== district) return false;
-      if (marketer === NO_MARKETER) { if (i.linked?.marketer) return false; }
-      else if (marketer && i.linked?.marketer !== marketer) return false;
+      if (marketer === NO_MARKETER) { if ((i.linked?.marketers.length ?? 0) > 0) return false; }
+      else if (marketer && !(i.linked?.marketers ?? []).includes(marketer)) return false;
       if (delivery && (i.linked?.delivery.kind ?? 'unknown') !== delivery) return false;
       if (min !== null || max !== null) {
         const pr = i.linked?.priceRange ?? null;
@@ -412,7 +413,7 @@ function PortfolioCard({ item, isAr, onOpenDetail, onEdit, onEditMaster }: { ite
           {linked?.marketer && (
             <div className="flex items-center gap-1.5 text-charcoal/70">
               <Megaphone size={13} className="text-charcoal/40 shrink-0" />
-              <span className="text-charcoal/40">{isAr ? 'المسوّق: ' : 'Marketer: '}</span>
+              <span className="text-charcoal/40">{(linked.marketers.length > 1) ? (isAr ? 'المسوّقون: ' : 'Marketers: ') : (isAr ? 'المسوّق: ' : 'Marketer: ')}</span>
               <span className="font-medium truncate">{linked.marketer}</span>
             </div>
           )}
@@ -524,7 +525,7 @@ function PortfolioTable({ items, isAr, onOpen }: { items: PortfolioItem[]; isAr:
     { key: 'city', label: isAr ? 'المدينة' : 'City' },
     { key: 'district', label: isAr ? 'الحي' : 'District' },
     { key: 'developer', label: isAr ? 'المطور' : 'Developer' },
-    { key: 'marketer', label: isAr ? 'المسوّق' : 'Marketer' },
+    { key: 'marketer', label: isAr ? 'المسوّقون' : 'Marketers' },
     { key: 'price', label: isAr ? 'السعر' : 'Price', end: true },
     { key: 'available', label: isAr ? 'المتاح' : 'Available', end: true },
     { key: 'delivery', label: isAr ? 'التسليم' : 'Delivery' },

@@ -5,7 +5,7 @@
 # Model: Project Officers / مسؤولو المشاريع  `project_officers`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-31
+**Last updated (from DB):** 2026-09-29
 **Model id:** `026855a4-02cb-41de-b9b5-91c0eee331a9`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -27,18 +27,18 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `name` | Name / الاسم | Text | yes | half | yes |  |
 | `phone` | Phone / رقم الهاتف | Phone | yes | half | yes |  |
-| `developer` | Developer / المطور | Lookup | no | half | yes | → Developers |
+| `developer` | Developer / المطور | Lookup | no | half | yes | → Companies |
 | `projects` | Projects (optional) / المشاريع (اختياري) | Lookup | no | half | yes | → All Projects · multi |
 | `is_active` | Active / نشط | Checkbox | no | half | yes |  |
 | `notes` | Notes / ملاحظات | Text area | no | full | no |  |
-| `marketer` | Marketer / المسوّق | Lookup | no | half | yes | → Marketers |
+| `marketer` | Marketer / المسوّق | Lookup | no | half | yes | → Companies |
 
 **Field details:**
 
 - **Phone / رقم الهاتف** (`phone`, type `phone`):
   - default country code `+966`
 - **Developer / المطور** (`developer`, type `lookup`):
-  - target model: Developers
+  - target model: Companies
   - shows field: `name`
   - multiple: no · max in dropdown: 500
 - **Projects (optional) / المشاريع (اختياري)** (`projects`, type `lookup`):
@@ -46,6 +46,6 @@
   - shows field: `project_name`
   - multiple: yes · max in dropdown: 1000
 - **Marketer / المسوّق** (`marketer`, type `lookup`):
-  - target model: Marketers
+  - target model: Companies
   - shows field: `name`
   - multiple: no · max in dropdown: 500
