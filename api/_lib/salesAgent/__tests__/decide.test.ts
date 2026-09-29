@@ -101,7 +101,13 @@ describe('texts follow the reps\' voice', () => {
     agentText.askBedrooms('ar', 'm'), agentText.askBudget('ar'), agentText.afterProject('ar', 'north', false, true),
     agentText.afterProject('ar', 'north', true, true), agentText.noResults('ar'), agentText.interested('ar'),
     agentText.holding('ar'), agentText.close('ar'),
+    agentText.afterProject('ar', 'north', false, true, 'شقة'), agentText.afterProject('ar', 'north', false, true, null, true),
   ];
+  it('says so when the project is not the asked type, and only claims a fit when exact', () => {
+    expect(agentText.afterProject('ar', 'north', false, true, 'شقة')).toBe('ما عندنا شقق بالشمال حالياً، هذا أقرب شي لطلبك. ناسبك؟');
+    expect(agentText.afterProject('ar', 'north', false, true, null, true)).toBe('هذا يناسب طلبك، ناسبك؟');
+    expect(agentText.afterProject('ar', 'north', false, true, null, false)).toBe('هذا أقرب شي لطلبك، ناسبك؟');
+  });
   it('no bullets, no colon-labels, short', () => {
     for (const t of all) {
       expect(t).not.toMatch(/[•\n]|^-|الخيار الأول:/);

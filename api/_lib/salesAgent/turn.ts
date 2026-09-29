@@ -186,7 +186,11 @@ export async function runAgentTurn(
       const exclude = [...conv.sent_project_ids, ...(conv.ad_project_id ? [conv.ad_project_id] : [])];
       project = await findBestProject(svc, slots, exclude);
       if (project) {
-        replies.push(agentText.afterProject(lang, slots.zone ?? null, project.outsideZone, sentCount === 0));
+        const missingType = project.relaxed === 'unit_type' && slots.unit_types?.length === 1 ? slots.unit_types[0] : null;
+        replies.push(agentText.afterProject(
+          lang, slots.zone ?? null, project.outsideZone, sentCount === 0,
+          missingType, project.relaxed === null && !project.outsideZone,
+        ));
         asked = 'more';
       } else {
         replies.push(sentCount ? agentText.noMoreResults(lang) : agentText.noResults(lang));

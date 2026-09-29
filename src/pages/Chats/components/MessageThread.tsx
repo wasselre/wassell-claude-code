@@ -4,6 +4,14 @@ import { useAppStore } from '@/stores/appStore';
 import MessageBubble, { type MessageProjectActions } from './MessageBubble';
 import type { ChatMessage } from '@/types';
 
+const PROJECT_LINK_RE = /wassel\.re\/project\?id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
+/** The all_projects id in a project card's «wassel.re/project?id=…» link. */
+function projectIdFromBody(body: string | null | undefined): string | null {
+  const m = body ? PROJECT_LINK_RE.exec(body) : null;
+  return m?.[1] ? m[1].toLowerCase() : null;
+}
+
 /**
  * Scrollable message thread. On mount: calls loadMessagesForChat to fetch
  * the latest page, then scrolls to the bottom. "Load older" button at the
@@ -243,9 +251,15 @@ export default function MessageThread({
             <DaySeparator label={group.label} />
             {group.messages.map((m) => {
               // Project buttons ride on the TEXT bubble of a project message —
-              // project id from the optimistic send (m.project_id) or the
-              // chat_message_projects link (messageProjects[wid]).
-              const projectId = m.kind === 'text' ? (m.project_id ?? messageProjects[m.id] ?? null) : null;
+              // project id from the optimistic send (m.project_id), the
+              // chat_message_projects link (messageProjects[wid]), or the
+              // project link every project card carries in its body. The last
+              // one covers a card that arrives LIVE: its link row is written a
+              // moment after the message, so the per-chat link load (on open)
+              // never saw it — the bot's cards showed no buttons until a reload.
+              const projectId = m.kind === 'text'
+                ? (m.project_id ?? messageProjects[m.id] ?? (m.flow === 'out' ? projectIdFromBody(m.body) : null))
+                : null;
               const projectActions =
                 projectId && renderProjectActions ? renderProjectActions(projectId) : null;
               return (

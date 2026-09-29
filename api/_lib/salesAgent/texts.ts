@@ -19,6 +19,14 @@ const ZONE_EN: Record<Zone, string> = {
   north: 'in the north', south: 'in the south', east: 'in the east', west: 'in the west', center: 'in central Riyadh',
 };
 
+/** The asked unit type as a plural noun («ما عندنا شقق…»). Keys = agent labels. */
+const TYPE_PLURAL_AR: Record<string, string> = {
+  'شقة': 'شقق', 'دور': 'أدوار', 'فيلا': 'فلل', 'تاون هاوس': 'تاون هاوس', 'دبلكس': 'دبلكسات',
+};
+const TYPE_PLURAL_EN: Record<string, string> = {
+  'شقة': 'apartments', 'دور': 'floors', 'فيلا': 'villas', 'تاون هاوس': 'townhouses', 'دبلكس': 'duplexes',
+};
+
 /** «تبي» / «تبين» — the one verb whose gender every question carries. */
 const want = (g: Gender) => (g === 'f' ? 'تبين' : 'تبي');
 
@@ -52,14 +60,27 @@ export const agentText = {
       : 'وكم ميزانيتك تقريباً الله يسلمك؟';
   },
 
-  /** Follows a project card. `outsideZone` = nothing in the asked region, so we say so. */
-  afterProject(lang: Lang, zone: Zone | null, outsideZone: boolean, isFirst: boolean): string {
+  /** Follows a project card. `outsideZone` = nothing in the asked region;
+   *  `missingType` = none of the asked unit type (the card shows other types) —
+   *  both said plainly so the card never looks like it ignored the customer. */
+  afterProject(
+    lang: Lang, zone: Zone | null, outsideZone: boolean, isFirst: boolean,
+    missingType: string | null = null, exact = false,
+  ): string {
+    const typeEn = missingType ? TYPE_PLURAL_EN[missingType] ?? missingType : null;
+    const typeAr = missingType ? TYPE_PLURAL_AR[missingType] ?? missingType : null;
     if (lang === 'en') {
+      if (typeEn && zone) return `No ${typeEn} ${ZONE_EN[zone]} right now, this is the closest to what you want. Does it suit you?`;
+      if (typeEn) return `No ${typeEn} right now, this is the closest to what you want. Does it suit you?`;
       if (outsideZone && zone) return `Nothing exactly ${ZONE_EN[zone]}, this is the closest to what you want. Does it suit you?`;
-      return isFirst ? 'This is the closest to what you asked for. Does it suit you?' : "Here's another option. Does it suit you?";
+      if (!isFirst) return "Here's another option. Does it suit you?";
+      return exact ? 'This one fits what you asked for. Does it suit you?' : 'This is the closest to what you asked for. Does it suit you?';
     }
+    if (typeAr && zone && !outsideZone) return `ما عندنا ${typeAr} ${ZONE_AR[zone]} حالياً، هذا أقرب شي لطلبك. ناسبك؟`;
+    if (typeAr) return `ما عندنا ${typeAr} بطلبك حالياً، هذا أقرب شي. ناسبك؟`;
     if (outsideZone && zone) return `ما لقيت بالضبط ${ZONE_AR[zone]}، هذا أقرب شي لطلبك. ناسبك؟`;
-    return isFirst ? 'هذا أقرب شي لطلبك، ناسبك؟' : 'هذا خيار ثاني، ناسبك؟';
+    if (!isFirst) return 'هذا خيار ثاني، ناسبك؟';
+    return exact ? 'هذا يناسب طلبك، ناسبك؟' : 'هذا أقرب شي لطلبك، ناسبك؟';
   },
 
   /** Nothing matches at all → a rep takes over (notified). */
