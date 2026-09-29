@@ -96,8 +96,24 @@ const HALLUCINATIONS = new Set(['you', 'thank you', 'thank you.', 'thanks for wa
 export function isMeaninglessTranscript(text: string): boolean {
   // Music-only audio also comes back as bare music notes («♪♪ ♪♪»): 110 rows
   // were stored that way as if they were speech (language NULL, not 'none').
-  const t = text.trim().toLowerCase().replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
+  // Sound-effect captions («*Splash*», «[music]») are not speech either.
+  const t = text.trim().toLowerCase().replace(/\*[^*]*\*|\[[^\]]*\]/g, ' ').replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
   return t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase());
+}
+
+/**
+ * Auto-detect on music-only audio picks an arbitrary language and invents text
+ * in it — measured 2026-09-29 on the first 20-video backfill batch: «សូវតាន…»
+ * (Khmer, one syllable repeated) and «I am a man of the mind.» tagged Latin,
+ * both on videos whose old transcript was «Thank you. you» / «♪♪». Our videos
+ * are Saudi / Gulf Arabic or English, so when WE asked for auto-detect and fal
+ * came back with any other language, it heard no speech. (A forced language is
+ * trusted: the caller chose it.)
+ */
+export function isAutoDetectMisfire(request: Record<string, unknown>, inferred?: string[]): boolean {
+  if (request.language !== null) return false;
+  const lid = inferred?.[0];
+  return !!lid && lid !== 'ar' && lid !== 'en';
 }
 
 /** Detect ar / en / mixed from the transcript text (Whisper doesn't always label). */
@@ -188,7 +204,7 @@ export function normalizeFalResponse(
   const raw = { ...j, _request: request };
   // Music-only / silent reels → Whisper hallucinates "you"/"thanks for watching".
   // Store an explicit no-speech transcript rather than a bogus line.
-  if (isMeaninglessTranscript(rawText)) {
+  if (isMeaninglessTranscript(rawText) || isAutoDetectMisfire(request, inferred ?? undefined)) {
     return { text: '', segments: [], language: 'none', model, provider: 'fal', costUsd, raw };
   }
   const segments = chunkLevel === 'word' ? aggregateWords(ordered) : ordered;

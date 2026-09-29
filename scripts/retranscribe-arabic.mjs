@@ -560,7 +560,8 @@ function detectLanguage(text, inferred) {
 }
 const HALLUCINATIONS = new Set(['you', 'thank you', 'thank you.', 'thanks for watching', 'thanks for watching!', 'bye', 'bye.', '.', '..', '...', 'subscribe', 'the end']);
 function isMeaningless(text) {
-  const t = text.trim().toLowerCase().replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
+  // Sound-effect captions («*Splash*», «[music]») are not speech either.
+  const t = text.trim().toLowerCase().replace(/\*[^*]*\*|\[[^\]]*\]/g, ' ').replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
   return t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase());
 }
 
@@ -663,7 +664,11 @@ async function runBackfill() {
       const params = { task: 'transcribe', language: requestLanguage, chunk_level: 'segment', version: '3' };
       const { json, ms } = await falRun(MODEL_A, { audio_url: src.url, ...params }, { durationMs });
       const r = normalizeFal(json, durationMs, 'segment');
-      const meaningless = isMeaningless(r.text);
+      // Same rule as worker isAutoDetectMisfire: an auto-detect that lands on
+      // neither Arabic nor English heard music, not speech.
+      const lid = (json.languages ?? json.inferred_languages ?? [])[0];
+      const misfire = requestLanguage === null && !!lid && lid !== 'ar' && lid !== 'en';
+      const meaningless = isMeaningless(r.text) || misfire;
       const language = meaningless ? 'none' : detectLanguage(r.text, json.languages ?? json.inferred_languages ?? undefined);
       await writeMain(row, { language, text: meaningless ? '' : r.text, segments: meaningless ? [] : r.segments, costUsd: r.costUsd },
         { ...json, _request: params, _source: src, _replaced: replacedOf(row) });

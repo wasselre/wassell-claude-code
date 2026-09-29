@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
-  chunksToSegments, aggregateWords, normalizeFalResponse, transcribeAudioUrl, isMeaninglessTranscript,
+  chunksToSegments, aggregateWords, normalizeFalResponse, transcribeAudioUrl, isMeaninglessTranscript, isAutoDetectMisfire,
   WORD_AGG_MAX_MS, WORD_AGG_MIN_MS,
 } from '../falTranscribe';
 
@@ -104,6 +104,19 @@ describe('normalizeFalResponse', () => {
   it('treats bare music notes as no speech', () => {
     for (const t of ['♪♪ ♪♪', '♪♪ ♪♪ ♪♪', '♫']) expect(isMeaninglessTranscript(t)).toBe(true);
     expect(isMeaninglessTranscript('♪ مشروع يمام بارك ♪')).toBe(false);
+    expect(isMeaninglessTranscript('*Splash*')).toBe(true);
+    expect(isMeaninglessTranscript('[music] ')).toBe(true);
+  });
+  it('an auto-detect that lands outside ar/en is music, not speech', () => {
+    // Real rows from the 2026-09-29 backfill batch.
+    const km = normalizeFalResponse({ text: 'សូវតានប់ពីបានប់ពី', chunks: [{ timestamp: [0, 35], text: 'សូវតានប់ពីបានប់ពី' }], languages: ['km'] }, 35000, 'fal-ai/wizper', { language: null }, 'segment');
+    expect(km).toMatchObject({ text: '', language: 'none' });
+    const la = normalizeFalResponse({ text: 'I am a man of the mind.', chunks: [], languages: ['la'] }, 63000, 'fal-ai/wizper', { language: null }, 'segment');
+    expect(la.language).toBe('none');
+    expect(isAutoDetectMisfire({ language: null }, ['ar'])).toBe(false);
+    expect(isAutoDetectMisfire({ language: null }, ['en'])).toBe(false);
+    // A forced language is the caller's decision, never overridden.
+    expect(isAutoDetectMisfire({ language: 'ar' }, ['km'])).toBe(false);
   });
 });
 
