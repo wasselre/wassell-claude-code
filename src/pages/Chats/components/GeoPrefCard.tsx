@@ -11,6 +11,7 @@ import { pruneGeoExpression, type PrunableExpression } from '@/lib/geo/pruneGeoE
 import { shouldAutoRead } from '@/lib/geo/geoCardAutoRead';
 import { callJson, HttpError } from '../lib/cardHttp';
 import PrefSuggestionsSection, { type PrefsCardDTO } from './PrefSuggestionsSection';
+import CallAuditSection from './CallAuditSection';
 
 const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
 
@@ -30,6 +31,10 @@ const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
  * (PrefSuggestionsSection) and saves through /api/client-prefs/review. The
  * card reads on its own when the customer has written something unread
  * (trigger 'open'); the per-minute cron reads the rest.
+ *
+ * The CALL AUDIT's proposals for this client (preferences the customer said on
+ * a Hatif call that are EMPTY on the client) render just above the chat's own
+ * preference section (CallAuditSection) and save fill-empty-only.
  */
 
 type CardStatus =
@@ -94,6 +99,12 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
   const [saving, setSaving] = useState(false);
   const [unticked, setUnticked] = useState<Set<string>>(new Set());
   const [showMap, setShowMap] = useState(false);
+  // Call-audit saves in this session: the fields skipped because they were
+  // logged since the call, per proposal (the section unmounts on reload).
+  const [callSkipped, setCallSkipped] = useState<Record<string, string[]>>({});
+  const onCallSaved = useCallback((proposalId: string, skipped: string[]) => {
+    setCallSkipped((prev) => ({ ...prev, [proposalId]: skipped }));
+  }, []);
 
   // Collapse state, persisted GLOBALLY (one preference across all chats), like the study card.
   const COLLAPSE_KEY = 'wassell_geo_pref_card_collapsed';
@@ -260,6 +271,7 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
           <MapPin size={10} />
           {t('chats.prefs.card_title')}
           {(status && OPEN.has(status) && rows.length > 0) || card?.prefs?.proposal?.status === 'pending'
+            || (card?.prefs?.call_proposals ?? []).some((p) => p.status === 'pending')
             ? <span className="text-copper font-bold">•</span>
             : null}
         </button>
@@ -480,6 +492,16 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
                   <GeoPrefMap items={saved ? (card.proposal?.items ?? []) : mapItems} isAr={isAr} height={220} />
                 </Suspense>
               </div>
+            )}
+
+            {/* Preferences the customer said on a call but the client does not have (call audit) */}
+            {(card.prefs?.call_proposals ?? []).length > 0 && (
+              <CallAuditSection
+                proposals={card.prefs.call_proposals ?? []}
+                onReload={load}
+                skippedById={callSkipped}
+                onSaved={onCallSaved}
+              />
             )}
 
             {/* Preferences read from the same conversation (budget, unit type, …) */}

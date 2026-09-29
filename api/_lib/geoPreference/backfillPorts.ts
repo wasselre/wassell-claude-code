@@ -306,22 +306,79 @@ export async function gatherClientConversations(
     }
   }
   for (const c of calls) {
-    const log = logs.get(c.id);
-    // call_logs.creation_time is a real timestamptz — prefer it as the time base.
-    const callTime = (log && isoUtc(log.creation_time)) || c.ts || null;
-    const dialogue = log ? hatifWordsToTurns(log.transcription, { direction: log.direction ?? c.direction, ref: c.id, callTimeIso: callTime }) : null;
-    if (dialogue) {
-      out.push({ channel: 'call', id: c.id, speaker_labels: dialogue.labelSource, turns: dialogue.turns.slice(0, MAX_TURNS_PER_CONVERSATION) });
-      continue;
-    }
-    const turns = transcriptToTurns(c.text, c.ts, c.id).slice(0, MAX_TURNS_PER_CONVERSATION);
-    if (turns.length === 0) continue;
-    out.push({ channel: 'call', id: c.id, speaker_labels: 'none', turns });
+    const conversation = buildCallConversation(c, logs.get(c.id) ?? null);
+    if (conversation) out.push(conversation);
   }
 
   // Oldest conversation first (by its first timestamp; blanks sort first, stable).
   const firstTs = (c: Conversation): string => c.turns.find((t) => t.timestamp)?.timestamp ?? '';
   return out.sort((a, b) => firstTs(a).localeCompare(firstTs(b)));
+}
+
+/** The phone_calls record's parts a call conversation is built from. */
+export interface CallRecordParts {
+  id: string;
+  /** call_time (normalised UTC ISO) or '' */
+  ts: string;
+  /** Hatif's flattened transcription_text ('' when none). */
+  text: string;
+  direction: string | null;
+}
+
+/** The call_logs row's parts (same id as the phone_calls record). */
+export interface CallLogParts {
+  direction: string | null;
+  transcription: unknown;
+  creation_time: string | null;
+}
+
+/**
+ * PURE: ONE call → a call {@link Conversation}, or null when there is nothing
+ * to read. Hatif's DIARIZED words (call_logs.transcription) win — speaker
+ * labelled, agent decided by hatifDialogue.ts; the flattened
+ * transcription_text is the fallback and is UNLABELLED (`speaker_labels:
+ * 'none'`). Shared by {@link gatherClientConversations} and
+ * {@link gatherCallConversation} so the diarization path exists once.
+ */
+export function buildCallConversation(call: CallRecordParts, log: CallLogParts | null): Conversation | null {
+  // call_logs.creation_time is a real timestamptz — prefer it as the time base.
+  const callTime = (log && isoUtc(log.creation_time)) || call.ts || null;
+  const dialogue = log ? hatifWordsToTurns(log.transcription, { direction: log.direction ?? call.direction, ref: call.id, callTimeIso: callTime }) : null;
+  if (dialogue) {
+    return { channel: 'call', id: call.id, speaker_labels: dialogue.labelSource, turns: dialogue.turns.slice(0, MAX_TURNS_PER_CONVERSATION) };
+  }
+  const turns = transcriptToTurns(call.text, call.ts, call.id).slice(0, MAX_TURNS_PER_CONVERSATION);
+  if (turns.length === 0) return null;
+  return { channel: 'call', id: call.id, speaker_labels: 'none', turns };
+}
+
+/**
+ * ONE call by id → its {@link Conversation} (see {@link buildCallConversation}),
+ * or null when neither the phone_calls record nor the call_logs row carries a
+ * readable transcript. Reads the phone_calls record (via unified_records, the
+ * same read gatherClientConversations does) and the call_logs row in parallel.
+ * A read error THROWS — never "this call is empty".
+ */
+export async function gatherCallConversation(supabase: SupabaseClient, callId: string): Promise<Conversation | null> {
+  const mId = await modelId(supabase, 'phone_calls');
+  const [recRes, logRes] = await Promise.all([
+    mId
+      ? supabase.from('unified_records').select('id, data').eq('id', callId).eq('model_id', mId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    supabase.from('call_logs').select('id, direction, transcription, creation_time').eq('id', callId).maybeSingle(),
+  ]);
+  if (recRes.error) throw new Error(`gather: phone_calls read for ${callId} failed: ${recRes.error.message}`);
+  if (logRes.error) throw new Error(`gather: call_logs read for ${callId} failed: ${logRes.error.message}`);
+  const data = ((recRes.data as { data?: Record<string, unknown> } | null)?.data) ?? {};
+  const call: CallRecordParts = {
+    id: callId,
+    ts: isoUtc(asStr(data.call_time) || asStr(data.creation_time)) ?? '',
+    text: asStr(data.transcription_text),
+    direction: asStr(data.direction) || null,
+  };
+  const l = logRes.data as { direction: string | null; transcription: unknown; creation_time: string | null } | null;
+  const log: CallLogParts | null = l ? { direction: l.direction, transcription: l.transcription, creation_time: l.creation_time } : null;
+  return buildCallConversation(call, log);
 }
 
 /** The gate config row → {@link GateConfig}, with auto_write FORCED off. The

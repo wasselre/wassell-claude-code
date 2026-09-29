@@ -3,12 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { Check, Loader2, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
-import type { ModelField } from '@/types';
-import { formatRangeValue } from '@/pages/Records/components/RangeField';
-import {
-  PREF_FIELD_KINDS, PREF_SLUG_ORDER, asSetValue, asRangeValue, isSameAsSaved,
-} from '@/lib/clientPrefs/mergePrefs';
+import { PREF_FIELD_KINDS, PREF_SLUG_ORDER, isSameAsSaved } from '@/lib/clientPrefs/mergePrefs';
 import { callJson, HttpError } from '../lib/cardHttp';
+import { usePrefFieldFormat } from '../lib/usePrefFieldFormat';
 
 /**
  * «تفضيلات العميل من المحادثة» — the preference half of the in-chat card.
@@ -26,6 +23,21 @@ export interface PrefSuggestionDTO {
   value: unknown;
   quote: string | null;
   confidence: number;
+}
+
+/** A call-audit proposal (api/_lib/clientPrefs/card.ts PrefsCardCallProposal). */
+export interface CallProposalDTO {
+  id: string;
+  version: number;
+  status: 'pending' | 'saved' | 'dismissed' | 'superseded';
+  call_id: string | null;
+  call_at: string | null;
+  suggestions: Record<string, PrefSuggestionDTO>;
+  /** FRESH from the client, this proposal's slugs only — non-empty ⇒ logged since the call. */
+  current_values: Record<string, unknown>;
+  created_at: string;
+  decided_at: string | null;
+  saved_fields: string[] | null;
 }
 
 export interface PrefsCardDTO {
@@ -52,6 +64,8 @@ export interface PrefsCardDTO {
   pending_transcripts: number;
   unread_voice_notes: number;
   current_values: Record<string, unknown>;
+  /** The call audit's proposals for this client (optional: an older API build omits it). */
+  call_proposals?: CallProposalDTO[];
 }
 
 interface Props {
@@ -63,44 +77,13 @@ interface Props {
 
 export default function PrefSuggestionsSection({ prefs, prefsError, onReload }: Props) {
   const { t } = useTranslation();
-  const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
-  const models = useAppStore((s) => s.models);
+  const { isAr, fieldLabel, formatValue } = usePrefFieldFormat();
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
 
   const proposal = prefs.proposal;
   useEffect(() => { setToggled({}); }, [proposal?.id]);
-
-  // Field labels + option labels from the LIVE clients schema in the store.
-  const fields = useMemo(() => {
-    const m = models.find((x) => x.name === 'clients');
-    const out = new Map<string, ModelField>();
-    for (const sec of m?.schema.sections ?? []) for (const f of sec.fields ?? []) out.set(f.name, f);
-    return out;
-  }, [models]);
-
-  const fieldLabel = (slug: string): string => {
-    const f = fields.get(slug);
-    return f ? (isAr ? f.label_ar : f.label_en) : slug;
-  };
-
-  const formatValue = (slug: string, value: unknown): string => {
-    const f = fields.get(slug);
-    if (PREF_FIELD_KINDS[slug] === 'set') {
-      const opts = f?.options ?? [];
-      return asSetValue(value)
-        .map((v) => {
-          const o = opts.find((x) => x.value === v);
-          return o ? (isAr ? o.label_ar : o.label_en) : v;
-        })
-        .join(isAr ? '، ' : ', ');
-    }
-    const r = asRangeValue(value);
-    if (!r) return '';
-    if (f) return formatRangeValue(f, r, isAr);
-    return [r.min, r.max].filter((n) => n !== undefined).join(' – ');
-  };
 
   const rows = useMemo(() => {
     if (!proposal) return [];

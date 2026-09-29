@@ -147,6 +147,45 @@ export function buildPrefPatch(
   return { patch, dropped };
 }
 
+export interface FillEmptyPatchResult extends PrefPatchResult {
+  /** Ticked fields that are NOT empty on the fresh row — never written. */
+  skippedFilled: string[];
+}
+
+/**
+ * The CALL AUDIT's save: FILL-EMPTY-ONLY, never overwrite. For each ticked
+ * suggestion, a field whose FRESH value is non-empty (`isEmptyValue` — the same
+ * test the audit used to propose it) is skipped and reported in
+ * `skippedFilled`; an empty one gets the suggested value. Set values are still
+ * validated against the live schema options (unknown ⇒ dropped + reported).
+ * Unticked / unknown / unsuggested slugs are ignored.
+ */
+export function buildFillEmptyPatch(
+  current: Record<string, unknown>,
+  suggestions: Record<string, PrefSuggestionLike>,
+  ticked: readonly string[],
+  optionsBySlug: Readonly<Record<string, readonly string[] | undefined>>,
+): FillEmptyPatchResult {
+  const patch: Record<string, unknown> = {};
+  const dropped: Array<{ slug: string; value: string }> = [];
+  const skippedFilled: string[] = [];
+  for (const slug of new Set(ticked)) {
+    const kind = PREF_FIELD_KINDS[slug];
+    const sug = suggestions[slug];
+    if (!kind || !sug) continue;
+    if (!isEmptyValue(current[slug])) { skippedFilled.push(slug); continue; }
+    if (kind === 'set') {
+      const merged = mergeSetValues(null, sug.value, new Set(optionsBySlug[slug] ?? []));
+      for (const v of merged.dropped) dropped.push({ slug, value: v });
+      if (merged.values.length > 0) patch[slug] = merged.values;
+    } else {
+      const next = asRangeValue(sug.value);
+      if (next) patch[slug] = next;
+    }
+  }
+  return { patch, dropped, skippedFilled };
+}
+
 /** True when the value carries nothing to show. */
 export function isEmptyPrefValue(v: unknown): boolean {
   return isEmptyValue(v);

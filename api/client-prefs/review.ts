@@ -1,6 +1,7 @@
 /**
- * POST /api/client-prefs/review — a rep resolves ONE chat preference proposal
- * (`client_pref_proposals`, produced by the chat auto-read's preference agent).
+ * POST /api/client-prefs/review — a rep resolves ONE preference proposal
+ * (`client_pref_proposals`, produced by the chat auto-read's preference agent
+ * or, `source='call'`, by the call audit).
  *
  *   { proposalId, action: 'save', fields: [slug…], expectedVersion? }
  *       Writes ONLY the ticked fields to the client: set fields (unit type,
@@ -8,6 +9,11 @@
  *       (budget, area, bedrooms) REPLACE it. Set values are re-validated
  *       against the LIVE clients schema options at save time — an unknown one
  *       is dropped and console.error-ed, never saved.
+ *       A CALL-AUDIT proposal (`source='call'`) is FILL-EMPTY-ONLY instead
+ *       (buildFillEmptyPatch): a ticked field whose FRESH value is non-empty
+ *       is skipped — never written — and returned in `skipped_filled`;
+ *       `saved_fields` lists only what was actually written (may be empty —
+ *       the proposal is still marked saved).
  *   { proposalId, action: 'dismiss', expectedVersion? }
  *       Marks it dismissed. NEVER touches the client record.
  *
@@ -28,7 +34,7 @@ import { withAuth, jsonError, jsonOk, assertCanAccessRecord } from '../_lib/auth
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { recordSaveWithRetry } from '../_lib/recordSaveRetry.js';
 import {
-  PREF_FIELD_KINDS, isPrefSlug, buildPrefPatch, type PrefSuggestionLike,
+  PREF_FIELD_KINDS, isPrefSlug, buildPrefPatch, buildFillEmptyPatch, type PrefSuggestionLike,
 } from '../../src/lib/clientPrefs/mergePrefs.js';
 
 export const config = { runtime: 'edge' };
@@ -44,7 +50,12 @@ export interface PrefProposalRow {
   status: string;
   version: number | null;
   suggestions: Record<string, PrefSuggestionLike>;
+  /** 'call' ⇒ fill-empty-only save. Absent (pre-2026-09-29 rows) ⇒ 'chat'. */
+  source?: string | null;
 }
+
+/** How the ticked fields land: chat = union sets / replace ranges; call audit = only into EMPTY fields. */
+export type PrefWriteMode = 'merge' | 'fill_empty';
 
 export interface PrefDecisionPatch {
   status: 'saved' | 'dismissed';
@@ -60,6 +71,8 @@ export interface PrefClientWrite {
   /** The values actually written (only the fields that changed). */
   written: Record<string, unknown>;
   dropped: Array<{ slug: string; value: string }>;
+  /** fill_empty only: ticked fields that were no longer empty on the fresh row — not written. */
+  skippedFilled: string[];
 }
 
 export interface PrefReviewDeps {
@@ -69,7 +82,7 @@ export interface PrefReviewDeps {
   /** The LIVE clients schema's option values per set-field slug. */
   loadOptions(): Promise<Record<string, string[]>>;
   /** The ONLY client writer. Only the save branch reaches it. */
-  writeClient(clientId: string, suggestions: Record<string, PrefSuggestionLike>, fields: string[], options: Record<string, string[]>): Promise<PrefClientWrite>;
+  writeClient(clientId: string, suggestions: Record<string, PrefSuggestionLike>, fields: string[], options: Record<string, string[]>, mode: PrefWriteMode): Promise<PrefClientWrite>;
   /** Mark the proposal decided — guarded on status='pending'; must throw PrefReviewError(409) when 0 rows matched. */
   markDecided(id: string, patch: PrefDecisionPatch): Promise<void>;
   now(): string;
@@ -92,6 +105,8 @@ export interface PrefReviewOutcome {
   before: Record<string, unknown> | null;
   written: Record<string, unknown> | null;
   dropped: Array<{ slug: string; value: string }>;
+  /** Call-audit save: ticked fields logged since the call — skipped, not written. Always [] for a chat proposal. */
+  skipped_filled: string[];
 }
 
 export class PrefReviewError extends Error {
@@ -123,22 +138,27 @@ export async function applyPrefReview(deps: PrefReviewDeps, input: PrefReviewInp
     await deps.markDecided(p.id, { status: 'dismissed', decided_by: input.reviewerId, decided_at: deps.now() });
     return {
       proposalId: p.id, clientId: p.client_id, action: 'dismiss', status: 'dismissed',
-      saved_fields: [], before: null, written: null, dropped: [],
+      saved_fields: [], before: null, written: null, dropped: [], skipped_filled: [],
     };
   }
 
+  const mode: PrefWriteMode = p.source === 'call' ? 'fill_empty' : 'merge';
   const options = await deps.loadOptions();
-  const w = await deps.writeClient(p.client_id, p.suggestions, fields, options);
+  const w = await deps.writeClient(p.client_id, p.suggestions, fields, options, mode);
   for (const d of w.dropped) {
     console.error(`[client-prefs-review] proposal=${p.id} dropped '${d.value}' for ${d.slug} — not an option of the live clients schema`);
   }
+  // A call proposal records only what was actually written (never-overwrite
+  // skips are not "saved"); a chat proposal keeps recording the ticked fields.
+  const savedFields = mode === 'fill_empty' ? fields.filter((f) => f in w.written) : fields;
   await deps.markDecided(p.id, {
     status: 'saved', decided_by: input.reviewerId, decided_at: deps.now(),
-    saved_fields: fields, after_values: w.written,
+    saved_fields: savedFields, after_values: w.written,
   });
   return {
     proposalId: p.id, clientId: p.client_id, action: 'save', status: 'saved',
-    saved_fields: fields, before: w.before, written: w.written, dropped: w.dropped,
+    saved_fields: savedFields, before: w.before, written: w.written, dropped: w.dropped,
+    skipped_filled: mode === 'fill_empty' ? w.skippedFilled : [],
   };
 }
 
@@ -196,7 +216,7 @@ export default async function handler(req: Request): Promise<Response> {
       async getProposal(id) {
         const { data, error } = await service
           .from('client_pref_proposals')
-          .select('id, client_id, chat_wid, status, version, suggestions')
+          .select('id, client_id, chat_wid, status, version, suggestions, source')
           .eq('id', id).maybeSingle();
         if (error) throw new PrefReviewError(500, `proposal read failed: ${error.message}`);
         return (data as PrefProposalRow | null) ?? null;
@@ -212,23 +232,33 @@ export default async function handler(req: Request): Promise<Response> {
         if (!data) throw new PrefReviewError(500, 'clients model not found');
         return prefOptionsFromSchema(data.schema);
       },
-      async writeClient(clientId, suggestions, ticked, options) {
+      async writeClient(clientId, suggestions, ticked, options, mode) {
         let before: Record<string, unknown> = {};
         let written: Record<string, unknown> = {};
         let dropped: Array<{ slug: string; value: string }> = [];
+        let skippedFilled: string[] = [];
         // recordSaveWithRetry re-reads the FRESH row every attempt, so a set
-        // union lands on top of a concurrent manual edit instead of wiping it.
+        // union lands on top of a concurrent manual edit instead of wiping it —
+        // and the call audit's "is it still empty?" is decided on that same
+        // fresh row, inside the versioned write (never overwrite).
         await recordSaveWithRetry(service, {
           recordId: clientId,
           build: (fresh) => {
             before = Object.fromEntries(ticked.map((f) => [f, fresh[f] ?? null]));
+            if (mode === 'fill_empty') {
+              const res = buildFillEmptyPatch(fresh, suggestions, ticked, options);
+              written = res.patch;
+              dropped = res.dropped;
+              skippedFilled = res.skippedFilled;
+              return Object.keys(res.patch).length ? { ...fresh, ...res.patch } : null;
+            }
             const res = buildPrefPatch(fresh, suggestions, ticked, options);
             written = res.patch;
             dropped = res.dropped;
             return Object.keys(res.patch).length ? { ...fresh, ...res.patch } : null;
           },
         });
-        return { before, written, dropped };
+        return { before, written, dropped, skippedFilled };
       },
       async markDecided(id, patch) {
         const { data, error } = await service
@@ -245,7 +275,7 @@ export default async function handler(req: Request): Promise<Response> {
 
     try {
       const outcome = await applyPrefReview(deps, { proposalId, action, reviewerId: user.userId, fields, expectedVersion });
-      console.log(`[client-prefs-review] proposal=${proposalId} action=${action} fields=${outcome.saved_fields.join(',') || '-'} by=${user.userId}`);
+      console.log(`[client-prefs-review] proposal=${proposalId} action=${action} fields=${outcome.saved_fields.join(',') || '-'}${outcome.skipped_filled.length ? ` skipped_filled=${outcome.skipped_filled.join(',')}` : ''} by=${user.userId}`);
       return jsonOk(outcome);
     } catch (err) {
       if (err instanceof PrefReviewError) return jsonError(err.status, err.message);

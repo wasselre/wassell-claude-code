@@ -19,6 +19,14 @@
  * Budget: stops STARTING reads after TIME_BUDGET_MS (240 s of the 300 s
  * function limit), PARALLELISM reads at a time; the rest wait for the next tick.
  *
+ * CALL AUDIT (2026-09-29): after the chat reads, while time remains
+ * (CALL_AUDIT_RESERVE_MS kept back from the budget), `call_audit_candidates`
+ * lists finished Hatif calls (> 20 s, diarized, ≥ 1 h after hang-up) not yet
+ * audited, and each is audited SEQUENTIALLY (`auditCall`): preferences the
+ * customer said that are EMPTY on the client become ONE pending proposal. It
+ * never writes a client. The chat reads above are unchanged and always run
+ * first.
+ *
  * Auth: Bearer $CRON_SECRET or ?secret= (same as the other crons). `?dryRun=1`
  * returns the selection only — no read, no write. Always 200 with a counts
  * body so Vercel never marks the cron failed; every failure is ALSO
@@ -29,6 +37,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { selectDueChats, type ReadCandidate } from '../_lib/clientPrefs/dueSelection.js';
 import { readChatForClient, type ReadChatResult } from '../_lib/clientPrefs/readChat.js';
+import { auditCall } from '../_lib/clientPrefs/callAudit.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
 
@@ -36,6 +45,16 @@ const SERVICE_NAME = 'api:cron-chat-auto-read';
 const TIME_BUDGET_MS = 240_000;
 const PARALLELISM = 2;
 const CANDIDATE_LIMIT = 50;
+/** No call audit STARTS after TIME_BUDGET_MS - this (one audit can take ~a minute). */
+const CALL_AUDIT_RESERVE_MS = 60_000;
+const CALL_CANDIDATE_LIMIT = 20;
+
+interface CallCandidate {
+  call_id: string;
+  client_id: string;
+  hangup_time: string;
+  duration_seconds: number;
+}
 
 function nodeToWebRequest(nodeReq: IncomingMessage): Request {
   const host = (nodeReq.headers.host as string | undefined) ?? 'localhost';
@@ -102,10 +121,12 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   };
 
   if (dryRun) {
+    const callRes = await loadCallCandidates(sb, now);
     return send(nodeRes, 200, {
       ok: true, dryRun: true, counts,
       due: sel.due.map(brief), gated: sel.gated.map(brief), waiting: sel.waiting.map(brief),
       leased: sel.leased.map(brief), backoff: sel.backoff.map(brief),
+      calls: callRes.error ? { error: callRes.error } : { candidates: callRes.rows.length, list: callRes.rows },
       ms: Date.now() - startedAt,
     });
   }
@@ -156,13 +177,61 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   };
   await Promise.all(Array.from({ length: Math.min(PARALLELISM, queue.length) }, () => worker()));
 
+  // Call audit: after the chat reads, sequentially, within what is left of the budget.
+  const calls = { candidates: 0, done: 0, skipped: 0, failed: 0, proposals: 0, deferred: 0 };
+  const callDeadline = TIME_BUDGET_MS - CALL_AUDIT_RESERVE_MS;
+  if (Date.now() - startedAt < callDeadline) {
+    const callRes = await loadCallCandidates(sb, new Date());
+    if (callRes.error) {
+      errors.push(`call_audit_candidates: ${callRes.error}`);
+    } else {
+      calls.candidates = callRes.rows.length;
+      for (const c of callRes.rows) {
+        if (Date.now() - startedAt >= callDeadline) { calls.deferred += 1; continue; }
+        // auditCall never throws for an audit failure (it records + returns
+        // 'failed'); a throw here is the claim RPC itself failing.
+        try {
+          const r = await auditCall(sb, {
+            callId: c.call_id, clientId: c.client_id, hangupAt: c.hangup_time,
+            log: (m) => console.log(m),
+          });
+          calls[r.status] += 1;
+          if (r.proposalId) calls.proposals += 1;
+          if (r.status === 'failed') errors.push(`call ${c.call_id}: ${r.reason ?? 'failed'}`);
+        } catch (err) {
+          const msg = `call ${c.call_id}/${c.client_id}: ${err instanceof Error ? err.message : String(err)}`;
+          console.error('[chat-auto-read] call audit failed:', msg);
+          errors.push(msg);
+          calls.failed += 1;
+        }
+      }
+    }
+  } else {
+    console.log('[chat-auto-read] no time left for the call audit this tick');
+  }
+
   const body = {
     ok: errors.length === 0,
     counts: { ...counts, gate_skipped_marked: gateSkipped, deferred },
     outcomes,
+    calls,
     errors,
     ms: Date.now() - startedAt,
   };
-  console.log(`[chat-auto-read] ${JSON.stringify({ counts: body.counts, outcomes, errors: errors.length, ms: body.ms })}`);
+  console.log(`[chat-auto-read] ${JSON.stringify({ counts: body.counts, outcomes, calls, errors: errors.length, ms: body.ms })}`);
   return send(nodeRes, 200, body);
+}
+
+/** The finished calls due for the audit. An RPC error is returned (and console.error-ed), never an empty list. */
+async function loadCallCandidates(
+  sb: NonNullable<ReturnType<typeof makeServiceClient>>, now: Date,
+): Promise<{ rows: CallCandidate[]; error: string | null }> {
+  const { data, error } = await sb.rpc('call_audit_candidates', {
+    p_now: now.toISOString(), p_grace: '60 minutes', p_window: '60 days', p_limit: CALL_CANDIDATE_LIMIT,
+  });
+  if (error) {
+    console.error('[chat-auto-read] call_audit_candidates failed:', error.message);
+    return { rows: [], error: error.message };
+  }
+  return { rows: (data ?? []) as CallCandidate[], error: null };
 }

@@ -15,7 +15,7 @@ vi.mock('@anthropic-ai/sdk', () => ({
 
 import {
   buildExtractSystemPrompt, buildExtractUserText, EXTRACT_SYSTEM_PROMPT, PREF_FIELDS,
-  callDeepSeek, extractPreferences, PREF_CLAUDE_FALLBACK_MODEL, PREF_DEEPSEEK_MODEL,
+  callDeepSeek, extractPreferences, PREF_CLAUDE_FALLBACK_MODEL, PREF_DEEPSEEK_MODEL, PREF_EXTRACTOR_VERSION,
 } from '../prefExtract.js';
 
 const GOOD_JSON = JSON.stringify({
@@ -67,6 +67,26 @@ describe('prompts per channel', () => {
     expect(chat).toContain('(رسالة صوتية)');
     expect(chat).toContain('فيه فلل؟');
     expect(chat).toContain('وافق عليه العميل');
+  });
+  it('the rent rule (no purpose, no budget for a renter) is on BOTH channels', () => {
+    for (const ch of ['chat', 'call'] as const) {
+      const p = buildExtractSystemPrompt(ch);
+      expect(p).toContain('إيجار');
+      expect(p).toContain('فلا تُخرج purchase_objective ولا budget');
+    }
+  });
+  it('the salesperson rule is on the CALL prompt only, and names the «العميل» line', () => {
+    const call = buildExtractSystemPrompt('call');
+    const chat = buildExtractSystemPrompt('chat');
+    expect(call).toContain('ما يقوله المندوب ليس تفضيلًا للعميل');
+    expect(call).toContain('في سطر «العميل» الخاص به');
+    expect(call).toContain('لا من كلام المندوب أبدًا');
+    expect(chat).not.toContain('ما يقوله المندوب ليس تفضيلًا للعميل');
+    // The chat-only rules stay off the call prompt.
+    expect(call).not.toContain('(رسالة صوتية)');
+  });
+  it('the extractor version was bumped for the new rules', () => {
+    expect(PREF_EXTRACTOR_VERSION).toBe('pref-extract/v3');
   });
   it('the user text heading follows the channel', () => {
     expect(buildExtractUserText('chat', 'x')).toBe('المحادثة:\nx');

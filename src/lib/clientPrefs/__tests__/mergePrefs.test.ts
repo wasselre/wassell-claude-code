@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPrefPatch, mergeSetValues, isSameAsSaved, type PrefSuggestionLike } from '../mergePrefs';
+import { buildPrefPatch, buildFillEmptyPatch, mergeSetValues, isSameAsSaved, type PrefSuggestionLike } from '../mergePrefs';
 
 const sug = (slug: string, value: unknown): PrefSuggestionLike => ({ slug, value, quote: null, confidence: 80 });
 const OPTIONS = {
@@ -72,5 +72,43 @@ describe('isSameAsSaved', () => {
   it('range: same bounds regardless of key order', () => {
     expect(isSameAsSaved('budget', { max: 3, min: 1 }, { min: 1, max: 3 })).toBe(true);
     expect(isSameAsSaved('budget', null, { min: 1 })).toBe(false);
+  });
+});
+
+describe('buildFillEmptyPatch (call audit — never overwrite)', () => {
+  const suggestions = {
+    preferred_unit_type: sug('preferred_unit_type', ['villa', 'x']),
+    budget: sug('budget', { max: 3000000 }),
+    preferred_area: sug('preferred_area', { min: 200 }),
+    purchase_objective: sug('purchase_objective', ['residential']),
+  };
+  const options = { preferred_unit_type: ['villa'], purchase_objective: ['residential', 'investment'] };
+
+  it('a field filled since the call is NEVER written and is reported as skipped', () => {
+    const current = { budget: { min: 1000000 }, preferred_area: null };
+    const r = buildFillEmptyPatch(current, suggestions, ['budget', 'preferred_area'], options);
+    expect(r.patch).toEqual({ preferred_area: { min: 200 } });
+    expect(r.skippedFilled).toEqual(['budget']);
+  });
+  it('a filled SET field is skipped too (no union with what the rep saved)', () => {
+    const r = buildFillEmptyPatch({ preferred_unit_type: ['other'] }, suggestions, ['preferred_unit_type'], options);
+    expect(r.patch).toEqual({});
+    expect(r.skippedFilled).toEqual(['preferred_unit_type']);
+  });
+  it('set values on an empty field are validated against the live options', () => {
+    const r = buildFillEmptyPatch({ preferred_unit_type: [] }, suggestions, ['preferred_unit_type'], options);
+    expect(r.patch).toEqual({ preferred_unit_type: ['villa'] });
+    expect(r.dropped).toEqual([{ slug: 'preferred_unit_type', value: 'x' }]);
+    expect(r.skippedFilled).toEqual([]);
+  });
+  it('every set value unknown ⇒ nothing written for that field', () => {
+    const r = buildFillEmptyPatch({}, { purchase_objective: sug('purchase_objective', ['rent']) }, ['purchase_objective'], options);
+    expect(r.patch).toEqual({});
+    expect(r.dropped).toEqual([{ slug: 'purchase_objective', value: 'rent' }]);
+  });
+  it('unticked, unknown and unsuggested slugs are untouched', () => {
+    const r = buildFillEmptyPatch({}, suggestions, ['purchase_objective', 'client_name', 'preferred_bedrooms'], options);
+    expect(r.patch).toEqual({ purchase_objective: ['residential'] });
+    expect(r.skippedFilled).toEqual([]);
   });
 });

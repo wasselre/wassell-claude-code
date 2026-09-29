@@ -672,6 +672,46 @@ PRDs: `docs/prd/geo-preference-ability.md`, `docs/prd/chats.md`.
    extractor's routing exactly (stub → DeepSeek `deepseek-chat` → Claude Haiku via
    `trackedAnthropic`), and THROWS when both providers fail — never a silent empty.
 
+### Call audit (added 2026-09-29)
+
+Calls are NOT read for a live card (the rep logs during/after the call). The one
+call feature is an AUDIT of what the customer said that the salesperson forgot
+to put on the client. After its chat reads (which are unchanged and always run
+first), the same cron — while ≥ 60 s of its budget remains — lists finished
+calls with `call_audit_candidates` (> 20 s, diarized words, ≥ 1 h after
+hang-up, last 60 days, linked to an existing client) and runs `auditCall`
+(`api/_lib/clientPrefs/callAudit.ts`) on them one at a time. Migration:
+`2026-09-29_01_call_pref_audit.sql`.
+
+1. **NEVER overwrite — fill-empty-only, at proposal AND at save time.** The
+   audit proposes only fields EMPTY on the client (`emptyOnlySuggestions`); a
+   value that differs from the saved one is never shown. The save
+   (`/api/client-prefs/review`, `source='call'` ⇒ `buildFillEmptyPatch`)
+   re-checks every ticked field on the FRESH row inside the versioned write and
+   skips (reports in `skipped_filled`, never writes) any that is no longer empty.
+   Don't "simplify" a call proposal's save into the chat's union/replace path.
+2. **One ledger row per call** (`call_pref_audit`, written only by
+   `call_audit_claim` / `call_audit_finish`, service role). `done` / `skipped`
+   are terminal — a call is audited once; `failed` is retried at most 3 attempts
+   (then left). A claimed attempt is ALWAYS finished, a failure included; a
+   killed process leaves a lease that expires.
+3. **Unlabelled calls are skipped** (`speaker_labels === 'none'` ⇒
+   `skipped/unlabelled`): without speaker labels the salesperson's restatement
+   cannot be told from the customer's words — the exact error the call prompt
+   (v3) exists to stop.
+4. **A suggestion survives only if its quote is in the CUSTOMER's own turns**
+   (`customerSaidIt`: every «...»-separated fragment, normalised, must appear in
+   `speaker==='client'` text). The prompt rule alone was NOT enough — measured
+   2026-09-29 the model still quoted the salesperson in 3 of 14 suggestions
+   («أنتِ تبحثين عن شقة…», «أبديت اهتمامك تملك وحدة…»); with the guard the
+   backfill went from 6 cards / 14 fields to 3 cards / 9 fields, all customer
+   words. Never loosen it to "the prompt says so" — the guard is the guarantee.
+5. **No geography from calls** in this version — districts are dropped.
+6. A call proposal is a `client_pref_proposals` row with `source='call'`,
+   `call_id`, `call_at`, `trigger='call_audit'`, stored under
+   `chat_wid = 'call:' || call_id` (one pending per call). The chat card's chat
+   `proposal` never picks it up (it filters on the chat's real wid).
+
 ## Listing photo mirror (Aqar → our bucket) (added 2026-07-29)
 
 Market-listing photos are copied into a bucket we own **at scan/import time**, so nothing user-facing ever downloads from `images.aqar.fm`. Rides the existing `generation_jobs` queue as `kind='listing-mirror'` (the same shape as `video-convert`).

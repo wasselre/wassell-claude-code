@@ -16,6 +16,10 @@
  * rules the geography pipeline follows on chats: a rep's proposal is not the
  * customer's preference until the customer accepts it; a customer QUESTION is
  * interest (lower confidence); a transcribed voice note is the customer's words.
+ * The call variant (v3, used by the call audit) says the salesperson's own
+ * summary / suggestion is never the customer's preference and the quote must
+ * come from a customer line. Both variants skip purpose + budget for a
+ * customer looking to RENT.
  *
  * ROUTING (mirrors api/_lib/geoPreference/extractor.ts exactly): STUB mode
  * (`WA_EXTRACT_STUB=1`, or no provider key at all — `extractionStubEnabled`)
@@ -40,8 +44,9 @@ import { recordAiUsage, openAiCompatTokens, openAiCompatModel, trackedAnthropic 
 import { llmRoutingEnabled, logLlmFallback } from './textLlm.js';
 import { extractionStubEnabled } from './geoPreference/extractor.js';
 
-/** Bump when the prompt or the parse contract changes (stored on every proposal). */
-export const PREF_EXTRACTOR_VERSION = 'pref-extract/v2-chat';
+/** Bump when the prompt or the parse contract changes (stored on every proposal).
+ *  v3 (2026-09-29): the rent rule on both channels + the salesperson rule on calls. */
+export const PREF_EXTRACTOR_VERSION = 'pref-extract/v3';
 
 /** What the DeepSeek alias is called (same model the geo extractor uses via llmText). */
 export const PREF_DEEPSEEK_MODEL = 'deepseek-chat';
@@ -87,7 +92,8 @@ const setOptions = (slug: PrefSlug): readonly string[] =>
 // ── prompt ───────────────────────────────────────────────────────────────────
 
 const PROMPT_INTRO: Record<PrefChannel, string> = {
-  call: 'أنت مساعد لفريق مبيعات عقاري سعودي. تقرأ نص مكالمة هاتفية مع عميل — مُصنّفة حسب المتحدث (المندوب / العميل) — وتستخرج تفضيلات العميل العقارية فقط.',
+  // Matches renderConversation for a diarized call: «[رقم] العميل: …» / «[رقم] المندوب: …».
+  call: 'أنت مساعد لفريق مبيعات عقاري سعودي. تقرأ نص مكالمة هاتفية مع عميل — كل سطر بالشكل «[رقم] المتحدث: النص» والمتحدث هو العميل أو المندوب — وتستخرج تفضيلات العميل العقارية فقط.',
   // Matches renderConversation (geoPreference/extractor.ts): «[رقم] العميل: …» / «[رقم] المندوب: …».
   chat: 'أنت مساعد لفريق مبيعات عقاري سعودي. تقرأ محادثة واتساب بين المندوب والعميل — كل سطر بالشكل «[رقم] المتحدث: النص» والمتحدث هو العميل أو المندوب — وتستخرج تفضيلات العميل العقارية فقط.',
 };
@@ -99,7 +105,26 @@ const CHAT_RULES = `
 - السطر الذي يبدأ بـ «(رسالة صوتية)» هو تفريغ لرسالة صوتية أرسلها العميل نفسه — كلامه هو، وعامله ككلام مكتوب منه.
 - إذا غيّر العميل رأيه خلال المحادثة، اعتمد آخر ما قاله.`;
 
-/** The system prompt for a channel. Only the first sentence (and, for chat, the extra rules) differ. */
+/**
+ * Extra rules for a phone call. Measured 2026-09-29 on 26 real calls: the
+ * salesperson's own summary («أنتِ تبحثين عن شقة في شمال الرياض»، «أبديت
+ * اهتمامك تملك وحدة») — often a restatement of the lead form — was taken as
+ * the customer's words. Only lines labelled «العميل» count.
+ */
+const CALL_RULES = `
+- ما يقوله المندوب ليس تفضيلًا للعميل: تلخيصه («أنت تبحث عن شقة…»)، أو اقتراحه، أو إعادته لما عبّأه العميل في النموذج أو الإعلان. لا تسجّله إلا إذا أكّده العميل صراحةً في سطر «العميل» الخاص به.
+- «quote» يجب أن يكون من كلام العميل نفسه (سطر يبدأ بـ «العميل:»)، لا من كلام المندوب أبدًا. إن لم تجد في أسطر العميل عبارة تدل على القيمة، فاترك الحقل null.
+- إذا غيّر العميل رأيه خلال المكالمة، اعتمد آخر ما قاله.`;
+
+/**
+ * Both channels. Measured 2026-09-29: a customer looking to RENT («عم ندور
+ * الحين على تأجير»، «بدي إيجار») was recorded as purchase_objective
+ * residential with the rent as a purchase budget.
+ */
+const RENT_RULE = `
+- إذا كان العميل يبحث عن إيجار أو استئجار (إيجار، استئجار، تأجير، «أبي أستأجر») لا عن شراء، فلا تُخرج purchase_objective ولا budget — مبلغ الإيجار ليس ميزانية شراء. بقية الحقول (نوع الوحدة، الغرف، المساحة، المرافق) تُسجَّل كالمعتاد.`;
+
+/** The system prompt for a channel. Only the first sentence and the channel's extra rules differ. */
 export function buildExtractSystemPrompt(channel: PrefChannel): string {
   return `${PROMPT_INTRO[channel]}
 
@@ -110,7 +135,7 @@ export function buildExtractSystemPrompt(channel: PrefChannel): string {
 - لكن إذا ذكر العميل تفضيلًا ولو بشكل عابر أو غير مؤكد، سجّله. «فيلا أكيد يعني» = ["فيلا"]، «أي شي عادي بس شقة» = ["شقة"]، «ما يتجاوز الثلاثة مليون» = budget.max 3000000، «حوالي ميتين متر» = area حول 200. لا تتردد في تسجيل ما قاله العميل فعلًا.
 - الممنوع الوحيد هو الاختلاق: لا تسجّل قيمة لم تُذكر ولا يمكن استنتاجها من كلام العميل.
 - الأرقام بالعامية: «مليونين ونص» = 2500000، «ميتين متر» = 200، «ثلاث مية» = 300، «مليون وستمية» = 1600000.
-- لكل حقل تستخرجه، أرفق «quote» = العبارة الحرفية التي قالها العميل، و«confidence» من 0 إلى 100.${channel === 'chat' ? CHAT_RULES : ''}
+- لكل حقل تستخرجه، أرفق «quote» = العبارة الحرفية التي قالها العميل، و«confidence» من 0 إلى 100.${RENT_RULE}${channel === 'chat' ? CHAT_RULES : CALL_RULES}
 
 الحقول والقيم المسموحة (استخدم القيم حرفيًا):
 - preferred_unit_type: مصفوفة من [${setOptions('preferred_unit_type').join(', ')}]

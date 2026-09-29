@@ -1230,6 +1230,15 @@ const resources = {
       'chats.prefs.save_failed': 'تعذّر الحفظ: {{msg}}',
       'chats.prefs.partial': 'قُرئت المواقع فقط — تعذّر استخراج التفضيلات',
       'chats.prefs.conflict': 'تغيّرت الاقتراحات منذ فتحتها — أعدنا تحميلها',
+      // Call audit — what the customer said on a call that is missing from the client
+      'chats.prefs.call_title': 'من مكالمة {{date}} — قالها العميل ولم تُسجَّل',
+      'chats.prefs.call_logged_since': 'سُجّلت بعد المكالمة',
+      'chats.prefs.call_fill_hint': 'تُضاف فقط إلى الحقول الفارغة — لا يُستبدل شيء محفوظ',
+      'chats.prefs.call_save': 'أضف المحدد إلى ملف العميل',
+      'chats.prefs.call_added': 'أُضيفت إلى ملف العميل',
+      'chats.prefs.call_skipped': 'تُخطيت لأنها سُجّلت: {{fields}}',
+      'chats.prefs.call_nothing_added': 'لم يُضف شيء — سُجّلت الحقول بعد المكالمة',
+      'chats.prefs.call_dismissed': 'تم تجاهل اقتراحات المكالمة',
     },
   },
   en: {
@@ -2446,6 +2455,15 @@ const resources = {
       'chats.prefs.save_failed': 'Save failed: {{msg}}',
       'chats.prefs.partial': 'Locations read; preference extraction failed',
       'chats.prefs.conflict': 'The suggestions changed since you opened them — reloaded',
+      // Call audit — what the customer said on a call that is missing from the client
+      'chats.prefs.call_title': 'From the call on {{date}} — said by the customer, not in the profile',
+      'chats.prefs.call_logged_since': 'Logged since the call',
+      'chats.prefs.call_fill_hint': 'Only fills empty fields — nothing saved is replaced',
+      'chats.prefs.call_save': 'Add ticked to the client',
+      'chats.prefs.call_added': 'Added to the client',
+      'chats.prefs.call_skipped': 'Skipped because already logged: {{fields}}',
+      'chats.prefs.call_nothing_added': 'Nothing added — the fields were logged since the call',
+      'chats.prefs.call_dismissed': 'Call suggestions dismissed',
     },
   },
 };

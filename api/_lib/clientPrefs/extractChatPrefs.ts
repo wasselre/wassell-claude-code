@@ -78,9 +78,55 @@ export async function extractChatPrefs(sb: SupabaseClient, input: ExtractChatPre
 
   const currentValues = await readClientPrefValues(sb, input.clientId);
 
+  const watermark = input.watermark ?? newestClientTurnAt(input.conversation) ?? new Date().toISOString();
+  const { proposalId, superseded } = await insertPendingProposal(sb, {
+    client_id: input.clientId,
+    chat_wid: input.chatWid,
+    suggestions,
+    current_values: currentValues,
+    source_watermark: watermark,
+    source_message_count: input.conversation.turns.length,
+    extractor_version: PREF_EXTRACTOR_VERSION,
+    model: res.model,
+    is_fallback: res.isFallback,
+    trigger: input.trigger,
+  });
+
+  log(`[chat-prefs] client=${input.clientId} chat=${input.chatWid} model=${res.model}${res.isFallback ? ' (fallback)' : ''} fields=${fieldCount} proposal=${proposalId} superseded=${superseded}`);
+  return { proposalId, fieldCount, model: res.model, isFallback: res.isFallback };
+}
+
+/** The columns of a new pending `client_pref_proposals` row (status is set here). */
+export interface NewPrefProposalRow {
+  client_id: string;
+  /** The chat's wid, or `call:<call id>` for a call-audit proposal. */
+  chat_wid: string;
+  suggestions: Record<string, unknown>;
+  current_values: Record<string, unknown>;
+  source_watermark: string;
+  source_message_count: number;
+  extractor_version: string;
+  model: string;
+  is_fallback: boolean;
+  trigger: string;
+  /** Call-audit columns (2026-09-29_01). Omitted for a chat proposal ⇒ the column defaults ('chat', NULL, NULL). */
+  source?: 'chat' | 'call';
+  call_id?: string;
+  call_at?: string | null;
+}
+
+/**
+ * Supersede the older PENDING proposal(s) of this (chat_wid, client), insert
+ * the new pending one, then link the superseded rows to it. A failed insert
+ * puts the rows it just superseded back to pending before throwing. Shared by
+ * the chat preference agent and the call audit. Every error THROWS.
+ */
+export async function insertPendingProposal(
+  sb: SupabaseClient, row: NewPrefProposalRow,
+): Promise<{ proposalId: string; superseded: number }> {
   const { data: open, error: openErr } = await sb
     .from('client_pref_proposals').select('id')
-    .eq('chat_wid', input.chatWid).eq('client_id', input.clientId).eq('status', 'pending');
+    .eq('chat_wid', row.chat_wid).eq('client_id', row.client_id).eq('status', 'pending');
   if (openErr) throw new Error(`client prefs: pending proposals read failed: ${openErr.message}`);
   const older = ((open ?? []) as Array<{ id: string }>).map((r) => r.id);
 
@@ -91,22 +137,9 @@ export async function extractChatPrefs(sb: SupabaseClient, input: ExtractChatPre
     if (error) throw new Error(`client prefs: superseding older proposals failed: ${error.message}`);
   }
 
-  const watermark = input.watermark ?? newestClientTurnAt(input.conversation) ?? new Date().toISOString();
   const { data: inserted, error: insErr } = await sb
     .from('client_pref_proposals')
-    .insert({
-      client_id: input.clientId,
-      chat_wid: input.chatWid,
-      suggestions,
-      current_values: currentValues,
-      status: 'pending',
-      source_watermark: watermark,
-      source_message_count: input.conversation.turns.length,
-      extractor_version: PREF_EXTRACTOR_VERSION,
-      model: res.model,
-      is_fallback: res.isFallback,
-      trigger: input.trigger,
-    })
+    .insert({ ...row, status: 'pending' })
     .select('id').single();
   if (insErr || !inserted) {
     const msg = insErr?.message ?? 'no row returned';
@@ -129,7 +162,5 @@ export async function extractChatPrefs(sb: SupabaseClient, input: ExtractChatPre
       .in('id', older).eq('status', 'superseded');
     if (error) throw new Error(`client prefs: linking superseded proposals failed: ${error.message}`);
   }
-
-  log(`[chat-prefs] client=${input.clientId} chat=${input.chatWid} model=${res.model}${res.isFallback ? ' (fallback)' : ''} fields=${fieldCount} proposal=${proposalId} superseded=${older.length}`);
-  return { proposalId, fieldCount, model: res.model, isFallback: res.isFallback };
+  return { proposalId, superseded: older.length };
 }
