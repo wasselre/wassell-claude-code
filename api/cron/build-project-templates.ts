@@ -32,8 +32,16 @@ import { buildPickerItems, isUnitPlanFile } from '../../src/pages/Chats/lib/proj
 export const config = { runtime: 'nodejs', maxDuration: 300 };
 
 const FILE_COLS =
-  'id, kind, title, original_name, document_type, primary_category, origin, usage_rights, acquisition_source, duration_seconds';
+  'id, kind, title, original_name, document_type, primary_category, origin, usage_rights, acquisition_source, duration_seconds, width_px, height_px, size_bytes';
 const PHOTO_COUNT = 3;
+// A real project photo is never this small. The developer-site imports also
+// scraped amenity ICONS («حضانة أطفال», «مقهى», «أندية رياضية» — 356×112 SVGs
+// saved as .jpg, 6–15 KB) tagged raw_photo; with no size check they tied with
+// the 1920px renders and were sent to a customer as صفا 78's photos (2026-09-29).
+// 300px: every icon measured was 112px tall; real photos in live templates go
+// down to 480×360 (صفا 102) and 540×413 (الماجدية 174), which must stay.
+const MIN_PHOTO_SIDE_PX = 300;
+const MIN_PHOTO_BYTES = 40_000;
 // The body is written by the SAME AI rewrite a rep triggers (generateProjectMessage,
 // Kimi ~40s each), NOT the deterministic sheet. Vercel caps a request at 300s, so
 // only this many bodies are (re)generated per run — missing/stale ones first; the
@@ -51,6 +59,16 @@ interface FileRow {
   usage_rights: string | null;
   acquisition_source: string | null;
   duration_seconds: number | null;
+  width_px: number | null;
+  height_px: number | null;
+  size_bytes: number | null;
+}
+
+/** Too small to be a project photo (an icon / logo / thumbnail). Unknown
+ *  dimensions fall back to the byte size; both unknown → kept. */
+export function isTooSmallForPhoto(f: Pick<FileRow, 'width_px' | 'height_px' | 'size_bytes'>): boolean {
+  if (f.width_px != null && f.height_px != null) return Math.min(f.width_px, f.height_px) < MIN_PHOTO_SIDE_PX;
+  return f.size_bytes != null && f.size_bytes < MIN_PHOTO_BYTES;
 }
 
 function json(body: unknown, status: number): Response {
@@ -81,10 +99,14 @@ function selectMedia(files: FileRow[]): Selection {
 
   // Real photos ONLY (hero_image + raw_photo) — NOT ai_content, brochure-as-image
   // etc. Matches the "3 best real photos" intent; designs are already excluded.
+  // Within a category the sharpest (largest) image wins — never storage order.
+  const area = (f: FileRow) => (f.width_px ?? 0) * (f.height_px ?? 0);
   const imageIds = rows
     .filter((f) => f.kind === 'image' && sendable.has(f.id)
-      && (f.primary_category === 'hero_image' || f.primary_category === 'raw_photo'))
-    .sort((a, b) => photoRank(a.primary_category) - photoRank(b.primary_category))
+      && (f.primary_category === 'hero_image' || f.primary_category === 'raw_photo')
+      && !isTooSmallForPhoto(f))
+    .sort((a, b) => photoRank(a.primary_category) - photoRank(b.primary_category)
+      || area(b) - area(a) || (b.size_bytes ?? 0) - (a.size_bytes ?? 0))
     .slice(0, PHOTO_COUNT)
     .map((f) => f.id);
 
