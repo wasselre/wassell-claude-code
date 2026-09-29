@@ -229,23 +229,82 @@ export async function loadRecord(svc: Svc, id: string | null): Promise<Rec | nul
   return (data as Rec | null) ?? null;
 }
 
-/** Ids of officers covering a project — the same rule as /api/whatsapp/notify-officer. */
-export async function coveringOfficerIds(svc: Svc, projectId: string, developerId: string | null, marketerIds: string[]): Promise<Set<string>> {
+/** Which side an officer works for: the developer's or a marketer's. */
+export type Party = 'developer' | 'marketer' | null;
+
+/** Officers covering a project, with the side each works for — the same
+ *  coverage rule as /api/whatsapp/notify-officer. */
+export async function coveringOfficers(svc: Svc, projectId: string, developerId: string | null, marketerIds: string[]): Promise<Map<string, Party>> {
   const { data: m } = await svc.from('models').select('id').eq('name', 'project_officers').maybeSingle();
   const officersModelId = (m as { id: string } | null)?.id;
-  if (!officersModelId) return new Set();
-  const { data: rows } = await svc.from('unified_records').select('id, data').eq('model_id', officersModelId);
-  const out = new Set<string>();
+  if (!officersModelId) return new Map();
+  const { data: rows, error } = await svc.from('unified_records').select('id, data').eq('model_id', officersModelId);
+  if (error) throw new Error(`officers load failed: ${error.message}`);
+  const out = new Map<string, Party>();
   for (const o of (rows ?? []) as Rec[]) {
     const d = o.data ?? {};
     if (d.is_active === false) continue;
     const projs = idList(d.projects);
     const offDev = idList(d.developer)[0] ?? null;
     const offMkt = idList(d.marketer)[0] ?? null;
-    if (projs.includes(projectId)) out.add(o.id);
-    else if (projs.length === 0 && ((offDev && offDev === developerId) || (offMkt && marketerIds.includes(offMkt)))) out.add(o.id);
+    const party: Party = offDev ? 'developer' : offMkt ? 'marketer' : null;
+    if (projs.includes(projectId)) out.set(o.id, party);
+    else if (projs.length === 0 && ((offDev && offDev === developerId) || (offMkt && marketerIds.includes(offMkt)))) out.set(o.id, party);
   }
   return out;
+}
+
+export interface PortalCoverageInput {
+  id: string;
+  projects: string[];
+  officers: string[];
+  developer: string | null;
+  marketers: string[];
+}
+
+export interface PortalCoverage {
+  id: string;
+  coverage: PortalOption['coverage'];
+}
+
+/**
+ * Which portals a client for this project should be registered in.
+ *
+ * DEVELOPER FIRST (the operator's rule, 2026-09-29 — same rule the officer
+ * notification already follows): when we have a DIRECT relationship with the
+ * project's developer — the developer has a portal of its own, or an officer on
+ * the developer's side covers the project — the client goes to the developer
+ * only, and every portal reached through a MARKETER is dropped. A marketer's
+ * portal is used only when we have no direct line to the developer. Listing a
+ * marketer on a project records who markets it (Competitor Watch); it must
+ * never divert a lead away from a developer we deal with directly.
+ * A portal that explicitly lists the project is always kept — someone chose it.
+ */
+export function pickPortals(
+  portals: PortalCoverageInput[],
+  project: { id: string; developerId: string | null; marketerIds: string[] } | null,
+  officers: Map<string, Party>,
+): PortalCoverage[] {
+  const withSide: Array<PortalCoverage & { side: Party | 'explicit' }> = [];
+  for (const p of portals) {
+    const viaOfficers = p.officers.filter((id) => officers.has(id));
+    if (project && p.projects.includes(project.id)) {
+      withSide.push({ id: p.id, coverage: 'project', side: 'explicit' });
+    } else if (viaOfficers.length > 0) {
+      const side: Party = viaOfficers.some((id) => officers.get(id) === 'developer') ? 'developer'
+        : viaOfficers.some((id) => officers.get(id) === 'marketer') ? 'marketer' : null;
+      withSide.push({ id: p.id, coverage: 'officer', side });
+    } else if (project?.developerId && p.developer === project.developerId) {
+      withSide.push({ id: p.id, coverage: 'developer', side: 'developer' });
+    } else if (project && p.marketers.some((id) => project.marketerIds.includes(id))) {
+      withSide.push({ id: p.id, coverage: 'marketer', side: 'marketer' });
+    }
+  }
+  const direct = withSide.some((p) => p.side === 'developer')
+    || [...officers.values()].some((party) => party === 'developer');
+  return withSide
+    .filter((p) => !(direct && p.side === 'marketer'))
+    .map(({ id, coverage }) => ({ id, coverage }));
 }
 
 export async function resolvePortals(
@@ -267,17 +326,21 @@ export async function resolvePortals(
   // A project can have several marketers (one developer + any number of
   // marketing companies); a portal or officer of ANY of them covers it.
   const marketerIds = idList(pdata.marketer);
-  const officerIds = project ? await coveringOfficerIds(svc, project.id, developerId, marketerIds) : new Set<string>();
+  const officers = project ? await coveringOfficers(svc, project.id, developerId, marketerIds) : new Map<string, Party>();
+  const picked = new Map(pickPortals(
+    portals.map((p) => {
+      const d = p.data ?? {};
+      return { id: p.id, projects: idList(d.projects), officers: idList(d.officers), developer: idList(d.developer)[0] ?? null, marketers: idList(d.marketer) };
+    }),
+    project ? { id: project.id, developerId, marketerIds } : null,
+    officers,
+  ).map((c) => [c.id, c.coverage]));
 
   const rank: Record<PortalOption['coverage'], number> = { project: 0, officer: 1, developer: 2, marketer: 3 };
   const out: PortalOption[] = [];
   for (const p of portals) {
     const d = p.data ?? {};
-    let coverage: PortalOption['coverage'] | null = null;
-    if (project && idList(d.projects).includes(project.id)) coverage = 'project';
-    else if (idList(d.officers).some((id) => officerIds.has(id))) coverage = 'officer';
-    else if (developerId && idList(d.developer)[0] === developerId) coverage = 'developer';
-    else if (idList(d.marketer).some((id) => marketerIds.includes(id))) coverage = 'marketer';
+    const coverage = picked.get(p.id);
     if (!coverage) continue;
 
     const { fields, error: fieldsErr } = parseFields(d.required_fields);

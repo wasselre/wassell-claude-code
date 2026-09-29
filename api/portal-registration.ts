@@ -37,7 +37,10 @@
  *   P ∈ portal.projects                                   → 'project'
  *   portal.officers ∩ officers covering P ≠ ∅              → 'officer'
  *   portal.developer == P.developer                        → 'developer'
- *   portal.marketer  == P.marketer                         → 'marketer'
+ *   portal.marketer  ∈ P's marketers                       → 'marketer'
+ * DEVELOPER FIRST: when we deal with P's developer directly (the developer has
+ * a portal, or a developer-side officer covers P), portals reached through a
+ * marketer are dropped — see pickPortals in _lib/leadPortals.ts.
  */
 
 import { withAuth, jsonOk, jsonError, assertCanAccessRecord, AuthError } from './_lib/auth.js';
