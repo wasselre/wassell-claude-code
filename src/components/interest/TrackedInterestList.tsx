@@ -95,20 +95,20 @@ export default function TrackedInterestList({
                   {r.name ?? (mode === 'project' ? phoneOf(r.chat_wid) : L('مشروع', 'Project'))}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-charcoal/60">
-                  <span>{L(`${r.messages} رسالة`, `${r.messages} msg`)}</span>
+                  <span>{L(`أرسلنا ${r.messages} رسالة`, `${r.messages} msg sent`)}</span>
                   {r.sessions > 0 ? (
                     <>
-                      <Stat icon={<Eye size={11} />} text={L(`${r.sessions} فتح`, `${r.sessions} opens`)} />
-                      {r.photos_opened > 0 && <Stat icon={<ImageIcon size={11} />} text={L(`${r.photos_opened} صور`, `${r.photos_opened} photos`)} />}
-                      {r.videos_played > 0 && <Stat icon={<PlayCircle size={11} />} text={`${r.videos_played} · ${Math.round(Number(r.max_video_pct) || 0)}%`} />}
-                      {Number(r.brochure_seconds) > 0 && <Stat icon={<FileText size={11} />} text={dur(Number(r.brochure_seconds), isAr)} />}
+                      <Stat icon={<Eye size={11} />} text={L(`دخل الصفحة ${r.sessions === 1 ? 'مرة' : `${r.sessions} مرات`}`, `opened the page ${r.sessions}×`)} />
+                      {r.photos_opened > 0 && <Stat icon={<ImageIcon size={11} />} text={L(`كبّر ${r.photos_opened} صور`, `enlarged ${r.photos_opened} photos`)} />}
+                      {r.videos_played > 0 && <Stat icon={<PlayCircle size={11} />} text={L(`شغّل ${r.videos_played} فيديو · ${Math.round(Number(r.max_video_pct) || 0)}%`, `played ${r.videos_played} video · ${Math.round(Number(r.max_video_pct) || 0)}%`)} />}
+                      {Number(r.brochure_seconds) > 0 && <Stat icon={<FileText size={11} />} text={`${L('البروشور', 'Brochure')} ${dur(Number(r.brochure_seconds), isAr)}`} />}
                       {(r.units_opened > 0 || Number(r.units_seconds) > 0) && (
-                        <Stat icon={<LayoutGrid size={11} />} text={r.units_opened > 0 ? L(`${r.units_opened} وحدات`, `${r.units_opened} units`) : dur(Number(r.units_seconds), isAr)} />
+                        <Stat icon={<LayoutGrid size={11} />} text={r.units_opened > 0 ? L(`فتح ${r.units_opened} وحدات`, `opened ${r.units_opened} units`) : `${L('الوحدات', 'Units')} ${dur(Number(r.units_seconds), isAr)}`} />
                       )}
-                      {r.opened_map && <Stat icon={<MapPin size={11} />} text={L('الموقع', 'Map')} />}
+                      {r.opened_map && <Stat icon={<MapPin size={11} />} text={L('فتح الموقع', 'Opened map')} />}
                     </>
                   ) : (
-                    <span className="text-charcoal/45">{L('لم يفتح الروابط', 'Not opened')}</span>
+                    <span className="text-charcoal/45">{L('لم يفتح روابط المشروع', 'Has not opened the links')}</span>
                   )}
                 </div>
               </div>
