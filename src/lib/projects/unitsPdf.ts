@@ -366,6 +366,39 @@ export async function buildUnitPdf({
   unit: UnitView;
   isAr: boolean;
 }): Promise<Blob> {
+  return rasterizeSectionsToPdf(await unitSheetSections({ project, unit, isAr }), 'portrait');
+}
+
+/**
+ * Several unit sheets in ONE PDF — each unit keeps its full page sequence
+ * (details → floor plan → payment plans, missing pages deleted), one unit after
+ * the other. Units may come from different projects; every sheet carries its
+ * own project's header. Used by the client options list to send the selected
+ * units as a single document.
+ */
+export async function buildUnitSheetsPdf({
+  items,
+  isAr,
+}: {
+  items: Array<{ project: ProjectView; unit: UnitView }>;
+  isAr: boolean;
+}): Promise<Blob> {
+  if (items.length === 0) throw new Error(isAr ? 'لا توجد وحدات للتصدير' : 'No units to export');
+  const sections: Array<string | null> = [];
+  for (const it of items) sections.push(...(await unitSheetSections({ project: it.project, unit: it.unit, isAr })));
+  return rasterizeSectionsToPdf(sections, 'portrait');
+}
+
+/** The HTML pages of one unit sheet (null = a page with no data, dropped). */
+async function unitSheetSections({
+  project,
+  unit,
+  isAr,
+}: {
+  project: ProjectView;
+  unit: UnitView;
+  isAr: boolean;
+}): Promise<Array<string | null>> {
   const cur = isAr ? 'ر.س' : 'SAR';
   const sar = (n: number | null) => (n != null ? `${fmt(n)} ${cur}` : null);
   const m2 = (n: number | null) => (n != null ? `${fmt(n)} ${isAr ? 'م²' : 'm²'}` : null);
@@ -473,7 +506,7 @@ export async function buildUnitPdf({
       </div>`)
     : null;
 
-  return rasterizeSectionsToPdf([detailsPage, planPage, paymentsPage], 'portrait');
+  return [detailsPage, planPage, paymentsPage];
 }
 
 // ─── Payment plans ──────────────────────────────────────────────────────────
@@ -609,6 +642,10 @@ function slug(s: string | null | undefined, fallback: string): string {
 
 export function unitsPdfFilename(project: ProjectView): string {
   return `wassel-units-${slug(project.projectId ?? project.name, project.id.slice(0, 8))}.pdf`;
+}
+
+export function unitSheetsPdfFilename(count: number): string {
+  return `wassel-units-${count}-${new Date().toISOString().slice(0, 10)}.pdf`;
 }
 
 export function unitPdfFilename(project: ProjectView, unit: UnitView): string {

@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
   Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass, Send,
-  LayoutList, LayoutGrid, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal, CheckSquare, Square, Trash2,
+  LayoutList, LayoutGrid, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal, CheckSquare, Square, Trash2, FileText,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
@@ -29,7 +29,12 @@ import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlo
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import Modal from '@/components/ui/Modal';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
-import { chatPdfFromClient } from '@/lib/projects/sendPdfToChat';
+import { chatPdfFromClient, downloadPdf } from '@/lib/projects/sendPdfToChat';
+import SendUnitsPdfModal from '@/pages/Chats/components/SendUnitsPdfModal';
+import { modelByName, resolveProjectView, type ProjectView } from '@/lib/projects/projectView';
+import { resolveUnitView, type UnitView } from '@/lib/projects/unitView';
+import { getEntityFieldText } from '@/lib/recordTranslation/store';
+import { buildUnitSheetsPdf, unitSheetsPdfFilename, unitPdfFilename as unitPdfFilenameFor } from '@/lib/projects/unitsPdf';
 
 interface Props {
   client: AppRecord;
@@ -291,6 +296,10 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
   // (same UnitsInventory the finder + project page use). Holds the resolved
   // all_projects id + a display name.
   const [unitsFor, setUnitsFor] = useState<{ projectId: string; name: string } | null>(null);
+  // "Send PDF" for UNIT options — one card, or every selected unit option.
+  // Holds the unit record ids; the PDF has each unit's full sheet in order.
+  const [unitPdfIds, setUnitPdfIds] = useState<string[] | null>(null);
+  const [unitPdfDownloading, setUnitPdfDownloading] = useState(false);
 
   // The all_projects id a project option's units live under. Our-portfolio
   // options store the our_projects record id (their finder source_id), so we
@@ -464,6 +473,89 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
     await withBusy(r.id, () => updateSalesNotes(r.id, notesDraft.trim()), L('تم حفظ الملاحظة.', 'Note saved.'), L('تعذّر الحفظ.', 'Could not save.'));
     setEditNotesId(null);
   }
+
+  // ── Units PDF (unit options) ─────────────────────────────────────────────
+  // unit record id → the option's display name (for the dialog title).
+  const optionByUnitId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of options) {
+      if (r.data.source_type === 'unit' && typeof r.data.source_id === 'string') {
+        m.set(r.data.source_id, String(r.data.source_name || r.data.source_id));
+      }
+    }
+    return m;
+  }, [options]);
+  // Unit record ids of the currently selected UNIT options (bulk send).
+  const selectedUnitIds = useMemo(
+    () => options
+      .filter((r) => selectedIds.has(r.id) && r.data.source_type === 'unit' && typeof r.data.source_id === 'string' && r.data.source_id)
+      .map((r) => String(r.data.source_id)),
+    [options, selectedIds],
+  );
+
+  /**
+   * Resolve unit ids → { project, unit } views in the requested PDF language,
+   * read from the store at BUILD time so a language switch in the send dialog
+   * re-resolves translated labels. A unit that is not loaded, or has no parent
+   * project, cannot produce a sheet (the header needs the project) — the build
+   * fails loudly naming how many were skipped rather than sending a short PDF.
+   */
+  const unitSheetItems = (unitIds: string[], wantAr: boolean): Array<{ project: ProjectView; unit: UnitView }> => {
+    const st = useAppStore.getState();
+    const store = { models: st.models, records: st.records };
+    const um = modelByName(st.models, 'units');
+    const pm = modelByName(st.models, 'all_projects');
+    const unitRecs = new Map((um ? st.records[um.id] ?? [] : []).map((r) => [r.id, r]));
+    const projRecs = new Map((pm ? st.records[pm.id] ?? [] : []).map((r) => [r.id, r]));
+    const items: Array<{ project: ProjectView; unit: UnitView }> = [];
+    let missing = 0;
+    for (const id of unitIds) {
+      const rec = unitRecs.get(id);
+      const unit = rec ? resolveUnitView(store, rec, { isAr: wantAr, translate: getEntityFieldText }) : null;
+      const projRec = unit?.projectId ? projRecs.get(unit.projectId) : undefined;
+      if (!unit || !projRec) { missing++; continue; }
+      items.push({ project: resolveProjectView(store, projRec, { isAr: wantAr, translate: getEntityFieldText }), unit });
+    }
+    if (missing > 0) {
+      throw new Error(wantAr
+        ? `تعذّر تجهيز ${missing} وحدة (غير محمّلة أو بلا مشروع) — لم يُنشأ الملف`
+        : `${missing} unit(s) could not be loaded or have no project — PDF not created`);
+    }
+    return items;
+  };
+
+  const unitPdfFilename = (ids: string[]): string => {
+    if (ids.length === 1) {
+      try {
+        const [it] = unitSheetItems(ids, isAr);
+        if (it) return unitPdfFilenameFor(it.project, it.unit);
+      } catch (e) {
+        console.error('[ClientOptionsTab] unit PDF filename fell back to generic', e);
+      }
+    }
+    return unitSheetsPdfFilename(ids.length);
+  };
+
+  /** Open the send dialog (client has a phone) or download straight away. */
+  const openUnitPdf = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    if (chatPdf) { setUnitPdfIds(ids); return; }
+    if (unitPdfDownloading) return;
+    setUnitPdfDownloading(true);
+    try {
+      const blob = await buildUnitSheetsPdf({ items: unitSheetItems(ids, isAr), isAr });
+      downloadPdf(blob, unitPdfFilename(ids));
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+    } finally {
+      setUnitPdfDownloading(false);
+    }
+  };
+
+  const unitNamesFor = (ids: string[]): string => {
+    const names = ids.map((id) => optionByUnitId.get(id)).filter(Boolean) as string[];
+    return names.length <= 3 ? names.join('، ') : `${names.slice(0, 3).join('، ')}…`;
+  };
 
   // ── Multi-select + bulk actions ──────────────────────────────────────────
   const allVisibleSelected = visible.length > 0 && visible.every((r) => selectedIds.has(r.id));
@@ -748,6 +840,24 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
               </button>
             )}
 
+            {/* Unit options: send the unit's sheet (details, floor plan,
+                payment plans) as a PDF — to the client's WhatsApp when the
+                client has a phone, else a download. */}
+            {d.source_type === 'unit' && d.source_id && (
+              <button
+                type="button"
+                disabled={unitPdfDownloading}
+                onClick={() => void openUnitPdf([String(d.source_id)])}
+                className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-[11px] font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+                title={chatPdf
+                  ? L('إرسال ملف PDF للوحدة للعميل عبر واتساب', 'Send the unit PDF to the client over WhatsApp')
+                  : L('تنزيل ملف PDF للوحدة (لا يوجد رقم جوال للعميل)', 'Download the unit PDF (the client has no phone number)')}
+              >
+                {unitPdfDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+                {chatPdf ? L('إرسال PDF', 'Send PDF') : L('تنزيل PDF', 'Download PDF')}
+              </button>
+            )}
+
             {/* Market-listing options: contact the advertiser — opens the
                 WhatsApp chat if the phone is already on the listing, else
                 runs the REGA lookup and opens it when the number lands. */}
@@ -1003,6 +1113,20 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
             </span>
             {bulkBusy && <Loader2 size={13} className="animate-spin text-copper" />}
             <div className="flex-1" />
+            {selectedUnitIds.length > 0 && (
+              <button
+                type="button"
+                disabled={bulkBusy || unitPdfDownloading}
+                onClick={() => void openUnitPdf(selectedUnitIds)}
+                title={L('ملف PDF واحد فيه بطاقة كل وحدة محددة', 'One PDF with a sheet for every selected unit')}
+                className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-xs font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+              >
+                {unitPdfDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+                {chatPdf
+                  ? L(`إرسال الوحدات PDF (${selectedUnitIds.length})`, `Send units PDF (${selectedUnitIds.length})`)
+                  : L(`تنزيل الوحدات PDF (${selectedUnitIds.length})`, `Download units PDF (${selectedUnitIds.length})`)}
+              </button>
+            )}
             <select
               value=""
               disabled={bulkBusy}
@@ -1171,6 +1295,27 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
             onClose={() => setSendTarget(null)}
           />
         )
+      )}
+
+      {/* Units PDF send dialog (unit options). Mounted only while open so its
+          cached per-language blob resets per open. */}
+      {unitPdfIds && chatPdf && (
+        <SendUnitsPdfModal
+          open
+          onClose={() => setUnitPdfIds(null)}
+          chatWid={chatPdf.chatWid}
+          clientName={chatPdf.clientName}
+          clientPhone={chatPdf.clientPhone}
+          titleFor={(a) => (unitPdfIds.length === 1
+            ? (a ? `وحدة ${unitNamesFor(unitPdfIds)}` : `Unit ${unitNamesFor(unitPdfIds)}`)
+            : (a ? `${unitPdfIds.length} وحدات` : `${unitPdfIds.length} units`))}
+          subtitleFor={() => unitNamesFor(unitPdfIds)}
+          filenameFor={() => unitPdfFilename(unitPdfIds)}
+          captionFor={(a) => (unitPdfIds.length === 1
+            ? (a ? `تفاصيل الوحدة ${unitNamesFor(unitPdfIds)}` : `Unit details — ${unitNamesFor(unitPdfIds)}`)
+            : (a ? `تفاصيل ${unitPdfIds.length} وحدات` : `Details of ${unitPdfIds.length} units`))}
+          buildFor={(a) => buildUnitSheetsPdf({ items: unitSheetItems(unitPdfIds, a), isAr: a })}
+        />
       )}
 
       {/* Hard-delete confirm — spells out how it differs from eliminate. */}
