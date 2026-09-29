@@ -26,6 +26,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { jsonError, jsonOk } from './_lib/auth.js';
 import { makeServiceClient } from './_lib/serviceClient.js';
+import { resolvePortal, type PortalRow } from './_lib/brokerPortal.js';
 
 export const config = { runtime: 'edge' };
 
@@ -43,10 +44,6 @@ interface SchemaField { name?: string; options?: SchemaOption[] }
 interface ModelRow { id: string; name: string; schema: { sections?: Array<{ fields?: SchemaField[] }> } | null }
 type Json = Record<string, unknown>;
 interface RecordRow { id: string; data: Json }
-interface PortalRow {
-  id: string; developer_id: string; title_ar: string | null; title_en: string | null;
-  is_active: boolean; expires_at: string | null;
-}
 interface FileRow {
   id: string; kind: string | null; mime_type: string | null; original_name: string | null;
   title: string | null; size_bytes: number | null; storage_bucket: string; storage_path: string;
@@ -152,19 +149,6 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 }
 
 // ── Data loading ───────────────────────────────────────────────────────────
-
-async function resolvePortal(svc: SupabaseClient, token: string): Promise<PortalRow | null> {
-  const { data, error } = await svc
-    .from('broker_portals')
-    .select('id, developer_id, title_ar, title_en, is_active, expires_at')
-    .eq('token', token)
-    .maybeSingle();
-  if (error) throw new Error(`portal lookup failed: ${error.message}`);
-  const row = data as PortalRow | null;
-  if (!row || !row.is_active) return null;
-  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return null;
-  return row;
-}
 
 async function loadModels(svc: SupabaseClient): Promise<{ projects: ModelRow; units: ModelRow; developers?: ModelRow }> {
   const { data, error } = await svc
@@ -416,6 +400,7 @@ async function overview(svc: SupabaseClient, portal: PortalRow): Promise<Respons
       website: str(dev.website),
     },
     projects: cards,
+    can_send: portal.send_enabled,
     expires_at: new Date(Date.now() + PORTAL_URL_TTL_SECONDS * 1000).toISOString(),
   });
 }
@@ -431,6 +416,66 @@ function sectionOf(role: string | null, f: FileRow): 'photos' | 'videos' | 'libr
   return 'documents';
 }
 const SECTION_RANK = { plans: 0, library: 1, videos: 2, documents: 3, photos: 4 } as const;
+
+/** One entry per file, placed in its most specific section, with the units it
+ *  is linked to (floor plans are linked per unit). */
+function placeFiles(links: LinkRow[], files: Map<string, FileRow>, unitIds: Set<string>) {
+  const placed = new Map<string, { section: keyof typeof SECTION_RANK; unit_ids: string[]; record_ids: string[] }>();
+  for (const l of links) {
+    const f = files.get(l.file_id);
+    if (!f) continue;
+    const section = sectionOf(l.role, f);
+    const cur = placed.get(f.id);
+    const unit_ids = cur?.unit_ids ?? [];
+    const record_ids = cur?.record_ids ?? [];
+    if (unitIds.has(l.record_id) && !unit_ids.includes(l.record_id)) unit_ids.push(l.record_id);
+    if (!record_ids.includes(l.record_id)) record_ids.push(l.record_id);
+    if (!cur || SECTION_RANK[section] < SECTION_RANK[cur.section]) placed.set(f.id, { section, unit_ids, record_ids });
+    else { cur.unit_ids = unit_ids; cur.record_ids = record_ids; }
+  }
+  return placed;
+}
+
+/** Only real speech is shown to a broker. Two kinds of stored rows are not:
+ *  (1) LEGACY English rows — fal's wizper defaulted to English and TRANSLATED
+ *  the Saudi Arabic speech (no `language` in the stored request; being repaired
+ *  by scripts/retranscribe-arabic.mjs); (2) music-only reels whose "transcript"
+ *  is Whisper's hallucinated "♪ Thank you". */
+function isPresentableTranscript(t: { text: string | null; language: string | null; raw: Json | null }): boolean {
+  const text = (t.text ?? '').trim();
+  if (!text || t.language === 'none') return false;
+  const req = (t.raw?._request ?? null) as Json | null;
+  const legacyEnglish = t.language === 'en' && !(req && typeof req === 'object' && 'language' in req);
+  if (legacyEnglish) return false;
+  const words = text.replace(/[\u266A\u266B\u{1F3B5}*.,!?'"()[\]-]/gu, ' ').replace(/\b(thank you|thanks|you|so|oh my god)\b/gi, ' ').trim();
+  return words.replace(/\s+/g, '').length >= 20;
+}
+
+/** Speech transcripts for video files (collected social reels are transcribed
+ *  by the marketing lane: files ← mkt_content_media.file_id → mkt_transcripts).
+ *  Empty transcripts (music-only reels) are left out. */
+async function loadTranscripts(svc: SupabaseClient, fileIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (let i = 0; i < fileIds.length; i += 150) {
+    const { data: media, error } = await svc
+      .from('mkt_content_media').select('id, file_id').in('file_id', fileIds.slice(i, i + 150));
+    if (error) { console.error('[broker-portal] content media lookup failed:', error.message); return out; }
+    const rows = (media ?? []) as Array<{ id: string; file_id: string }>;
+    if (!rows.length) continue;
+    const { data: tr, error: tErr } = await svc
+      .from('mkt_transcripts').select('content_media_id, text, language, raw').eq('status', 'done')
+      .in('content_media_id', rows.map((r) => r.id));
+    if (tErr) { console.error('[broker-portal] transcript lookup failed:', tErr.message); return out; }
+    const fileOf = new Map(rows.map((r) => [r.id, r.file_id]));
+    for (const t of (tr ?? []) as Array<{ content_media_id: string; text: string | null; language: string | null; raw: Json | null }>) {
+      if (!isPresentableTranscript(t)) continue;
+      const text = (t.text ?? '').trim();
+      const fid = fileOf.get(t.content_media_id);
+      if (fid && (out.get(fid)?.length ?? 0) < text.length) out.set(fid, text);
+    }
+  }
+  return out;
+}
 
 async function projectDetail(svc: SupabaseClient, portal: PortalRow, projectId: string): Promise<Response> {
   const models = await loadModels(svc);
@@ -455,18 +500,8 @@ async function projectDetail(svc: SupabaseClient, portal: PortalRow, projectId: 
   // projected into file_links by its triggers (source_key 'field:…').
   const signed = await signFiles(svc, [...files.values()]);
 
-  // One entry per file, placed in its most specific section.
-  const unitIds = new Set(units.map((u) => u.id));
-  const placed = new Map<string, { section: keyof typeof SECTION_RANK; unit_ids: string[] }>();
-  for (const l of links) {
-    const f = files.get(l.file_id)!;
-    const section = sectionOf(l.role, f);
-    const cur = placed.get(f.id);
-    const unit_ids = cur?.unit_ids ?? [];
-    if (unitIds.has(l.record_id) && !unit_ids.includes(l.record_id)) unit_ids.push(l.record_id);
-    if (!cur || SECTION_RANK[section] < SECTION_RANK[cur.section]) placed.set(f.id, { section, unit_ids });
-    else cur.unit_ids = unit_ids;
-  }
+  const placed = placeFiles(links, files, new Set(units.map((u) => u.id)));
+  const transcripts = await loadTranscripts(svc, [...files.values()].filter((f) => f.kind === 'video').map((f) => f.id));
   const mediaFiles = [...placed.entries()].map(([id, p]) => {
     const f = files.get(id)!;
     const s = signed.get(id);
@@ -485,6 +520,7 @@ async function projectDetail(svc: SupabaseClient, portal: PortalRow, projectId: 
       download: s?.download ?? null,
       unit_ids: p.unit_ids,
       created_at: f.created_at,
+      transcript: transcripts.get(id) ?? null,
     };
   }).filter((m) => m.url);
 
@@ -575,9 +611,103 @@ async function projectDetail(svc: SupabaseClient, portal: PortalRow, projectId: 
   });
 }
 
+/** Every project + unit id of the portal's developer (the library's scope and
+ *  the sign action's allow-list). */
+async function loadScope(svc: SupabaseClient, portal: PortalRow) {
+  const models = await loadModels(svc);
+  const projects = await loadAll((a, b) =>
+    svc.from('records').select('id, data').eq('model_id', models.projects.id)
+      .eq('data->>developer', portal.developer_id).order('id').range(a, b),
+  );
+  const projectIds = projects.map((p) => p.id);
+  const unitProject = new Map<string, string>();
+  for (let i = 0; i < projectIds.length; i += 50) {
+    const chunk = projectIds.slice(i, i + 50);
+    const rows = await loadAll((a, b) =>
+      svc.from('records').select('id, project_id:data->>project_id').eq('model_id', models.units.id)
+        .in('data->>project_id', chunk).order('id').range(a, b),
+    );
+    for (const r of rows as unknown as Array<{ id: string; project_id: string }>) unitProject.set(r.id, r.project_id);
+  }
+  return { projects, unitProject };
+}
+
+/** The whole developer library: every linked file across all projects and
+ *  units, WITHOUT urls (the page signs the visible page via action 'sign'). */
+async function library(svc: SupabaseClient, portal: PortalRow): Promise<Response> {
+  const { projects, unitProject } = await loadScope(svc, portal);
+  const { links, files } = await loadLinkedFiles(svc, [...projects.map((p) => p.id), ...unitProject.keys()]);
+  const placed = placeFiles(links, files, new Set(unitProject.keys()));
+  const transcripts = await loadTranscripts(svc, [...files.values()].filter((f) => f.kind === 'video').map((f) => f.id));
+  const projectIdSet = new Set(projects.map((p) => p.id));
+
+  const items = [...placed.entries()].map(([id, p]) => {
+    const f = files.get(id)!;
+    const projectIds = [...new Set(p.record_ids.map((r) => (projectIdSet.has(r) ? r : unitProject.get(r))).filter((x): x is string => !!x))];
+    return {
+      id,
+      section: p.section,
+      kind: f.kind,
+      mime_type: f.mime_type,
+      name: (f.title || f.original_name || '').replace(/^�+/, '').trim(),
+      size_bytes: f.size_bytes,
+      width: f.width_px,
+      height: f.height_px,
+      duration_seconds: f.duration_seconds,
+      project_ids: projectIds,
+      unit_count: p.unit_ids.length,
+      transcript: transcripts.get(id) ?? null,
+      created_at: f.created_at,
+    };
+  }).sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+
+  const hosted = projects.flatMap((p) => arr(p.data.project_videos)
+    .map(str)
+    .filter((u): u is string => !!u && !UUID_RE.test(u))
+    .map(hostedVideo)
+    .filter((v): v is NonNullable<ReturnType<typeof hostedVideo>> => v != null)
+    .map((v) => ({ ...v, project_id: p.id })))
+    // The same reel is often attached to several projects — list it once.
+    .filter((v, i, all) => all.findIndex((x) => x.url === v.url) === i);
+
+  return jsonOk({
+    projects: projects.map((p) => ({ id: p.id, name: str(p.data.project_name) ?? '' }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ar')),
+    files: items,
+    hosted_videos: hosted,
+  });
+}
+
+/** Signed urls for up to 60 library files — only files linked to this
+ *  developer's projects or units are signed; anything else is silently left out. */
+async function signForPortal(svc: SupabaseClient, portal: PortalRow, rawIds: unknown): Promise<Response> {
+  if (!Array.isArray(rawIds)) return jsonError(400, 'fileIds (array) is required');
+  const ids = [...new Set(rawIds.filter((x): x is string => typeof x === 'string' && UUID_RE.test(x)))].slice(0, 60);
+  if (!ids.length) return jsonOk({ urls: {} });
+  const { projects, unitProject } = await loadScope(svc, portal);
+  const scope = new Set([...projects.map((p) => p.id), ...unitProject.keys()]);
+  const { data: links, error } = await svc.from('file_links').select('file_id, record_id').in('file_id', ids);
+  if (error) throw new Error(`file links lookup failed: ${error.message}`);
+  const allowed = [...new Set(((links ?? []) as Array<{ file_id: string; record_id: string }>)
+    .filter((l) => scope.has(l.record_id)).map((l) => l.file_id))];
+  if (!allowed.length) return jsonOk({ urls: {} });
+  const { data: fileRows, error: fErr } = await svc
+    .from('files')
+    .select('id, kind, mime_type, original_name, title, size_bytes, storage_bucket, storage_path, width_px, height_px, duration_seconds, primary_category, confidentiality, status, archived_at, created_at')
+    .in('id', allowed);
+  if (fErr) throw new Error(`files lookup failed: ${fErr.message}`);
+  const shareable = ((fileRows ?? []) as FileRow[]).filter((f) =>
+    f.status === 'active' && !f.archived_at && (!f.confidentiality || SHAREABLE_CONFIDENTIALITY.has(f.confidentiality)));
+  const signed = await signFiles(svc, shareable);
+  return jsonOk({
+    urls: Object.fromEntries([...signed.entries()].filter(([, v]) => v.url)),
+    expires_at: new Date(Date.now() + PORTAL_URL_TTL_SECONDS * 1000).toISOString(),
+  });
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
-  let body: { token?: unknown; action?: unknown; projectId?: unknown };
+  let body: { token?: unknown; action?: unknown; projectId?: unknown; fileIds?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -592,6 +722,8 @@ export default async function handler(req: Request): Promise<Response> {
   try {
     const portal = await resolvePortal(svc, token);
     if (!portal) return jsonError(404, 'link not available');
+    if (body.action === 'library') return await library(svc, portal);
+    if (body.action === 'sign') return await signForPortal(svc, portal, body.fileIds);
     if (body.action === 'project') {
       const projectId = typeof body.projectId === 'string' ? body.projectId : '';
       if (!UUID_RE.test(projectId)) return jsonError(400, 'projectId is required');

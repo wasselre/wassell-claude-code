@@ -38,6 +38,7 @@ export interface PortalOverview {
   portal: { title_ar: string | null; title_en: string | null };
   developer: { name: string; phone: string | null; website: string | null };
   projects: PortalProjectCard[];
+  can_send: boolean;
   expires_at: string;
 }
 
@@ -88,6 +89,7 @@ export interface PortalFile {
   download: string | null;
   unit_ids: string[];
   created_at: string | null;
+  transcript: string | null;
 }
 
 export interface HostedVideo {
@@ -143,4 +145,68 @@ export function fetchPortalOverview(token: string): Promise<PortalOverview> {
 
 export function fetchPortalProject(token: string, projectId: string): Promise<PortalProjectDetail> {
   return call<PortalProjectDetail>({ token, action: 'project', projectId });
+}
+
+// ── Library (whole developer, urls signed on demand) ─────────────────────────
+
+export interface LibraryFile {
+  id: string;
+  section: MediaSection;
+  kind: string | null;
+  mime_type: string | null;
+  name: string;
+  size_bytes: number | null;
+  width: number | null;
+  height: number | null;
+  duration_seconds: number | null;
+  project_ids: string[];
+  unit_count: number;
+  transcript: string | null;
+  created_at: string | null;
+}
+
+export interface PortalLibrary {
+  projects: Array<{ id: string; name: string }>;
+  files: LibraryFile[];
+  hosted_videos: Array<HostedVideo & { project_id: string }>;
+}
+
+export interface SignedUrls { url: string | null; thumb: string | null; download: string | null }
+
+export function fetchPortalLibrary(token: string): Promise<PortalLibrary> {
+  return call<PortalLibrary>({ token, action: 'library' });
+}
+
+export function signPortalFiles(token: string, fileIds: string[]): Promise<{ urls: Record<string, SignedUrls> }> {
+  return call<{ urls: Record<string, SignedUrls> }>({ token, action: 'sign', fileIds });
+}
+
+// ── Message preview + send from Wassel's line (nodejs endpoint) ──────────────
+
+async function callSend<T>(body: Record<string, unknown>): Promise<T> {
+  const res = await fetch('/api/broker-portal-send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+  return json;
+}
+
+export function fetchProjectMessage(token: string, projectId: string): Promise<{ message: Bi | null; can_send: boolean }> {
+  return callSend({ token, action: 'message', projectId });
+}
+
+export interface SendInput {
+  projectId: string;
+  clientPhone: string;
+  clientName: string;
+  brokerName: string;
+  brokerPhone: string;
+  lang: 'ar' | 'en';
+}
+
+export function sendProjectToClient(token: string, input: SendInput): Promise<{ ok: boolean; reason?: string; media_queued?: number }> {
+  return callSend({ token, action: 'send', ...input });
 }

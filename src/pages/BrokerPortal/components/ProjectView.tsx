@@ -6,8 +6,9 @@
 import { useMemo, useState } from 'react';
 import {
   ArrowLeft, ArrowRight, Building2, CalendarClock, CheckCircle2, Clock, FileText, Film, Images,
-  LayoutGrid, Library, MapPin, Maximize2, ShieldCheck, Sparkles, Wallet,
+  LayoutGrid, Library, MapPin, Maximize2, Send, ShieldCheck, Sparkles, Wallet,
 } from 'lucide-react';
+import SendToClientModal from './SendToClientModal';
 import type { PortalFile, PortalProjectDetail, PortalUnit } from '../lib/api';
 import { bi, fmtDate, fmtMoney, fmtMoneyShort, fmtNum, fmtPct, fmtRange, makeT, type TKey } from '../lib/i18n';
 import { DocumentsSection, Lightbox, MediaGrid, VideosSection, fileToLightbox } from './Media';
@@ -16,8 +17,10 @@ import UnitsSection, { ScheduleList } from './UnitsSection';
 export type TabKey = 'overview' | 'units' | 'plans' | 'photos' | 'videos' | 'library' | 'documents';
 
 export default function ProjectView({
-  detail, isAr, onBack, tab, onTab, initialUnitId, shareBaseUrl,
+  token, canSend, detail, isAr, onBack, tab, onTab, initialUnitId, shareBaseUrl,
 }: {
+  token: string;
+  canSend: boolean;
   detail: PortalProjectDetail;
   isAr: boolean;
   onBack: () => void;
@@ -30,6 +33,7 @@ export default function ProjectView({
   const { project: p, units, files, hosted_videos } = detail;
   const [focusUnits, setFocusUnits] = useState<string[] | null>(null);
   const [heroIdx, setHeroIdx] = useState<number | null>(null);
+  const [sendOpen, setSendOpen] = useState(false);
 
   const by = useMemo(() => {
     const out: Record<'photos' | 'videos' | 'library' | 'documents' | 'plans', PortalFile[]> = {
@@ -95,15 +99,24 @@ export default function ProjectView({
               <MapPin size={15} /> {place}
             </div>
           )}
-          {heroImages.length > 1 && (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setHeroIdx(0)}
-              className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 backdrop-blur text-xs font-bold"
+              onClick={() => setSendOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#25D366] text-white text-sm font-bold shadow-lg hover:opacity-90"
             >
-              <Maximize2 size={14} /> {heroImages.length} {t('images')}
+              <Send size={16} /> {t('sendToClient')}
             </button>
-          )}
+            {heroImages.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setHeroIdx(0)}
+                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 backdrop-blur text-xs font-bold"
+              >
+                <Maximize2 size={14} /> {heroImages.length} {t('images')}
+              </button>
+            )}
+          </div>
         </div>
       </section>
 
@@ -162,6 +175,17 @@ export default function ProjectView({
         {tab === 'documents' && <DocumentsSection files={by.documents} externalLinks={externalLinks} isAr={isAr} />}
       </section>
 
+      {sendOpen && (
+        <SendToClientModal
+          token={token}
+          projectId={p.id}
+          projectName={p.name}
+          isAr={isAr}
+          canSend={canSend}
+          brochures={by.documents.filter((f) => f.kind === 'pdf').slice(0, 3)}
+          onClose={() => setSendOpen(false)}
+        />
+      )}
       {heroIdx != null && (
         <Lightbox items={heroImages.map(fileToLightbox)} index={heroIdx} onIndex={setHeroIdx} onClose={() => setHeroIdx(null)} isAr={isAr} />
       )}

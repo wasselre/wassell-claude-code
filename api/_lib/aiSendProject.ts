@@ -126,6 +126,27 @@ async function resolveMessageText(
   return { text: sheetBodyAr, source: 'sheet' };
 }
 
+/**
+ * The project's ready-to-send message text WITHOUT sending anything — the same
+ * resolution the send uses with AI disabled (saved template when its numbers
+ * are current, else the deterministic sheet). Used by the broker portal's
+ * "copy message" so a broker pastes exactly what our line would send.
+ * null when the project has no sellable data.
+ */
+export async function resolveProjectMessagePreview(
+  svc: SupabaseClient,
+  projectId: string,
+): Promise<{ ar: string; en: string } | null> {
+  const sheet = await resolveProjectSheet(svc, svc, { projectId });
+  if (!sheet.ok) return null;
+  const facts = sheet.facts as unknown as ProjectMessageFacts;
+  const [ar, en] = await Promise.all([
+    resolveMessageText(svc, sheet.project_id, sheet.body_ar, sheet.body_en, facts, false, 'ar'),
+    resolveMessageText(svc, sheet.project_id, sheet.body_ar, sheet.body_en, facts, false, 'en'),
+  ]);
+  return { ar: ar.text, en: en.text };
+}
+
 type MediaRef = { fileId?: string; url?: string; caption: string | null };
 type FileRow = SendableFile & { storage_bucket: string; storage_path: string };
 // `origin` / `usage_rights` / `acquisition_source` are REQUIRED, not extra:
@@ -283,6 +304,9 @@ export async function sendProjectViaAiFlow(
     allowAi?: boolean;
     /** Language to send the message text in (media is language-agnostic). Default 'ar'. */
     lang?: 'ar' | 'en';
+    /** Optional first paragraph of the text message (the broker portal's
+     *  "sent to you by <broker>" line). Prepended to the resolved project text. */
+    introText?: string | null;
   },
 ): Promise<AiSendProjectResult> {
   const chatWid = (input.chatWid ?? '').trim();
@@ -313,6 +337,8 @@ export async function sendProjectViaAiFlow(
     svc, projectId, sheet.body_ar, sheet.body_en, sheet.facts as unknown as ProjectMessageFacts, allowAi, input.lang ?? 'ar',
   );
   if (!text.trim()) return { queued: false, error: 'resolved an empty message', project_id: projectId };
+  const intro = input.introText?.trim();
+  const fullText = intro ? `${intro}\n\n${text}` : text;
 
   const deviceId = await resolveDevice(svc, input.deviceId);
   if (!deviceId) return { queued: false, error: 'no active WhatsApp device configured', project_id: projectId };
@@ -320,7 +346,7 @@ export async function sendProjectViaAiFlow(
   // ── 1) TEXT — gate re-check + audit, delivered ~now. If the gate blocks (a
   //        human took over), send NOTHING further. ──
   const textRes = await enqueueAiReply(svc, {
-    chatWid, text, deviceId, jobId: input.jobId, force: input.force,
+    chatWid, text: fullText, deviceId, jobId: input.jobId, force: input.force,
     // Link this project message to its project at delivery, so the chat thread
     // shows the finder-style action buttons on the bot-sent bubble too.
     projectId,

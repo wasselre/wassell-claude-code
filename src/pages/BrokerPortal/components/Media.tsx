@@ -5,11 +5,62 @@
  */
 
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Film, Loader2, Play, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Copy, Download, ExternalLink, FileText, Film, Loader2, Play, X } from 'lucide-react';
+import { flash } from '../lib/flash';
 import type { HostedVideo, PortalFile } from '../lib/api';
 import { fmtBytes, fmtDuration, makeT } from '../lib/i18n';
 
 const PdfViewer = lazy(() => import('@/components/ui/PdfViewer'));
+
+// ── Clipboard ──────────────────────────────────────────────────────────────
+
+/** Re-encode any image blob as PNG — the only image type every browser's
+ *  clipboard accepts. */
+async function toPng(blob: Blob): Promise<Blob> {
+  if (blob.type === 'image/png') return blob;
+  const bmp = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bmp.width;
+  canvas.height = bmp.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas 2d unavailable');
+  ctx.drawImage(bmp, 0, 0);
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('png encode failed'))), 'image/png'));
+}
+
+/** Copy an image to the clipboard so a broker can paste it straight into
+ *  WhatsApp. Falls back to a download where the browser has no image clipboard. */
+export async function copyImageToClipboard(url: string, download: string | null, isAr: boolean): Promise<void> {
+  const t = makeT(isAr);
+  if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
+    if (download) window.location.href = download;
+    flash(t('copyUnsupported'), 'error');
+    return;
+  }
+  try {
+    // The item is built synchronously with a PROMISE (Safari only allows a
+    // clipboard write inside the click's own task).
+    const png = fetch(url).then((r) => r.blob()).then(toPng);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    flash(t('imageCopied'));
+  } catch (e) {
+    console.error('[broker-portal] image copy failed:', e);
+    if (download) window.location.href = download;
+    flash(t('copyUnsupported'), 'error');
+  }
+}
+
+export async function copyText(text: string, okMsg: string, failMsg: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    flash(okMsg);
+  } catch (e) {
+    // Clipboard blocked (permissions / insecure context). The text is on
+    // screen and selectable, so say so instead of opening a blocking prompt.
+    console.error('[broker-portal] text copy failed:', e);
+    flash(failMsg, 'error');
+  }
+}
 
 // ── Lightbox ───────────────────────────────────────────────────────────────
 
@@ -19,6 +70,7 @@ export interface LightboxItem {
   kind: 'image' | 'video';
   caption?: string;
   download?: string | null;
+  transcript?: string | null;
 }
 
 export function Lightbox({
@@ -62,6 +114,15 @@ export function Lightbox({
           {item.caption}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {item.kind === 'image' && (
+            <button
+              type="button"
+              onClick={() => void copyImageToClipboard(item.src, item.download ?? null, isAr)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm"
+            >
+              <Copy size={16} /> <span className="hidden sm:inline">{t('copyImage')}</span>
+            </button>
+          )}
           {item.download && (
             <a href={item.download} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm">
               <Download size={16} /> {t('download')}
@@ -112,6 +173,19 @@ export function Lightbox({
           </>
         )}
       </div>
+      {item.kind === 'video' && item.transcript && (
+        <div className="mx-auto mb-4 w-full max-w-3xl px-4">
+          <div className="rounded-xl bg-white/10 text-white/90 p-3 max-h-[22vh] overflow-y-auto text-sm leading-7 whitespace-pre-line">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-xs font-bold text-white/60">{t('transcript')}</span>
+              <button type="button" onClick={() => void copyText(item.transcript ?? '', t('copied'), t('copyFailed'))} className="inline-flex items-center gap-1 text-xs text-white/80 hover:text-white">
+                <Copy size={13} /> {t('copyTranscript')}
+              </button>
+            </div>
+            {item.transcript}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -123,6 +197,7 @@ export function fileToLightbox(f: PortalFile): LightboxItem {
     kind: f.kind === 'video' ? 'video' : 'image',
     caption: f.name,
     download: f.download,
+    transcript: f.transcript,
   };
 }
 
@@ -138,7 +213,29 @@ export function EmptySection({ isAr }: { isAr: boolean }) {
 }
 
 /** Mixed image + video grid (photos, marketing library). Opens a lightbox. */
+/** Always-visible (touch) / hover (desktop) copy + download buttons on a tile. */
+function TileActions({ f, isAr }: { f: PortalFile; isAr: boolean }) {
+  const t = makeT(isAr);
+  const btn = 'w-8 h-8 rounded-lg bg-black/60 hover:bg-black/80 text-white flex items-center justify-center';
+  return (
+    <div className="absolute bottom-2 end-2 flex gap-1.5 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 transition">
+      {f.kind === 'image' && (
+        <button type="button" aria-label={t('copyImage')} title={t('copyImage')} className={btn}
+          onClick={() => void copyImageToClipboard(f.url, f.download, isAr)}>
+          <Copy size={15} />
+        </button>
+      )}
+      {f.download && (
+        <a href={f.download} aria-label={t('download')} title={t('download')} className={btn}>
+          <Download size={15} />
+        </a>
+      )}
+    </div>
+  );
+}
+
 export function MediaGrid({ files, isAr, square = true }: { files: PortalFile[]; isAr: boolean; square?: boolean }) {
+  const t = makeT(isAr);
   const [open, setOpen] = useState<number | null>(null);
   const items = files.map(fileToLightbox);
   if (files.length === 0) return <EmptySection isAr={isAr} />;
@@ -146,12 +243,11 @@ export function MediaGrid({ files, isAr, square = true }: { files: PortalFile[];
     <>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {files.map((f, i) => (
-          <button
+          <div
             key={f.id}
-            type="button"
-            onClick={() => setOpen(i)}
             className={`group relative overflow-hidden rounded-xl bg-cream-200 border border-sand/40 ${square ? 'aspect-square' : 'aspect-[4/3]'}`}
           >
+            <button type="button" onClick={() => setOpen(i)} className="absolute inset-0 w-full h-full" aria-label={f.name || t('open')}>
             {f.kind === 'video' ? (
               <>
                 <video src={`${f.url}#t=0.5`} preload="metadata" muted playsInline className="w-full h-full object-cover" />
@@ -161,8 +257,13 @@ export function MediaGrid({ files, isAr, square = true }: { files: PortalFile[];
                   </span>
                 </span>
                 {fmtDuration(f.duration_seconds) && (
-                  <span className="absolute bottom-2 end-2 text-[11px] px-1.5 py-0.5 rounded bg-black/60 text-white">
+                  <span className="absolute top-2 end-2 text-[11px] px-1.5 py-0.5 rounded bg-black/60 text-white">
                     {fmtDuration(f.duration_seconds)}
+                  </span>
+                )}
+                {f.transcript && (
+                  <span className="absolute top-2 start-2 text-[10px] px-1.5 py-0.5 rounded bg-copper text-white font-bold">
+                    {t('transcript')}
                   </span>
                 )}
               </>
@@ -179,7 +280,9 @@ export function MediaGrid({ files, isAr, square = true }: { files: PortalFile[];
                 }}
               />
             )}
-          </button>
+            </button>
+            <TileActions f={f} isAr={isAr} />
+          </div>
         ))}
       </div>
       {open != null && (
@@ -244,6 +347,7 @@ export function VideosSection({ files, hosted, isAr }: { files: PortalFile[]; ho
                   </a>
                 )}
               </div>
+              {f.transcript && <TranscriptBlock text={f.transcript} isAr={isAr} />}
             </div>
           ))}
           {direct.map((v) => (
@@ -269,6 +373,21 @@ export function VideosSection({ files, hosted, isAr }: { files: PortalFile[]; ho
         </div>
       )}
     </div>
+  );
+}
+
+export function TranscriptBlock({ text, isAr }: { text: string; isAr: boolean }) {
+  const t = makeT(isAr);
+  return (
+    <details className="bg-cream-50 border-t border-sand/40 text-xs text-charcoal">
+      <summary className="cursor-pointer px-3 py-2 font-bold text-copper">{t('transcript')}</summary>
+      <div className="px-3 pb-3 leading-6 whitespace-pre-line max-h-48 overflow-y-auto">{text}</div>
+      <div className="px-3 pb-2">
+        <button type="button" onClick={() => void copyText(text, t('copied'), t('copyFailed'))} className="inline-flex items-center gap-1 text-copper font-bold">
+          <Copy size={13} /> {t('copyTranscript')}
+        </button>
+      </div>
+    </details>
   );
 }
 

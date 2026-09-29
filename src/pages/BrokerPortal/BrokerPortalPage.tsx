@@ -15,13 +15,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Building2, Globe, Loader2, MapPin, Phone, Search } from 'lucide-react';
+import { AlertTriangle, Building2, CheckCircle2, Globe, Library, Loader2, MapPin, Phone, Search, Send } from 'lucide-react';
 import {
   fetchPortalOverview, fetchPortalProject,
   type PortalOverview, type PortalProjectCard, type PortalProjectDetail,
 } from './lib/api';
 import { bi, fmtMoneyShort, fmtNum, fmtRange, makeT } from './lib/i18n';
 import ProjectView, { type TabKey } from './components/ProjectView';
+import LibraryView from './components/LibraryView';
+import SendToClientModal from './components/SendToClientModal';
+import { onFlash, type FlashMsg } from './lib/flash';
 
 const TABS: TabKey[] = ['overview', 'units', 'plans', 'photos', 'videos', 'library', 'documents'];
 
@@ -42,6 +45,8 @@ export default function BrokerPortalPage() {
   const [overview, setOverview] = useState<Load<PortalOverview>>({ phase: 'loading' });
   const [detail, setDetail] = useState<Load<PortalProjectDetail>>({ phase: 'loading' });
   const [query, setQuery] = useState('');
+  const [sendFor, setSendFor] = useState<PortalProjectCard | null>(null);
+  const view: 'projects' | 'library' = params.get('view') === 'library' ? 'library' : 'projects';
   const detailCache = useRef(new Map<string, { data: PortalProjectDetail; at: number }>());
 
   useEffect(() => {
@@ -110,10 +115,17 @@ export default function BrokerPortalPage() {
 
   const data = overview.phase === 'ready' ? overview.data : null;
   const title = data ? (isAr ? data.portal.title_ar : data.portal.title_en) || data.developer.name : '';
+  // «مكتبة الرمز» / "Al-Ramz Library" — the English name comes from the portal
+  // title with its "… Real Estate Projects" tail removed.
+  const libraryTitle = data
+    ? isAr
+      ? `${t('libraryOf')} ${data.developer.name}`
+      : `${(data.portal.title_en ?? data.developer.name).replace(/\s*(real estate)?\s*projects?\s*$/i, '').trim()} ${t('libraryOf')}`
+    : t('libraryOf');
 
   useEffect(() => {
     const projName = detail.phase === 'ready' && projectId ? detail.data.project.name : null;
-    document.title = [projName, title, t('gift')].filter(Boolean).join(' · ');
+    document.title = [projName, title, t('portalName')].filter(Boolean).join(' · ');
   }, [title, detail, projectId, t]);
 
   const filtered = useMemo(() => {
@@ -146,7 +158,7 @@ export default function BrokerPortalPage() {
             <img src="/assets/wassel-icon.png" alt="" className="w-9 h-9 object-contain shrink-0" />
             <div className="min-w-0">
               <div className="text-sm font-bold text-chocolate truncate">{title || t('brand')}</div>
-              <div className="text-[11px] text-charcoal/50 truncate">{t('gift')} · {t('brand')}</div>
+              <div className="text-[11px] text-charcoal/50 truncate">{t('portalName')} · {t('brand')}</div>
             </div>
           </div>
           <button
@@ -165,12 +177,32 @@ export default function BrokerPortalPage() {
         {overview.phase === 'error' && <Message title={t('errorTitle')} body={overview.message} onRetry={loadOverview} retryLabel={t('retry')} />}
 
         {data && !projectId && (
+          <nav className="mb-6 inline-flex p-1 rounded-2xl bg-white border border-sand/50 shadow-sm">
+            {(['projects', 'library'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => update({ view: v === 'library' ? 'library' : null })}
+                className={`inline-flex items-center gap-2 px-4 sm:px-5 py-2 rounded-xl text-sm font-bold transition ${
+                  view === v ? 'bg-chocolate text-white shadow' : 'text-charcoal hover:bg-cream'
+                }`}
+              >
+                {v === 'projects' ? <Building2 size={16} /> : <Library size={16} />}
+                {v === 'projects' ? t('projects') : libraryTitle}
+              </button>
+            ))}
+          </nav>
+        )}
+
+        {data && !projectId && view === 'library' && <LibraryView token={token} isAr={isAr} title={libraryTitle} />}
+
+        {data && !projectId && view === 'projects' && (
           <div className="space-y-8">
             {/* Developer hero */}
             <section className="relative overflow-hidden rounded-3xl bg-chocolate text-white px-6 sm:px-10 py-10 sm:py-14 shadow-xl">
               <img src="/assets/wassel-icon-white.png" alt="" className="absolute -bottom-10 -end-10 w-64 opacity-[0.07] pointer-events-none" />
               <div className="relative max-w-3xl">
-                <div className="text-copper-200 text-sm font-bold mb-2">{t('gift')}</div>
+                <div className="text-copper-200 text-sm font-bold mb-2">{t('portalName')}</div>
                 <h1 className="text-3xl sm:text-5xl font-bold leading-tight">{title}</h1>
                 <p className="mt-4 text-white/80 leading-8 text-[15px]">{t('intro')}</p>
                 <div className="mt-6 flex flex-wrap gap-3">
@@ -212,7 +244,9 @@ export default function BrokerPortalPage() {
                 <Message title={t('noResults')} body="" />
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filtered.map((p) => <ProjectCard key={p.id} p={p} isAr={isAr} onOpen={() => openProject(p.id)} />)}
+                  {filtered.map((p) => (
+                    <ProjectCard key={p.id} p={p} isAr={isAr} onOpen={() => openProject(p.id)} onSend={() => setSendFor(p)} />
+                  ))}
                 </div>
               )}
             </section>
@@ -227,6 +261,8 @@ export default function BrokerPortalPage() {
             {detail.phase === 'ready' && (
               <ProjectView
                 key={projectId}
+                token={token}
+                canSend={data.can_send}
                 detail={detail.data}
                 isAr={isAr}
                 onBack={() => update({ p: null, tab: null, u: null })}
@@ -239,6 +275,19 @@ export default function BrokerPortalPage() {
           </>
         )}
       </main>
+
+      {sendFor && data && (
+        <SendToClientModal
+          token={token}
+          projectId={sendFor.id}
+          projectName={sendFor.name}
+          isAr={isAr}
+          canSend={data.can_send}
+          brochures={[]}
+          onClose={() => setSendFor(null)}
+        />
+      )}
+      <FlashHost />
 
       <footer className="border-t border-sand/40 mt-10">
         <div className="max-w-7xl mx-auto px-4 py-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-charcoal/55">
@@ -253,19 +302,16 @@ export default function BrokerPortalPage() {
   );
 }
 
-function ProjectCard({ p, isAr, onOpen }: { p: PortalProjectCard; isAr: boolean; onOpen: () => void }) {
+function ProjectCard({ p, isAr, onOpen, onSend }: { p: PortalProjectCard; isAr: boolean; onOpen: () => void; onSend: () => void }) {
   const t = makeT(isAr);
   const place = [bi(p.location.district, isAr), bi(p.location.city, isAr)].filter(Boolean).join(isAr ? '، ' : ', ');
   const from = p.available_price_range?.min ?? p.available_price_range?.max ?? null;
   const area = fmtRange(p.available_area_range, (n) => `${fmtNum(n)} ${t('m2')}`);
   const hasUnits = p.unit_count > 0;
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="group text-start rounded-3xl overflow-hidden bg-white border border-sand/50 hover:shadow-xl hover:-translate-y-0.5 transition flex flex-col"
-    >
-      <div className="relative aspect-[3/2] bg-gradient-to-br from-chocolate to-copper overflow-hidden">
+    <div className="group rounded-3xl overflow-hidden bg-white border border-sand/50 hover:shadow-xl hover:-translate-y-0.5 transition flex flex-col">
+    <button type="button" onClick={onOpen} className="text-start flex-1 flex flex-col">
+      <div className="relative w-full aspect-[3/2] bg-gradient-to-br from-chocolate to-copper overflow-hidden">
         {p.cover ? (
           <img src={p.cover} alt={p.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
         ) : (
@@ -299,6 +345,41 @@ function ProjectCard({ p, isAr, onOpen }: { p: PortalProjectCard; isAr: boolean;
         </div>
       </div>
     </button>
+    {hasUnits && (
+      <div className="px-4 pb-4">
+        <button
+          type="button"
+          onClick={onSend}
+          className="w-full h-10 rounded-xl bg-[#25D366]/10 text-[#128C7E] border border-[#25D366]/30 text-sm font-bold inline-flex items-center justify-center gap-2 hover:bg-[#25D366]/20"
+        >
+          <Send size={15} /> {t('sendShort')}
+        </button>
+      </div>
+    )}
+    </div>
+  );
+}
+
+function FlashHost() {
+  const [msgs, setMsgs] = useState<FlashMsg[]>([]);
+  useEffect(() => onFlash((m) => {
+    setMsgs((prev) => [...prev, m]);
+    window.setTimeout(() => setMsgs((prev) => prev.filter((x) => x.id !== m.id)), 2600);
+  }), []);
+  if (!msgs.length) return null;
+  return (
+    <div className="fixed bottom-4 inset-x-0 z-[90] flex flex-col items-center gap-2 px-4 pointer-events-none">
+      {msgs.map((m) => (
+        <div
+          key={m.id}
+          className={`pointer-events-auto inline-flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-lg text-sm font-bold ${
+            m.kind === 'ok' ? 'bg-chocolate text-white' : 'bg-rose-600 text-white'
+          }`}
+        >
+          {m.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />} {m.text}
+        </div>
+      ))}
+    </div>
   );
 }
 

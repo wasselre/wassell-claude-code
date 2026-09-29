@@ -8,6 +8,7 @@ import { BedDouble, Bath, Check, Copy, Maximize2, MessageCircle, Ruler, X } from
 import type { PortalFile, PortalUnit, UnitStatus } from '../lib/api';
 import { bi, fmtMoney, fmtNum, fmtPct, makeT } from '../lib/i18n';
 import { Lightbox } from './Media';
+import { flash } from '../lib/flash';
 
 type StatusFilter = UnitStatus | 'all';
 type Sort = 'price_asc' | 'price_desc' | 'area_desc' | 'number';
@@ -288,7 +289,7 @@ function UnitSheet({
       window.setTimeout(() => setCopied(false), 1800);
     } catch (e) {
       console.error('[broker-portal] clipboard write failed:', e);
-      window.prompt(t('copyLink'), shareUrl);
+      flash(t('copyFailed'), 'error');
     }
   };
 
