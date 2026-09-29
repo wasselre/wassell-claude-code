@@ -22,6 +22,9 @@ export interface Slots {
   lang?: Lang;
   /** Name of the last project we sent — so a rep's notification can name it. */
   last_project_name?: string;
+  /** The last line we sent and when — a handoff line is never repeated. */
+  last_reply?: string;
+  last_reply_at?: string;
 }
 
 export type Intent =

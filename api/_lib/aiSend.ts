@@ -30,6 +30,10 @@ export async function enqueueAiReply(
     chatWid: string; text: string; deviceId?: string | null; jobId?: string | null; force?: boolean; projectId?: string | null;
     /** Deliver this many seconds from now (e.g. a follow-up that must land after a project's photos). */
     delaySeconds?: number;
+    /** Hold this message until no other job of the chat whose reference starts
+     *  with this prefix is still queued/running (a project package's media), so a
+     *  slow video can never land after the follow-up. Ceiling 10 min (SQL). */
+    afterPrefix?: string | null;
   },
 ): Promise<EnqueueResult> {
   const chatWid = (opts.chatWid ?? '').trim();
@@ -70,6 +74,7 @@ export async function enqueueAiReply(
     p_deliver_at: new Date(Date.now() + Math.max(0, opts.delaySeconds ?? 0) * 1000).toISOString(),
     p_user_id: null,
     p_project_id: opts.projectId ?? null,
+    p_after_prefix: opts.afterPrefix ?? null,
   });
   if (schedErr) return { queued: false, sent: false, error: `enqueue failed: ${schedErr.message}` };
   const wid = `sched:${String(schedId)}`;

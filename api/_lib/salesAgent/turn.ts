@@ -26,6 +26,8 @@ import { loadAgentSettings, type AgentConversation } from './conversation.js';
 /** Photos in a project package go out 4 s apart; the follow-up question must
  *  land after the last one (mirrors aiSendProject's SPACING_MS). */
 const MEDIA_SPACING_S = 4;
+/** A handoff line is not repeated within this window (the rep is still told). */
+const REPEAT_WINDOW_MS = 30 * 60_000;
 
 const SYSTEM_KINDS = ['reaction', 'call_log', 'e2e_notification', 'notification', 'notification_template', 'gp2', 'protocol', 'ciphertext', 'revoked'];
 
@@ -187,8 +189,10 @@ export async function runAgentTurn(
       project = await findBestProject(svc, slots, exclude);
       if (project) {
         const missingType = project.relaxed === 'unit_type' && slots.unit_types?.length === 1 ? slots.unit_types[0] : null;
+        // A changed ask (new region / type / bedrooms) starts a new search, so its
+        // first result is not «خيار ثاني» (live test: east after north).
         replies.push(agentText.afterProject(
-          lang, slots.zone ?? null, project.outsideZone, sentCount === 0,
+          lang, slots.zone ?? null, project.outsideZone, sentCount === 0 || changed,
           missingType, project.relaxed === null && !project.outsideZone,
         ));
         asked = 'more';
@@ -221,6 +225,19 @@ export async function runAgentTurn(
   }
 
   if (project) slots.last_project_name = project.projectName;
+
+  // Never say the same handoff line twice in a row. Two customer messages 16 s
+  // apart became two turns that each replied «بيتواصل معك زميلي…» (live test
+  // 2026-09-29). The rep is still notified of the new message.
+  const now = Date.now();
+  if (step.kind === 'handoff' && replies.length === 1 && replies[0] === slots.last_reply
+      && slots.last_reply_at && now - new Date(slots.last_reply_at).getTime() < REPEAT_WINDOW_MS) {
+    replies.length = 0;
+  }
+  if (replies.length) {
+    slots.last_reply = replies[replies.length - 1];
+    slots.last_reply_at = new Date(now).toISOString();
+  }
   const result: TurnResult = { step, understanding: u, slots, replies, project, notify, status, model };
   if (dryRun) return { ...result, sent: false };
 
@@ -241,6 +258,7 @@ export async function runAgentTurn(
 
   // ── Send ───────────────────────────────────────────────────────────────
   let followUpDelay = 0;
+  let afterPrefix: string | null = null;
   if (project) {
     const flow = await sendProjectViaAiFlow(svc, {
       chatWid, projectId: project.projectId, deviceId, jobId: 'agent',
@@ -248,6 +266,10 @@ export async function runAgentTurn(
     });
     if (flow.queued) {
       followUpDelay = ((flow.media_queued ?? 0) + 1) * MEDIA_SPACING_S + MEDIA_SPACING_S;
+      // The delay is only a floor: a video can take minutes. The queue holds the
+      // follow-up until every job of THIS package (aiSendProject's
+      // `ai-project:<jobId>:<projectId>:<i>` references) has finished.
+      afterPrefix = `ai-project:agent:${project.projectId}:`;
       const { error: sErr } = await svc.from('wa_agent_conversations')
         .update({ sent_project_ids: [...conv.sent_project_ids, project.projectId] }).eq('chat_wid', chatWid);
       if (sErr) console.error(`[salesAgent] sent-list save failed chat=${chatWid}:`, sErr.message);
@@ -261,7 +283,9 @@ export async function runAgentTurn(
   }
   let allSent = true;
   for (const text of replies) {
-    const res = await enqueueAiReply(svc, { chatWid, text, deviceId, jobId: 'agent', force: true, delaySeconds: followUpDelay });
+    const res = await enqueueAiReply(svc, {
+      chatWid, text, deviceId, jobId: 'agent', force: true, delaySeconds: followUpDelay, afterPrefix,
+    });
     if (!res.queued) {
       allSent = false;
       console.error(`[salesAgent] reply enqueue failed chat=${chatWid}: ${res.error ?? res.reason ?? 'unknown'}`);
