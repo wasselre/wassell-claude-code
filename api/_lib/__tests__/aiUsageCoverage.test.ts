@@ -232,6 +232,33 @@ describe('AI usage coverage', () => {
     expect(offenders, `Untracked Modal spend:${NL}  ${offenders.join(NL + '  ')}`).toEqual([]);
   });
 
+  const FAL_TRANSPORT_ALLOWLIST: Record<string, { reason: string; proof: string }> = {
+    'worker/src/marketing/content/__tests__/falTranscribe.test.ts': {
+      reason: 'request-shape test: fetch is stubbed, so it never reaches fal',
+      proof: "vi.stubGlobal('fetch'",
+    },
+  };
+
+  it('every direct fal call records usage', () => {
+    // Added 2026-09-29: scripts/retranscribe-arabic.mjs called fal's queue
+    // directly with no recorder — an operator batch of ~$12 would have been
+    // invisible. The imageGen rule below only knew about two named files.
+    const offenders: string[] = [];
+    for (const { path, src } of FILES) {
+      if (RECORDER_FILES.has(path)) continue;
+      if (!src.includes('fal.run')) continue;
+      const allow = FAL_TRANSPORT_ALLOWLIST[path];
+      if (allow) {
+        if (!src.includes(allow.proof)) {
+          offenders.push(`${path} is allowlisted ("${allow.reason}") but no longer contains "${allow.proof}" — the exemption has become a hole`);
+        }
+        continue;
+      }
+      if (!src.includes('recordAiUsage')) offenders.push(`${path} calls fal directly but never calls recordAiUsage`);
+    }
+    expect(offenders, `Untracked fal spend:${NL}  ${offenders.join(NL + '  ')}`).toEqual([]);
+  });
+
   it('the shared DeepSeek client forces every caller to declare a call site', () => {
     const src = FILES.find((f) => f.path === 'api/_lib/deepseek.ts')?.src ?? '';
     expect(src).toContain('recordAiUsage');

@@ -1,7 +1,7 @@
 # PRD: Competitor Watch (مرصد المنافسين)
 
 **Status:** Live (all five surfaces: Content Library + Agents & runs, Content pipeline, Storage, Companies)
-**Last updated:** 2026-09-29 (**One Companies list.** Every watched company is now a record in the CRM Companies list (the old Developers model, relabelled «الشركات», with a required مطوّر / مسوّق type) and its watch-entry type follows that record. 41 watched companies that were in no CRM list got a Companies record; 11 duplicate company rows were merged; ذراع and آبه are marketers. A project now names ONE developer and ANY number of marketers, and every marketer it names becomes an `authorized_marketer` link here — see `mkt_project_organizations` under «Data touched». A company created, renamed, retyped or deleted in the CRM updates its watch entry automatically.) | 2026-09-29 (**The «المعلنون المدفوعون» Settings page was deleted** — competitor paid-ad collection has no screen now. Nothing collected paid ads through it after 2026-07-22: 27 advertiser look-ups (last 2026-07-28), zero `paid_ads` queue jobs; the 10 stored paid ads (`mkt_paid_ads`, all 2026-07-22) stay. Server actions + data kept. See the new bullet under «How collection runs».) | 2026-09-28 (**Creating a project works again.** The attribution catch-up that runs inside every project insert (`mkt_enqueue_attribution_rerun`) took 68 s and timed the save out, so no project could be created from the app since ~2026-09-14; rewritten set-based, now 165 ms with the same jobs queued.) | 2026-09-27 (**Relationships follow the project records** — a project's marketer in the CRM now becomes its marketer here automatically, and stale copies are retired; see `mkt_project_organizations` under «Data touched».) Also 2026-09-27 (**Companies surface rebuilt around the marketing read** — type, channels, cadence, format mix, dominant message, offers, projects and districts per competitor; «آخر نشاط» was our scrape time and is now «آخر نشر», theirs.) Previously 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
+**Last updated:** 2026-09-29 (**Transcripts in the language that was spoken.** New video transcriptions ask fal for language auto-detect instead of omitting the key — omitted, fal defaults to English, which is why 840 competitor transcripts (2026-07-23 → 2026-09-28) were English translations of Saudi Arabic speech. The historical rows are repaired in place by `scripts/retranscribe-arabic.mjs --backfill` (≈ $12, operator-run, metered). Also earlier today: **One Companies list.** Every watched company is now a record in the CRM Companies list (the old Developers model, relabelled «الشركات», with a required مطوّر / مسوّق type) and its watch-entry type follows that record. 41 watched companies that were in no CRM list got a Companies record; 11 duplicate company rows were merged; ذراع and آبه are marketers. A project now names ONE developer and ANY number of marketers, and every marketer it names becomes an `authorized_marketer` link here — see `mkt_project_organizations` under «Data touched». A company created, renamed, retyped or deleted in the CRM updates its watch entry automatically.) | 2026-09-29 (**The «المعلنون المدفوعون» Settings page was deleted** — competitor paid-ad collection has no screen now. Nothing collected paid ads through it after 2026-07-22: 27 advertiser look-ups (last 2026-07-28), zero `paid_ads` queue jobs; the 10 stored paid ads (`mkt_paid_ads`, all 2026-07-22) stay. Server actions + data kept. See the new bullet under «How collection runs».) | 2026-09-28 (**Creating a project works again.** The attribution catch-up that runs inside every project insert (`mkt_enqueue_attribution_rerun`) took 68 s and timed the save out, so no project could be created from the app since ~2026-09-14; rewritten set-based, now 165 ms with the same jobs queued.) | 2026-09-27 (**Relationships follow the project records** — a project's marketer in the CRM now becomes its marketer here automatically, and stale copies are retired; see `mkt_project_organizations` under «Data touched».) Also 2026-09-27 (**Companies surface rebuilt around the marketing read** — type, channels, cadence, format mix, dominant message, offers, projects and districts per competitor; «آخر نشاط» was our scrape time and is now «آخر نشر», theirs.) Previously 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
 
 > A NEW, from-scratch workspace that succeeds the **Marketing Intelligence**
 > page (`marketing-intelligence.md`), built because the operator found that page
@@ -203,6 +203,22 @@ that study the corpus (how competitors write posts, script reels, price offers).
   (`discover_advertiser`, `paid_ads`, `advertiser_list`, … in `api/marketing.ts`)
   and all stored data were kept, so bringing it back is a UI job only.
 
+- **Transcript language (fixed 2026-09-29).** Every video transcription
+  (`worker/src/marketing/content/falTranscribe.ts`, shared by this pipeline,
+  our own marketing assets and Files AI) now sends `language: null` to fal
+  wizper, which means *detect the spoken language*. Until then the key was
+  omitted, and fal's default for a missing key is **English**: Whisper then
+  decoded Saudi Arabic speech as an English translation («The door is small
+  for you and the villa is expensive? … Yaman Park 10 project»). Auto-detect,
+  not forced Arabic, because some watched companies (UAE developers) speak
+  English and forcing Arabic would translate *them*. Bare music-note output
+  («♪♪») is now stored as no-speech (`language='none'`) instead of as text.
+- **One transcript row per video.** The repair of old rows overwrites the
+  existing `fal-ai/wizper` row rather than adding a second one, because every
+  reader (the Library, script exemplars, the «النص» button, re-processing)
+  assumes one. The English text it replaced is kept in `raw._replaced`; a
+  repaired row is recognisable by `raw._request.language` being present.
+
 ## User flows
 
 1. **Browse a shelf** — open Competitor Watch → pick a purpose shelf (e.g. Offer)
@@ -301,6 +317,12 @@ Reads, plus two admin writes (`attribution_set`, `attribution_rerun`).
   discovery", pause/enable an account, dismiss). Storage/company byte + fact totals
   are exact (not sampled); the Companies list covers organizations that have at
   least one active social account.
+- **840 historical transcripts are English translations** until the operator
+  runs `node scripts/retranscribe-arabic.mjs --backfill --limit 1000 --confirm`
+  (dry run first: `--dry-run`; ≈ 1,205 audio-min ≈ $12.05 at fal's $0.01/min;
+  capped by `--max-usd`, default 15). Anything derived from those transcripts
+  before the repair — content enrichment, post embeddings, CV `search_tsv` —
+  still reflects the English text until it is recomputed.
 - **Full transcript text is not inlined yet** — only a presence flag. A per-post
   "load transcript" fetch is the follow-up.
 - **Competitor filter is click-to-filter** (from a row); no standalone competitor

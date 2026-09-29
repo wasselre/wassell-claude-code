@@ -116,6 +116,7 @@ export async function runAssetProcess(sb: SupabaseClient, assetId: string): Prom
           const up = await uploadBytes(audio, 'content/audio', checksum, 'm4a', 'audio/mp4');
           const tx = await transcribeAudioUrl(up.storedUrl, durationMs, {
             track: { area: 'marketing', callSite: 'worker/marketing/runAssetProcess', operation: 'transcribe' },
+            language: null, // auto-detect: Saudi Arabic stays Arabic, English stays English
           });
           transcript = (tx.text ?? '').trim();
           stats.transcript_chars = transcript.length;

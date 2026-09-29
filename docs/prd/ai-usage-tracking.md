@@ -196,6 +196,7 @@ app — was invisible.
 | Competitors | `worker/cv/process` | Modal GPU (largest single line) |
 | Competitors | `role:shot_analyzer` / `frame_describer` | Sonnet 5 / Haiku 4.5 |
 | Competitors | `worker/marketing/falTranscribe` | fal wizper (per minute) |
+| Competitors | `scripts/retranscribe-arabic` | fal wizper (per minute; operator backfill, `run_kind=operator_script`) |
 | Competitors | `api/analyze-reel` | Opus 4.7 → Sonnet 4.6 |
 | Internal | `api/builder-agent`, `api/workflow-agent` | Opus 4.7 (per loop iteration) |
 | Internal | `api/doc-assist`, `api/project-ai` | DeepSeek → Sonnet 4.6 |

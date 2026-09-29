@@ -280,6 +280,7 @@ export async function runEnrichmentJob(
           const up = await uploadBytes(audio, 'content/audio', sha256Hex(audio), 'm4a', 'audio/mp4');
           const tx = await transcribeAudioUrl(up.storedUrl, durationMs || null, {
             track: { area: 'internal', callSite: 'worker/runEnrichmentJob', operation: 'transcribe' },
+            language: null, // auto-detect: Saudi Arabic stays Arabic, English stays English
           });
           transcript = (tx.text ?? '').trim().slice(0, 6000);
         } catch (e) {

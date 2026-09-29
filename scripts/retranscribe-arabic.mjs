@@ -17,10 +17,24 @@
 //       mkt_transcript_upsert (UNIQUE (content_media_id, model) keeps A), and
 //       write docs/eval/asr-ab/{report.md,human-review.md,results.json}.
 //       --store-word additionally stores B under 'fal-ai/whisper@ar-word'.
-//   --backfill --limit N [--dry-run] [--concurrency 3] --confirm
-//       Every stored video whose wizper transcript has speech (text non-empty)
-//       and has no '@ar' row yet → wizper ar segment → '@ar' row. Resumable
-//       (skips existing rows), logs cost, refuses to run without --confirm.
+//   --backfill --limit N [--dry-run] [--concurrency 2] [--max-usd 15]
+//              [--language auto|ar] [--retry-failed] --confirm
+//       (rewritten 2026-09-29) Repairs the LEGACY English rows IN PLACE: every
+//       `fal-ai/wizper` row with language 'en' whose stored request had NO
+//       `language` key (= fal defaulted to English and translated the Saudi
+//       speech) is re-run with auto-detect (default) or forced 'ar', and the
+//       SAME row (content_media_id, 'fal-ai/wizper') is overwritten — one
+//       transcript per video stays the invariant every reader relies on
+//       (runContentProcess maybeSingle, mkt_script_exemplars, the content
+//       library, file_video_transcript …). The replaced English text is kept
+//       in raw._replaced. A media that already has an A/B '@ar' row is
+//       PROMOTED (copied into the main row, @ar row deleted) with no fal call.
+//       Resumable: a repaired row carries raw._request.language, so it is not
+//       picked again. Failures leave the English row untouched and are logged
+//       to scripts/.retranscribe-failures.local (skipped next run unless
+//       --retry-failed). Every fal call is metered in ai_usage
+//       (area competitors, call_site scripts/retranscribe-arabic).
+//       Stops once the estimated spend reaches --max-usd.
 //
 // ENV: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (from .env.local / .env) and
 //      FAL_KEY (process.env, or .env.local — it is NOT committed anywhere on
@@ -33,6 +47,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
+import { recordAiUsage } from './lib/aiUsage.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, '..');
@@ -62,7 +77,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const FAL_KEY = process.env.FAL_KEY;
 if (!SUPABASE_URL || !SERVICE_KEY) { console.error('SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are required (.env.local)'); process.exit(2); }
-if (!FAL_KEY) { console.error('FAL_KEY is required. It is not stored on disk in this repo — pull it from Vercel (`vercel env pull <scratch>`) or Fly and export it.'); process.exit(2); }
+// A dry run calls no model, so it runs without FAL_KEY.
+if (!FAL_KEY && !process.argv.includes('--dry-run')) { console.error('FAL_KEY is required. It is not stored on disk in this repo — pull it from Vercel (`vercel env pull <scratch>`) or Fly and export it.'); process.exit(2); }
 
 const sb = makeIdentifiedClient('script:retranscribe-arabic', SUPABASE_URL, SERVICE_KEY);
 
@@ -72,8 +88,23 @@ const flag = (n) => argv.includes(`--${n}`);
 const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : d; };
 
 // ── fal queue REST ──────────────────────────────────────────────────────────
-async function falRun(model, body, { timeoutMs = 300_000 } = {}) {
+// Every call is metered (CLAUDE.md "Every AI call is metered"): fal returns no
+// billing data, so the billable quantity is audio minutes; the ai_price_book
+// row for fal-ai/wizper prices it. Failures are recorded too.
+async function falRun(model, body, { timeoutMs = 300_000, durationMs = null, operation = 'transcribe' } = {}) {
   const t0 = Date.now();
+  const track = { area: 'competitors', callSite: 'scripts/retranscribe-arabic', operation, provider: 'fal', model, unitKind: 'minute' };
+  try {
+    const out = await falRunInner(model, body, timeoutMs, t0);
+    const lastEnd = (out.json.chunks ?? []).reduce((m, c) => Math.max(m, typeof c.timestamp?.[1] === 'number' ? c.timestamp[1] * 1000 : 0), 0);
+    await recordAiUsage({ ...track, status: 'ok', units: (durationMs || lastEnd) / 60000, latencyMs: Date.now() - t0, meta: { requested_language: body.language ?? null } });
+    return out;
+  } catch (e) {
+    await recordAiUsage({ ...track, status: 'error', error: e.message, units: 0, latencyMs: Date.now() - t0, meta: { requested_language: body.language ?? null } });
+    throw e;
+  }
+}
+async function falRunInner(model, body, timeoutMs, t0) {
   const submit = await fetch(`https://queue.fal.run/${model}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Key ${FAL_KEY}` }, body: JSON.stringify(body),
   });
@@ -302,8 +333,8 @@ async function loadPool() {
 }
 async function existingArRows(mediaIds) {
   const have = new Set();
-  for (let i = 0; i < mediaIds.length; i += 500) {
-    const { data, error } = await sb.from('mkt_transcripts').select('content_media_id').eq('model', MODEL_AR).in('content_media_id', mediaIds.slice(i, i + 500));
+  for (let i = 0; i < mediaIds.length; i += 100) { // 500 uuids overflow the request URL ("fetch failed")
+    const { data, error } = await sb.from('mkt_transcripts').select('content_media_id').eq('model', MODEL_AR).in('content_media_id', mediaIds.slice(i, i + 100));
     if (error) throw new Error(`existing @ar: ${error.message}`);
     for (const r of data) have.add(r.content_media_id);
   }
@@ -398,7 +429,7 @@ async function runAb() {
     for (const [key, model, params, level, storeKey] of variants) {
       const body = { audio_url: src.url, ...params };
       try {
-        const { json, ms } = await falRun(model, body);
+        const { json, ms } = await falRun(model, body, { durationMs, operation: 'transcribe_ab' });
         const r = normalizeFal(json, durationMs, level);
         out.variants[key] = { model, request: params, text: r.text, segments: r.segments, reordered_by_us: r.reordered, languages: r.languages, chunk_count: (json.chunks ?? []).length, costUsd: r.costUsd, latency_ms: ms, metrics: scoreTranscript(r.text, r.segments, durationMs, facts), stored_as: storeKey };
         if (storeKey) await upsertTranscript(row, storeKey, r, durationMs, { ...json, _request: params, _source: src });
@@ -517,35 +548,136 @@ function writeHumanReview(results) {
   fs.writeFileSync(path.join(OUT_DIR, 'human-review.md'), L.join('\n') + '\n');
 }
 
+// Same rule as worker falTranscribe.detectLanguage / isMeaninglessTranscript
+// (duplicated on purpose: this script must not import worker TS).
+function detectLanguage(text, inferred) {
+  if (inferred && inferred.length > 1) return 'mixed';
+  const ar = (text.match(/[؀-ۿ]/g) ?? []).length;
+  const en = (text.match(/[A-Za-z]/g) ?? []).length;
+  if (ar === 0 && en === 0) return inferred?.[0] ?? null;
+  if (ar > 0 && en > 0 && Math.min(ar, en) / Math.max(ar, en) > 0.12) return 'mixed';
+  return ar >= en ? 'ar' : 'en';
+}
+const HALLUCINATIONS = new Set(['you', 'thank you', 'thank you.', 'thanks for watching', 'thanks for watching!', 'bye', 'bye.', '.', '..', '...', 'subscribe', 'the end']);
+function isMeaningless(text) {
+  const t = text.trim().toLowerCase().replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
+  return t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase());
+}
+
+const FAIL_LOG = path.join(REPO, 'scripts', '.retranscribe-failures.local');
+function readFailed() {
+  if (!fs.existsSync(FAIL_LOG)) return new Set();
+  const out = new Set();
+  for (const line of fs.readFileSync(FAIL_LOG, 'utf8').split(/\r?\n/).filter(Boolean)) {
+    let parsed = null;
+    try { parsed = JSON.parse(line); } catch (e) {
+      // Only a malformed log line lands here; it is reported, not hidden.
+      console.error(`[backfill] unreadable failure-log line ignored (${e.message}): ${line.slice(0, 80)}`);
+    }
+    if (parsed?.media) out.add(parsed.media);
+  }
+  return out;
+}
+
+const LEGACY_SELECT = 'id,content_media_id,content_post_id,model,language,text,duration_ms,cost_usd,updated_at,source_checksum,raw_req:raw->_request,mkt_content_media(id,stored_url,checksum_sha256,duration_ms,download_status,media_kind),mkt_content_posts(id,caption,post_url)';
+/** Legacy rows = fal-ai/wizper, done, 'en', and the stored request had no `language` key. */
+async function loadLegacyEnglish() {
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from('mkt_transcripts').select(LEGACY_SELECT)
+      .eq('model', MODEL_A).eq('status', 'done').eq('language', 'en')
+      .order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(`legacy load: ${error.message}`);
+    rows.push(...data); if (data.length < 1000) break;
+  }
+  const legacy = rows.filter((r) => !(r.raw_req && typeof r.raw_req === 'object' && 'language' in r.raw_req));
+  const usable = legacy.filter((r) => r.mkt_content_media?.download_status === 'stored' && r.mkt_content_media?.stored_url);
+  return { legacy, usable };
+}
+const durOf = (r) => r.mkt_content_media?.duration_ms || r.duration_ms || 0;
+const replacedOf = (r) => ({ model: r.model, language: r.language, text: r.text, cost_usd: r.cost_usd, updated_at: r.updated_at, request: r.raw_req ?? null, replaced_at: new Date().toISOString() });
+
+async function writeMain(row, fields, raw) {
+  const { error } = await sb.rpc('mkt_transcript_upsert', {
+    p_media: row.content_media_id, p_post: row.content_post_id, p_provider: 'fal', p_model: MODEL_A,
+    p_language: fields.language, p_text: fields.text, p_segments: fields.segments, p_duration_ms: durOf(row) || null,
+    p_confidence: null, p_cost: fields.costUsd, p_status: 'done', p_failure: null,
+    p_source_checksum: row.mkt_content_media?.checksum_sha256 ?? row.source_checksum, p_raw: raw,
+  });
+  if (error) throw new Error(`mkt_transcript_upsert: ${error.message}`);
+}
+
 async function runBackfill() {
-  const limit = Number(opt('limit', 0)); const dry = flag('dry-run'); const conc = Number(opt('concurrency', 3));
+  const limit = Number(opt('limit', 0)); const dry = flag('dry-run');
+  const conc = Math.max(1, Math.min(4, Number(opt('concurrency', 2))));
+  const maxUsd = Number(opt('max-usd', 15));
+  const langOpt = opt('language', 'auto');
+  if (!['auto', 'ar'].includes(langOpt)) { console.error('--language must be auto or ar'); process.exit(2); }
+  const requestLanguage = langOpt === 'ar' ? 'ar' : null; // null = fal auto-detect (never omit the key)
   if (!limit) { console.error('--backfill needs --limit N'); process.exit(2); }
-  if (!dry && !flag('confirm')) { console.error('Refusing to run the backfill without --confirm (the coordinator runs it only after the A/B gate passes). Use --dry-run to preview.'); process.exit(2); }
-  const pool = await loadPool();
-  const have = await existingArRows(pool.map((r) => r.content_media_id));
-  const todo = pool.filter((r) => !have.has(r.content_media_id)).slice(0, limit);
-  const estMin = todo.reduce((s, r) => s + (r.mkt_content_media?.duration_ms || r.duration_ms || 0), 0) / 60000;
-  console.log(`[backfill] pool ${pool.length}, already have @ar ${have.size}, todo ${todo.length} (limit ${limit}), ~${estMin.toFixed(1)} audio-min ≈ $${(estMin * USD_PER_MIN).toFixed(3)}${dry ? ' — DRY RUN' : ''}`);
-  if (dry) { for (const r of todo.slice(0, 25)) console.log(`  ${r.content_media_id} ${Math.round((r.mkt_content_media?.duration_ms || r.duration_ms || 0) / 1000)}s ${r.mkt_content_posts?.post_url}`); return; }
-  let cost = 0, ok = 0, fail = 0;
+  if (!dry && !flag('confirm')) { console.error('Refusing to run the backfill without --confirm. Use --dry-run to preview.'); process.exit(2); }
+
+  const { legacy, usable } = await loadLegacyEnglish();
+  const have = await existingArRows(usable.map((r) => r.content_media_id));
+  const failed = flag('retry-failed') ? new Set() : readFailed();
+  const promote = usable.filter((r) => have.has(r.content_media_id));
+  const todo = usable.filter((r) => !have.has(r.content_media_id) && !failed.has(r.content_media_id)).slice(0, limit);
+  const min = (rs) => rs.reduce((a, r) => a + durOf(r), 0) / 60000;
+  console.log(`[backfill] legacy English rows ${legacy.length} (${legacy.length - usable.length} without stored media — cannot be re-run)`);
+  console.log(`[backfill] promote existing @ar rows (no fal call): ${promote.length}`);
+  console.log(`[backfill] skipped (in failure log): ${usable.filter((r) => failed.has(r.content_media_id)).length}`);
+  console.log(`[backfill] to transcribe now: ${todo.length} (limit ${limit}), ${min(todo).toFixed(1)} audio-min ≈ $${(min(todo) * USD_PER_MIN).toFixed(2)} at $${USD_PER_MIN}/min; cap --max-usd ${maxUsd}; language ${langOpt}; concurrency ${conc}`);
+  for (const [lo, hi, label] of [[0, 180000, '<=3 min'], [180000, 600000, '3-10 min'], [600000, Infinity, '>10 min']]) {
+    const b = todo.filter((r) => durOf(r) > lo && durOf(r) <= hi);
+    console.log(`  ${label.padEnd(8)} ${String(b.length).padStart(4)} videos  ${min(b).toFixed(1).padStart(7)} min  $${(min(b) * USD_PER_MIN).toFixed(2)}`);
+  }
+  if (dry) {
+    for (const r of todo.slice(0, 25)) console.log(`  ${r.content_media_id} ${Math.round(durOf(r) / 1000)}s ${r.mkt_content_posts?.post_url ?? ''}`);
+    console.log('[backfill] DRY RUN — nothing called, nothing written.');
+    return;
+  }
+
+  // 1. Promote the A/B '@ar' rows (already paid for) into the main row.
+  for (const r of promote) {
+    const { data: ar, error } = await sb.from('mkt_transcripts').select('id,language,text,segments,cost_usd,raw,status').eq('content_media_id', r.content_media_id).eq('model', MODEL_AR).maybeSingle();
+    if (error) { console.error(`[promote] FAIL ${r.content_media_id}: ${error.message}`); process.exitCode = 1; continue; }
+    if (!ar || ar.status !== 'done' || !ar.text) { console.log(`[promote] skip ${r.content_media_id}: @ar row is not a done transcript`); continue; }
+    await writeMain(r, { language: detectLanguage(ar.text), text: ar.text, segments: ar.segments, costUsd: ar.cost_usd },
+      { ...(ar.raw ?? {}), _request: { ...(ar.raw?._request ?? {}), language: 'ar' }, _promoted_from: MODEL_AR, _replaced: replacedOf(r) });
+    const { error: delErr } = await sb.from('mkt_transcripts').delete().eq('id', ar.id);
+    if (delErr) { console.error(`[promote] main row written but @ar row ${ar.id} not deleted: ${delErr.message}`); process.exitCode = 1; }
+    else console.log(`[promote] ok ${r.content_media_id}`);
+  }
+
+  // 2. Re-transcribe the rest, bounded by --limit and --max-usd.
+  let spent = 0, ok = 0, fail = 0, review = 0, stopped = false;
+  const langs = {};
   await mapLimit(todo, conc, async (row) => {
-    const durationMs = row.mkt_content_media?.duration_ms || row.duration_ms || null;
+    if (stopped) return;
+    const durationMs = durOf(row) || null;
+    const est = ((durationMs ?? 0) / 60000) * USD_PER_MIN;
+    if (spent + est > maxUsd) { stopped = true; console.log(`[backfill] --max-usd ${maxUsd} reached (spent ≈ $${spent.toFixed(3)}); stopping — re-run to continue`); return; }
+    spent += est;
     try {
       const src = await audioUrlFor(row);
-      const params = { task: 'transcribe', language: 'ar', chunk_level: 'segment', version: '3' };
-      const { json, ms } = await falRun('fal-ai/wizper', { audio_url: src.url, ...params });
+      const params = { task: 'transcribe', language: requestLanguage, chunk_level: 'segment', version: '3' };
+      const { json, ms } = await falRun(MODEL_A, { audio_url: src.url, ...params }, { durationMs });
       const r = normalizeFal(json, durationMs, 'segment');
-      await upsertTranscript(row, MODEL_AR, r, durationMs, { ...json, _request: params, _source: src });
-      cost += r.costUsd; ok++;
-      console.log(`[backfill] ok ${row.content_media_id} ${ms}ms $${r.costUsd} ar=${arabicRatio(r.text).toFixed(2)} chars=${r.text.length} (running $${cost.toFixed(3)})`);
+      const meaningless = isMeaningless(r.text);
+      const language = meaningless ? 'none' : detectLanguage(r.text, json.languages ?? json.inferred_languages ?? undefined);
+      await writeMain(row, { language, text: meaningless ? '' : r.text, segments: meaningless ? [] : r.segments, costUsd: r.costUsd },
+        { ...json, _request: params, _source: src, _replaced: replacedOf(row) });
+      ok++; langs[language] = (langs[language] ?? 0) + 1;
+      // Auto-detect said English on a post with an Arabic caption: plausible for
+      // a Dubai developer, suspicious otherwise — flag it for a human look.
+      if (language === 'en' && /[ء-ي]/.test(row.mkt_content_posts?.caption ?? '')) { review++; console.log(`[backfill] REVIEW ${row.content_media_id} came back English but the caption is Arabic: ${row.mkt_content_posts?.post_url ?? ''}`); }
+      console.log(`[backfill] ok ${row.content_media_id} ${ms}ms ${language} ar=${arabicRatio(r.text).toFixed(2)} chars=${r.text.length} (≈ $${spent.toFixed(3)})`);
     } catch (e) {
-      fail++; console.error(`[backfill] FAIL ${row.content_media_id}: ${e.message}`);
-      // Record the failure loudly on the @ar key so the next run does not silently retry forever; resumable by deleting the row.
-      const { error } = await sb.rpc('mkt_transcript_upsert', { p_media: row.content_media_id, p_post: row.content_post_id, p_provider: 'fal', p_model: MODEL_AR, p_language: null, p_text: null, p_segments: '[]', p_duration_ms: durationMs, p_confidence: null, p_cost: 0, p_status: 'failed', p_failure: String(e.message).slice(0, 300), p_source_checksum: row.mkt_content_media?.checksum_sha256 ?? row.source_checksum, p_raw: null });
-      if (error) console.error(`[backfill] could not record failure row: ${error.message}`);
+      fail++; console.error(`[backfill] FAIL ${row.content_media_id}: ${e.message} — English row left untouched`);
+      fs.appendFileSync(FAIL_LOG, JSON.stringify({ media: row.content_media_id, at: new Date().toISOString(), error: String(e.message).slice(0, 300) }) + '\n');
     }
   });
-  console.log(`[backfill] done: ${ok} ok, ${fail} failed, estimated fal cost $${cost.toFixed(4)}`);
+  console.log(`[backfill] done: ${ok} ok ${JSON.stringify(langs)}, ${fail} failed, ${review} flagged REVIEW, estimated fal spend ≈ $${spent.toFixed(3)} (metered in ai_usage)`);
   if (fail) process.exitCode = 1;
 }
 
@@ -571,4 +703,4 @@ async function runRescore() {
 if (flag('ab')) await runAb();
 else if (flag('backfill')) await runBackfill();
 else if (flag('rescore')) await runRescore();
-else { console.error('usage: node scripts/retranscribe-arabic.mjs --ab [--n 10] [--dry-run] [--no-store] [--store-word] | --rescore | --backfill --limit N [--dry-run] [--concurrency 3] --confirm'); process.exit(2); }
+else { console.error('usage: node scripts/retranscribe-arabic.mjs --ab [--n 10] [--dry-run] [--no-store] [--store-word] | --rescore | --backfill --limit N [--dry-run] [--concurrency 2] [--max-usd 15] [--language auto|ar] [--retry-failed] --confirm'); process.exit(2); }

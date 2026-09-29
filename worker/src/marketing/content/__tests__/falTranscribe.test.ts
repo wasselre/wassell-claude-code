@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
-  chunksToSegments, aggregateWords, normalizeFalResponse, transcribeAudioUrl,
+  chunksToSegments, aggregateWords, normalizeFalResponse, transcribeAudioUrl, isMeaninglessTranscript,
   WORD_AGG_MAX_MS, WORD_AGG_MIN_MS,
 } from '../falTranscribe';
 
@@ -101,6 +101,10 @@ describe('normalizeFalResponse', () => {
     expect(r).toMatchObject({ text: '', segments: [], language: 'none' });
     expect(r.costUsd).toBe(0.0016);
   });
+  it('treats bare music notes as no speech', () => {
+    for (const t of ['♪♪ ♪♪', '♪♪ ♪♪ ♪♪', '♫']) expect(isMeaninglessTranscript(t)).toBe(true);
+    expect(isMeaninglessTranscript('♪ مشروع يمام بارك ♪')).toBe(false);
+  });
 });
 
 describe('transcribeAudioUrl request shape', () => {
@@ -131,10 +135,11 @@ describe('transcribeAudioUrl request shape', () => {
     return p;
   }
 
-  it('with no options sends the v1 request (no language key at all)', async () => {
+  it('with no options sends language: null (auto-detect) — never omits the key', async () => {
+    // Omitting the key = fal's default "en" = Saudi Arabic translated into
+    // English (840 competitor rows, 2026-07-23 → 2026-09-28). Pin it.
     const r = await call();
-    expect(bodies[0]).toEqual({ audio_url: 'https://x/a.m4a', task: 'transcribe', chunk_level: 'segment', version: '3' });
-    expect('language' in bodies[0]).toBe(false);
+    expect(bodies[0]).toEqual({ audio_url: 'https://x/a.m4a', task: 'transcribe', chunk_level: 'segment', version: '3', language: null });
     expect(r.segments.map((s) => s.text)).toEqual(['أول', 'ثاني', 'ثالث']);
   });
   it('passes language ar / explicit null / segment tuning through', async () => {

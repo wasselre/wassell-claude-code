@@ -15,8 +15,16 @@
 //   NOT auto-detect. Omitting it (the v1 behaviour) makes Whisper decode Saudi
 //   Arabic speech as English, which is why 390+ stored transcripts are English
 //   translations. `language: null` (explicit) is auto-detect; `language: 'ar'`
-//   forces Arabic. Callers that pass no options keep the v1 request shape so
-//   the coordinator can switch them deliberately.
+//   forces Arabic.
+//   FIXED 2026-09-29: an omitted `language` option now SENDS `language: null`
+//   (auto-detect). The "omit the key" path was kept for a deliberate switch
+//   that never happened, so every competitor video from 2026-07-23 to
+//   2026-09-28 (840 rows) was stored as an English translation. Auto-detect is
+//   the default because English-speaking videos exist (Dubai/UAE developers)
+//   and forcing 'ar' on them would translate them INTO Arabic — the same bug
+//   mirrored. Measured on the inbound voice-note lane (the only lane already
+//   sending null): 10 of 11 Saudi voice notes came back 'ar'. The historical
+//   rows are repaired by `scripts/retranscribe-arabic.mjs --backfill`.
 //
 // CHUNK LEVEL — MEASURED 2026-09-02: wizper's schema declares
 //   `chunk_level: const "segment"` and returns 422 on 'word'. Word-level
@@ -47,9 +55,10 @@ export interface TranscribeOptions {
    */
   track: AiCallRef;
   /**
-   * `'ar'` / `'en'` force that language; `null` sends an explicit null = fal
-   * auto-detect; `undefined` (default) OMITS the key = fal's own default,
-   * which is "en" (see header). Keep undefined only for the legacy path.
+   * `'ar'` / `'en'` force that language; `null` and `undefined` (default)
+   * both SEND `language: null` = fal auto-detect. The key is never omitted:
+   * fal's own default for a missing key is "en", which translated every Saudi
+   * video into English (see header).
    */
   language?: 'ar' | 'en' | null;
   /** `'segment'` (default, the only value wizper accepts) or `'word'` (fal-ai/whisper only). */
@@ -85,7 +94,9 @@ function falEnv() {
 // "no meaningful speech" so a music reel isn't stored as a bogus English line.
 const HALLUCINATIONS = new Set(['you', 'thank you', 'thank you.', 'thanks for watching', 'thanks for watching!', 'bye', 'bye.', '.', '..', '...', 'subscribe', 'the end']);
 export function isMeaninglessTranscript(text: string): boolean {
-  const t = text.trim().toLowerCase().replace(/[!.?،]/g, '').trim();
+  // Music-only audio also comes back as bare music notes («♪♪ ♪♪»): 110 rows
+  // were stored that way as if they were speech (language NULL, not 'none').
+  const t = text.trim().toLowerCase().replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
   return t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase());
 }
 
@@ -194,8 +205,8 @@ export function normalizeFalResponse(
  * ORDERED by start + detected language. Throws on terminal failure so the
  * caller records an explicit failed transcript row.
  *
- * With no `options` the request is byte-identical to v1 (task transcribe,
- * chunk_level segment, version 3, NO language key ⇒ fal default "en").
+ * With no language option the request carries `language: null` (auto-detect)
+ * — never the v1 shape that omitted the key and got English.
  */
 export async function transcribeAudioUrl(
   audioUrl: string,
@@ -206,7 +217,7 @@ export async function transcribeAudioUrl(
   // duration IS the billable quantity. Recorded as units so the price book
   // can reprice history if the list rate changes.
   const started = Date.now();
-  const minutes = typeof durationMs === 'number' && durationMs > 0 ? durationMs / 60000 : 0;
+  const knownMinutes = typeof durationMs === 'number' && durationMs > 0 ? durationMs / 60000 : 0;
   const model = (options.model ?? falEnv().model).replace(/^\//, '');
   try {
     const res = await transcribeAudioUrlInner(audioUrl, durationMs, options);
@@ -215,10 +226,13 @@ export async function transcribeAudioUrl(
       provider: 'fal',
       model: res.model || model,
       status: 'ok',
-      units: minutes,
+      // No duration from the caller (the voice-note lane) ⇒ the cost was
+      // estimated from the last timestamp; record the same minutes as units
+      // so the ledger does not show a costed call that consumed 0 minutes.
+      units: knownMinutes || res.costUsd / USD_PER_AUDIO_MINUTE,
       unitKind: 'minute',
       latencyMs: Date.now() - started,
-      meta: { language: res.language, segments: res.segments.length },
+      meta: { language: res.language, segments: res.segments.length, requested_language: options.language ?? null },
       ...(typeof res.costUsd === 'number' ? { costUsd: res.costUsd } : {}),
     });
     return res;
@@ -254,7 +268,8 @@ async function transcribeAudioUrlInner(
     throw new Error(`${WIZPER} only supports chunk_level 'segment' (fal returns 422 for 'word'); pass options.model='fal-ai/whisper' for word-level timestamps`);
   }
   const request: Record<string, unknown> = { audio_url: audioUrl, task: 'transcribe', chunk_level: chunkLevel, version: '3' };
-  if (options.language !== undefined) request.language = options.language; // null = explicit auto-detect
+  // ALWAYS send the key: omitted = fal's default "en" = Arabic translated to English.
+  request.language = options.language ?? null;
   if (options.maxSegmentLen !== undefined) request.max_segment_len = options.maxSegmentLen;
   if (options.mergeChunks !== undefined) request.merge_chunks = options.mergeChunks;
 
