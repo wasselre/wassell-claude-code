@@ -18,6 +18,7 @@ interface LookupComboboxProps {
   disabled?: boolean; // render an inert, greyed-out control (e.g. a child level before its parent is chosen)
   disableCreate?: boolean; // suppress the inline "Create:" row (you can't invent a geography record here)
   placeholder?: string; // override the default "Search <model>..." placeholder
+  createDefaults?: Record<string, unknown>; // extra data for a record created inline (e.g. the field's lookup_filter value)
 }
 
 export default function LookupCombobox({
@@ -31,6 +32,7 @@ export default function LookupCombobox({
   disabled,
   disableCreate,
   placeholder,
+  createDefaults,
 }: LookupComboboxProps) {
   const { models, records, language, saveRecord } = useAppStore();
   const isAr = language === 'ar';
@@ -176,7 +178,7 @@ export default function LookupCombobox({
     const newRec = {
       id: uuid(),
       model_id: lookupModelId,
-      data: { [lookupDisplayField]: trimmedQuery },
+      data: { ...createDefaults, [lookupDisplayField]: trimmedQuery },
       created_at: now,
       updated_at: now,
     };

@@ -120,7 +120,7 @@ export function isRetiredModel(name: string | null | undefined): boolean {
  */
 export const WORKSPACE_HIDDEN_MODEL_NAMES = [
   // D10 — lookup dimensions, surfaced in Projects & Inventory / contextually.
-  'developers', 'marketers', 'project_officers', 'unit_updates',
+  'developers', 'project_officers', 'unit_updates',
   // D11 — units live in a project's Units tab + Project Finder.
   'units',
   // D20 — sales-lifecycle milestones, surfaced on Client 360. Models + triggers

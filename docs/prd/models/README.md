@@ -4,7 +4,7 @@
 
 # Models — auto-generated index
 
-**44 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**43 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -31,7 +31,6 @@
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Lead portals](lead-portals.md) | `lead_portals` | JSONB | — | 2 | 17 | no | 2026-09-29 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 86 | no | 2026-09-20 |
-| [Marketers](marketers.md) | `marketers` | JSONB | Projects | 1 | 3 | no | 2026-08-31 |
 | [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-09-20 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | — | 1 | 9 | no | 2026-09-27 |
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 5 | 15 | no | 2026-09-20 |
@@ -50,5 +49,5 @@
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 3 | 13 | no | 2026-09-20 |
 | [Unit Updates](unit-updates.md) | `unit_updates` | JSONB | Projects | 1 | 9 | no | 2026-09-07 |
-| [Units](units.md) | `units` | JSONB | Projects | 8 | 52 | no | 2026-09-28 |
+| [Units](units.md) | `units` | JSONB | Projects | 8 | 52 | no | 2026-09-29 |
 | [Visits](visits.md) | `visits` | JSONB | — | 1 | 13 | no | 2026-09-27 |

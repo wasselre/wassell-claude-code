@@ -150,6 +150,12 @@ export interface LocationLevel {
   parent_link_field?: string | null; // slug on this level's records holding the parent record id; null/absent for the top level
 }
 
+/** Restricts a lookup picker to target records whose `field` equals `value`. */
+export interface LookupFilter {
+  field: string;
+  value: string;
+}
+
 export interface ModelField {
   id: string;
   name: string; // snake_case slug
@@ -167,6 +173,11 @@ export interface ModelField {
   lookup_display_field?: string | null;
   is_multi?: boolean; // When type: 'lookup', allows picking multiple records (value becomes string[]).
   lookup_max_records?: number; // When type: 'lookup', caps how many records show in the combobox dropdown (default 20).
+  // When type: 'lookup', only records whose `field` equals `value` are offered in
+  // the picker, and a record created inline from the picker gets that value
+  // (e.g. the Companies list: a project's marketer picker lists company_type =
+  // marketer). Configured by migration; the Builder carries it through edits.
+  lookup_filter?: LookupFilter | null;
   // Location cascade (type: 'location'). A guided region → city → district picker
   // where each level is gated by its parent and the child list is filtered to the
   // parent's children. Stored value is a compound object keyed by each level's

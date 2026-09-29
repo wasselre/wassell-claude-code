@@ -6,6 +6,7 @@ import { ExternalLink, Fingerprint, Calculator, X, Plus } from 'lucide-react';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import LookupCombobox from './LookupCombobox';
+import { lookupFilterPredicate, lookupFilterDefaults } from '@/lib/lookupFilter';
 import LocationCascadeField from './LocationCascadeField';
 import ClientLocationField from './ClientLocationField';
 import UnitPickerField from './UnitPickerField';
@@ -461,6 +462,8 @@ export default function DynamicField({
             lookupDisplayField={field.lookup_display_field}
             isMulti={field.is_multi}
             maxRecords={field.lookup_max_records}
+            candidatePredicate={lookupFilterPredicate(field)}
+            createDefaults={lookupFilterDefaults(field)}
             value={value as string | string[] | undefined}
             onChange={onChange}
           />

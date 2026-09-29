@@ -32,7 +32,8 @@ import { createHash } from 'node:crypto';
 import { serviceClient, pageAll, parseArgs, ROOT } from './_lib/env.mjs';
 
 const ALL_PROJECTS_MODEL = '220c49b9-de57-492d-9eca-c0d9f54fd40f';
-const MARKETERS_MODEL = '37f4905c-bc64-4993-a0c4-07e4f54463e2';
+// One Companies list (model slug `developers`) holds developers AND marketers
+// since 2026-09-29; a project's `marketer` is a list of company ids.
 const DEVELOPERS_MODEL = '11bade2c-7da9-4d00-b045-eaab37153da2';
 const OUT_DIR = join(ROOT, 'docs', 'eval');
 
@@ -115,7 +116,6 @@ function range(r) {
 async function buildScriptSet() {
   const projects = await pageAll((a, b) => sb.from('unified_records').select('id,data,updated_at').eq('model_id', ALL_PROJECTS_MODEL).range(a, b));
   const byId = new Map(projects.map((p) => [p.id, p]));
-  const marketers = new Map((await pageAll((a, b) => sb.from('unified_records').select('id,data').eq('model_id', MARKETERS_MODEL).range(a, b))).map((r) => [r.id, r.data]));
   const developers = new Map((await pageAll((a, b) => sb.from('unified_records').select('id,data').eq('model_id', DEVELOPERS_MODEL).range(a, b))).map((r) => [r.id, r.data]));
   const { data: content, error } = await sb.from('mos_content_v').select('id,ref,title,project_id,content_type_key,language').not('project_id', 'is', null);
   if (error) throw new Error(`mos_content_v: ${error.message}`);
@@ -137,8 +137,9 @@ async function buildScriptSet() {
     // NAME is allowed per script_writer_rules.allow_developer_name), and any
     // phone number found in the record's free-text fields.
     const must_not_contain = [];
-    if (d.marketer) {
-      const m = marketers.get(d.marketer);
+    const marketerIds = Array.isArray(d.marketer) ? d.marketer : d.marketer ? [d.marketer] : [];
+    for (const id of marketerIds) {
+      const m = developers.get(id);
       if (m?.name) must_not_contain.push(m.name);
       if (m?.phone) must_not_contain.push(String(m.phone));
     }

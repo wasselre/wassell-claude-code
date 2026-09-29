@@ -488,6 +488,10 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       lookup_display_field: type === 'lookup' ? lookupDisplayField : null,
       is_multi: type === 'lookup' || type === 'unit_picker' ? isMulti : undefined,
       lookup_max_records: type === 'lookup' ? lookupMaxRecords : undefined,
+      // No Builder UI yet — carried through so an edit never drops it; dropped
+      // when the lookup is re-pointed at another model (the filter would no
+      // longer make sense there).
+      lookup_filter: type === 'lookup' && field?.lookup_model_id === lookupModelId ? field?.lookup_filter : undefined,
       location_multi: type === 'location' ? locationMulti : undefined,
       location_levels: type === 'location' ? locationLevels : undefined,
       location_default: type === 'location' ? field?.location_default : undefined,

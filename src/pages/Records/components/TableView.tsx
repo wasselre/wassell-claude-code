@@ -6,6 +6,7 @@ import DynamicCell from './DynamicCell';
 import PhoneInput from './PhoneInput';
 import RangeField from './RangeField';
 import LookupCombobox from './LookupCombobox';
+import { lookupFilterPredicate, lookupFilterDefaults } from '@/lib/lookupFilter';
 import LocationCascadeField from './LocationCascadeField';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
@@ -628,13 +629,18 @@ function InlineInput({
               lookupDisplayField={field.lookup_display_field}
               isMulti
               maxRecords={field.lookup_max_records}
+              candidatePredicate={lookupFilterPredicate(field)}
+              createDefaults={lookupFilterDefaults(field)}
               value={value as string | string[] | undefined}
               onChange={onChange}
             />
           </div>
         );
       }
-      const linkedRecords = records[field.lookup_model_id] ?? [];
+      // The current value always stays selectable even if it no longer passes
+      // the field's lookup_filter, so opening the cell never silently clears it.
+      const allowed = lookupFilterPredicate(field);
+      const linkedRecords = (records[field.lookup_model_id] ?? []).filter((rec) => !allowed || allowed(rec) || rec.id === value);
       const targetModel = models.find((m) => m.id === field.lookup_model_id);
       return (
         <select
