@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ExternalLink, Loader2, MapPin, Play, X } from 'lucide-react';
 import type { LinkBrochure, LinkPhoto, LinkVideo, UnitDetail, UnitSummary } from '../lib/api';
 import { fetchUnit } from '../lib/api';
@@ -217,10 +217,84 @@ export function UnitsSection({ token, units, tracker, isAr }: { token: string; u
     }
   };
 
+  const [type, setType] = useState<string>('');
+  const [bed, setBed] = useState<number | null>(null);
+  const [maxPrice, setMaxPrice] = useState<number | null>(null);
+  const [floor, setFloor] = useState<string>('');
+  const [sort, setSort] = useState<'cheapest' | 'largest'>('cheapest');
+
+  const types = useMemo(() => distinct(units.map((u) => u.type)), [units]);
+  const beds = useMemo(() => [...new Set(units.map((u) => u.bedrooms).filter((b): b is number => typeof b === 'number'))].sort((a, b) => a - b), [units]);
+  const floors = useMemo(() => distinct(units.map((u) => u.floor)), [units]);
+  const budgetSteps = useMemo(() => priceSteps(units.map((u) => u.price)), [units]);
+
+  const shown = useMemo(() => {
+    const out = units.filter((u) =>
+      (!type || u.type === type) &&
+      (bed === null || u.bedrooms === bed) &&
+      (maxPrice === null || (u.price !== null && u.price <= maxPrice)) &&
+      (!floor || u.floor === floor));
+    return [...out].sort((a, b) => (sort === 'largest'
+      ? (b.area ?? 0) - (a.area ?? 0)
+      : (a.price ?? Infinity) - (b.price ?? Infinity)));
+  }, [units, type, bed, maxPrice, floor, sort]);
+
+  // What the customer narrowed to is a preference signal — record it once they
+  // stop tapping (1.5 s), and the same combination only once per page view.
+  const filterKey = [type && `type=${type}`, bed !== null && `bed=${bed}`, maxPrice !== null && `max=${maxPrice}`, floor && `floor=${floor}`]
+    .filter(Boolean).join(';');
+  useEffect(() => {
+    if (!filterKey) return;
+    const t = window.setTimeout(() => tracker.track('units_filter', { item: filterKey, once: true }), 1500);
+    return () => window.clearTimeout(t);
+  }, [filterKey, tracker]);
+
+  const clear = () => { setType(''); setBed(null); setMaxPrice(null); setFloor(''); };
+
   if (!units.length) return <p className="py-10 text-center text-charcoal/60">{tr('noUnits', isAr)}</p>;
   return (
     <div className="flex flex-col gap-2">
-      {units.map((u) => (
+      <div className="mb-1 flex flex-col gap-2 rounded-xl border border-sand/60 bg-white p-3">
+        {types.length > 1 && (
+          <ChipRow label={tr('type', isAr)} isAr={isAr} value={type} onChange={setType}
+            options={types.map((t) => ({ value: t, label: t }))} />
+        )}
+        {beds.length > 1 && (
+          <ChipRow label={tr('bedroomsLabel', isAr)} isAr={isAr} value={bed === null ? '' : String(bed)}
+            onChange={(v) => setBed(v ? Number(v) : null)}
+            options={beds.map((b) => ({ value: String(b), label: String(b) }))} />
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {budgetSteps.length > 1 && (
+            <select value={maxPrice ?? ''} onChange={(e) => setMaxPrice(e.target.value ? Number(e.target.value) : null)}
+              aria-label={tr('budgetUpTo', isAr)}
+              className={`rounded-lg border bg-white px-2 py-1.5 text-sm ${maxPrice !== null ? 'border-copper text-copper' : 'border-sand/70 text-charcoal'}`}>
+              <option value="">{tr('anyBudget', isAr)}</option>
+              {budgetSteps.map((p) => <option key={p} value={p}>{tr('upTo', isAr)} {money(p, isAr)}</option>)}
+            </select>
+          )}
+          {floors.length > 1 && (
+            <select value={floor} onChange={(e) => setFloor(e.target.value)} aria-label={tr('floor', isAr)}
+              className={`rounded-lg border bg-white px-2 py-1.5 text-sm ${floor ? 'border-copper text-copper' : 'border-sand/70 text-charcoal'}`}>
+              <option value="">{tr('anyFloor', isAr)}</option>
+              {floors.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+          )}
+          <select value={sort} onChange={(e) => setSort(e.target.value as 'cheapest' | 'largest')}
+            className="rounded-lg border border-sand/70 bg-white px-2 py-1.5 text-sm text-charcoal">
+            <option value="cheapest">{tr('sortCheapest', isAr)}</option>
+            <option value="largest">{tr('sortLargest', isAr)}</option>
+          </select>
+        </div>
+        <div className="flex items-center justify-between text-xs text-charcoal/60">
+          <span>{shown.length} {tr('unitsCount', isAr)}</span>
+          {filterKey && (
+            <button type="button" onClick={clear} className="font-semibold text-copper">{tr('clearFilters', isAr)}</button>
+          )}
+        </div>
+      </div>
+      {shown.length === 0 && <p className="py-6 text-center text-sm text-charcoal/60">{tr('noMatch', isAr)}</p>}
+      {shown.map((u) => (
         <div key={u.id} className="overflow-hidden rounded-xl border border-sand/60 bg-white">
           <button type="button" onClick={() => void toggle(u)} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start">
             <span className="min-w-0">
@@ -240,6 +314,40 @@ export function UnitsSection({ token, units, tracker, isAr }: { token: string; u
       ))}
     </div>
   );
+}
+
+function ChipRow({ label, value, onChange, options, isAr }: {
+  label: string; value: string; onChange: (v: string) => void;
+  options: Array<{ value: string; label: string }>; isAr: boolean;
+}) {
+  const chip = (active: boolean) =>
+    `shrink-0 rounded-full border px-3 py-1 text-sm ${active ? 'border-copper bg-copper text-white' : 'border-sand/70 bg-white text-charcoal'}`;
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-16 shrink-0 text-xs text-charcoal/60">{label}</span>
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+        <button type="button" className={chip(!value)} onClick={() => onChange('')}>{tr('all', isAr)}</button>
+        {options.map((o) => (
+          <button key={o.value} type="button" className={chip(value === o.value)} onClick={() => onChange(value === o.value ? '' : o.value)}>{o.label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function distinct(values: Array<string | null>): string[] {
+  return [...new Set(values.filter((v): v is string => !!v && !!v.trim()))];
+}
+
+/** Up to 6 budget caps spanning the project's prices, rounded up to 50k, each
+ *  of which returns at least one unit. */
+function priceSteps(prices: Array<number | null>): number[] {
+  const p = prices.filter((x): x is number => typeof x === 'number' && x > 0).sort((a, b) => a - b);
+  if (p.length < 2) return [];
+  const round = (v: number) => Math.ceil(v / 50_000) * 50_000;
+  const out = new Set<number>();
+  for (let i = 1; i <= 6; i++) out.add(round(p[Math.min(p.length - 1, Math.floor(((p.length - 1) * i) / 6))]!));
+  return [...out].sort((a, b) => a - b);
 }
 
 // ── Location ──────────────────────────────────────────────────────────────────

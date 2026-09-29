@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Image as ImageIcon, PlayCircle, FileText, LayoutGrid, MapPin, Flame } from 'lucide-react';
+import { Eye, EyeOff, Image as ImageIcon, PlayCircle, FileText, LayoutGrid, MapPin, Flame, SlidersHorizontal } from 'lucide-react';
 import type { TrackedLinkEngagement } from '@/types';
 
 /**
@@ -64,6 +64,10 @@ export default function LinkEngagementChip({
         : `${isAr ? 'الوحدات' : 'Units'} ${duration(Number(engagement.units_seconds), isAr)}`,
     });
   }
+  const filter = describeFilter(engagement.last_units_filter, isAr);
+  if (filter) {
+    parts.push({ key: 'filter', icon: <SlidersHorizontal size={11} />, text: filter });
+  }
   if (engagement.opened_map) {
     parts.push({ key: 'map', icon: <MapPin size={11} />, text: isAr ? 'فتح الموقع' : 'Opened map' });
   }
@@ -88,6 +92,25 @@ export default function LinkEngagementChip({
       </span>
     </div>
   );
+}
+
+/** «type=شقة;bed=3;max=1500000;floor=أول» → «يبحث عن: شقة · 3 غرف · حتى 1,500,000 · دور أول». */
+function describeFilter(raw: string | null | undefined, isAr: boolean): string | null {
+  if (!raw) return null;
+  const parts: string[] = [];
+  for (const pair of raw.split(';')) {
+    const [k, ...rest] = pair.split('=');
+    const v = rest.join('=').trim();
+    if (!v) continue;
+    if (k === 'type') parts.push(v);
+    else if (k === 'bed') parts.push(isAr ? `${v} غرف` : `${v} bd`);
+    else if (k === 'max') {
+      const n = Number(v);
+      if (Number.isFinite(n)) parts.push(isAr ? `حتى ${n.toLocaleString('en-US')}` : `≤ ${n.toLocaleString('en-US')}`);
+    } else if (k === 'floor') parts.push(isAr ? `دور ${v}` : `floor ${v}`);
+  }
+  if (!parts.length) return null;
+  return `${isAr ? 'يبحث عن' : 'Looking for'}: ${parts.join(' · ')}`;
 }
 
 function duration(seconds: number, isAr: boolean): string {

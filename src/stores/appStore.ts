@@ -1771,7 +1771,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!supabase || !chatWid) return;
     const { data, error } = await supabase
       .from('v_tracked_link_engagement')
-      .select('token, project_id, unit_id, sessions, open_days, first_open_at, last_activity_at, photos_opened, videos_played, max_video_pct, photos_seconds, videos_seconds, brochure_seconds, brochure_pages, units_seconds, units_opened, opened_map, score')
+      .select('token, project_id, unit_id, sessions, open_days, first_open_at, last_activity_at, photos_opened, videos_played, max_video_pct, photos_seconds, videos_seconds, brochure_seconds, brochure_pages, units_seconds, units_opened, opened_map, score, last_units_filter')
       .eq('chat_wid', chatWid)
       .order('created_at', { ascending: false })
       .limit(500);

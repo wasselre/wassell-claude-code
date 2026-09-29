@@ -36,7 +36,7 @@ const LINK_LIFETIME_DAYS = 365;
 const MAX_EVENTS = 40;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TOKEN_RE = /^[A-Za-z0-9]{8,32}$/;
-const KINDS = new Set(['view', 'photo_open', 'video_play', 'video_progress', 'time', 'brochure_page', 'map_open', 'unit_open']);
+const KINDS = new Set(['view', 'photo_open', 'video_play', 'video_progress', 'time', 'brochure_page', 'map_open', 'unit_open', 'units_filter']);
 const SECTIONS = new Set(['photos', 'videos', 'brochure', 'location', 'units', 'unit']);
 
 interface LinkRow { id: string; project_id: string; unit_id: string | null; sections: string[]; created_at: string }

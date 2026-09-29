@@ -48,6 +48,16 @@ const DICT = {
   next: { ar: 'التالي', en: 'Next' },
   close: { ar: 'إغلاق', en: 'Close' },
   moreAboutProject: { ar: 'اكتشف المشروع', en: 'Explore the project' },
+  all: { ar: 'الكل', en: 'All' },
+  budgetUpTo: { ar: 'الميزانية', en: 'Budget' },
+  anyBudget: { ar: 'أي ميزانية', en: 'Any budget' },
+  upTo: { ar: 'حتى', en: 'Up to' },
+  anyFloor: { ar: 'كل الأدوار', en: 'All floors' },
+  sortCheapest: { ar: 'الأرخص', en: 'Cheapest' },
+  sortLargest: { ar: 'الأكبر مساحة', en: 'Largest' },
+  unitsCount: { ar: 'وحدة', en: 'units' },
+  clearFilters: { ar: 'مسح الفلاتر', en: 'Clear filters' },
+  noMatch: { ar: 'لا توجد وحدات بهذه المواصفات — جرّب تغيير الفلاتر', en: 'No units match — try changing the filters' },
 } as const;
 
 export type Key = keyof typeof DICT;

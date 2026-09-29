@@ -2940,6 +2940,8 @@ export interface TrackedLinkEngagement {
   units_opened: number;
   opened_map: boolean;
   score: number;
+  /** The last filter the customer applied on the units page ("type=…;bed=…;max=…;floor=…"). */
+  last_units_filter: string | null;
 }
 
 /** One customer × project row of v_project_interest, plus a resolved name. */

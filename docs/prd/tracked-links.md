@@ -15,6 +15,8 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
 ## Key behaviors
 - **One token per sent message.** The same project sent twice (different days) gets two tokens, so each message has its own numbers; the per-project view sums them.
 - **Only real opens count.** Events are written by the page's own JavaScript, so WhatsApp's link-preview crawler (which runs no JS) never counts as an open. No IP address or user agent is stored.
+- **An "open" is a VISIT, not a page view.** Switching tabs (photos → units), reloading, or coming back from Google Maps stays in the same visit; a new visit starts after 30 minutes idle or in a new browser tab (visit id in `sessionStorage`, per link). Until 2026-09-29 every tab switch counted as an open — one test link showed 13 opens for 3 visits. If the browser blocks storage, each page view counts as its own visit (over-counts rather than breaks).
+- **The units page has filters:** type and bedrooms as chips, a budget cap (up to six steps spanning the project's own available prices, rounded to 50k), floor, and sort (cheapest / largest), with a live unit count and «مسح الفلاتر». Each combination the customer settles on (1.5 s after the last tap) is recorded as a `units_filter` event, e.g. `bed=3;max=1500000`, and the chat chip shows the latest one as «يبحث عن: 3 غرف · حتى 1,500,000».
 - **What the pages show** is the same customer-safe material a project message may carry: the send-safety filters of the file picker (no designs/posters, no unit plans on the photos page, no tiny icons), **available** prices only (a sold-out project shows no price), the newest brochure, direct video files plus the project's external videos.
 - **Sections appear only when there is something behind them** (no «الفيديوهات» link for a project without videos; no «الوحدات المتاحة» when nothing is available).
 - **Language:** the page follows the message's language (`?lang=en` for English messages); Arabic pages are RTL.
@@ -28,7 +30,7 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
   - the units window / unit drawer / client options («طريقة الإرسال: رابط متتبَّع | PDF» — link is the default; the PDF and Download remain).
 - **Interest score (0–100), computed in SQL** (`tracked_interest_score`), each part capped: opened 10 · photos 2 each (≤14) · videos 5 each (≤10) + 10 for one watched to ≥75% · brochure 1 per 6 s (≤10) + 1 per page (≤5) · units 4 each (≤16) + 1 per 20 s (≤5) · map tap 10 · came back on another day 5 each (≤10) · media time 1 per 30 s (≤5).
 - **Where the rep sees it:**
-  - under every tracked message in the chat: «لم يفتح الروابط بعد», or opens · photos · videos % · brochure time · units · map · score (refreshed every minute while the chat is open);
+  - under every tracked message in the chat: «لم يفتح الروابط بعد», or visits · photos · videos % · brochure time · units · what they filtered for · map · score (refreshed every minute while the chat is open);
   - Client → Options tab: «اهتمامه بالمشاريع» (hidden until a tracked message exists);
   - Project page → «اهتمام العملاء» tab. A row opens the conversation.
 - A tracked message no longer contains the website link, so the chat's project buttons resolve the project from the token.
@@ -41,10 +43,10 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
 
 ## Data touched
 - Writes: `tracked_links` (one row per sent message: token, project_id, unit_id, chat_wid, conversation_record_id, client_id, device_id, sent_via, sections, created_by_user_id) — service role only.
-- Writes: `tracked_link_events` (link_id, session_id, kind ∈ view/time/photo_open/video_play/video_progress/brochure_page/unit_open/map_open, section, item, value) — only through the anonymous `POST /api/tracked-link {action:'track'}`, validated (kinds, sections, time ≤ 120 s per beat, ≤ 40 events per call).
+- Writes: `tracked_link_events` (link_id, session_id, kind ∈ view/time/photo_open/video_play/video_progress/brochure_page/unit_open/units_filter/map_open, section, item, value) — only through the anonymous `POST /api/tracked-link {action:'track'}`, validated (kinds, sections, time ≤ 120 s per beat, ≤ 40 events per call).
 - Reads (anonymous page): the project record, `file_links` → `files` (signed URLs), `project_videos`, available units, districts.
 - Reads (app): `v_tracked_link_engagement` (per message) and `v_project_interest` (per customer × project) — both `security_invoker`, RLS on `tracked_links` mirrors `chat_messages`, so a rep sees engagement only for chats they can see.
-- Migrations: `2026-09-29_tracked_links.sql`, `2026-09-29_tracked_links_units.sql`.
+- Migrations: `2026-09-29_tracked_links.sql`, `2026-09-29_tracked_links_units.sql`, `2026-09-29_tracked_links_filter.sql` (`units_filter` kind + `last_units_filter` on the engagement view).
 
 ## Key files
 | File | What it does |

@@ -1,7 +1,10 @@
 /**
  * What the customer does on a tracked page → /api/tracked-link (action 'track').
  *
- * - One SESSION per page view (random id) — the server counts sessions and days.
+ * - One SESSION per VISIT, not per page view: switching tabs (photos → units)
+ *   or coming back from Google Maps stays in the same visit; a new visit starts
+ *   after 30 minutes idle or in a new browser tab. The server counts sessions as
+ *   "opens", so a per-view id reported 13 opens for 3 visits (2026-09-29).
  * - Events are queued and flushed every few seconds with fetch(keepalive); when
  *   the page is hidden or closed the rest goes by navigator.sendBeacon, so a
  *   customer who reads and leaves is still counted.
@@ -11,7 +14,7 @@
  *   only place that swallows, and it logs.)
  */
 
-export type TrackKind = 'view' | 'photo_open' | 'video_play' | 'video_progress' | 'time' | 'brochure_page' | 'map_open' | 'unit_open';
+export type TrackKind = 'view' | 'photo_open' | 'video_play' | 'video_progress' | 'time' | 'brochure_page' | 'map_open' | 'unit_open' | 'units_filter';
 export type TrackSection = 'photos' | 'videos' | 'brochure' | 'units' | 'location' | 'unit';
 interface TrackEvent { kind: TrackKind; section: TrackSection; item?: string; value?: number }
 
@@ -25,16 +28,54 @@ function randomId(): string {
   return Array.from(bytes, (b) => b.toString(36).padStart(2, '0')).join('').slice(0, 20);
 }
 
+const VISIT_IDLE_MS = 30 * 60 * 1000;
+
+/**
+ * The visit id for this token in this browser tab. Kept in sessionStorage so a
+ * section switch or a return from Google Maps continues the visit. Storage can
+ * be unavailable (private mode, blocked site data): then each page view is its
+ * own visit — over-counting opens, which is the lesser error than failing.
+ */
+function visitId(token: string): string {
+  const key = `tl_visit:${token}`;
+  const now = Date.now();
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    const prev = raw ? (JSON.parse(raw) as { id?: unknown; at?: unknown }) : null;
+    if (prev && typeof prev.id === 'string' && typeof prev.at === 'number' && now - prev.at < VISIT_IDLE_MS) {
+      window.sessionStorage.setItem(key, JSON.stringify({ id: prev.id, at: now }));
+      return prev.id;
+    }
+    const id = randomId();
+    window.sessionStorage.setItem(key, JSON.stringify({ id, at: now }));
+    return id;
+  } catch (e) {
+    console.error('[tracked-link] visit storage unavailable — counting this view as its own visit:', e);
+    return randomId();
+  }
+}
+
+/** Keep the visit alive while the customer is active on the page. */
+function touchVisit(token: string, id: string): void {
+  try {
+    window.sessionStorage.setItem(`tl_visit:${token}`, JSON.stringify({ id, at: Date.now() }));
+  } catch (e) {
+    console.error('[tracked-link] visit storage unavailable:', e);
+  }
+}
+
 export class Tracker {
   private queue: TrackEvent[] = [];
-  private readonly session = randomId();
+  private readonly session: string;
   private flushTimer: number | null = null;
   private beatTimer: number | null = null;
   private visibleSince: number | null = null;
   private readonly seen = new Set<string>();
   private stopped = false;
 
-  constructor(private readonly token: string, private readonly section: TrackSection) {}
+  constructor(private readonly token: string, private readonly section: TrackSection) {
+    this.session = visitId(token);
+  }
 
   start(): void {
     this.push({ kind: 'view', section: this.section });
@@ -102,6 +143,7 @@ export class Tracker {
   private flush(leaving: boolean): void {
     if (!this.queue.length) return;
     const events = this.queue.splice(0, 40);
+    touchVisit(this.token, this.session);
     const body = JSON.stringify({ token: this.token, action: 'track', session: this.session, events });
     try {
       if (leaving && typeof navigator.sendBeacon === 'function') {
