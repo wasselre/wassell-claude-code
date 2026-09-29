@@ -345,11 +345,16 @@ export async function sendProjectViaAiFlow(
 
   // ── 1) TEXT — gate re-check + audit, delivered ~now. If the gate blocks (a
   //        human took over), send NOTHING further. ──
+  // The card carries the package prefix, and every media item waits for it
+  // (after_prefix): the queue sends in parallel, so without this a card whose
+  // send took 5 minutes arrived AFTER its own photos (live test 2026-09-29).
+  const cardRef = `ai-project:${input.jobId ?? 'flow'}:${projectId}:card:${Date.now()}`;
   const textRes = await enqueueAiReply(svc, {
     chatWid, text: fullText, deviceId, jobId: input.jobId, force: input.force,
     // Link this project message to its project at delivery, so the chat thread
     // shows the finder-style action buttons on the bot-sent bubble too.
     projectId,
+    reference: cardRef,
   });
   if (textRes.blocked) return { queued: false, blocked: true, reason: textRes.reason, message_source: source, project_id: projectId };
   if (textRes.error) return { queued: false, error: textRes.error, message_source: source, project_id: projectId };
@@ -380,6 +385,7 @@ export async function sendProjectViaAiFlow(
         p_reference: `ai-project:${input.jobId ?? 'flow'}:${projectId}:${i}`,
         p_deliver_at: deliverAt,
         p_user_id: null,
+        p_after_prefix: cardRef,
       });
       if (error) { mediaFailed++; console.error(`[aiSendProject] media enqueue ${i} failed:`, error.message); }
       else mediaQueued++;

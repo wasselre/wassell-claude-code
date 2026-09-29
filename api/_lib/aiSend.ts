@@ -34,6 +34,9 @@ export async function enqueueAiReply(
      *  with this prefix is still queued/running (a project package's media), so a
      *  slow video can never land after the follow-up. Ceiling 10 min (SQL). */
     afterPrefix?: string | null;
+    /** Override the queue reference (default `ai:<jobId>:<ms>`). Must start with
+     *  `ai:` or `ai-project:` so delivery tags it as a bot message. */
+    reference?: string;
   },
 ): Promise<EnqueueResult> {
   const chatWid = (opts.chatWid ?? '').trim();
@@ -70,7 +73,7 @@ export async function enqueueAiReply(
     p_phone: `+${digits}`,
     p_body: text,
     p_media: null,
-    p_reference: `ai:${opts.jobId ?? 'basic'}:${Date.now()}`,
+    p_reference: opts.reference ?? `ai:${opts.jobId ?? 'basic'}:${Date.now()}`,
     p_deliver_at: new Date(Date.now() + Math.max(0, opts.delaySeconds ?? 0) * 1000).toISOString(),
     p_user_id: null,
     p_project_id: opts.projectId ?? null,
