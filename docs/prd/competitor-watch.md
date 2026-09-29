@@ -212,7 +212,12 @@ that study the corpus (how competitors write posts, script reels, price offers).
   for you and the villa is expensive? … Yaman Park 10 project»). Auto-detect,
   not forced Arabic, because some watched companies (UAE developers) speak
   English and forcing Arabic would translate *them*. Bare music-note output
-  («♪♪») is now stored as no-speech (`language='none'`) instead of as text.
+  («♪♪»), sound tags («\*Splash\*»), an auto-detect that lands on a language
+  other than Arabic/English (music misheard as Khmer / Latin), and a transcript
+  made only of Whisper's Arabic filler («موسيقى اشتركوا في القناة») are all
+  stored as no-speech (`language='none'`). Decoder loops (the same phrase
+  repeated more than 3 times back-to-back — seen on a 35-minute walkthrough)
+  are collapsed to one copy (`collapseRepeats`).
 - **One transcript row per video.** The repair of old rows overwrites the
   existing `fal-ai/wizper` row rather than adding a second one, because every
   reader (the Library, script exemplars, the «النص» button, re-processing)
@@ -317,12 +322,13 @@ Reads, plus two admin writes (`attribution_set`, `attribution_rerun`).
   discovery", pause/enable an account, dismiss). Storage/company byte + fact totals
   are exact (not sampled); the Companies list covers organizations that have at
   least one active social account.
-- **840 historical transcripts are English translations** until the operator
-  runs `node scripts/retranscribe-arabic.mjs --backfill --limit 1000 --confirm`
-  (dry run first: `--dry-run`; ≈ 1,205 audio-min ≈ $12.05 at fal's $0.01/min;
-  capped by `--max-usd`, default 15). Anything derived from those transcripts
-  before the repair — content enrichment, post embeddings, CV `search_tsv` —
-  still reflects the English text until it is recomputed.
+- **The 840 historical English transcripts were re-transcribed on 2026-09-29**
+  with `node scripts/retranscribe-arabic.mjs --backfill` (operator-run, metered,
+  capped by `--max-usd`). When the text rules change, `--reclean` re-applies
+  them to repaired rows from the stored fal response at no cost. Anything
+  derived from the transcripts before the repair — content enrichment, post
+  embeddings, CV `search_tsv` — still reflects the English text until it is
+  recomputed.
 - **Full transcript text is not inlined yet** — only a presence flag. A per-post
   "load transcript" fetch is the follow-up.
 - **Competitor filter is click-to-filter** (from a row); no standalone competitor

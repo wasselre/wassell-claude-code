@@ -583,6 +583,11 @@ const AR_HALLUCINATION_PHRASES = ['اشتركوا في القناة', 'اشتر�
 function isMeaningless(text) {
   const t = text.trim().toLowerCase().replace(/\*[^*]*\*|\[[^\]]*\]/g, ' ').replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
   if (t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase())) return true;
+  // A transcript made only of Whisper's English filler on music — measured on
+  // the 2026-09-29 backfill: «Thank you. ♪♪ Thank you.», «so you», «Amen.»,
+  // «Outro Music», «Oh,» — is no speech. Only when NOTHING else remains.
+  const filler = t.replace(/[,\-]/g, ' ').replace(/\b(thank you|thanks|so|you|amen|oh|hmm|wow|music|outro|bye)\b/g, ' ');
+  if (filler.replace(/\s+/g, ' ').trim().length < 3) return true;
   let rest = t;
   for (const p of AR_HALLUCINATION_PHRASES) rest = rest.split(p).join(' ');
   return rest.replace(/\s+/g, ' ').trim().length < 3;
@@ -641,11 +646,25 @@ async function runBackfill() {
   if (!limit) { console.error('--backfill needs --limit N'); process.exit(2); }
   if (!dry && !flag('confirm')) { console.error('Refusing to run the backfill without --confirm. Use --dry-run to preview.'); process.exit(2); }
 
-  const { legacy, usable } = await loadLegacyEnglish();
-  const have = await existingArRows(usable.map((r) => r.content_media_id));
-  const failed = flag('retry-failed') ? new Set() : readFailed();
-  const promote = usable.filter((r) => have.has(r.content_media_id));
-  const todo = usable.filter((r) => !have.has(r.content_media_id) && !failed.has(r.content_media_id)).slice(0, limit);
+  // --redo id,id,…: re-run SPECIFIC videos (already repaired or not) — for the
+  // rows a human judged wrong, e.g. Arabic speech that auto-detect heard as
+  // English (use with --language ar). Bypasses the legacy filter and the
+  // failure log; still metered, capped and --confirm-gated.
+  const redoIds = String(opt('redo', '')).split(',').map((x) => x.trim()).filter(Boolean);
+  let legacy, usable, have, failed, promote, todo;
+  if (redoIds.length) {
+    const { data, error } = await sb.from('mkt_transcripts').select(LEGACY_SELECT).eq('model', MODEL_A).eq('status', 'done').in('content_media_id', redoIds);
+    if (error) throw new Error(`redo load: ${error.message}`);
+    legacy = data; usable = data.filter((r) => r.mkt_content_media?.download_status === 'stored' && r.mkt_content_media?.stored_url);
+    have = new Set(); failed = new Set(); promote = []; todo = usable.slice(0, limit);
+    if (data.length !== redoIds.length) console.error(`[backfill] --redo: ${redoIds.length} ids given, ${data.length} rows found`);
+  } else {
+    ({ legacy, usable } = await loadLegacyEnglish());
+    have = await existingArRows(usable.map((r) => r.content_media_id));
+    failed = flag('retry-failed') ? new Set() : readFailed();
+    promote = usable.filter((r) => have.has(r.content_media_id));
+    todo = usable.filter((r) => !have.has(r.content_media_id) && !failed.has(r.content_media_id)).slice(0, limit);
+  }
   const min = (rs) => rs.reduce((a, r) => a + durOf(r), 0) / 60000;
   console.log(`[backfill] legacy English rows ${legacy.length} (${legacy.length - usable.length} without stored media — cannot be re-run)`);
   console.log(`[backfill] promote existing @ar rows (no fal call): ${promote.length}`);

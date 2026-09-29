@@ -104,6 +104,11 @@ export function isMeaninglessTranscript(text: string): boolean {
   // Sound-effect captions («*Splash*», «[music]») are not speech either.
   const t = text.trim().toLowerCase().replace(/\*[^*]*\*|\[[^\]]*\]/g, ' ').replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
   if (t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase())) return true;
+  // A transcript made only of Whisper's English filler on music — measured on
+  // the 2026-09-29 backfill: «Thank you. ♪♪ Thank you.», «so you», «Amen.»,
+  // «Outro Music», «Oh,» — is no speech. Only when NOTHING else remains.
+  const filler = t.replace(/[,\-]/g, ' ').replace(/\b(thank you|thanks|so|you|amen|oh|hmm|wow|music|outro|bye)\b/g, ' ');
+  if (filler.replace(/\s+/g, ' ').trim().length < 3) return true;
   let rest = t;
   for (const p of AR_HALLUCINATION_PHRASES) rest = rest.split(p).join(' ');
   return rest.replace(/\s+/g, ' ').trim().length < 3;

@@ -110,6 +110,9 @@ describe('normalizeFalResponse', () => {
   it('Arabic "music / subscribe" hallucinations alone are no speech; inside real speech they stay', () => {
     expect(isMeaninglessTranscript('موسيقى اشتركوا في القناة')).toBe(true);
     expect(isMeaninglessTranscript('ترجمة نانسي قنقر')).toBe(true);
+    for (const t of ['Thank you. ♪♪ Thank you.', 'so you', 'Amen.', 'Outro Music', 'Oh,', '♪♪♪ ♪♪♪ so you']) expect(isMeaninglessTranscript(t)).toBe(true);
+    expect(isMeaninglessTranscript('Hello friends. ♪♪ *music*')).toBe(false);
+    expect(isMeaninglessTranscript('Rukam 11, Al-Shuhada District, blends a prime address')).toBe(false);
     expect(isMeaninglessTranscript('موسيقى هادئة في مشروع الماجدية 155 بحي عرقة')).toBe(false);
   });
   it('collapses decoder loops but keeps genuine repeats', () => {
