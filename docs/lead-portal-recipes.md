@@ -97,7 +97,8 @@ an unescaped dot is parsed as a class and the step fails with a bare
 | `if_visible` | target, `timeout_ms?`, `then?: [...]`, `else?: [...]` | Branch (e.g. "already registered" dialog). |
 | `phase` | `ar`, `en` | Progress label shown to the rep. |
 | `fail` | `ar`, `en`, optional `outcome` | Stop with a message. With `"outcome": "already_registered"` the run is NOT a failure: it ends as its own status `already_registered` (the portal answered that the client is another broker's) — sky-blue «مسجّل لدى وسيط آخر» on the chat card, an activity-log line on the client, «ℹ️» on the ops WhatsApp, no retry button. It is the only outcome so far (`RECIPE_OUTCOMES` in `recipe.ts`); an unknown value fails the step. |
-| `collect_rows` | `url` (with `{{page}}`), `source`, `fields {ref,name,phone,status}`, optional `ref_prefix`, `status_labels`, `max_pages` (200). `source: "inertia"` + `rows_path` + `last_page_path` (fields = JSON keys); `source: "table"` + `rows_selector` (fields = CSS selectors inside a row) | **Status checks only.** Reads the portal's own client list page by page. `inertia` reads the page's embedded JSON (`#app[data-page]`, Al Ramz); `table` reads a plain HTML table (Riva's Livewire «طلباتي») and walks `?page=1,2,…` until a page has no rows or repeats the last one. A row without a phone is dropped (empty-state rows). More pages than `max_pages` fails loudly — never a silent partial list. |
+| `collect_rows` | `url` (with `{{page}}`), `source`, `fields {ref,name,phone,status}`, optional `ref_prefix`, `status_labels`, `max_pages` (200). `source: "inertia"` + `rows_path` + `last_page_path` (fields = JSON keys); `source: "table"` + `rows_selector` (fields = CSS selectors inside a row; `@attr` = an attribute of the row, `sel@attr` = of a child; `status_detail` is appended as «status — detail»; `ref_pattern` = a regex with one capture group applied to the ref) | **Status checks only.** Reads the portal's own client list page by page. `inertia` reads the page's embedded JSON (`#app[data-page]`, Al Ramz); `table` reads a plain HTML table (Riva's Livewire «طلباتي») and walks `?page=1,2,…` until a page has no rows or repeats the last one. A row without a phone is dropped (empty-state rows). More pages than `max_pages` fails loudly — never a silent partial list. |
+| `save_html` | optional `label` | Saves the current page's HTML to the private `portal-registrations` bucket next to the screenshots (logged, not shown in the chat card). For writing a recipe against pages that sit behind a sign-in code. |
 | `set` | `key`, `value` | Store a value in `{{vars.key}}`. |
 
 ### Example — phone + OTP sign-in, then a lead form
@@ -155,6 +156,18 @@ Riva example (a Livewire table, no code at sign-in — its check needs nobody):
   "rows_selector": "table tbody tr",
   "fields": { "ref": "td:nth-child(1)", "name": "td:nth-child(2) > div:nth-child(1)",
               "phone": "td:nth-child(2) [dir='ltr']", "status": "td:nth-child(6) span" } }
+```
+
+Safa example — its opportunities are cards whose full details sit in hidden
+`.detail-col` panels on the same page, so the "row" is the panel and the id is
+read from its `id` attribute:
+
+```json
+{ "do": "collect_rows", "url": "https://broker.safainv.sa/opportunities?page={{page}}", "source": "table",
+  "rows_selector": ".detail-col",
+  "fields": { "ref": "@id", "name": ".profile-name", "phone": ".profile-contact-item--ltr",
+              "status": ".profile-card-head .badge", "status_detail": ".outcome-badge-label" },
+  "ref_pattern": "(\d+)$", "ref_prefix": "#" }
 ```
 
 A portal without a `status_recipe` is simply never checked; its portal status is

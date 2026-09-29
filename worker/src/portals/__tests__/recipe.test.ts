@@ -10,6 +10,7 @@ import {
   jsonPath,
   toCollectedRow,
   withPage,
+  READ_TABLE_ROWS,
 } from '../recipe';
 
 // Every locator is "visible" so an if_visible takes its `then` branch — the
@@ -123,6 +124,36 @@ describe('save_html', () => {
   it('fails loudly where the runtime cannot store pages', async () => {
     const err = await runSteps([{ do: 'save_html' }] as RecipeStep[], runtime(async () => '')).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RecipeError);
+  });
+});
+
+describe('READ_TABLE_ROWS (runs inside the portal page)', () => {
+  // A minimal stand-in for a DOM element: text by selector, attributes by name.
+  type Fake = { attrs: Record<string, string>; kids: Record<string, Fake>; text: string };
+  const el = (text: string, attrs: Record<string, string> = {}, kids: Record<string, Fake> = {}): Fake => ({ text, attrs, kids });
+  const dom = (f: Fake): unknown => ({
+    textContent: f.text,
+    getAttribute: (n: string) => f.attrs[n] ?? null,
+    querySelector: (sel: string) => (f.kids[sel] ? dom(f.kids[sel]!) : null),
+  });
+
+  it('reads @attr of the row, child text, and stage + outcome (Safa panel shape)', () => {
+    const panel = el('', { id: 'lead-info-83964' }, {
+      '.profile-name': el(' ثامر '),
+      '.profile-contact-item--ltr': el('\n 599090218 \n'),
+      '.profile-card-head .badge': el('مغلق'),
+      '.outcome-badge-label': el('خسارة'),
+    });
+    const rows = READ_TABLE_ROWS([dom(panel)], {
+      ref: '@id', name: '.profile-name', phone: '.profile-contact-item--ltr',
+      status: '.profile-card-head .badge', status_detail: '.outcome-badge-label',
+    });
+    expect(rows).toEqual([{ ref: 'lead-info-83964', name: 'ثامر', phone: '599090218', status: 'مغلق', status_detail: 'خسارة' }]);
+  });
+
+  it('reads sel@attr from a child, and missing selectors come back empty', () => {
+    const row = el('', {}, { a: el('', { href: '/leads/11170' }) });
+    expect(READ_TABLE_ROWS([dom(row)], { ref: 'a@href', name: '.nope' })[0]).toMatchObject({ ref: '/leads/11170', name: '' });
   });
 });
 

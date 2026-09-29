@@ -123,8 +123,14 @@ export interface CollectRowsStep {
   last_page_path?: string;
   /** table: CSS selector for one row, e.g. `table tbody tr`. */
   rows_selector?: string;
-  /** Row field → JSON key (inertia) or CSS selector inside the row (table). */
-  fields: { ref?: string; name?: string; phone?: string; status?: string };
+  /** Row field → JSON key (inertia) or, for table, a CSS selector inside the
+   *  row — `@attr` reads an attribute of the row itself, `sel@attr` one of a
+   *  child. `status_detail` (table) is appended to the status as
+   *  "status — detail" (Safa: stage «مغلق» + outcome «خسارة»). */
+  fields: { ref?: string; name?: string; phone?: string; status?: string; status_detail?: string };
+  /** Regex with ONE capture group applied to the ref, e.g. "(\\d+)$" turns
+   *  "lead-info-83964" into "83964". No match ⇒ the ref is kept as read. */
+  ref_pattern?: string;
   /** Prepended to the ref (Al Ramz shows its ids as "#14157"). */
   ref_prefix?: string;
   /** Portal status code → the label the portal shows, e.g. { new: "جديد" }. */
@@ -139,21 +145,27 @@ export function withPage(url: string, n: number): string {
   return url.replace(/\{\{\s*page\s*\}\}/g, String(n));
 }
 
-type RawTableRow = { ref: string; name: string; phone: string; status: string };
+type RawTableRow = { ref: string; name: string; phone: string; status: string; status_detail: string };
 /**
  * Runs INSIDE the portal page (Playwright serialises it). Built from a string
  * on purpose: a bundler that wraps named inner functions (esbuild keepNames ⇒
  * `__name(...)`) would ship a helper the page does not have, and the step dies
  * with "__name is not defined". A string body has nothing to wrap.
  */
-const READ_TABLE_ROWS = new Function('trs', 'f', `
+export const READ_TABLE_ROWS = new Function('trs', 'f', `
   return trs.map(function (tr) {
+    function clean(v) { return (v || '').replace(/\\s+/g, ' ').trim(); }
     function pick(sel) {
       if (!sel) return '';
+      var at = sel.lastIndexOf('@');
+      if (at >= 0) {
+        var host = at === 0 ? tr : tr.querySelector(sel.slice(0, at));
+        return host ? clean(host.getAttribute(sel.slice(at + 1))) : '';
+      }
       var el = tr.querySelector(sel);
-      return el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+      return el ? clean(el.textContent) : '';
     }
-    return { ref: pick(f.ref), name: pick(f.name), phone: pick(f.phone), status: pick(f.status) };
+    return { ref: pick(f.ref), name: pick(f.name), phone: pick(f.phone), status: pick(f.status), status_detail: pick(f.status_detail) };
   });
 `) as (trs: unknown[], f: CollectRowsStep['fields']) => RawTableRow[];
 
@@ -610,13 +622,16 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
           const sig = rows.map((x) => x.ref || x.phone).join('|');
           if (rows.length === 0 || sig === prevSig) break;
           prevSig = sig;
+          const refRe = step.ref_pattern ? new RegExp(step.ref_pattern) : null;
           for (const x of rows) {
+            const ref = refRe ? (refRe.exec(x.ref)?.[1] ?? x.ref) : x.ref;
+            const code = [x.status, x.status_detail].filter(Boolean).join(' — ');
             rt.collected.push({
-              ref: x.ref ? `${step.ref_prefix ?? ''}${x.ref}` : null,
+              ref: ref ? `${step.ref_prefix ?? ''}${ref}` : null,
               name: x.name || null,
               phone: x.phone || null,
-              status_code: x.status || null,
-              status_label: x.status ? (step.status_labels?.[x.status] ?? x.status) : null,
+              status_code: code || null,
+              status_label: code ? (step.status_labels?.[code] ?? code) : null,
             });
           }
         }
