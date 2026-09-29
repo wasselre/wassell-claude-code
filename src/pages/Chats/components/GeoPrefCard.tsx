@@ -265,7 +265,11 @@ export default function GeoPrefCard({ clientId, chatWid, task, outcome, onRecord
     if (chosenTab || !prefsLoaded || !outcome.loaded) return;
     setChosenTab(defaultAiTab(prefCount, outcomeCount));
   }, [chosenTab, prefsLoaded, outcome.loaded, prefCount, outcomeCount]);
-  const tab: AiTab = chosenTab ?? defaultAiTab(prefCount, outcomeCount);
+  // Until both sides have loaded, stay on the preferences tab (it carries the
+  // loading state) — falling back to defaultAiTab here showed «النتائج» for a
+  // moment and then jumped to the preferences once they arrived (seen live
+  // 2026-09-29).
+  const tab: AiTab = chosenTab ?? (prefsLoaded && outcome.loaded ? defaultAiTab(prefCount, outcomeCount) : 'prefs');
 
   if (collapsed) {
     return (
