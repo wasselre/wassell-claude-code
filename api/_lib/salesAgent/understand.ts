@@ -13,6 +13,7 @@ import { deepseekJson } from '../deepseek.js';
 import { llmRoutingEnabled, logLlmFallback } from '../textLlm.js';
 import { parseZone, normalizeUnitType, type Intent, type Slot, type Slots, type Understanding } from './decide.js';
 import type { Gender, Lang, Zone } from './texts.js';
+import { clip } from './clip.js';
 
 const CALL_SITE = 'api/_lib/salesAgent/understand';
 const HAIKU = 'claude-haiku-4-5-20251001';
@@ -67,7 +68,7 @@ intent (the NEW messages as a whole):
 
 function render(turns: ChatTurn[]): string {
   return turns
-    .map((t) => `${t.isNew ? '[NEW] ' : ''}${t.who === 'customer' ? 'العميل' : 'وصل'}: ${t.text.replace(/\s+/g, ' ').slice(0, 500)}`)
+    .map((t) => `${t.isNew ? '[NEW] ' : ''}${t.who === 'customer' ? 'العميل' : 'وصل'}: ${clip(t.text.replace(/\s+/g, ' '), 500)}`)
     .join('\n');
 }
 

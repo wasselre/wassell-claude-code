@@ -24,6 +24,7 @@ import { resolveProjectSheet } from '../projectSheet.js';
 import { normalizeUnitType } from './decide.js';
 import type { ChatTurn } from './understand.js';
 import type { Lang, Zone } from './texts.js';
+import { clip } from './clip.js';
 
 const CALL_SITE = 'api/_lib/salesAgent/brain';
 const MAX_ROUNDS = 7;
@@ -207,7 +208,7 @@ function renderTranscript(turns: ChatTurn[], startedAt?: string): string {
       if (lines.length) lines.push('--- بداية المحادثة الحالية ---');
       marked = true;
     }
-    lines.push(`${t.isNew ? '[NEW] ' : ''}${t.who === 'customer' ? 'العميل' : 'وصل'}: ${t.text.replace(/\s+/g, ' ').slice(0, 400)}`);
+    lines.push(`${t.isNew ? '[NEW] ' : ''}${t.who === 'customer' ? 'العميل' : 'وصل'}: ${clip(t.text.replace(/\s+/g, ' '), 400)}`);
   }
   return lines.join('\n');
 }
@@ -342,7 +343,7 @@ export async function runBrain(
         }
         case 'handoff_to_rep': {
           const reason = String(input.reason ?? 'other');
-          const note = String(input.note_for_rep ?? '').slice(0, 600);
+          const note = clip(String(input.note_for_rep ?? ''), 600);
           if (out.handoff) return { content: 'Already handed off in this reply.' };
           await commit();
           await hooks.handoff(reason, note);

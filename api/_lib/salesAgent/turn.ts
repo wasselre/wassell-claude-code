@@ -24,6 +24,7 @@ import { agentText, type Gender, type Lang } from './texts.js';
 import { loadAgentSettings, type AgentConversation } from './conversation.js';
 import { BrainError, runBrain, type BrainOutcome } from './brain.js';
 import type { Zone } from './texts.js';
+import { clip } from './clip.js';
 
 /** Photos in a project package go out 4 s apart; the follow-up question must
  *  land after the last one (mirrors aiSendProject's SPACING_MS). */
@@ -198,7 +199,7 @@ export async function runAgentTurn(
   let notify: string | null = null;
   let status: AgentConversation['status'] = 'active';
   let asked: string | null = conv.asked;
-  const quote = newCustomerText.slice(0, 200);
+  const quote = clip(newCustomerText, 200);
 
   switch (step.kind) {
     case 'ask': {
@@ -451,7 +452,7 @@ async function runBrainTurn(
     reply = outcome.sent
       ? agentText.afterProject(lang, slots.zone ?? null, false, true)
       : agentText.holding(lang);
-    if (!outcome.sent && !outcome.handoff) notify = `المساعد الآلي لم يستطع صياغة رد آمن للعميل — يحتاج متابعة مندوب: «${a.newCustomerText.slice(0, 200)}»`;
+    if (!outcome.sent && !outcome.handoff) notify = `المساعد الآلي لم يستطع صياغة رد آمن للعميل — يحتاج متابعة مندوب: «${clip(a.newCustomerText, 200)}»`;
   }
 
   // Never the same line twice in a row within the window (e.g. two quick messages).

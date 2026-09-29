@@ -21,6 +21,7 @@ import type { MatchRequirements } from '../matchAgent.js';
 import { normalizeUnitType } from './decide.js';
 import { num, projectFits, range, type FitCheck, type Master } from './search.js';
 import type { Zone } from './texts.js';
+import { clip } from './clip.js';
 
 export type Readiness = 'ready' | 'off_plan';
 
@@ -101,7 +102,7 @@ function toProject(master: Master, m: FinderMatch, inArea: boolean): CatalogProj
   const price = range(d.available_price_range);
   const beds = range(d.bedroom_range);
   const district = typeof m.facts?.district === 'string' && m.facts.district.trim() ? m.facts.district.trim() : null;
-  const plan = typeof d.payment_plan_summary === 'string' && d.payment_plan_summary.trim() ? d.payment_plan_summary.trim().slice(0, 200) : null;
+  const plan = typeof d.payment_plan_summary === 'string' && d.payment_plan_summary.trim() ? clip(d.payment_plan_summary.trim(), 200) : null;
   const handover = typeof d.handover_date === 'string' && d.handover_date ? d.handover_date.slice(0, 10) : null;
   return {
     project_id: master.id,
@@ -448,6 +449,6 @@ export async function projectFacts(svc: SupabaseClient, projectId: string): Prom
     down_payment_percent: num(d.down_payment_percent),
     during_construction_percent: num(d.during_construction_percent),
     on_handover_percent: num(d.on_handover_percent),
-    payment_plan: text(d.payment_plan_summary)?.slice(0, 300) ?? null,
+    payment_plan: (() => { const p = text(d.payment_plan_summary); return p ? clip(p, 300) : null; })(),
   };
 }
