@@ -343,6 +343,7 @@ export default function RowApproval({
                             asset={slot?.asset ?? null}
                             url={urlFor(slot?.asset ?? null)}
                             thumb={thumbFor(slot?.asset ?? null)}
+                            isAr={isAr}
                             empty={isAr ? 'الخانة فارغة' : 'empty slot'}
                           />
                           <span style={{ fontSize: 11, color: 'var(--mute)', textAlign: 'center' }}>

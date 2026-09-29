@@ -6,7 +6,9 @@
  * Nothing here fetches and nothing here acts. Every piece takes what
  * `row_detail` already returned.
  */
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
+import { Maximize2 } from 'lucide-react';
+import ImagePreview from '@/components/ui/ImagePreview';
 import type { MosAsset, MosAssetLink, MosStep } from '@/lib/marketingOS/client';
 import {
   MosRowDetail, MosRowMember, RowSlotRole,
@@ -222,19 +224,26 @@ export function slotsFilled(
  * so one signing round-trip serves the whole row.
  */
 export function SlotFrame({
-  role, asset, url, thumb, empty, children,
+  role, asset, url, thumb, isAr, empty, children,
 }: {
   role: RowSlotRole;
   asset: MosAsset | null;
   url: string | null;
   thumb: string | null;
+  isAr: boolean;
   empty?: ReactNode;
   children?: ReactNode;
 }) {
   const meta = SLOT_META[role];
+  const [viewing, setViewing] = useState(false);
+  // Review needs the real pixels, not the cover-cropped thumbnail — so the
+  // viewer opens the full-resolution URL and only falls back to the thumb.
+  const fullUrl = asset && asset.kind !== 'video' ? url ?? thumb : null;
+  const openLabel = isAr ? 'عرض بالحجم الكامل' : 'View full size';
   return (
     <div
       style={{
+        position: 'relative',
         aspectRatio: meta.vertical ? '9 / 16' : '1 / 1',
         width: meta.vertical ? 132 : 180, maxWidth: '100%', maxHeight: 250,
         borderRadius: 10, background: 'var(--line)', overflow: 'hidden',
@@ -245,11 +254,40 @@ export function SlotFrame({
       {asset && asset.kind === 'video' && url
         ? <video src={url} controls style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         : asset && thumb
-          ? <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ? (
+            <img
+              src={thumb}
+              alt=""
+              onClick={fullUrl ? () => setViewing(true) : undefined}
+              style={{
+                width: '100%', height: '100%', objectFit: 'cover',
+                cursor: fullUrl ? 'zoom-in' : undefined,
+              }}
+            />
+          )
           : asset
             ? <IconLibrary />
             : <span style={{ fontSize: 11.5, color: 'var(--mute)', textAlign: 'center', padding: 8 }}>{empty}</span>}
+      {fullUrl && (
+        <button
+          type="button"
+          onClick={() => setViewing(true)}
+          title={openLabel}
+          aria-label={openLabel}
+          style={{
+            position: 'absolute', bottom: 6, insetInlineEnd: 6,
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '4px 8px', borderRadius: 8, border: 'none',
+            background: 'rgba(0,0,0,0.62)', color: '#fff',
+            fontSize: 11, fontWeight: 700, cursor: 'pointer',
+          }}
+        >
+          <Maximize2 size={13} />
+          {isAr ? 'تكبير' : 'Full size'}
+        </button>
+      )}
       {children}
+      <ImagePreview url={viewing ? fullUrl : null} onClose={() => setViewing(false)} />
     </div>
   );
 }

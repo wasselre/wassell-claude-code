@@ -1166,6 +1166,14 @@ pre-publish check, and the order **read-only** — by then six designs are keyed
 to it. That is enforced, not just drawn: `row_order_save` refuses the write once
 the row is past the writing review.
 
+**Every filled image slot opens full size.** The slot frames are small,
+cover-cropped thumbnails, which is not enough to proofread the text on a design.
+Each image slot — on the approval face AND the designer pane, since both draw
+`SlotFrame` — carries a «تكبير / Full size» button (and the picture itself is
+clickable) that opens the full-resolution file in the shared `ImagePreview`
+lightbox, uncropped, with open-in-new-tab and download. Video slots keep their
+inline player.
+
 **Approval is per row; a send-back is per post.** The reviewer marks the posts
 that need changing and presses one button, which opens `RequestChangesModal` —
 the ONE rejection dialog — with those posts already selected. It gained a member

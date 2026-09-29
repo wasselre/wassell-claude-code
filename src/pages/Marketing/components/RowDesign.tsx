@@ -369,6 +369,7 @@ export default function RowDesign({
                               asset={asset}
                               url={urlFor(asset)}
                               thumb={thumbFor(asset)}
+                              isAr={isAr}
                               empty={up
                                 ? `${isAr ? 'جارٍ الرفع' : 'Uploading'} ${pct(up.frac * 100, isAr)}`
                                 : isAr ? 'الخانة فارغة — مطلوبة' : 'Empty — required'}
