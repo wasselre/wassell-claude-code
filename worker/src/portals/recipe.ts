@@ -105,6 +105,14 @@ export class RecipeCancelledError extends Error {
   }
 }
 
+/**
+ * A control-flow signal raised by the RUNTIME (not a step failure) that the
+ * job runner must see with its type intact. `stepError` rethrows it unwrapped.
+ * Wrapping it into "Step N failed" is exactly how the OTP-relay timeout lost
+ * its type and failed runs it was meant to park (2026-09-29).
+ */
+export class RecipeInterrupt extends Error {}
+
 // ── Templating ──────────────────────────────────────────────────────────────
 
 export type TemplateScope = Record<string, unknown>;
@@ -292,7 +300,7 @@ function locate(page: Page, t: Target, scope: TemplateScope): Locator {
 
 function stepError(step: RecipeStep, index: number, err: unknown): RecipeError {
   if (err instanceof RecipeError) return err;
-  if (err instanceof RecipeCancelledError) throw err;
+  if (err instanceof RecipeCancelledError || err instanceof RecipeInterrupt) throw err;
   const msg = err instanceof Error ? err.message.split('\n')[0] ?? err.message : String(err);
   const what = 'selector' in step || 'text' in step || 'label' in step || 'placeholder' in step || 'role' in step
     ? ` (${describeTarget(step as Target)})`

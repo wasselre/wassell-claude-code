@@ -38,6 +38,7 @@ import {
   runSteps,
   RecipeCancelledError,
   RecipeError,
+  RecipeInterrupt,
   type RecipeRuntime,
   type RecipeStep,
 } from './portals/recipe.js';
@@ -67,7 +68,7 @@ const INPUT_POLL_MS = 1_500;
 const HEARTBEAT_EVERY_POLLS = 4; // ≈ every 6 s while waiting
 const DEFAULT_INPUT_TIMEOUT_S = 300;
 /** The code wait ran out on a WhatsApp-relay run → park it, don't fail it. */
-class OtpRelayTimeoutError extends Error {
+class OtpRelayTimeoutError extends RecipeInterrupt {
   constructor() {
     super('otp relay wait timed out');
   }
