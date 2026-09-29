@@ -1,4 +1,5 @@
 import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
+import TrackedInterestList from '@/components/interest/TrackedInterestList';
 import { buildGeoNameMap } from '@/lib/geo/geoNameMap';
 import { pickLocalized } from '@/lib/geo/localizedName';
 import { useMemo, useState } from 'react';
@@ -552,6 +553,23 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
     }
   };
 
+  /** The units as tracked-link targets (project + label). A unit that is not
+   *  loaded or has no project is left out of the LINK choice — it would still
+   *  go in the PDF, which throws loudly for it. Null when none resolve. */
+  const trackedUnitsFor = (ids: string[]): Array<{ projectId: string; unitId: string; label: string }> | null => {
+    const st = useAppStore.getState();
+    const um = modelByName(st.models, 'units');
+    const unitRecs = new Map((um ? st.records[um.id] ?? [] : []).map((r) => [r.id, r]));
+    const out: Array<{ projectId: string; unitId: string; label: string }> = [];
+    for (const id of ids) {
+      const rec = unitRecs.get(id);
+      const pid = rec ? (rec.data as Record<string, unknown>).project_id : null;
+      if (typeof pid !== 'string' || !pid) return null;
+      out.push({ projectId: pid, unitId: id, label: optionByUnitId.get(id) ?? id.slice(0, 8) });
+    }
+    return out.length > 0 ? out : null;
+  };
+
   const unitNamesFor = (ids: string[]): string => {
     const names = ids.map((id) => optionByUnitId.get(id)).filter(Boolean) as string[];
     return names.length <= 3 ? names.join('، ') : `${names.slice(0, 3).join('، ')}…`;
@@ -921,6 +939,10 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
 
   return (
     <div className="space-y-3">
+      {/* What this client did with the tracked links we sent (hidden until
+          there is at least one tracked message). */}
+      <TrackedInterestList mode="client" id={client.id} isAr={isAr} compact />
+
       {/* Filter bar */}
       <div className="space-y-2 rounded-2xl border border-sand/30 bg-white px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -1315,6 +1337,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
             ? (a ? `تفاصيل الوحدة ${unitNamesFor(unitPdfIds)}` : `Unit details — ${unitNamesFor(unitPdfIds)}`)
             : (a ? `تفاصيل ${unitPdfIds.length} وحدات` : `Details of ${unitPdfIds.length} units`))}
           buildFor={(a) => buildUnitSheetsPdf({ items: unitSheetItems(unitPdfIds, a), isAr: a })}
+          trackedUnits={trackedUnitsFor(unitPdfIds)}
         />
       )}
 

@@ -1,9 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
-import { AlertCircle, Clock, Download, Loader2, Send } from 'lucide-react';
+import { AlertCircle, Clock, Download, FileText, Link2, Loader2, Send } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { sendPdfToChat, downloadPdf } from '@/lib/projects/sendPdfToChat';
+import { sendTrackedUnitLinks, sendTrackedUnitsLink } from '@/lib/trackedLinks/client';
 import SchedulePopover, { formatScheduleTime } from '@/pages/Chats/components/SchedulePopover';
 
 interface Props {
@@ -23,6 +24,13 @@ interface Props {
   captionFor: (isAr: boolean) => string;
   /** Lazily produce the PDF bytes for a language; memoized per language. */
   buildFor: (isAr: boolean) => Promise<Blob>;
+  /** Set → the dialog offers (and defaults to) sending a per-customer TRACKED
+   *  LINK instead of the PDF: the units page for a project (`unitId` absent) or
+   *  the unit's own page. The PDF stays available as a choice + Download. */
+  trackedLink?: { projectId: string; unitId?: string | null } | null;
+  /** Several units in one message — one tracked link per unit. Takes the place
+   *  of `trackedLink` (pass one or the other). */
+  trackedUnits?: Array<{ projectId: string; unitId: string; label: string }> | null;
 }
 
 /**
@@ -43,7 +51,10 @@ export default function SendUnitsPdfModal({
   filenameFor,
   captionFor,
   buildFor,
+  trackedLink,
+  trackedUnits,
 }: Props) {
+  const canLink = !!trackedLink || (!!trackedUnits && trackedUnits.length > 0);
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
 
@@ -57,6 +68,7 @@ export default function SendUnitsPdfModal({
   const captionEdited = useRef(false);
   const [busy, setBusy] = useState<'send' | 'download' | null>(null);
   const [showSchedule, setShowSchedule] = useState(false);
+  const [sendAs, setSendAs] = useState<'link' | 'pdf'>(canLink ? 'link' : 'pdf');
   const blobCache = useRef<Record<'ar' | 'en', Blob | null>>({ ar: null, en: null });
 
   const L = (ar: string, en: string) => (isAr ? ar : en);
@@ -103,6 +115,30 @@ export default function SendUnitsPdfModal({
     const cap = caption;
     const filename = filenameFor(docAr);
     onClose();
+    if (canLink && sendAs === 'link') {
+      void (async () => {
+        try {
+          if (trackedUnits && trackedUnits.length > 0) {
+            await sendTrackedUnitLinks({ chatWid, units: trackedUnits, lang: docLang, caption: cap, deliverAt });
+          } else if (trackedLink) {
+            await sendTrackedUnitsLink({
+              chatWid, projectId: trackedLink.projectId, unitId: trackedLink.unitId ?? null,
+              lang: docLang, caption: cap, deliverAt,
+            });
+          }
+          addToast(
+            deliverAt
+              ? L(`تمت جدولة الرابط — سيُرسل ${formatScheduleTime(deliverAt, true)}`, `Scheduled — will send ${formatScheduleTime(deliverAt, false)}`)
+              : L('تم إرسال الرابط إلى العميل', 'Link sent to the client'),
+            'success',
+          );
+        } catch (err) {
+          console.error('[SendUnitsPdfModal] tracked link send failed:', err);
+          addToast(L(`تعذّر إرسال الرابط — ${err instanceof Error ? err.message : String(err)}`, `Couldn't send the link — ${err instanceof Error ? err.message : String(err)}`), 'error');
+        }
+      })();
+      return;
+    }
     void (async () => {
       try {
         const blob = await ensureBlob();
@@ -166,10 +202,35 @@ export default function SendUnitsPdfModal({
       }
     >
       <div className="space-y-4">
+        {/* Send as a tracked link (default) or the PDF. The link opens our own
+            page for this customer and records what they look at. */}
+        {canLink && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-charcoal/50">{L('طريقة الإرسال', 'Send as')}</span>
+            <div className="inline-flex rounded-lg border border-sand/40 overflow-hidden">
+              <button type="button" onClick={() => setSendAs('link')}
+                className={`inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold transition-colors ${sendAs === 'link' ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream'}`}>
+                <Link2 size={12} />{L('رابط متتبَّع', 'Tracked link')}
+              </button>
+              <button type="button" onClick={() => setSendAs('pdf')}
+                className={`inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold transition-colors ${sendAs === 'pdf' ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream'}`}>
+                <FileText size={12} />PDF
+              </button>
+            </div>
+          </div>
+        )}
+        {canLink && sendAs === 'link' && (
+          <p className="text-xs text-charcoal/55">
+            {(trackedUnits && trackedUnits.length > 0) || trackedLink?.unitId
+              ? L('يصل العميل رابط لصفحة الوحدة، ونعرف متى فتحها وكم بقي فيها.', 'The client gets a link to the unit page; we see when they open it and how long they stay.')
+              : L('يصل العميل رابط لصفحة الوحدات المتاحة، ونعرف أي وحدة فتح وكم بقي في الصفحة.', 'The client gets a link to the available-units page; we see which units they open and how long they stay.')}
+          </p>
+        )}
+
         {/* PDF language — the rep picks Arabic or English for the document,
             independent of the app UI language. */}
         <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-charcoal/50">{L('لغة الملف', 'PDF language')}</span>
+          <span className="text-xs font-bold text-charcoal/50">{sendAs === 'link' ? L('لغة الصفحة', 'Page language') : L('لغة الملف', 'PDF language')}</span>
           <div className="inline-flex rounded-lg border border-sand/40 overflow-hidden">
             <button type="button" disabled={busy !== null} onClick={() => changeDocLang('ar')}
               className={`px-3 py-1 text-xs font-semibold transition-colors ${docAr ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream'}`}>

@@ -10,6 +10,8 @@ import {
 } from '../lib/drafts';
 import { sendProjectImageMessages } from '@/lib/projectMessageImages';
 import { holdSendLane, waitForSendLane } from '@/lib/chat/sendLane';
+import { mintTrackedLink } from '@/lib/trackedLinks/client';
+import { replaceLinksInMessage } from '@/lib/trackedLinks/text';
 import TemplatePickerModal from './TemplatePickerModal';
 import SchedulePopover, { formatScheduleTime } from './SchedulePopover';
 import type { ResolvedConversationIdentity } from '../lib/conversationIdentity';
@@ -464,6 +466,36 @@ export default function Composer({ identity }: { identity: ResolvedConversationI
     setProjectId(picked.projectId ?? null);
     setShowPicker(false);
     textareaRef.current?.focus();
+    if (picked.projectId) void attachTrackedLinks(picked.projectId, picked.body, picked.imageFileIds ?? [], picked.mediaKind);
+  };
+
+  /**
+   * Tracked links (operator, 2026-09-29): a project message carries THIS
+   * customer's links to our pages (photos / videos / brochure / units /
+   * location) and ONE cover photo instead of the gallery + brochure/video file,
+   * so every open is scored. The links appear in the box before Send, so the rep
+   * sees exactly what goes out. If minting fails the template sends with its
+   * files as before — loudly, never silently.
+   */
+  const attachTrackedLinks = async (projectIdForLink: string, templateBody: string, imageIds: string[], mediaKind: string | null) => {
+    const lang: 'ar' | 'en' = /[؀-ۿ]/.test(templateBody) ? 'ar' : 'en';
+    try {
+      const link = await mintTrackedLink({ projectId: projectIdForLink, chatWid, lang, sentVia: 'rep' });
+      if (!link.block) return;
+      const block = link.block;
+      // Untouched template → swap its website link for the tracked links; if the
+      // rep already started editing, append the links rather than rewrite.
+      setText((cur) => (cur === templateBody ? replaceLinksInMessage(cur, block) : `${cur.trim()}\n\n${block}`));
+      const cover = link.coverFileId ?? imageIds[0] ?? null;
+      setProjectImageFileIds(cover ? [cover] : []);
+      if (mediaKind && mediaKind !== 'image') setTemplateAtt(null);
+    } catch (e) {
+      console.error('[composer] tracked link failed — the template sends with its files:', e);
+      addToast(
+        isAr ? 'تعذّر إنشاء روابط التتبع — سيُرسل القالب بملفاته' : 'Could not create tracked links — the template will send with its files',
+        'error',
+      );
+    }
   };
 
   return (

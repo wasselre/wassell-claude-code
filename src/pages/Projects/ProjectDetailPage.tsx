@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import TrackedInterestList from '@/components/interest/TrackedInterestList';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import {
   Building2, MapPin, Pencil, Search, ExternalLink, FileText,
@@ -20,7 +21,7 @@ import MatchClientModal from './components/MatchClientModal';
 import PaymentPlansTabPane from '@/pages/Records/components/PaymentPlansTabPane';
 import { FilesTab, InventoryUpdateTab, CustomerDemandTab, WebsiteTab } from './components/ProjectExtraTabs';
 
-type TabKey = 'overview' | 'units' | 'payments' | 'location' | 'files' | 'inventory-update' | 'customer-demand' | 'website';
+type TabKey = 'overview' | 'units' | 'payments' | 'location' | 'files' | 'inventory-update' | 'customer-demand' | 'interest' | 'website';
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
@@ -211,6 +212,7 @@ export default function ProjectDetailPage(
     { key: 'files', ar: 'الملفات', en: 'Files' },
     { key: 'inventory-update', ar: 'تحديث المخزون', en: 'Inventory Update' },
     { key: 'customer-demand', ar: 'طلب العملاء', en: 'Customer Demand' },
+    { key: 'interest', ar: 'اهتمام العملاء', en: 'Customer Interest' },
     { key: 'website', ar: 'الموقع الإلكتروني', en: 'Website' },
   ];
 
@@ -347,6 +349,7 @@ export default function ProjectDetailPage(
         {tab === 'files' && (record ? <FilesTab record={record} isAr={isAr} /> : <NoMaster />)}
         {tab === 'inventory-update' && (view ? <InventoryUpdateTab project={view} isAr={isAr} /> : <NoMaster />)}
         {tab === 'customer-demand' && (view ? <CustomerDemandTab view={view} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'interest' && (view ? <TrackedInterestList mode="project" id={view.id} isAr={isAr} /> : <NoMaster />)}
         {tab === 'website' && (view && record ? (
           <WebsiteTab
             view={view} record={record} portfolioRecord={isPortfolio ? portfolioRecord : undefined} isAr={isAr}

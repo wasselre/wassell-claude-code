@@ -595,6 +595,7 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
           filenameFor={() => unitsPdfFilename(projectView)}
           captionFor={(a) => (a ? `قائمة وحدات ${projectViewByLang(true)?.name ?? ''}`.trim() : `${projectViewByLang(false)?.name ?? 'Project'} — units list`)}
           buildFor={(a) => buildUnitsTablePdf({ project: projectViewByLang(a) ?? projectView, units: unitsByLang(a), isAr: a })}
+          trackedLink={{ projectId }}
         />
       )}
     </div>

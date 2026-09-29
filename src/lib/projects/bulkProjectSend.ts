@@ -36,6 +36,9 @@
 
 import { useAppStore } from '@/stores/appStore';
 import { sendProjectImageMessages } from '@/lib/projectMessageImages';
+import { mintTrackedLink } from '@/lib/trackedLinks/client';
+import { replaceLinksInMessage } from '@/lib/trackedLinks/text';
+import { normalizePhone } from '@/lib/phone';
 
 /** Who receives the bulk send. Either an existing conversation, or a phone we
  *  may not have messaged yet (the first text establishes the chat). */
@@ -106,7 +109,40 @@ export async function enqueueBulkProjectSend(
   // then advances past that project's media before the next project starts.
   let cursor = Date.now() + START_DELAY_MS;
 
-  for (const item of plan) {
+  // The conversation a tracked link is minted for. A new number's wid is the
+  // one startNewChat will create (`<e164 digits>@c.us`).
+  const linkWid = (): string | null => {
+    if (chatWid) return chatWid;
+    if (recipient.kind !== 'new') return null;
+    const e164 = normalizePhone(recipient.phone);
+    return e164 ? `${e164.slice(1)}@c.us` : null;
+  };
+
+  for (const rawItem of plan) {
+    // Tracked links (2026-09-29): the project goes out as its text + THIS
+    // customer's links + one cover photo, instead of the gallery and files. A
+    // link that can't be minted falls back to the rep's files — counted in
+    // firstError, never silent.
+    let item = rawItem;
+    const wid = linkWid();
+    if (wid) {
+      try {
+        const lang: 'ar' | 'en' = /[؀-ۿ]/.test(rawItem.text) ? 'ar' : 'en';
+        const link = await mintTrackedLink({ projectId: rawItem.projectId, chatWid: wid, lang, sentVia: 'bulk' });
+        if (link.block) {
+          item = {
+            ...rawItem,
+            text: replaceLinksInMessage(rawItem.text, link.block),
+            orderedRefs: link.coverFileId ? [link.coverFileId] : rawItem.orderedRefs.slice(0, 1),
+          };
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[bulkProjectSend] tracked link failed for ${rawItem.projectId} — sending its files:`, msg);
+        firstError ??= `tracked link failed: ${msg}`;
+      }
+    }
+
     // Never schedule into the (near-)past. The cursor is advanced by a fixed
     // per-item SPACING, but the enqueue loop below makes real, sequential
     // network round-trips (create chat, send text, upload each photo). On a

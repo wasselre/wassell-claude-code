@@ -2753,6 +2753,15 @@ export interface AppState {
   messageProjects: Record<string, string>;
   /** Load the message→project links for one conversation into messageProjects. */
   loadMessageProjects: (chatWid: string) => Promise<void>;
+  /** tracked-link token → what the customer did with that message's links
+   *  (v_tracked_link_engagement). Populated per-conversation by loadLinkEngagement. */
+  linkEngagement: Record<string, TrackedLinkEngagement>;
+  /** Load the tracked links (and their engagement) sent in one conversation. */
+  loadLinkEngagement: (chatWid: string) => Promise<void>;
+  /** Per customer × project interest from tracked links (v_project_interest),
+   *  for one project (its interested customers) or one client (their projects).
+   *  `name` is the OTHER side's display name. Throws on a read failure. */
+  loadTrackedInterest: (filter: { projectId?: string; clientId?: string }) => Promise<TrackedInterestRow[]>;
   /**
    * Load the latest page of messages for one conversation from Haberchat
    * (via the proxy). Writes to `chatMessages[chatWid]`. When `before` is
@@ -2909,4 +2918,51 @@ export interface AppState {
    * don't need to use it (the channel lives for the app's lifetime).
    */
   subscribeMarketingRealtime: () => () => void;
+}
+
+/** One tracked link's engagement — a row of v_tracked_link_engagement. */
+export interface TrackedLinkEngagement {
+  token: string;
+  project_id: string;
+  unit_id: string | null;
+  sessions: number;
+  open_days: number;
+  first_open_at: string | null;
+  last_activity_at: string | null;
+  photos_opened: number;
+  videos_played: number;
+  max_video_pct: number;
+  photos_seconds: number;
+  videos_seconds: number;
+  brochure_seconds: number;
+  brochure_pages: number;
+  units_seconds: number;
+  units_opened: number;
+  opened_map: boolean;
+  score: number;
+}
+
+/** One customer × project row of v_project_interest, plus a resolved name. */
+export interface TrackedInterestRow {
+  chat_wid: string;
+  project_id: string;
+  client_id: string | null;
+  conversation_record_id: string | null;
+  messages: number;
+  last_sent_at: string;
+  sessions: number;
+  open_days: number;
+  last_activity_at: string | null;
+  photos_opened: number;
+  videos_played: number;
+  max_video_pct: number;
+  media_seconds: number;
+  brochure_seconds: number;
+  units_seconds: number;
+  brochure_pages: number;
+  units_opened: number;
+  opened_map: boolean;
+  score: number;
+  /** Client name (project view) or project name (client view); null = unknown. */
+  name: string | null;
 }

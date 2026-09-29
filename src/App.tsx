@@ -110,6 +110,7 @@ const DocumentEditorPage = lazy(() => import('@/pages/Documents/DocumentEditorPa
 const PublicShareFilePage = lazy(() => import('@/pages/PublicShare/PublicShareFilePage'));
 const RateVisitPage = lazy(() => import('@/pages/PublicRate/RateVisitPage'));
 const BrokerPortalPage = lazy(() => import('@/pages/BrokerPortal/BrokerPortalPage'));
+const TrackedLinkPage = lazy(() => import('@/pages/TrackedLink/TrackedLinkPage'));
 const SalesConsultantApplicationPage = lazy(() => import('@/pages/Careers/SalesConsultantApplicationPage'));
 const JobApplicationsPage = lazy(() => import('@/pages/Careers/JobApplicationsPage'));
 // Private, per-candidate pre-interview experience (public link, no auth, RTL).
@@ -312,7 +313,9 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 /** Public pages that need neither the CRM store nor the app's language. */
 function isSelfContainedPublicPath(): boolean {
-  return window.location.pathname.startsWith('/brokers/');
+  const p = window.location.pathname;
+  // /v/ = tracked project/unit links sent to customers (they own their own dir/lang).
+  return p.startsWith('/brokers/') || p.startsWith('/v/');
 }
 
 export default function App() {
@@ -366,6 +369,11 @@ export default function App() {
         {/* Public broker portal: one developer's projects, units, plans and
             marketing library for outside brokers (token in broker_portals). */}
         <Route path="/brokers/:token" element={<BrokerPortalPage />} />
+        {/* Tracked customer links: a project message's photos / videos / brochure
+            / units / location, or one unit's page. What the customer does there
+            is recorded (tracked_link_events) and scored in the CRM. */}
+        <Route path="/v/:token" element={<TrackedLinkPage />} />
+        <Route path="/v/:token/:section" element={<TrackedLinkPage />} />
         {/* Public job-application landing (ad traffic). No auth, no layout,
             fully Arabic/RTL. Private applicant files are handled server-side. */}
         <Route path="/careers/sales-consultant" element={<SalesConsultantApplicationPage />} />

@@ -21,7 +21,12 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
-export default function PdfViewer({ url, isAr }: { url: string; isAr: boolean }) {
+export default function PdfViewer({ url, isAr, onPageChange }: {
+  url: string;
+  isAr: boolean;
+  /** Called with the centred page number as it changes (tracked-link brochure pages). */
+  onPageChange?: (page: number) => void;
+}) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -52,6 +57,10 @@ export default function PdfViewer({ url, isAr }: { url: string; isAr: boolean })
       void task.destroy();
     };
   }, [url]);
+
+  useEffect(() => {
+    if (numPages) onPageChange?.(current);
+  }, [current, numPages, onPageChange]);
 
   // Track which page is centred, for the "X / N" indicator.
   const onScroll = useCallback(() => {

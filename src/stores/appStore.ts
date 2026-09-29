@@ -49,6 +49,8 @@ import type { PaginatedRecordsByModel, RecordsPageCache } from '@/lib/recordsCac
 import { bootExcludedModelIds, bootDeferredModelIds, isSummaryModelName, summaryViewName } from '@/lib/lazyModels';
 import { isRetiredModel } from '@/lib/featureFlags';
 import type {
+  TrackedLinkEngagement,
+  TrackedInterestRow,
   AppState,
   AppModel,
   ModelGroup,
@@ -1743,6 +1745,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   waDevicesLoaded: false,
   chatMessages: {},
   messageProjects: {},
+  linkEngagement: {},
 
   loadMessageProjects: async (chatWid: string) => {
     if (!supabase || !chatWid) return;
@@ -1763,6 +1766,58 @@ export const useAppStore = create<AppState>((set, get) => ({
       for (const r of rows) next[r.message_wid] = r.project_id;
       return { messageProjects: next };
     });
+  },
+  loadLinkEngagement: async (chatWid: string) => {
+    if (!supabase || !chatWid) return;
+    const { data, error } = await supabase
+      .from('v_tracked_link_engagement')
+      .select('token, project_id, unit_id, sessions, open_days, first_open_at, last_activity_at, photos_opened, videos_played, max_video_pct, photos_seconds, videos_seconds, brochure_seconds, brochure_pages, units_seconds, units_opened, opened_map, score')
+      .eq('chat_wid', chatWid)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (error) {
+      // Non-fatal: the engagement chip is an enhancement; the thread still renders.
+      console.error('[loadLinkEngagement] read failed:', error.message);
+      return;
+    }
+    const rows = (data ?? []) as TrackedLinkEngagement[];
+    if (rows.length === 0) return;
+    set((s) => {
+      const next = { ...s.linkEngagement };
+      for (const r of rows) next[r.token] = { ...r, score: Number(r.score) || 0 };
+      return { linkEngagement: next };
+    });
+  },
+  loadTrackedInterest: async (filter) => {
+    if (!supabase) return [];
+    let q = supabase
+      .from('v_project_interest')
+      .select('chat_wid, project_id, client_id, conversation_record_id, messages, last_sent_at, sessions, open_days, last_activity_at, photos_opened, videos_played, max_video_pct, media_seconds, brochure_seconds, units_seconds, brochure_pages, units_opened, opened_map, score');
+    if (filter.projectId) q = q.eq('project_id', filter.projectId);
+    if (filter.clientId) q = q.eq('client_id', filter.clientId);
+    const { data, error } = await q.order('score', { ascending: false }).limit(1000);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Array<Omit<TrackedInterestRow, 'name'>>;
+    // The other side's name: client names for a project, project names for a client.
+    const nameIds = [...new Set(rows.map((r) => (filter.projectId ? r.client_id : r.project_id)).filter((x): x is string => !!x))];
+    const names = new Map<string, string>();
+    for (let i = 0; i < nameIds.length; i += 200) {
+      const { data: recs, error: nErr } = await supabase
+        .from('records')
+        .select(filter.projectId ? 'id, name:data->>client_name' : 'id, name:data->>project_name')
+        .in('id', nameIds.slice(i, i + 200));
+      if (nErr) {
+        // Names are a nicety — the rows still render with a phone / id fallback.
+        console.error('[loadTrackedInterest] name read failed:', nErr.message);
+        break;
+      }
+      for (const r of (recs ?? []) as unknown as Array<{ id: string; name: string | null }>) if (r.name) names.set(r.id, r.name);
+    }
+    return rows.map((r) => ({
+      ...r,
+      score: Number(r.score) || 0,
+      name: names.get((filter.projectId ? r.client_id : r.project_id) ?? '') ?? null,
+    }));
   },
   webhookSlugs: [],
   webhookPayloads: [],

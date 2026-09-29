@@ -455,6 +455,7 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
           filenameFor={() => unitPdfFilename(project, unit)}
           captionFor={(a) => (a ? `تفاصيل الوحدة ${unit.code ?? ''} — ${projectNameForLang(true)}`.trim() : `Unit ${unit.code ?? ''} — ${projectNameForLang(false)}`.trim())}
           buildFor={(a) => buildUnitPdf({ project: projectByLang(a) ?? project, unit: unitByLang(a) ?? unit, isAr: a })}
+          trackedLink={unit.projectId ? { projectId: unit.projectId, unitId: unit.id } : null}
         />
       )}
     </div>

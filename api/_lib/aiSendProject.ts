@@ -25,6 +25,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { enqueueAiReply } from './aiSend.js';
 import { resolveDefaultDeviceId, scheduledMediaItem } from './whatsappGateway.js';
 import { resolveProjectSheet } from './projectSheet.js';
+import { createTrackedLink, sentViaOf, withTrackedLinks, type ProjectFile } from './trackedLinks.js';
+import { uuidV5FromWidSync } from './chatIngest.js';
 import { generateProjectMessage } from './projectMessageAi.js';
 import { savedMessageMatchesCurrentFacts } from '../../src/lib/projectMessage/factsMatch.js';
 import type { ProjectMessageFacts } from '../../src/lib/projectMessage/compose.js';
@@ -41,6 +43,10 @@ const WA_TEMP_BUCKET = 'wassel-files';
  *  the queue drips text → brochure → photo1 → photo2… single-file. Kept above
  *  the worker's ~3s poll (same value the bulk rep flow uses). */
 const SPACING_MS = 4_000;
+// Tracked links (operator, 2026-09-29): send the card + ONE cover photo + per-customer
+// links to our own pages instead of the photos/videos/brochure files. When a link can't be
+// minted the files package below is the fallback (SEND_PROJECT_PHOTOS_AND_VIDEOS).
+const SEND_TRACKED_LINKS = true;
 const SEND_PROJECT_PHOTOS_AND_VIDEOS = true; // operator 2026-09-27: ON — bot sends the template's brochure + top-3 photos + longest video (any origin), all by reference; templates are auto-built by api/cron/build-project-templates
 
 export interface AiSendProjectResult {
@@ -338,10 +344,32 @@ export async function sendProjectViaAiFlow(
   );
   if (!text.trim()) return { queued: false, error: 'resolved an empty message', project_id: projectId };
   const intro = input.introText?.trim();
-  const fullText = intro ? `${intro}\n\n${text}` : text;
+  let fullText = intro ? `${intro}\n\n${text}` : text;
 
   const deviceId = await resolveDevice(svc, input.deviceId);
   if (!deviceId) return { queued: false, error: 'no active WhatsApp device configured', project_id: projectId };
+
+  // ── Tracked links (operator, 2026-09-29): the card carries per-customer links
+  //    to our own pages (photos / videos / brochure / units / location) and ONE
+  //    cover photo — no more video/PDF uploads, and every open is scored. If the
+  //    link can't be minted the send DEGRADES to the files package below; a
+  //    customer never gets nothing because tracking failed. ──
+  let linkCover: ProjectFile | null = null;
+  let linked = false;
+  if (SEND_TRACKED_LINKS) {
+    try {
+      const link = await createTrackedLink(svc, {
+        projectId, chatWid, conversationRecordId: uuidV5FromWidSync(chatWid), deviceId, sentVia: sentViaOf(input.jobId),
+      });
+      if (link.sections.length) {
+        fullText = withTrackedLinks(fullText, link.urls, input.lang ?? 'ar');
+        linkCover = link.cover;
+        linked = true;
+      }
+    } catch (err) {
+      console.error(`[aiSendProject] tracked link failed — sending files instead chat=${chatWid} project=${projectId}:`, err instanceof Error ? err.message : String(err));
+    }
+  }
 
   // ── 1) TEXT — gate re-check + audit, delivered ~now. If the gate blocks (a
   //        human took over), send NOTHING further. ──
@@ -363,7 +391,19 @@ export async function sendProjectViaAiFlow(
   //        a failed item is tallied, the rest still queue (matches send-media-batch). ──
   let mediaQueued = 0;
   let mediaFailed = 0;
-  if (allProjectsModelId) {
+  if (linked) {
+    // Links mode: only the cover photo rides along (the links carry the rest).
+    const ref = linkCover ? fileToRef(svc, linkCover as unknown as FileRow) : null;
+    if (ref) {
+      const { error } = await svc.rpc('scheduled_whatsapp_enqueue', {
+        p_device_id: deviceId, p_chat_wid: chatWid, p_phone: `+${digits}`, p_body: null, p_media: [ref],
+        p_reference: `ai-project:${input.jobId ?? 'flow'}:${projectId}:0`,
+        p_deliver_at: new Date(Date.now() + SPACING_MS).toISOString(), p_user_id: null, p_after_prefix: cardRef,
+      });
+      if (error) { mediaFailed++; console.error('[aiSendProject] cover enqueue failed:', error.message); }
+      else mediaQueued++;
+    }
+  } else if (allProjectsModelId) {
     let mediaItems: MediaRef[];
     if (SEND_PROJECT_PHOTOS_AND_VIDEOS) {
       const saved = await resolveSavedSelectionRefs(svc, projectId);

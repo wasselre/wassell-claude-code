@@ -5,6 +5,9 @@ import StartChatModal from '@/pages/Chats/components/StartChatModal';
 import ProjectFilePickerModal from '@/pages/Chats/components/ProjectFilePickerModal';
 import ProjectMessageComposeStep from '@/pages/Chats/components/ProjectMessageComposeStep';
 import { resolveClientSlugs, recordToPickedClient, type PickedClient } from '@/pages/Chats/components/ClientPicker';
+import { chatPdfFromClient } from '@/lib/projects/sendPdfToChat';
+import { mintTrackedLink } from '@/lib/trackedLinks/client';
+import { replaceLinksInMessage } from '@/lib/trackedLinks/text';
 
 /**
  * "WhatsApp this project" flow — launched from a Suggested Projects / Finder /
@@ -12,7 +15,11 @@ import { resolveClientSlugs, recordToPickedClient, type PickedClient } from '@/p
  *
  *   1. TEXT  — `ProjectMessageComposeStep` (saved message / AI rewrite / fact-check /
  *              language toggle / save-as-template). Shared with the bulk wizard.
- *   2. FILES — pick which linked files (photos/videos/PDFs) to send.
+ *   2. LINKS — this customer's tracked links + one cover photo replace the
+ *              files (2026-09-29). Only when the link can't be minted (no
+ *              client phone, or the mint fails — toasted) does the rep pick
+ *              files instead:
+ *      FILES — pick which linked files (photos/videos/PDFs) to send.
  *   3. CHAT  — StartChatModal opens on the client with the text + selected media.
  */
 
@@ -45,13 +52,31 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
     return recordToPickedClient(clientRec, resolveClientSlugs(clientsModel), isAr);
   }, [clientRec, clientsModel, isAr]);
 
+  const acceptText = async (text: string) => {
+    setChatBody(text);
+    const wid = chatPdfFromClient(clientRec)?.chatWid ?? null;
+    if (!wid) { setPhase('files'); return; }
+    try {
+      const lang: 'ar' | 'en' = /[؀-ۿ]/.test(text) ? 'ar' : 'en';
+      const link = await mintTrackedLink({ projectId, chatWid: wid, lang, sentVia: 'rep' });
+      if (!link.block) { setPhase('files'); return; }
+      setChatBody(replaceLinksInMessage(text, link.block));
+      setSelectedRefs(link.coverFileId ? [link.coverFileId] : []);
+      setPhase('chat');
+    } catch (err) {
+      console.error('[ProjectWhatsAppFlow] tracked link failed — picking files instead:', err);
+      addToast(L('تعذّر إنشاء روابط التتبع — اختر الملفات لإرسالها', 'Could not create tracked links — pick the files to send'), 'error');
+      setPhase('files');
+    }
+  };
+
   if (phase === 'compose') {
     return (
       <ProjectMessageComposeStep
         isAr={isAr}
         projectId={projectId}
         projectName={projectName}
-        onAccept={({ text }) => { setChatBody(text); setPhase('files'); }}
+        onAccept={({ text }) => void acceptText(text)}
         onCancel={onClose}
       />
     );

@@ -3,6 +3,7 @@ import { MessageCircle, Loader2, ChevronUp } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import MessageBubble, { type MessageProjectActions } from './MessageBubble';
 import type { ChatMessage } from '@/types';
+import { trackedTokenIn } from '@/lib/trackedLinks/text';
 
 const PROJECT_LINK_RE = /wassel\.re\/project\?id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
@@ -35,6 +36,8 @@ export default function MessageThread({
   const loadMessagesForChat = useAppStore((s) => s.loadMessagesForChat);
   const loadMessageProjects = useAppStore((s) => s.loadMessageProjects);
   const messageProjects = useAppStore((s) => s.messageProjects);
+  const loadLinkEngagement = useAppStore((s) => s.loadLinkEngagement);
+  const linkEngagement = useAppStore((s) => s.linkEngagement);
   const retryChatMessage = useAppStore((s) => s.retryChatMessage);
 
   const [loading, setLoading] = useState(true);
@@ -69,6 +72,7 @@ export default function MessageThread({
     setError(null);
     // Load message→project links so project messages get their action buttons.
     void loadMessageProjects(chatWid);
+    void loadLinkEngagement(chatWid);
     const p = loadMessagesForChat(chatWid, { size: 50 });
     // The synchronous hydration inside the call above has already run.
     setLoading((useAppStore.getState().chatMessages[chatWid] ?? []).length === 0);
@@ -82,7 +86,34 @@ export default function MessageThread({
         setLoading(false);
       }
     })();
-  }, [chatWid, loadMessagesForChat, loadMessageProjects]);
+  }, [chatWid, loadMessagesForChat, loadMessageProjects, loadLinkEngagement]);
+
+  // Tracked links: the engagement numbers move while the thread is open (the
+  // customer is looking at the page right now), and a message sent a moment
+  // ago carries a token we have never loaded. Refresh every minute, and at once
+  // when an unknown token appears.
+  const trackedTokens = useMemo(() => {
+    const out: string[] = [];
+    for (const m of messages) {
+      if (m.flow !== 'out' || m.kind !== 'text') continue;
+      const t = trackedTokenIn(m.body);
+      if (t) out.push(t);
+    }
+    return out;
+  }, [messages]);
+  const hasUnknownToken = trackedTokens.some((t) => !linkEngagement[t]);
+  useEffect(() => {
+    if (trackedTokens.length === 0) return;
+    const timer = window.setInterval(() => void loadLinkEngagement(chatWid), 60_000);
+    return () => window.clearInterval(timer);
+  }, [chatWid, trackedTokens.length, loadLinkEngagement]);
+  useEffect(() => {
+    if (!hasUnknownToken) return;
+    // The link row is written just before the message is sent; give the send a
+    // few seconds to land, then read.
+    const timer = window.setTimeout(() => void loadLinkEngagement(chatWid), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [chatWid, hasUnknownToken, trackedTokens.length, loadLinkEngagement]);
 
   // Scroll-to-bottom on fresh load / new messages while pinned. When we
   // append older history via "Load older", we instead preserve scroll
@@ -257,8 +288,12 @@ export default function MessageThread({
               // one covers a card that arrives LIVE: its link row is written a
               // moment after the message, so the per-chat link load (on open)
               // never saw it — the bot's cards showed no buttons until a reload.
+              // A tracked message no longer carries the website link — its token
+              // resolves the project instead.
+              const token = m.kind === 'text' && m.flow === 'out' ? trackedTokenIn(m.body) : null;
+              const tracked = token ? (linkEngagement[token] ?? null) : undefined;
               const projectId = m.kind === 'text'
-                ? (m.project_id ?? messageProjects[m.id] ?? (m.flow === 'out' ? projectIdFromBody(m.body) : null))
+                ? (m.project_id ?? messageProjects[m.id] ?? tracked?.project_id ?? (m.flow === 'out' ? projectIdFromBody(m.body) : null))
                 : null;
               const projectActions =
                 projectId && renderProjectActions ? renderProjectActions(projectId) : null;
@@ -272,6 +307,7 @@ export default function MessageThread({
                   // in a chat the user has since switched to.
                   onRetry={m.flow === 'out' ? () => void retryChatMessage(chatWid, m.id) : undefined}
                   projectActions={projectActions}
+                  linkEngagement={tracked}
                 />
               );
             })}

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle, MessageSquare, ListChecks, User, RotateCcw, Building2, BookmarkPlus, Check, LayoutGrid } from 'lucide-react';
 import AckIndicator from './AckIndicator';
+import LinkEngagementChip from './LinkEngagementChip';
 import { fetchFileBlob } from '@/lib/haberchat/client';
 import { isLegacyHaberchatRef } from '@/lib/chat/legacyMedia';
 import { deviceIdString } from '@/lib/haberchat/normalize';
 import { useAppStore } from '@/stores/appStore';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, TrackedLinkEngagement } from '@/types';
 
 /**
  * One message bubble. Outbound on the right (copper), inbound on the left
@@ -38,6 +39,7 @@ export default function MessageBubble({
   reactions,
   onRetry,
   projectActions,
+  linkEngagement,
 }: {
   message: ChatMessage;
   isAr: boolean;
@@ -48,6 +50,9 @@ export default function MessageBubble({
   onRetry?: () => void;
   /** When set, this is a PROJECT message — render the finder-style action strip. */
   projectActions?: MessageProjectActions | null;
+  /** When the message carries a tracked link: what the customer did with it.
+   *  `undefined` = not a tracked message; `null` = tracked, not loaded yet. */
+  linkEngagement?: TrackedLinkEngagement | null;
 }) {
   const isOut = message.flow === 'out';
   const failed = isOut && message.ack === 'failed';
@@ -97,6 +102,8 @@ export default function MessageBubble({
         <MessageBody message={message} isAr={isAr} />
 
         {projectActions && <ProjectActionStrip actions={projectActions} isAr={isAr} />}
+
+        {linkEngagement !== undefined && <LinkEngagementChip engagement={linkEngagement} isAr={isAr} />}
 
         {/* A failed send is stated in words, not just a tick colour, and stays
             one click from going out again. The text is never discarded — the

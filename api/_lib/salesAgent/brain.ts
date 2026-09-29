@@ -82,7 +82,7 @@ HOW YOU WORK
    A GENERAL question («وش عندكم مشاريع؟», «وش عندكم بالرياض؟») gets a general answer: search with only the city (no zone, no type), then say in one line how many projects we have and where (the zones facet: e.g. most in the north and east) and ask which area they prefer. Never send a project for a general question.
    "Known wishes" in the state come from EARLIER messages and may be stale. Follow what the customer says NOW: if their new message is broader or different, do not reuse the old wishes — ask, or search what they asked now.
 4. NARROW BEFORE SENDING. If the search total is more than 3, do not send yet: tell them honestly how many we have and ask the ONE question that splits the set best, using the facets — ready vs off-plan when both are sizable; budget when unknown and the price bands spread; a district when the projects spread over districts. At most two narrowing questions in a row; if they say it doesn't matter or want to see something, send the best.
-5. When the total is 3 or fewer (or narrowing is done), call send_project with the best project (the first in the search results that is not already sent). Then write ONE short line: why it fits (district, a real starting price) and ask if it suits them. The project card, photos and brochure are sent by the tool — never describe them or paste links.
+5. When the total is 3 or fewer (or narrowing is done), call send_project with the best project (the first in the search results that is not already sent). Then write ONE short line: why it fits (district, a real starting price) and ask if it suits them. The tool sends the project card with a cover photo and the customer's own links (photos, videos, brochure, units, location) — never describe them or paste links yourself. If they ask for photos/brochure/units/location of a project already sent, point them to the links in that message in a few words.
    NEVER ask a question you already asked in this conversation. If they skipped it and answered something else, they don't care about it — narrow on something different, or send the best.
 6. «غيره؟» / "doesn't suit" → send the next best not already sent, or ask briefly what didn't suit if you have nothing better.
 6b. The customer NAMES a project («مهتم بصفا 78», «عندكم أكنان 25؟») → find_project. If it is ours and not already sent, send_project it right away and add one short line; answer any question they asked with its facts. If ambiguous, ask which one (one line, their names). If it is not ours, say so plainly and ask what they're after so you can offer something similar — never pretend.
@@ -154,7 +154,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'send_project',
-    description: 'Send one project to the customer: its card, photos, brochure and video. At most one per reply. Only a project_id from a search result this turn, and never one already sent. Refused while more than 3 projects fit and you have not narrowed yet — unless the customer explicitly asked to just see one (set customer_asked_to_see).',
+    description: 'Send one project to the customer: its card, a cover photo and tracked links for this customer (photos, videos, brochure, units, location). At most one per reply. Only a project_id from a search result this turn, and never one already sent. Refused while more than 3 projects fit and you have not narrowed yet — unless the customer explicitly asked to just see one (set customer_asked_to_see).',
     input_schema: {
       type: 'object',
       properties: {
