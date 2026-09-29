@@ -25,6 +25,7 @@
  * other crons here. This does NOT send anything to a customer; it only keeps the
  * templates ready. Whether the bot sends media is a separate flag.
  */
+import type { IncomingMessage, ServerResponse } from 'http';
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { generateProjectMessage } from '../_lib/projectMessageAi.js';
 import { buildPickerItems, isUnitPlanFile } from '../../src/pages/Chats/lib/projectFilePicker.js';
@@ -122,7 +123,29 @@ function selectMedia(files: FileRow[]): Selection {
   return { imageIds, videoId: video?.id ?? null, videoLen: video?.duration_seconds ?? null };
 }
 
-export default async function handler(req: Request): Promise<Response> {
+/**
+ * Vercel's NODE runtime calls a default export with (IncomingMessage,
+ * ServerResponse), not a web Request — `req.url` there is a bare path, so the
+ * old `handler(req: Request)` threw `Invalid URL` on EVERY call: the daily
+ * cron never ran once from 2026-09-27 to 2026-09-29. Adapt at the edge (same
+ * shape as chat-auto-read) and keep the body as a Request→Response function.
+ */
+export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
+  const host = (nodeReq.headers.host as string | undefined) ?? 'localhost';
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(nodeReq.headers)) {
+    if (typeof v === 'string') headers.set(k, v);
+    else if (Array.isArray(v)) headers.set(k, v.join(', '));
+  }
+  // The cron takes no body — GET and POST are read the same way.
+  const req = new Request(new URL(nodeReq.url ?? '/', `https://${host}`).toString(), { method: 'GET', headers });
+  const res = await run(req);
+  nodeRes.statusCode = res.status;
+  res.headers.forEach((v, k) => nodeRes.setHeader(k, v));
+  nodeRes.end(await res.text());
+}
+
+async function run(req: Request): Promise<Response> {
   const startedAt = Date.now();
   const expected = process.env.CRON_SECRET;
   if (!expected) return json({ error: 'CRON_SECRET is not set; refusing to run' }, 500);
