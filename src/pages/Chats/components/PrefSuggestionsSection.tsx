@@ -1,22 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Loader2, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import Button from '@/components/ui/Button';
 import { PREF_FIELD_KINDS, PREF_SLUG_ORDER, isSameAsSaved } from '@/lib/clientPrefs/mergePrefs';
 import { callJson, HttpError } from '../lib/cardHttp';
 import { usePrefFieldFormat } from '../lib/usePrefFieldFormat';
 import type { GeoCardDTO } from '../lib/geoRows';
+import SpecTiles, { type SpecTileItem } from './SpecTiles';
+import { SlideBody, SlideFooter } from './SlideParts';
 
 /**
- * «تفضيلات العميل من المحادثة» — the preference half of the in-chat card.
+ * «المواصفات · المحادثة» — the chat's preference slide of the in-chat card
+ * (and the card's shared DTO types).
  *
  * The chat auto-read's preference agent turns the conversation into ONE
  * proposal (budget, unit type, area, bedrooms, purpose, amenities), each line
  * with the customer's own words. Nothing reaches the client until the rep
- * ticks lines and presses save (POST /api/client-prefs/review): set fields are
- * ADDED to what is saved, ranges REPLACE it. A line that would change nothing
- * starts unticked and says «مطابق للمحفوظ».
+ * ticks tiles and presses save (POST /api/client-prefs/review): set fields are
+ * ADDED to what is saved, ranges REPLACE it (the ⓘ says so). A line that would
+ * change nothing starts unticked and carries «مطابق للمحفوظ».
  */
 
 export interface PrefSuggestionDTO {
@@ -84,12 +85,13 @@ export interface CallGeoDTO {
 
 interface Props {
   prefs: PrefsCardDTO;
-  /** The preference agent's error from the last reading (the geography half succeeded). */
-  prefsError: string | null;
   onReload: () => Promise<void>;
+  /** The rep saved / dismissed this proposal — the card shows a done state in its place. */
+  onDone: (action: 'saved' | 'dismissed') => void;
 }
 
-export default function PrefSuggestionsSection({ prefs, prefsError, onReload }: Props) {
+/** The chat's «المواصفات» slide: the pending proposal's lines as tiles + save / dismiss. */
+export default function ChatSpecsSlide({ prefs, onReload, onDone }: Props) {
   const { t } = useTranslation();
   const addToast = useAppStore((s) => s.addToast);
   const { isAr, fieldLabel, formatValue } = usePrefFieldFormat();
@@ -126,10 +128,11 @@ export default function PrefSuggestionsSection({ prefs, prefsError, onReload }: 
         }),
       });
       addToast(action === 'save' ? t('chats.prefs.saved') : t('chats.prefs.dismissed'), 'success');
+      onDone(action === 'save' ? 'saved' : 'dismissed');
       await onReload();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error('[PrefSuggestionsSection] review failed:', err);
+      console.error('[ChatSpecsSlide] review failed:', err);
       if (err instanceof HttpError && err.status === 409) {
         addToast(`${t('chats.prefs.conflict')}: ${msg}`, 'error');
         await onReload();
@@ -141,87 +144,47 @@ export default function PrefSuggestionsSection({ prefs, prefsError, onReload }: 
     }
   };
 
-  const status = proposal?.status ?? null;
-  const hasRead = Boolean(prefs.read_state?.last_read_at);
-  if (!proposal && !hasRead && !prefsError) return null;
+  if (!proposal || proposal.status !== 'pending' || rows.length === 0) return null;
+
+  const items: SpecTileItem[] = rows.map((r) => {
+    const currentText = formatValue(r.slug, r.current);
+    const hint = PREF_FIELD_KINDS[r.slug] === 'set' ? t('chats.prefs.union_hint') : t('chats.prefs.replace_hint');
+    return {
+      slug: r.slug,
+      label: fieldLabel(r.slug),
+      value: formatValue(r.slug, r.sug.value),
+      quote: r.sug.quote,
+      ticked: isTicked(r.slug, r.same),
+      locked: false,
+      chip: r.same ? { text: t('chats.prefs.same_as_saved'), tone: 'muted' } : undefined,
+      title: `${t('chats.prefs.current')}: ${currentText || t('chats.prefs.none_saved')} · ${hint}`,
+    };
+  });
 
   return (
-    <div className="mt-2 border-t border-sand/60 pt-2" dir={isAr ? 'rtl' : 'ltr'}>
-      <div className="flex items-center gap-1.5">
-        <SlidersHorizontal size={12} className="text-copper shrink-0" />
-        <span className="text-[11.5px] font-bold text-chocolate">{t('chats.prefs.title')}</span>
-      </div>
-
-      {prefsError && (
-        <p className="mt-1 text-[10.5px] text-amber-700" title={prefsError}>{t('chats.prefs.partial')}</p>
+    <SlideBody
+      footer={(
+        <SlideFooter
+          tickedCount={tickedSlugs.length}
+          saving={saving}
+          onSave={() => void decide('save')}
+          onDismiss={() => void decide('dismiss')}
+          info={t('chats.prefs.specs_info')}
+          isAr={isAr}
+        />
       )}
-
-      {(!proposal || status === 'superseded' || (status === 'pending' && rows.length === 0)) && hasRead && (
-        <p className="mt-1 text-[11px] text-charcoal/60">{t('chats.prefs.empty')}</p>
-      )}
-
-      {status === 'pending' && rows.length > 0 && (
-        <>
-          <ul className="mt-1 space-y-1.5">
-            {rows.map((r) => {
-              const ticked = isTicked(r.slug, r.same);
-              const currentText = formatValue(r.slug, r.current);
-              return (
-                <li key={r.slug} className="flex items-start gap-2">
-                  <input
-                    type="checkbox"
-                    className="mt-1 accent-copper shrink-0"
-                    checked={ticked}
-                    disabled={saving}
-                    onChange={() => setToggled((prev) => ({ ...prev, [r.slug]: !ticked }))}
-                    aria-label={fieldLabel(r.slug)}
-                  />
-                  <div className="min-w-0 flex-1 text-start">
-                    <p className={`text-[12px] leading-snug ${ticked ? 'text-charcoal' : 'text-charcoal/45'}`}>
-                      <span className="font-bold text-chocolate">{fieldLabel(r.slug)}</span>
-                      {': '}
-                      <span dir="auto">{formatValue(r.slug, r.sug.value)}</span>
-                      {r.same && <span className="ms-1.5 text-[10px] text-charcoal/45">({t('chats.prefs.same_as_saved')})</span>}
-                    </p>
-                    {r.sug.quote && (
-                      <p className="text-[10.5px] text-charcoal/55" dir="auto">«{r.sug.quote}»</p>
-                    )}
-                    <p className="text-[10px] text-charcoal/45">
-                      {t('chats.prefs.current')}: {currentText || t('chats.prefs.none_saved')}
-                      {' · '}
-                      {PREF_FIELD_KINDS[r.slug] === 'set' ? t('chats.prefs.union_hint') : t('chats.prefs.replace_hint')}
-                    </p>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="mt-2 flex items-center gap-2 flex-wrap">
-            <Button className="!px-3 !py-1 !text-[11px] !rounded-full" onClick={() => void decide('save')} disabled={saving || tickedSlugs.length === 0}>
-              {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-              {t('chats.prefs.save')}
-            </Button>
-            <Button variant="ghost" className="!px-3 !py-1 !text-[11px] !rounded-full" onClick={() => void decide('dismiss')} disabled={saving}>
-              {t('chats.prefs.dismiss')}
-            </Button>
-          </div>
-        </>
-      )}
-
-      {status === 'saved' && (
-        <div className="mt-1">
-          <p className="text-[11px] font-bold text-green-700">✓ {t('chats.prefs.saved')}</p>
-          {(proposal?.saved_fields ?? []).length > 0 && (
-            <p className="text-[10.5px] text-charcoal/55">
-              {(proposal?.saved_fields ?? []).map(fieldLabel).join(isAr ? '، ' : ', ')}
-            </p>
-          )}
-        </div>
-      )}
-
-      {status === 'dismissed' && (
-        <p className="mt-1 text-[11px] text-charcoal/60">{t('chats.prefs.dismissed')}</p>
-      )}
-    </div>
+    >
+      <SpecTiles
+        items={items}
+        onToggle={(slug) => {
+          const r = rows.find((x) => x.slug === slug);
+          if (!r) return;
+          const ticked = isTicked(r.slug, r.same);
+          setToggled((prev) => ({ ...prev, [slug]: !ticked }));
+        }}
+        disabled={saving}
+        isAr={isAr}
+      />
+    </SlideBody>
   );
 }

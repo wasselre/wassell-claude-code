@@ -1,4 +1,5 @@
 import type { DistrictInfo, Placement, VerifierVerdict } from './shared';
+import { toArabicDigits } from '@/pages/Marketing/lib/format';
 
 /**
  * "What did the AI put on the map for this mention?" — one bilingual line.
@@ -51,6 +52,45 @@ export function placementLine(
     return { text: `${verb}: ${parts.length ? parts.join(isAr ? '، ' : ', ') : labels.join(', ')} — ${sideTxt}`, tone: 'ok' };
   }
   return { text: `${verb}: ${labels.join(isAr ? '، ' : ', ')}`, tone: 'ok' };
+}
+
+const SIDE_TITLE_AR: Record<string, string> = { north: 'شمال', south: 'جنوب', east: 'شرق', west: 'غرب' };
+const SIDE_TITLE_EN: Record<string, string> = { north: 'North of', south: 'South of', east: 'East of', west: 'West of' };
+const count = (n: number, isAr: boolean): string => (isAr ? toArabicDigits(String(n)) : String(n));
+
+/**
+ * The PLACE of a placement as a short title for a tile — «الربوة»,
+ * «جنوب الرياض · ٢٠ حيًا», «شمال طريق الملك فهد», or the bare name of an
+ * unresolved mention. Built from the placement data (never by parsing the
+ * {@link placementLine} sentence), so the two can't drift apart silently:
+ * the tile shows this title, and the full sentence rides in its tooltip.
+ * PURE.
+ */
+export function placementTitle(
+  p: Placement,
+  names: Record<string, DistrictInfo>,
+  isAr: boolean,
+): string {
+  const sep = isAr ? '، ' : ', ';
+  const nameOf = (id: string): string => {
+    const d = names[id];
+    return d ? (isAr ? d.name_ar : (d.name_en || d.name_ar)) : id;
+  };
+  // Unresolved: element_ids are the bare names the customer used, not ids.
+  if (!p.resolved) return p.element_ids.join(sep) || p.label;
+  const n = p.element_ids.length;
+  if (p.operation === 'zone_union' || (p.operation === 'district_union' && n > 6)) {
+    const zone = p.label || (isAr ? 'منطقة' : 'zone');
+    return isAr ? `${zone} · ${count(n, true)} حيًا` : `${zone} · ${n} districts`;
+  }
+  if (p.operation === 'district_side_clip' && p.side && n > 0) {
+    const road = nameOf(p.element_ids[n - 1]!);
+    const side = (isAr ? SIDE_TITLE_AR : SIDE_TITLE_EN)[p.side];
+    return side ? `${side} ${road}` : `${p.side} ${road}`;
+  }
+  const labels = p.element_ids.map(nameOf);
+  if (labels.length <= 3) return labels.join(sep);
+  return `${labels.slice(0, 2).join(sep)} +${count(labels.length - 2, isAr)}`;
 }
 
 /** Short label for a verifier verdict other than 'right'. */

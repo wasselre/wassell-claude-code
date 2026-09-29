@@ -1,42 +1,51 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MapPin, Loader2, ChevronUp, ChevronDown, RefreshCw, Check, AlertTriangle, Map as MapIcon, Mic } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { MapPin, Loader2, ChevronUp, ChevronDown, RefreshCw, AlertTriangle, Map as MapIcon, Mic } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import { pruneGeoExpression, type PrunableExpression } from '@/lib/geo/pruneGeoExpression';
 import { shouldAutoRead } from '@/lib/geo/geoCardAutoRead';
+import { dateTimeShort } from '@/pages/Marketing/lib/format';
 import { callJson, HttpError } from '../lib/cardHttp';
-import PrefSuggestionsSection, { type PrefsCardDTO } from './PrefSuggestionsSection';
-import CallAuditSection from './CallAuditSection';
-import GeoLineGroups from './GeoLineGroups';
-import { buildGeoRows, GEO_OPEN, GEO_SAVED, type GeoCardDTO, type GeoRow } from '../lib/geoRows';
+import { usePrefFieldFormat } from '../lib/usePrefFieldFormat';
+import ChatSpecsSlide, { type PrefsCardDTO } from './PrefSuggestionsSection';
+import { CallPlacesSlide, CallSpecsSlide } from './CallAuditSection';
+import PlaceTiles from './PlaceTiles';
+import PrefCardSlider, { type SliderSlide } from './PrefCardSlider';
+import { SlideBody, SlideDoneView, SlideFooter } from './SlideParts';
+import { buildGeoRows, GEO_OPEN, type GeoCardDTO, type GeoRow } from '../lib/geoRows';
+import {
+  buildCardSlides, callDayMonth, mergeDoneSlides,
+  type DoneEntry, type SlideDone, type VisibleSlide,
+} from '../lib/cardSlides';
 
 const GeoPrefMap = lazy(() => import('@/pages/GeoGrade/components/GeoPrefMap'));
 
 /**
  * «تفضيلات العميل» — the preference confirm card (geography + specs/budget) inside a client-linked WhatsApp chat.
  *
+ * Since 2026-09-29 the card is a SLIDER of small topic cards (cardSlides.ts):
+ * one slide per thing the rep can still act on — the chat's places, the chat's
+ * specs, and per call (newest first) the call audit's places and specs — each
+ * a grid of tiles with its own «احفظ المحدد (n)» / «تجاهل». The strip on top
+ * carries the pills, ‹ › and «١ / ٤»; with no slides it says «لا جديد».
+ *
  * The geography ability reads THIS conversation and says where the customer
- * wants to buy (and where not). The rep ticks/unticks each line and taps
- * «احفظ في ملف العميل» — the rep's tap is the safety check: nothing reaches
- * the client record without it. Saving goes through
- * POST /api/geo-preference/review (confirm = all lines, edit = the pruned
- * expression; dismiss = reject). Reading the chat goes through
- * /api/geo-preference/chat-card, which never writes a client record.
+ * wants to buy (and where not). The rep ticks/unticks each place and saves —
+ * the rep's tap is the safety check: nothing reaches the client record
+ * without it. Saving goes through POST /api/geo-preference/review (confirm =
+ * all lines, edit = the pruned expression; dismiss = reject). Reading the chat
+ * goes through /api/geo-preference/chat-card, which never writes a client record.
  *
  * The same reading also runs the PREFERENCE agent (budget, unit type, area,
- * bedrooms, purpose, amenities); its proposal renders below the places
- * (PrefSuggestionsSection) and saves through /api/client-prefs/review. The
- * card reads on its own when the customer has written something unread
- * (trigger 'open'); the per-minute cron reads the rest.
+ * bedrooms, purpose, amenities); its proposal is the chat's specs slide
+ * (ChatSpecsSlide) and saves through /api/client-prefs/review. The card reads
+ * on its own when the customer has written something unread (trigger 'open');
+ * the per-minute cron reads the rest.
  *
- * The CALL AUDIT's proposals for this client (preferences the customer said on
- * a Hatif call that are EMPTY on the client) render just above the chat's own
- * preference section (CallAuditSection) and save fill-empty-only. Since
- * 2026-09-29 each call block also carries the PLACES the audit read from the
- * call (only proposed for a client with no places; the save refuses once the
- * client has places). Both the chat's lines and a call's lines render through
- * the shared GeoLineGroups / buildGeoRows.
+ * The CALL AUDIT's proposals for this client (preferences / places the customer
+ * said on a Hatif call that are EMPTY on the client) are the call slides
+ * (CallSpecsSlide / CallPlacesSlide) and save fill-empty-only.
  */
 
 interface ChatCardDTO extends GeoCardDTO {
@@ -49,13 +58,14 @@ interface ReadResultDTO {
   prefs: { ran: boolean; proposalId?: string | null; fields?: number; error?: string };
 }
 
-const SAVED = GEO_SAVED;
 const OPEN = GEO_OPEN;
+const COMPACT_BTN = '!px-2.5 !py-0.5 !text-[11px] !rounded-full !gap-1';
 
 export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; chatWid: string }) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
   const { t } = useTranslation();
+  const { fieldLabel } = usePrefFieldFormat();
   const [prefsError, setPrefsError] = useState<string | null>(null);
 
   const [card, setCard] = useState<ChatCardDTO | null>(null);
@@ -65,12 +75,9 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
   const [saving, setSaving] = useState(false);
   const [unticked, setUnticked] = useState<Set<string>>(new Set());
   const [showMap, setShowMap] = useState(false);
-  // Call-audit saves in this session: the fields skipped because they were
-  // logged since the call, per proposal (the section unmounts on reload).
-  const [callSkipped, setCallSkipped] = useState<Record<string, string[]>>({});
-  const onCallSaved = useCallback((proposalId: string, skipped: string[]) => {
-    setCallSkipped((prev) => ({ ...prev, [proposalId]: skipped }));
-  }, []);
+  // Slides the rep saved / dismissed in this session: kept (compact) until the
+  // chat is re-read, although the post-decision reload no longer returns them.
+  const [done, setDone] = useState<Record<string, DoneEntry>>({});
 
   // Collapse state, persisted GLOBALLY (one preference across all chats), like the study card.
   const COLLAPSE_KEY = 'wassell_geo_pref_card_collapsed';
@@ -112,16 +119,18 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
       setCard(c);
       setUnticked(new Set());
       setLoadError(null);
+      // A new reading replaces what was decided before it.
+      setDone({});
       // An agent failure is not an HTTP error — the reading reports it per agent.
       setPrefsError(c.read?.prefs?.error ?? null);
       if (c.read?.geo?.error) {
         console.error('[GeoPrefCard] geography agent failed:', c.read.geo.error);
-        addToast(isAr ? `تعذّرت قراءة المواقع: ${c.read.geo.error}` : `Could not read the locations: ${c.read.geo.error}`, 'error');
+        addToast(t('chats.prefs.geo_read_failed', { msg: c.read.geo.error }), 'error');
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[GeoPrefCard] analyze failed:', err);
-      addToast(isAr ? `تعذّرت قراءة المحادثة: ${msg}` : `Could not read the chat: ${msg}`, 'error');
+      addToast(t('chats.prefs.chat_read_failed', { msg }), 'error');
     } finally {
       setAnalyzing(false);
     }
@@ -140,6 +149,18 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
   }, [card, loading, analyzing]);
 
   const rows: GeoRow[] = useMemo(() => buildGeoRows(card, isAr), [card, isAr]);
+  const freshSlides = useMemo(() => buildCardSlides(card), [card]);
+  const slides: VisibleSlide[] = useMemo(() => mergeDoneSlides(freshSlides, done), [freshSlides, done]);
+  const slidesRef = useRef(slides);
+  slidesRef.current = slides;
+
+  // Remember what the rep did to a slide (snapshot of the slide as it was).
+  const markDone = useCallback((key: string, info: SlideDone) => {
+    const slide = slidesRef.current.find((s) => s.key === key);
+    if (!slide) return;
+    // mergeDoneSlides overrides the snapshot's own `done`, so it can be kept as is.
+    setDone((prev) => ({ ...prev, [key]: { slide, done: info } }));
+  }, []);
 
   const ticked = (r: GeoRow) => r.savable && !unticked.has(r.evidenceId);
   const tickedRows = rows.filter(ticked);
@@ -158,21 +179,17 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
         method: 'POST',
         body: JSON.stringify({ proposalId: p.id, action, expectedVersion: p.version, ...(finalExpression ? { finalExpression } : {}) }),
       });
-      addToast(
-        action === 'reject'
-          ? (isAr ? 'تم تجاهل القراءة' : 'Reading dismissed')
-          : (isAr ? 'حُفظت في تفضيلات العميل' : 'Saved to the client’s preferences'),
-        'success',
-      );
+      markDone('chat-places', { action: action === 'reject' ? 'dismissed' : 'saved' });
+      addToast(action === 'reject' ? t('chats.prefs.geo_dismissed') : t('chats.prefs.geo_saved'), 'success');
       await load();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[GeoPrefCard] review failed:', err);
       if (err instanceof HttpError && err.status === 409) {
-        addToast(isAr ? `تغيّرت القراءة (حسمها شخص آخر) — أعدنا تحميلها: ${msg}` : `This reading changed (someone else resolved it) — reloaded: ${msg}`, 'error');
+        addToast(t('chats.prefs.geo_conflict', { msg }), 'error');
         await load();
       } else {
-        addToast(isAr ? `تعذّر الحفظ: ${msg}` : `Save failed: ${msg}`, 'error');
+        addToast(t('chats.prefs.save_failed', { msg }), 'error');
       }
     } finally {
       setSaving(false);
@@ -194,16 +211,6 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
   });
 
   const status = card?.status ?? null;
-  const statusLabel = (() => {
-    if (loading) return '';
-    if (analyzing) return isAr ? 'يقرأ…' : 'reading…';
-    if (!status) return '';
-    if (status === 'none') return isAr ? 'لم تُقرأ' : 'not read';
-    if (status === 'empty') return isAr ? 'لا أماكن' : 'no places';
-    if (OPEN.has(status)) return rows.length ? (isAr ? 'بانتظار حفظك' : 'awaiting your save') : (isAr ? 'لا أماكن' : 'no places');
-    if (SAVED.has(status)) return isAr ? '✓ محفوظة' : '✓ saved';
-    return isAr ? 'متجاهلة' : 'dismissed';
-  })();
 
   if (collapsed) {
     return (
@@ -216,207 +223,229 @@ export default function GeoPrefCard({ clientId, chatWid }: { clientId: string; c
           <ChevronDown size={11} />
           <MapPin size={10} />
           {t('chats.prefs.card_title')}
-          {(status && OPEN.has(status) && rows.length > 0) || card?.prefs?.proposal?.status === 'pending'
-            || (card?.prefs?.call_proposals ?? []).some((p) => p.status === 'pending')
-            || (card?.prefs?.call_geo ?? []).some((g) => g.card.proposal?.id === g.proposal_id && OPEN.has(g.card.proposal.status))
-            ? <span className="text-copper font-bold">•</span>
-            : null}
+          {freshSlides.length > 0 ? <span className="text-copper font-bold">•</span> : null}
         </button>
       </div>
     );
   }
 
-  const reread = (label?: string) => (
+  const open = !!status && OPEN.has(status);
+  const missed = card?.proposal?.verifier?.missed ?? [];
+  const staleText = card?.stale && status !== 'none'
+    ? t(card.graded ? 'chats.prefs.stale_graded' : 'chats.prefs.stale')
+    : null;
+  const lastReadAt = card?.prefs?.read_state?.last_read_at ?? card?.analyzed_at ?? null;
+
+  const rereadButton = (compact: boolean) => (
     <button
       onClick={() => void analyze('manual')}
       disabled={analyzing || !card?.can_reanalyze}
-      title={!card?.can_reanalyze ? (isAr ? 'قُرئت قبل لحظات — انتظر دقيقة' : 'Read a moment ago — wait a minute') : undefined}
-      className="inline-flex items-center gap-1 rounded-full border border-copper/40 px-2.5 py-1 text-[11px] font-medium text-copper hover:bg-copper/10 transition-colors disabled:opacity-40"
+      title={!card?.can_reanalyze ? t('chats.prefs.reread_wait') : (staleText ?? t('chats.prefs.reread'))}
+      aria-label={t('chats.prefs.reread')}
+      className={`relative inline-flex items-center gap-1 rounded-full border border-copper/40 text-[11px] font-medium text-copper hover:bg-copper/10 transition-colors disabled:opacity-40 ${compact ? 'p-1' : 'px-2.5 py-0.5'}`}
     >
       <RefreshCw size={11} />
-      {label ?? (isAr ? 'أعد القراءة' : 'Read again')}
+      {!compact && t('chats.prefs.reread')}
+      {compact && staleText && <span className="absolute -top-0.5 -end-0.5 h-1.5 w-1.5 rounded-full bg-copper" />}
     </button>
   );
+  const readButton = (
+    <Button className={COMPACT_BTN} onClick={() => void analyze('manual')} disabled={analyzing}>
+      <MapPin size={12} />
+      {t('chats.prefs.read_locations')}
+    </Button>
+  );
+  // With slides on screen the re-read shows where it always did: nothing to act
+  // on in the chat's own reading, or new messages on a reading that can be redone.
+  const rereadWithSlides = !!card && (
+    status === 'empty' || status === 'rejected' || status === 'superseded' || (open && rows.length === 0)
+    || (!!card.stale && status !== 'none' && !card.graded)
+  );
 
-  const open = !!status && OPEN.has(status);
-  const saved = !!status && SAVED.has(status);
-  const missed = card?.proposal?.verifier?.missed ?? [];
+  const lead = (
+    <>
+      <MapPin size={14} className="text-copper shrink-0" />
+      <span className="text-[12px] font-bold text-chocolate whitespace-nowrap">{t('chats.prefs.card_title')}</span>
+      {(card?.prefs?.unread_voice_notes ?? 0) > 0 && (
+        <span
+          className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
+          title={t('chats.prefs.voice_notes', { count: card?.prefs?.unread_voice_notes ?? 0 })}
+        >
+          <Mic size={10} />
+          {card?.prefs?.unread_voice_notes}
+        </span>
+      )}
+    </>
+  );
+
+  const tail = (
+    <>
+      {loading && card && <Loader2 size={12} className="animate-spin text-copper" />}
+      {slides.length > 0 && card && !analyzing && (status === 'none' ? readButton : rereadWithSlides ? rereadButton(true) : null)}
+      <button
+        onClick={() => setCollapsedPersist(true)}
+        className="text-charcoal/30 hover:text-copper transition-colors"
+        title={t('chats.prefs.card_hide')}
+      >
+        <ChevronUp size={14} />
+      </button>
+    </>
+  );
+
+  // The strip's middle when nothing is left to act on.
+  const emptyLine: ReactNode = !card || analyzing || loadError ? null : status === 'none' ? (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] text-charcoal/60">{t('chats.prefs.never_read')}</span>
+      {readButton}
+    </span>
+  ) : (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] text-charcoal/55">
+        {staleText ?? t('chats.prefs.nothing_new')}
+        {lastReadAt && <> · {t('chats.prefs.last_read', { when: dateTimeShort(lastReadAt, isAr) })}</>}
+      </span>
+      {rereadButton(false)}
+    </span>
+  );
+
+  const notices = (
+    <>
+      {loading && !card && (
+        <p className="mt-1 flex items-center gap-1.5 text-[11px] text-charcoal/50">
+          <Loader2 size={12} className="animate-spin text-copper" />
+          {t('chats.prefs.loading')}
+        </p>
+      )}
+      {!loading && loadError && (
+        <div className="mt-1 flex items-center gap-2 text-[11px] text-red-600">
+          <AlertTriangle size={12} className="shrink-0" />
+          <span className="flex-1">{t('chats.prefs.load_failed', { msg: loadError })}</span>
+          <button onClick={() => void load()} className="text-copper hover:underline">{t('chats.prefs.retry')}</button>
+        </div>
+      )}
+      {analyzing && (
+        <p className="mt-1 flex items-center gap-1.5 text-[11px] text-charcoal/60">
+          <Loader2 size={12} className="animate-spin text-copper" />
+          {t('chats.prefs.analyzing')}
+        </p>
+      )}
+      {!loadError && card && !analyzing && (card.prefs?.pending_transcripts ?? 0) > 0 && (
+        <p className="mt-1 flex items-center gap-1.5 text-[10.5px] text-amber-700">
+          <Mic size={11} className="shrink-0" />
+          {t('chats.prefs.transcribing')}
+        </p>
+      )}
+      {!loadError && card && !analyzing && prefsError && (
+        <p className="mt-1 text-[10.5px] text-amber-700" title={prefsError}>{t('chats.prefs.partial')}</p>
+      )}
+    </>
+  );
+
+  const chatPlacesBody = (
+    <SlideBody
+      top={status === 'must_confirm' ? (
+        <p className="mb-1 text-[10.5px] text-amber-700">{t('chats.prefs.must_confirm')}</p>
+      ) : undefined}
+      bottom={missed.length > 0 ? (() => {
+        const text = t('chats.prefs.missed', { spans: missed.map((m) => `«${m.span}»`).join(isAr ? '، ' : ', ') });
+        return <p className="mt-1 truncate text-[10.5px] text-charcoal/45" title={text}>{text}</p>;
+      })() : undefined}
+      footer={(
+        <SlideFooter
+          tickedCount={tickedRows.length}
+          saving={saving}
+          onSave={save}
+          onDismiss={() => void review('reject')}
+          info={t('chats.prefs.places_info')}
+          extra={(
+            <button
+              type="button"
+              onClick={() => setShowMap((v) => !v)}
+              className={`inline-flex items-center rounded-full p-1 transition-colors ${showMap ? 'bg-copper/10 text-copper' : 'text-charcoal/45 hover:text-copper'}`}
+              title={showMap ? t('chats.prefs.hide_map') : t('chats.prefs.show_map')}
+              aria-label={showMap ? t('chats.prefs.hide_map') : t('chats.prefs.show_map')}
+              aria-pressed={showMap}
+            >
+              <MapIcon size={13} />
+            </button>
+          )}
+          isAr={isAr}
+        />
+      )}
+    >
+      <PlaceTiles rows={rows} names={card?.names ?? {}} isTicked={ticked} onToggle={toggle} disabled={saving} isAr={isAr} />
+    </SlideBody>
+  );
+
+  const doneDetail = (d: SlideDone): ReactNode => {
+    const labels = (slugs: readonly string[]) => slugs.map((s) => fieldLabel(s)).join(isAr ? '، ' : ', ');
+    return (
+      <>
+        {d.action === 'saved' && d.nothingAdded && (
+          <p className="text-[10.5px] text-charcoal/55">{t('chats.prefs.call_nothing_added')}</p>
+        )}
+        {d.skipped && d.skipped.length > 0 && (
+          <p className="text-[10.5px] text-amber-700">{t('chats.prefs.call_skipped', { fields: labels(d.skipped) })}</p>
+        )}
+      </>
+    );
+  };
+
+  const slideBody = (s: VisibleSlide): ReactNode => {
+    if (s.done) return <SlideDoneView action={s.done.action} detail={doneDetail(s.done)} />;
+    if (!card) return null;
+    switch (s.kind) {
+      case 'chat-places':
+        return chatPlacesBody;
+      case 'chat-specs':
+        return <ChatSpecsSlide key={s.proposalId} prefs={card.prefs} onReload={load} onDone={(action) => markDone(s.key, { action })} />;
+      case 'call-specs':
+        return <CallSpecsSlide key={s.proposalId} proposal={s.proposal} onReload={load} onDone={(d) => markDone(s.key, d)} />;
+      case 'call-places':
+        return <CallPlacesSlide key={s.proposalId} geo={s.geo} onReload={load} onDone={(d) => markDone(s.key, d)} />;
+    }
+  };
+
+  const sliderSlides: SliderSlide[] = slides.map((s) => {
+    const topic = s.kind === 'chat-places' || s.kind === 'call-places' ? 'places' : 'specs';
+    const source = s.kind === 'chat-places' || s.kind === 'chat-specs'
+      ? t('chats.prefs.pill_chat')
+      : t('chats.prefs.pill_call', { date: callDayMonth(s.callAt, isAr) }).trim();
+    return {
+      key: s.key,
+      icon: topic,
+      label: `${t(topic === 'places' ? 'chats.prefs.pill_places' : 'chats.prefs.pill_specs')} · ${source}`,
+      count: s.count,
+      done: !!s.done,
+      body: slideBody(s),
+    };
+  });
 
   return (
     <div className="px-3 pt-2 shrink-0" dir={isAr ? 'rtl' : 'ltr'}>
-      {/* Capped at ~40% of the viewport with its own scroll — at full height a
-          nine-place reading (plus the map) pushed the conversation off screen
-          (seen live 2026-09-27). The chat must always stay readable. */}
-      <div className="rounded-xl border border-sand bg-white px-3 py-2 max-h-[40vh] overflow-y-auto overscroll-contain">
-        {/* Header */}
-        <div className="flex items-center gap-2">
-          <MapPin size={14} className="text-copper shrink-0" />
-          <span className="text-[12px] font-bold text-chocolate">{t('chats.prefs.card_title')}</span>
-          {statusLabel && <span className="text-[10.5px] text-charcoal/50">· {statusLabel}</span>}
-          {(card?.prefs?.unread_voice_notes ?? 0) > 0 && (
-            <span
-              className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
-              title={t('chats.prefs.voice_notes', { count: card?.prefs?.unread_voice_notes ?? 0 })}
-            >
-              <Mic size={10} />
-              {card?.prefs?.unread_voice_notes}
-            </span>
-          )}
-          <button
-            onClick={() => setCollapsedPersist(true)}
-            className="ms-auto text-charcoal/30 hover:text-copper transition-colors"
-            title={t('chats.prefs.card_hide')}
-          >
-            <ChevronUp size={14} />
-          </button>
-        </div>
-
-        {/* Loading / load error */}
-        {loading && (
-          <p className="mt-1 flex items-center gap-1.5 text-[11px] text-charcoal/50">
-            <Loader2 size={12} className="animate-spin text-copper" />
-            {isAr ? 'تحميل…' : 'Loading…'}
-          </p>
-        )}
-        {!loading && loadError && (
-          <div className="mt-1 flex items-center gap-2 text-[11px] text-red-600">
-            <AlertTriangle size={12} className="shrink-0" />
-            <span className="flex-1">{isAr ? `تعذّر التحميل: ${loadError}` : `Load failed: ${loadError}`}</span>
-            <button onClick={() => void load()} className="text-copper hover:underline">{isAr ? 'إعادة المحاولة' : 'Retry'}</button>
-          </div>
-        )}
-
-        {/* Analyzing */}
-        {analyzing && (
-          <p className="mt-1 flex items-center gap-1.5 text-[11px] text-charcoal/60">
-            <Loader2 size={12} className="animate-spin text-copper" />
-            {isAr ? 'أقرأ المحادثة… قد يأخذ دقيقة' : 'Reading the chat… this can take a minute'}
-          </p>
-        )}
-
-        {!loading && !loadError && card && !analyzing && (card.prefs?.pending_transcripts ?? 0) > 0 && (
-          <p className="mt-1 flex items-center gap-1.5 text-[10.5px] text-amber-700">
-            <Mic size={11} className="shrink-0" />
-            {t('chats.prefs.transcribing')}
-          </p>
-        )}
-
-        {!loading && !loadError && card && !analyzing && (
-          <>
-            {/* Stale — on any state */}
-            {card.stale && status !== 'none' && (
-              <div className="mt-1 flex items-center gap-2 text-[10.5px] text-charcoal/55">
-                <span className="flex-1">
-                  {isAr ? 'رسائل جديدة منذ آخر قراءة' : 'New messages since the last reading'}
-                  {card.graded && (isAr ? ' — هذه المحادثة مقيَّمة، فلن تُعاد قراءتها من جديد' : ' — this conversation is graded, so it will not be re-read from scratch')}
-                </span>
-                {!card.graded && reread(isAr ? 'حدّث' : 'Refresh')}
-              </div>
-            )}
-
-            {/* Never read */}
-            {status === 'none' && (
-              <div className="mt-1 flex items-center gap-2">
-                <span className="flex-1 text-[11px] text-charcoal/60">{isAr ? 'لم تُقرأ هذه المحادثة بعد' : 'This chat has not been read yet'}</span>
-                <Button className="!px-3 !py-1 !text-[11px] !rounded-full" onClick={() => void analyze('manual')} disabled={analyzing}>
-                  <MapPin size={12} />
-                  {isAr ? 'اقرأ المواقع' : 'Read locations'}
-                </Button>
-              </div>
-            )}
-
-            {/* Read, nothing placed */}
-            {(status === 'empty' || (open && rows.length === 0)) && (
-              <div className="mt-1 flex items-center gap-2">
-                <span className="flex-1 text-[11px] text-charcoal/60">{isAr ? 'لم يذكر العميل أماكن بعد' : 'The customer has not mentioned any places yet'}</span>
-                {reread()}
-              </div>
-            )}
-
-            {/* Open proposal — tick/untick, save, dismiss */}
-            {open && rows.length > 0 && (
-              <>
-                {status === 'must_confirm' && (
-                  <p className="mt-1 text-[10.5px] text-amber-700">{isAr ? 'عُلِّمت: تحتاج تأكيد العميل أولًا' : 'Marked: the customer must confirm first'}</p>
-                )}
-                <GeoLineGroups rows={rows} withBox isTicked={ticked} onToggle={toggle} disabled={saving} isAr={isAr} />
-                {missed.length > 0 && (
-                  <p className="mt-1 text-[10.5px] text-charcoal/45">
-                    {isAr ? 'قد يكون العميل ذكر أيضًا: ' : 'The customer may also have mentioned: '}
-                    {missed.map((m) => `«${m.span}»`).join(isAr ? '، ' : ', ')}
-                  </p>
-                )}
-                <div className="mt-2 flex items-center gap-2 flex-wrap">
-                  <Button className="!px-3 !py-1 !text-[11px] !rounded-full" onClick={save} disabled={saving || tickedRows.length === 0}>
-                    {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                    {isAr ? 'احفظ في ملف العميل' : 'Save to client'}
-                  </Button>
-                  <Button variant="ghost" className="!px-3 !py-1 !text-[11px] !rounded-full" onClick={() => void review('reject')} disabled={saving}>
-                    {isAr ? 'تجاهل' : 'Dismiss'}
-                  </Button>
-                  <button
-                    onClick={() => setShowMap((v) => !v)}
-                    className="ms-auto inline-flex items-center gap-1 text-[11px] text-charcoal/50 hover:text-copper"
-                  >
-                    <MapIcon size={11} />
-                    {showMap ? (isAr ? 'إخفاء الخريطة' : 'Hide map') : (isAr ? 'إظهار الخريطة' : 'Show map')}
-                  </button>
-                </div>
-              </>
-            )}
-
-            {/* Saved */}
-            {saved && (
-              <>
-                <p className="mt-1 text-[11px] font-bold text-green-700">{isAr ? '✓ حُفظت في تفضيلات العميل' : '✓ Saved to the client’s preferences'}</p>
-                <GeoLineGroups rows={rows} withBox={false} isTicked={ticked} onToggle={toggle} disabled isAr={isAr} />
-                <div className="mt-1.5 flex items-center gap-2">
-                  {card.stale && !card.graded && reread()}
-                  {rows.length > 0 && (
-                    <button
-                      onClick={() => setShowMap((v) => !v)}
-                      className="ms-auto inline-flex items-center gap-1 text-[11px] text-charcoal/50 hover:text-copper"
-                    >
-                      <MapIcon size={11} />
-                      {showMap ? (isAr ? 'إخفاء الخريطة' : 'Hide map') : (isAr ? 'إظهار الخريطة' : 'Show map')}
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-
-            {/* Dismissed / replaced */}
-            {(status === 'rejected' || status === 'superseded') && (
-              <div className="mt-1 flex items-center gap-2">
-                <span className="flex-1 text-[11px] text-charcoal/60">{isAr ? 'تم تجاهل القراءة' : 'The reading was dismissed'}</span>
-                {reread()}
-              </div>
-            )}
-
-            {/* Map (of the ticked / saved lines) */}
-            {showMap && (open || saved) && rows.length > 0 && (
+      {/* Each slide caps its own height (~260 px) so the whole card stays well
+          under the chat; the outer cap only matters when the map is open. */}
+      <div className="rounded-xl border border-sand bg-white px-3 py-2 max-h-[70vh] overflow-y-auto overscroll-contain">
+        <PrefCardSlider
+          slides={sliderSlides}
+          lead={lead}
+          tail={tail}
+          emptyLine={emptyLine}
+          notices={notices}
+          hideSlides={analyzing || !!loadError}
+          below={(activeKey) => {
+            const s = slides.find((x) => x.key === activeKey);
+            if (!showMap || !s || s.kind !== 'chat-places' || s.done || rows.length === 0) return null;
+            return (
               <div className="mt-2">
                 <Suspense fallback={<Loader2 size={14} className="animate-spin text-copper" />}>
-                  <GeoPrefMap items={saved ? (card.proposal?.items ?? []) : mapItems} isAr={isAr} height={220} />
+                  <GeoPrefMap items={mapItems} isAr={isAr} height={220} />
                 </Suspense>
               </div>
-            )}
-
-            {/* Preferences the customer said on a call but the client does not have (call audit) */}
-            {((card.prefs?.call_proposals ?? []).length > 0 || (card.prefs?.call_geo ?? []).length > 0) && (
-              <CallAuditSection
-                proposals={card.prefs.call_proposals ?? []}
-                geo={card.prefs.call_geo ?? []}
-                onReload={load}
-                skippedById={callSkipped}
-                onSaved={onCallSaved}
-              />
-            )}
-
-            {/* Preferences read from the same conversation (budget, unit type, …) */}
-            {card.prefs && <PrefSuggestionsSection prefs={card.prefs} prefsError={prefsError} onReload={load} />}
-          </>
-        )}
+            );
+          }}
+          isAr={isAr}
+        />
       </div>
     </div>
   );
