@@ -81,7 +81,7 @@ async function loadRecentTurns(
     } else if (!isNew) {
       lastOursAt = r.date;
     }
-    return { who: r.flow === 'in' ? 'customer' : 'us', text, isNew };
+    return { who: r.flow === 'in' ? 'customer' : 'us', text, isNew, at: r.date };
   });
   return { turns, newestCustomerAt, deviceId, newCustomerText: newText.join(' '), lastOursAt };
 }
@@ -409,6 +409,8 @@ async function runBrainTurn(
   const outcome = await runBrain(
     {
       chatWid, lang, turns: a.turns, stateLines, sentProjectIds: conv.sent_project_ids,
+      // The conversation started ~5 min before created_at (the message that started it).
+      conversationStartedAt: new Date(new Date(conv.created_at).getTime() - 5 * 60_000).toISOString(),
       excludeProjectIds: exclude, knownProjectIds: knownIds, narrowTurns: slots.narrow_turns ?? 0,
     },
     {

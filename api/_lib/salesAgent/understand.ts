@@ -22,6 +22,8 @@ export interface ChatTurn {
   text: string;
   /** Sent after our last reply — what this turn must answer. */
   isNew: boolean;
+  /** Message time (ISO) — lets the brain mark where the current conversation starts. */
+  at?: string;
 }
 
 const INTENTS: Intent[] = ['answer', 'more', 'interested', 'question', 'human', 'stop', 'other'];
