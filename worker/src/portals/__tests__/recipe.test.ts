@@ -55,4 +55,17 @@ describe('runSteps error wrapping', () => {
     expect(err).toBeInstanceOf(RecipeError);
     expect((err as RecipeError).en).toContain('request_input');
   });
+
+  it('a fail step with outcome carries it on the RecipeError (already registered)', async () => {
+    const steps = [{ do: 'fail', ar: 'مسجّل لدى وسيط آخر', en: 'already registered', outcome: 'already_registered' }] as RecipeStep[];
+    const err = await runSteps(steps, runtime(async () => '')).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RecipeError);
+    expect((err as RecipeError).outcome).toBe('already_registered');
+  });
+
+  it('a fail step without outcome stays a plain failure', async () => {
+    const steps = [{ do: 'fail', ar: 'x', en: 'x' }] as RecipeStep[];
+    const err = await runSteps(steps, runtime(async () => '')).catch((e: unknown) => e);
+    expect((err as RecipeError).outcome).toBeUndefined();
+  });
 });

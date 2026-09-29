@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   X, Loader2, Search, Building2, Globe, KeyRound, ExternalLink, Eye, EyeOff,
-  CheckCircle2, AlertTriangle, Send, RefreshCw, Ban, History,
+  CheckCircle2, AlertTriangle, Send, RefreshCw, Ban, History, Info,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -125,6 +125,10 @@ export default function RegisterLeadPortalModal({
     () => (portal ? history.find((h) => h.portal_record_id === portal.id && h.status === 'done') ?? null : null),
     [portal, history],
   );
+  const priorTaken = useMemo(
+    () => (portal ? history.find((h) => h.portal_record_id === portal.id && h.status === 'already_registered') ?? null : null),
+    [portal, history],
+  );
 
   // ── Step 4: the run ────────────────────────────────────────────────────
   const [starting, setStarting] = useState(false);
@@ -166,7 +170,7 @@ export default function RegisterLeadPortalModal({
   }, [job?.id]);
 
   // Stop polling once the run is over (one last fetch for the final screenshots).
-  const terminal = job ? ['done', 'failed', 'cancelled'].includes(job.status) : false;
+  const terminal = job ? ['done', 'failed', 'cancelled', 'already_registered'].includes(job.status) : false;
   useEffect(() => {
     if (!terminal || !job) return;
     void fetchPortalJob(job.id).then((row) => setJob((cur) => (cur ? { ...cur, ...row } : row))).catch(() => {});
@@ -250,6 +254,7 @@ export default function RegisterLeadPortalModal({
     : s === 'awaiting_input' ? (isAr ? 'بانتظار الرمز' : 'Waiting for the code')
     : s === 'done' ? (isAr ? 'تم التسجيل' : 'Registered')
     : s === 'failed' ? (isAr ? 'فشل' : 'Failed')
+    : s === 'already_registered' ? (isAr ? 'مسجّل لدى وسيط آخر' : 'Another broker’s client')
     : (isAr ? 'أُلغي' : 'Cancelled');
 
   const fmtDate = (iso: string) => {
@@ -376,6 +381,16 @@ export default function RegisterLeadPortalModal({
                 ) : null}
 
                 {/* Prior registration warning */}
+                {priorTaken && !priorDone && (
+                  <div className="mb-3 flex items-start gap-2 rounded-xl border border-sky-300 bg-sky-50 p-3 text-xs text-sky-900">
+                    <Info size={14} className="mt-0.5 shrink-0" />
+                    <span>
+                      {isAr
+                        ? `أفادت «${priorTaken.portal_name}» بتاريخ ${fmtDate(priorTaken.finished_at ?? priorTaken.created_at)} أن هذا العميل مسجّل لدى وسيط آخر. المحاولة مرة أخرى ستُرفض غالباً.`
+                        : `On ${fmtDate(priorTaken.finished_at ?? priorTaken.created_at)} "${priorTaken.portal_name}" said this client is already another broker's. Trying again will most likely be refused.`}
+                    </span>
+                  </div>
+                )}
                 {priorDone && (
                   <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
                     <History size={14} className="mt-0.5 shrink-0" />
@@ -459,7 +474,7 @@ export default function RegisterLeadPortalModal({
                     <ul className="mt-2 space-y-1">
                       {history.map((h) => (
                         <li key={h.id} className="flex items-center gap-2" title={h.error_message ?? undefined}>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] ${h.status === 'done' ? 'bg-green-100 text-green-800' : h.status === 'failed' ? 'bg-red-100 text-red-800' : 'bg-charcoal/10 text-charcoal/70'}`}>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] ${h.status === 'done' ? 'bg-green-100 text-green-800' : h.status === 'failed' ? 'bg-red-100 text-red-800' : h.status === 'already_registered' ? 'bg-sky-100 text-sky-800' : 'bg-charcoal/10 text-charcoal/70'}`}>
                             {statusLabel(h.status)}
                           </span>
                           <span className="font-medium">{h.portal_name}</span>
@@ -505,6 +520,7 @@ export default function RegisterLeadPortalModal({
                 className={`ms-auto rounded-full px-2 py-0.5 text-[11px] font-medium ${
                   job.status === 'done' ? 'bg-green-100 text-green-800'
                   : job.status === 'failed' ? 'bg-red-100 text-red-800'
+                  : job.status === 'already_registered' ? 'bg-sky-100 text-sky-800'
                   : job.status === 'cancelled' ? 'bg-charcoal/10 text-charcoal/70'
                   : job.status === 'awaiting_input' ? 'bg-amber-100 text-amber-800'
                   : 'bg-copper/10 text-copper'
@@ -617,6 +633,16 @@ export default function RegisterLeadPortalModal({
                 <span>{pickErrorLine(job.error_message, isAr) || (isAr ? 'فشل التسجيل.' : 'Registration failed.')}</span>
               </div>
             )}
+            {job.status === 'already_registered' && (
+              <div className="mb-3 flex items-start gap-2 rounded-xl border border-sky-300 bg-sky-50 p-3 text-sm text-sky-900">
+                <Info size={16} className="mt-0.5 shrink-0" />
+                <span>
+                  {isAr
+                    ? `أفادت بوابة «${portal?.name ?? ''}» أن العميل${clientName ? ` «${clientName}»` : ''} مسجّل مسبقاً لدى وسيط آخر. سُجّلت المعلومة في ملف العميل ولن تُعاد المحاولة تلقائياً.`
+                    : `"${portal?.name ?? ''}" says${clientName ? ` "${clientName}"` : ' this client'} is already registered by another broker. This is saved on the client and will not be retried automatically.`}
+                </span>
+              </div>
+            )}
             {job.status === 'cancelled' && (
               <div className="mb-3 flex items-start gap-2 rounded-xl border border-sand bg-cream/60 p-3 text-sm text-charcoal">
                 <Ban size={16} className="mt-0.5 shrink-0" />
@@ -646,7 +672,7 @@ export default function RegisterLeadPortalModal({
                 </Button>
               ) : (
                 <>
-                  {job.status !== 'done' && (
+                  {job.status !== 'done' && job.status !== 'already_registered' && (
                     <Button variant="secondary" onClick={retry}>
                       <RefreshCw size={15} />
                       {isAr ? 'حاول مرة أخرى' : 'Try again'}

@@ -352,6 +352,35 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       }
       return { outcome: 'parked', park_result: parked };
     }
+    if (err instanceof RecipeError && err.outcome === 'already_registered') {
+      // The portal ANSWERED: the client is already another broker's. Record it
+      // as its own terminal status — not a failure a rep would retry forever.
+      const { data: marked, error: markErr } = await supabase.rpc('portal_registration_job_already_registered', {
+        p_job_id: job.id,
+        p_message: `${err.ar}\n${err.en}`,
+        p_result: { portal_name: portalScope.name, project_name: str(lead.project_name), step: err.stepIndex ?? null },
+      });
+      if (markErr) throw new Error(`portal_registration_job_already_registered failed: ${markErr.message}`);
+      log(`portal says the client is already registered by another broker → ${marked ? 'recorded' : 'row no longer live'}`);
+      if (marked) {
+        const { data: clientsModel } = await supabase.from('models').select('id').eq('name', 'clients').maybeSingle();
+        const { error: logErr } = await supabase.from('activity_log').insert({
+          category: 'record',
+          event_type: 'portal_lead_already_registered',
+          actor_user_id: job.userId,
+          target_model_id: (clientsModel as { id: string } | null)?.id ?? null,
+          target_record_id: job.clientRecordId,
+          target_label: str(client.data?.client_name) || null,
+          summary_ar: `بوابة «${portalScope.name}» أفادت أن العميل «${str(client.data?.client_name)}» مسجّل مسبقاً لدى وسيط آخر${lead.project_name ? ` — مشروع «${str(lead.project_name)}»` : ''}`,
+          summary_en: `Portal "${portalScope.name}" says client "${str(client.data?.client_name)}" is already registered by another broker${lead.project_name ? ` — project "${str(lead.project_name)}"` : ''}`,
+          details: { job_id: job.id, portal_record_id: job.portalRecordId, project_record_id: job.projectRecordId },
+          status: 'success',
+        });
+        if (logErr) console.error(`${tag} activity_log insert failed: ${logErr.message}`);
+        await relayNotify(`ℹ️ العميل «${clientName}» مسجّل مسبقاً لدى وسيط آخر في «${portalScope.name}»${projectLabel} — سُجّلت المعلومة في ملف العميل، ولن تُعاد المحاولة.`);
+      }
+      return { outcome: 'already_registered' };
+    }
     if (relay) {
       const reason = err instanceof RecipeError ? err.ar : (err as Error).message;
       await relayNotify(`❌ تعذّر تسجيل العميل «${clientName}» في «${portalScope.name}»: ${reason}`);

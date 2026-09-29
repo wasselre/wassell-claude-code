@@ -2580,6 +2580,11 @@ async function claimAndRunOnePortal(): Promise<boolean> {
       console.log(`[worker] portal job=${job.id} parked → ${String((result as { park_result?: unknown }).park_result)}`);
       return true;
     }
+    if ((result as { outcome?: string }).outcome === 'already_registered') {
+      // Already written by portal_registration_job_already_registered.
+      console.log(`[worker] portal job=${job.id} → already registered by another broker`);
+      return true;
+    }
     const { error: doneErr } = await supabase.rpc('portal_registration_job_complete', {
       p_job_id: job.id,
       p_result: result ?? {},

@@ -15,7 +15,7 @@
 
 import { supabase } from '@/lib/supabase';
 
-export type PortalJobStatus = 'queued' | 'running' | 'awaiting_input' | 'done' | 'failed' | 'cancelled';
+export type PortalJobStatus = 'queued' | 'running' | 'awaiting_input' | 'done' | 'failed' | 'cancelled' | 'already_registered';
 
 export interface PortalFieldSpec {
   key: string;

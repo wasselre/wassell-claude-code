@@ -96,7 +96,7 @@ an unescaped dot is parsed as a class and the step fails with a bare
 | `assert` | target, `error_ar?`, `error_en?`, `timeout_ms?` | Fail the run with that message unless the element appears (use it to prove success). |
 | `if_visible` | target, `timeout_ms?`, `then?: [...]`, `else?: [...]` | Branch (e.g. "already registered" dialog). |
 | `phase` | `ar`, `en` | Progress label shown to the rep. |
-| `fail` | `ar`, `en` | Stop with a message. |
+| `fail` | `ar`, `en`, optional `outcome` | Stop with a message. With `"outcome": "already_registered"` the run is NOT a failure: it ends as its own status `already_registered` (the portal answered that the client is another broker's) — sky-blue «مسجّل لدى وسيط آخر» on the chat card, an activity-log line on the client, «ℹ️» on the ops WhatsApp, no retry button. It is the only outcome so far (`RECIPE_OUTCOMES` in `recipe.ts`); an unknown value fails the step. |
 | `set` | `key`, `value` | Store a value in `{{vars.key}}`. |
 
 ### Example — phone + OTP sign-in, then a lead form
@@ -120,7 +120,7 @@ an unescaped dot is parsed as a class and the step fails with a bare
   { "do": "fill", "label": "رقم الجوال", "value": "{{lead.phone|local}}" },
   { "do": "select", "label": "المشروع", "option_label": "{{lead.project_name}}" },
   { "do": "if_visible", "text": "العميل مسجل مسبقاً", "timeout_ms": 2000,
-    "then": [ { "do": "fail", "ar": "هذا العميل مسجّل مسبقاً في البوابة", "en": "This client is already registered in the portal" } ] },
+    "then": [ { "do": "fail", "outcome": "already_registered", "ar": "هذا العميل مسجّل مسبقاً في البوابة", "en": "This client is already registered in the portal" } ] },
   { "do": "screenshot", "label": "before-submit" },
   { "do": "click", "role": "button", "name": "حفظ" },
   { "do": "assert", "text": "تم التسجيل بنجاح", "timeout_ms": 30000,

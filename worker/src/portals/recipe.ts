@@ -80,10 +80,16 @@ export type RecipeStep =
   | ({ do: 'assert'; timeout_ms?: number; error_ar?: string; error_en?: string } & Target)
   | ({ do: 'if_visible'; timeout_ms?: number; then?: RecipeStep[]; else?: RecipeStep[] } & Target)
   | { do: 'phase'; ar: string; en: string }
-  | { do: 'fail'; ar: string; en: string }
+  /** `outcome` turns the stop into a recorded ANSWER instead of a failure —
+   *  e.g. the portal says the client is already another broker's. */
+  | { do: 'fail'; ar: string; en: string; outcome?: RecipeOutcome }
   | { do: 'set'; key: string; value: string };
 
 // ── Errors ──────────────────────────────────────────────────────────────────
+
+/** Named results a `fail` step can end a run with instead of a plain failure. */
+export type RecipeOutcome = 'already_registered';
+export const RECIPE_OUTCOMES: readonly RecipeOutcome[] = ['already_registered'];
 
 /** A recipe-level failure with a bilingual, rep-facing message. */
 export class RecipeError extends Error {
@@ -91,6 +97,8 @@ export class RecipeError extends Error {
     public readonly ar: string,
     public readonly en: string,
     public readonly stepIndex?: number,
+    /** Set when the recipe ended on a known answer (see RecipeOutcome). */
+    public readonly outcome?: RecipeOutcome,
   ) {
     super(`${ar}\n${en}`);
     this.name = 'RecipeError';
@@ -455,7 +463,10 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
       return;
     }
     case 'fail': {
-      throw new RecipeError(r(step.ar), r(step.en), index);
+      if (step.outcome !== undefined && !RECIPE_OUTCOMES.includes(step.outcome)) {
+        throw new RecipeError(`نتيجة غير معروفة في خطوة fail: ${String(step.outcome)}`, `Unknown fail outcome: ${String(step.outcome)}`, index);
+      }
+      throw new RecipeError(r(step.ar), r(step.en), index, step.outcome);
     }
     case 'set': {
       scope.vars[step.key] = r(step.value);
