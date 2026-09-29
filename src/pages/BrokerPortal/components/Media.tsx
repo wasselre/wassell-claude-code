@@ -7,7 +7,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Copy, Download, ExternalLink, FileText, Film, Loader2, Play, X } from 'lucide-react';
 import { flash } from '../lib/flash';
-import type { HostedVideo, PortalFile } from '../lib/api';
+import type { HostedVideo, PortalFile, VideoAudio } from '../lib/api';
 import { fmtBytes, fmtDuration, makeT } from '../lib/i18n';
 
 const PdfViewer = lazy(() => import('@/components/ui/PdfViewer'));
@@ -71,6 +71,7 @@ export interface LightboxItem {
   caption?: string;
   download?: string | null;
   transcript?: string | null;
+  postCaption?: string | null;
 }
 
 export function Lightbox({
@@ -173,17 +174,21 @@ export function Lightbox({
           </>
         )}
       </div>
-      {item.kind === 'video' && item.transcript && (
-        <div className="mx-auto mb-4 w-full max-w-3xl px-4">
-          <div className="rounded-xl bg-white/10 text-white/90 p-3 max-h-[22vh] overflow-y-auto text-sm leading-7 whitespace-pre-line">
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <span className="text-xs font-bold text-white/60">{t('transcript')}</span>
-              <button type="button" onClick={() => void copyText(item.transcript ?? '', t('copied'), t('copyFailed'))} className="inline-flex items-center gap-1 text-xs text-white/80 hover:text-white">
-                <Copy size={13} /> {t('copyTranscript')}
-              </button>
-            </div>
-            {item.transcript}
-          </div>
+      {item.kind === 'video' && (item.transcript || item.postCaption) && (
+        <div className="mx-auto mb-4 w-full max-w-3xl px-4 grid gap-2 sm:grid-cols-2">
+          {([['transcript', item.transcript, 'copyTranscript'], ['postCaption', item.postCaption, 'copyCaption']] as const)
+            .filter(([, text]) => !!text)
+            .map(([label, text, copyLabel]) => (
+              <div key={label} className="rounded-xl bg-white/10 text-white/90 p-3 max-h-[22vh] overflow-y-auto text-sm leading-7 whitespace-pre-line">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-xs font-bold text-white/60">{t(label)}</span>
+                  <button type="button" onClick={() => void copyText(text ?? '', t('copied'), t('copyFailed'))} className="inline-flex items-center gap-1 text-xs text-white/80 hover:text-white">
+                    <Copy size={13} /> {t(copyLabel)}
+                  </button>
+                </div>
+                {text}
+              </div>
+            ))}
         </div>
       )}
     </div>
@@ -198,6 +203,7 @@ export function fileToLightbox(f: PortalFile): LightboxItem {
     caption: f.name,
     download: f.download,
     transcript: f.transcript,
+    postCaption: f.caption ?? null,
   };
 }
 
@@ -261,11 +267,7 @@ export function MediaGrid({ files, isAr, square = true }: { files: PortalFile[];
                     {fmtDuration(f.duration_seconds)}
                   </span>
                 )}
-                {f.transcript && (
-                  <span className="absolute top-2 start-2 text-[10px] px-1.5 py-0.5 rounded bg-copper text-white font-bold">
-                    {t('transcript')}
-                  </span>
-                )}
+                <AudioBadge audio={f.audio ?? null} isAr={isAr} className="absolute top-2 start-2" />
               </>
             ) : (
               <img
@@ -335,7 +337,7 @@ export function VideosSection({ files, hosted, isAr }: { files: PortalFile[]; ho
         </div>
       )}
       {(files.length > 0 || direct.length > 0) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
           {files.map((f) => (
             <div key={f.id} className="rounded-xl overflow-hidden bg-black border border-sand/40">
               <video src={f.url} controls preload="metadata" playsInline className="w-full aspect-video bg-black" />
@@ -347,7 +349,11 @@ export function VideosSection({ files, hosted, isAr }: { files: PortalFile[]; ho
                   </a>
                 )}
               </div>
+              <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2 bg-white">
+                <AudioBadge audio={f.audio ?? null} isAr={isAr} />
+              </div>
               {f.transcript && <TranscriptBlock text={f.transcript} isAr={isAr} />}
+              {f.caption && <TranscriptBlock text={f.caption} isAr={isAr} label="postCaption" copyLabel="copyCaption" />}
             </div>
           ))}
           {direct.map((v) => (
@@ -376,15 +382,37 @@ export function VideosSection({ files, hosted, isAr }: { files: PortalFile[]; ho
   );
 }
 
-export function TranscriptBlock({ text, isAr }: { text: string; isAr: boolean }) {
+/** What the Arabic transcription found for a video — shown on EVERY processed
+ *  video so a broker sees it was checked, not only the few with speech. */
+export function AudioBadge({ audio, isAr, className = '' }: { audio: VideoAudio; isAr: boolean; className?: string }) {
+  const t = makeT(isAr);
+  if (!audio) return null;
+  const style = audio === 'speech' ? 'bg-copper text-white' : 'bg-black/60 text-white';
+  const label = audio === 'speech' ? t('audioSpeech') : audio === 'music' ? t('audioMusic') : t('audioSilent');
+  const icon = audio === 'speech' ? '🎙️' : audio === 'music' ? '🎵' : '🔇';
+  return (
+    <span className={`${className} inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold ${style}`}>
+      <span aria-hidden>{icon}</span> {label}
+    </span>
+  );
+}
+
+export function TranscriptBlock({
+  text, isAr, label = 'transcript', copyLabel = 'copyTranscript',
+}: {
+  text: string;
+  isAr: boolean;
+  label?: 'transcript' | 'postCaption';
+  copyLabel?: 'copyTranscript' | 'copyCaption';
+}) {
   const t = makeT(isAr);
   return (
     <details className="bg-cream-50 border-t border-sand/40 text-xs text-charcoal">
-      <summary className="cursor-pointer px-3 py-2 font-bold text-copper">{t('transcript')}</summary>
+      <summary className="cursor-pointer px-3 py-2 font-bold text-copper">{t(label)}</summary>
       <div className="px-3 pb-3 leading-6 whitespace-pre-line max-h-48 overflow-y-auto">{text}</div>
       <div className="px-3 pb-2">
         <button type="button" onClick={() => void copyText(text, t('copied'), t('copyFailed'))} className="inline-flex items-center gap-1 text-copper font-bold">
-          <Copy size={13} /> {t('copyTranscript')}
+          <Copy size={13} /> {t(copyLabel)}
         </button>
       </div>
     </details>

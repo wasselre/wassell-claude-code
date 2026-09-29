@@ -1,7 +1,7 @@
 /**
  * The developer-wide library (e.g. «مكتبة الرمز»): every linked photo, video,
  * design, floor plan and brochure across all projects, plus the projects' reel
- * links. Filter by type / project, search names AND video transcripts.
+ * links. Filter by type / project, search names, video transcripts AND post captions.
  * Metadata arrives in one call; urls are signed per visible page (action 'sign').
  */
 
@@ -60,9 +60,9 @@ export default function LibraryView({ token, isAr, title }: { token: string; isA
       if (kind !== 'all' && kind !== 'reels' && kindOf(f) !== kind) return false;
       if (kind === 'reels') return false;
       if (project && !f.project_ids.includes(project)) return false;
-      if (onlyTranscribed && !f.transcript) return false;
+      if (onlyTranscribed && !f.transcript && !f.caption) return false;
       if (q) {
-        const hay = normalizeForSearch([f.name, f.transcript ?? '', ...f.project_ids.map((id) => projectName.get(id) ?? '')].join(' '));
+        const hay = normalizeForSearch([f.name, f.transcript ?? '', f.caption ?? '', ...f.project_ids.map((id) => projectName.get(id) ?? '')].join(' '));
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -106,7 +106,7 @@ export default function LibraryView({ token, isAr, title }: { token: string; isA
     return {
       id: f.id, section: f.section, kind: f.kind, mime_type: f.mime_type, name: f.name,
       size_bytes: f.size_bytes, width: f.width, height: f.height, duration_seconds: f.duration_seconds,
-      url: u.url, thumb: u.thumb, download: u.download, unit_ids: [], created_at: f.created_at, transcript: f.transcript,
+      url: u.url, thumb: u.thumb, download: u.download, unit_ids: [], created_at: f.created_at, transcript: f.transcript, caption: f.caption, audio: f.audio,
     };
   };
   const ready = visible.map(asPortalFile).filter((f): f is PortalFile => !!f);
@@ -133,7 +133,7 @@ export default function LibraryView({ token, isAr, title }: { token: string; isA
     { k: 'plans', label: 'plans', icon: LayoutGrid },
     { k: 'documents', label: 'documents', icon: FileText },
   ];
-  const transcribed = lib.files.filter((f) => f.transcript).length;
+  const transcribed = lib.files.filter((f) => f.kind === 'video' && (f.transcript || f.caption)).length;
 
   return (
     <div className="space-y-5">
@@ -181,7 +181,7 @@ export default function LibraryView({ token, isAr, title }: { token: string; isA
                 onlyTranscribed ? 'bg-copper text-white border-copper' : 'bg-white text-copper border-copper/40'
               }`}
             >
-              {t('withTranscript')} <span className="opacity-70">{transcribed}</span>
+              {t('withText')} <span className="opacity-70">{transcribed}</span>
             </button>
           )}
         </div>

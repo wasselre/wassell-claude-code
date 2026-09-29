@@ -90,7 +90,12 @@ export interface PortalFile {
   unit_ids: string[];
   created_at: string | null;
   transcript: string | null;
+  caption?: string | null;
+  audio?: VideoAudio;
 }
+
+/** What the Arabic transcription heard: speech, music only, or no sound track. */
+export type VideoAudio = 'speech' | 'music' | 'silent' | null;
 
 export interface HostedVideo {
   url: string;
@@ -162,6 +167,8 @@ export interface LibraryFile {
   project_ids: string[];
   unit_count: number;
   transcript: string | null;
+  caption: string | null;
+  audio: VideoAudio;
   created_at: string | null;
 }
 

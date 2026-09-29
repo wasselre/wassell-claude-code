@@ -462,36 +462,74 @@ function cleanTranscript(text: string): string {
     .trim();
 }
 
-/** Speech transcripts for video files (collected social reels are transcribed
- *  by the marketing lane: files ← mkt_content_media.file_id → mkt_transcripts).
- *  Empty transcripts (music-only reels) are left out. */
-async function loadTranscripts(svc: SupabaseClient, fileIds: string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  const keep = (fid: string | undefined, t: TranscriptRow) => {
-    if (!fid || !isPresentableTranscript(t)) return;
-    const text = cleanTranscript(t.text ?? '');
-    if (!text) return;
-    if ((out.get(fid)?.length ?? 0) < text.length) out.set(fid, text);
+/** What a broker learns about a video's words. `audio` says what the Arabic
+ *  transcription found (speech / music only / no sound track) so every
+ *  processed video shows a result, not only the few with speech. `caption` is
+ *  the original social-post text for collected reels — ready-made copy. */
+interface VideoText {
+  transcript: string | null;
+  caption: string | null;
+  audio: 'speech' | 'music' | 'silent' | null;
+}
+
+function requestedLanguage(req: Json | null): boolean {
+  return !!req && typeof req === 'object' && 'language' in req;
+}
+
+async function loadVideoText(svc: SupabaseClient, fileIds: string[]): Promise<Map<string, VideoText>> {
+  const out = new Map<string, VideoText>();
+  const get = (fid: string) => {
+    let v = out.get(fid);
+    if (!v) { v = { transcript: null, caption: null, audio: null }; out.set(fid, v); }
+    return v;
+  };
+  const take = (fid: string | undefined, t: TranscriptRow & { model?: string | null }) => {
+    if (!fid) return;
+    const v = get(fid);
+    if (isPresentableTranscript(t)) {
+      const text = cleanTranscript(t.text ?? '');
+      if (text) {
+        if ((v.transcript?.length ?? 0) < text.length) v.transcript = text;
+        v.audio = 'speech';
+        return;
+      }
+    }
+    if (v.audio === 'speech') return;
+    // The collector's marker for a video with NO audio track.
+    if (t.model === 'none') { v.audio = 'silent'; return; }
+    // A deliberate (language requested) transcription that heard no words.
+    if (requestedLanguage(t.req) && v.audio !== 'silent') v.audio = 'music';
   };
   for (let i = 0; i < fileIds.length; i += 150) {
     const chunk = fileIds.slice(i, i + 150);
-    // (1) Collected reels: files ← mkt_content_media.file_id → mkt_transcripts.
-    const { data: media, error } = await svc.from('mkt_content_media').select('id, file_id').in('file_id', chunk);
+    // (1) Collected reels: files ← mkt_content_media.file_id → mkt_transcripts + the post caption.
+    const { data: media, error } = await svc.from('mkt_content_media').select('id, file_id, content_post_id').in('file_id', chunk);
     if (error) { console.error('[broker-portal] content media lookup failed:', error.message); return out; }
-    const rows = (media ?? []) as Array<{ id: string; file_id: string }>;
+    const rows = (media ?? []) as Array<{ id: string; file_id: string; content_post_id: string | null }>;
     if (rows.length) {
       const { data: tr, error: tErr } = await svc
-        .from('mkt_transcripts').select('content_media_id, text, language, req:raw->_request').eq('status', 'done')
+        .from('mkt_transcripts').select('content_media_id, model, text, language, req:raw->_request').eq('status', 'done')
         .in('content_media_id', rows.map((r) => r.id));
       if (tErr) { console.error('[broker-portal] transcript lookup failed:', tErr.message); return out; }
       const fileOf = new Map(rows.map((r) => [r.id, r.file_id]));
-      for (const t of (tr ?? []) as Array<TranscriptRow & { content_media_id: string }>) keep(fileOf.get(t.content_media_id), t);
+      for (const t of (tr ?? []) as Array<TranscriptRow & { content_media_id: string; model: string | null }>) take(fileOf.get(t.content_media_id), t);
+
+      const postIds = [...new Set(rows.map((r) => r.content_post_id).filter((x): x is string => !!x))];
+      if (postIds.length) {
+        const { data: posts, error: pErr } = await svc.from('mkt_content_posts').select('id, caption').in('id', postIds);
+        if (pErr) console.error('[broker-portal] post caption lookup failed:', pErr.message);
+        const captionOf = new Map(((posts ?? []) as Array<{ id: string; caption: string | null }>).map((p) => [p.id, (p.caption ?? '').trim()]));
+        for (const r of rows) {
+          const c = r.content_post_id ? captionOf.get(r.content_post_id) : '';
+          if (c && c.length >= 12) get(r.file_id).caption = c;
+        }
+      }
     }
     // (2) Our own uploads: public.file_transcripts (scripts/transcribe-developer-videos.mjs).
     const { data: own, error: oErr } = await svc
-      .from('file_transcripts').select('file_id, text, language, req:raw->_request').eq('status', 'done').in('file_id', chunk);
+      .from('file_transcripts').select('file_id, model, text, language, req:raw->_request').eq('status', 'done').in('file_id', chunk);
     if (oErr) { console.error('[broker-portal] file transcript lookup failed:', oErr.message); return out; }
-    for (const t of (own ?? []) as Array<TranscriptRow & { file_id: string }>) keep(t.file_id, t);
+    for (const t of (own ?? []) as Array<TranscriptRow & { file_id: string; model: string | null }>) take(t.file_id, t);
   }
   return out;
 }
@@ -520,7 +558,7 @@ async function projectDetail(svc: SupabaseClient, portal: PortalRow, projectId: 
   const signed = await signFiles(svc, [...files.values()]);
 
   const placed = placeFiles(links, files, new Set(units.map((u) => u.id)));
-  const transcripts = await loadTranscripts(svc, [...files.values()].filter((f) => f.kind === 'video').map((f) => f.id));
+  const videoText = await loadVideoText(svc, [...files.values()].filter((f) => f.kind === 'video').map((f) => f.id));
   const mediaFiles = [...placed.entries()].map(([id, p]) => {
     const f = files.get(id)!;
     const s = signed.get(id);
@@ -539,7 +577,9 @@ async function projectDetail(svc: SupabaseClient, portal: PortalRow, projectId: 
       download: s?.download ?? null,
       unit_ids: p.unit_ids,
       created_at: f.created_at,
-      transcript: transcripts.get(id) ?? null,
+      transcript: videoText.get(id)?.transcript ?? null,
+      caption: videoText.get(id)?.caption ?? null,
+      audio: videoText.get(id)?.audio ?? null,
     };
   }).filter((m) => m.url);
 
@@ -657,7 +697,7 @@ async function library(svc: SupabaseClient, portal: PortalRow): Promise<Response
   const { projects, unitProject } = await loadScope(svc, portal);
   const { links, files } = await loadLinkedFiles(svc, [...projects.map((p) => p.id), ...unitProject.keys()]);
   const placed = placeFiles(links, files, new Set(unitProject.keys()));
-  const transcripts = await loadTranscripts(svc, [...files.values()].filter((f) => f.kind === 'video').map((f) => f.id));
+  const videoText = await loadVideoText(svc, [...files.values()].filter((f) => f.kind === 'video').map((f) => f.id));
   const projectIdSet = new Set(projects.map((p) => p.id));
 
   const items = [...placed.entries()].map(([id, p]) => {
@@ -675,7 +715,9 @@ async function library(svc: SupabaseClient, portal: PortalRow): Promise<Response
       duration_seconds: f.duration_seconds,
       project_ids: projectIds,
       unit_count: p.unit_ids.length,
-      transcript: transcripts.get(id) ?? null,
+      transcript: videoText.get(id)?.transcript ?? null,
+      caption: videoText.get(id)?.caption ?? null,
+      audio: videoText.get(id)?.audio ?? null,
       created_at: f.created_at,
     };
   }).sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
