@@ -3,6 +3,7 @@ import { MessageCircle, RefreshCw, Star, Wrench, Eye, EyeOff, Check, X } from 'l
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import BackToSettings from './components/BackToSettings';
+import { useSettingsEmbedded } from './components/settingsEmbed';
 import WahaConnectionCard from './components/WahaConnectionCard';
 import type { HaberchatDevice, WhatsAppNumber } from '@/types';
 
@@ -17,6 +18,7 @@ import type { HaberchatDevice, WhatsAppNumber } from '@/types';
  */
 export default function WhatsAppNumbersPage() {
   const isAr = useAppStore((s) => s.language === 'ar');
+  const embedded = useSettingsEmbedded();
   const waDevices = useAppStore((s) => s.waDevices);
   const waDevicesLive = useAppStore((s) => s.waDevicesLive);
   const loadWhatsAppNumbers = useAppStore((s) => s.loadWhatsAppNumbers);
@@ -85,16 +87,20 @@ export default function WhatsAppNumbersPage() {
   }, [waDevices, isAr]);
 
   return (
-    <div className="p-6 md:p-8 max-w-5xl mx-auto">
+    <div className={embedded ? 'max-w-5xl' : 'p-6 md:p-8 max-w-5xl mx-auto'}>
       <BackToSettings />
       <div className="flex items-center gap-3 mb-6">
-        <div className="w-12 h-12 rounded-2xl bg-charcoal/5 flex items-center justify-center">
-          <MessageCircle size={24} className="text-charcoal/60" />
-        </div>
+        {!embedded && (
+          <div className="w-12 h-12 rounded-2xl bg-charcoal/5 flex items-center justify-center">
+            <MessageCircle size={24} className="text-charcoal/60" />
+          </div>
+        )}
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-chocolate">
-            {isAr ? 'أرقام واتساب' : 'WhatsApp Numbers'}
-          </h1>
+          {!embedded && (
+            <h1 className="text-2xl font-bold text-chocolate">
+              {isAr ? 'أرقام واتساب' : 'WhatsApp Numbers'}
+            </h1>
+          )}
           <p className="text-sm text-charcoal/50 mt-0.5">
             {isAr
               ? 'الأرقام المتصلة بالنظام. اختر الرقم الافتراضي للمحادثات الجديدة.'

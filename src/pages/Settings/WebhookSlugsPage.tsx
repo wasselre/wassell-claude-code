@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { Plus, Trash2, Copy, Check, Eye, EyeOff, RefreshCw, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import BackToSettings from './components/BackToSettings';
+import { useSettingsEmbedded } from './components/settingsEmbed';
 import type { WebhookSlug } from '@/types';
 
 // Project URL for displaying the full inbox URL next to each slug. Pulled
@@ -11,6 +12,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 
 export default function WebhookSlugsPage() {
   const isAr = useAppStore((s) => s.language === 'ar');
+  const embedded = useSettingsEmbedded();
   const slugs = useAppStore((s) => s.webhookSlugs);
   const saveWebhookSlug = useAppStore((s) => s.saveWebhookSlug);
   const deleteWebhookSlug = useAppStore((s) => s.deleteWebhookSlug);
@@ -72,13 +74,15 @@ export default function WebhookSlugsPage() {
   };
 
   return (
-    <div className="p-6 md:p-8 max-w-5xl mx-auto space-y-5">
+    <div className={embedded ? 'max-w-5xl space-y-5' : 'p-6 md:p-8 max-w-5xl mx-auto space-y-5'}>
       <BackToSettings className="!mb-0" />
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-charcoal mb-1">
-            {isAr ? 'نقاط استقبال الخطافات' : 'Webhook Endpoints'}
-          </h1>
+          {!embedded && (
+            <h1 className="text-2xl font-bold text-charcoal mb-1">
+              {isAr ? 'نقاط استقبال الخطافات' : 'Webhook Endpoints'}
+            </h1>
+          )}
           <p className="text-sm text-charcoal/60 max-w-3xl">
             {isAr
               ? 'نقاط نهاية تستقبل طلبات HTTP من أنظمة خارجية (وكلاء الذكاء الاصطناعي، أنظمة CRM، …). كل نقطة لها معرّف فريد، رابط استقبال، وسر اختياري للتحقق من التوقيع. سير العمل الذي يستخدم هذه النقطة كمشغّل سيُنفّذ تلقائياً عند استقبال بياناتها.'

@@ -11,6 +11,8 @@ import type {
   ModelField,
 } from '@/types';
 import BackToSettings from './components/BackToSettings';
+import { chatAccessLevel } from '@/lib/whatsappAccessLevel';
+import { useSettingsEmbedded } from './components/settingsEmbed';
 
 /**
  * Dedicated admin UI for WhatsApp (chats) visibility.
@@ -44,6 +46,7 @@ function findField(model: AppModel | undefined, slug: string): ModelField | unde
 
 export default function WhatsAppPermissionsPage() {
   const isAr = useAppStore((s) => s.language === 'ar');
+  const embedded = useSettingsEmbedded();
   const models = useAppStore((s) => s.models);
   const profiles = useAppStore((s) => s.profiles);
   const users = useAppStore((s) => s.users);
@@ -98,8 +101,8 @@ export default function WhatsAppPermissionsPage() {
       color: '#6B7280',
       titleAr: 'لا صلاحية',
       titleEn: 'No access',
-      descAr: 'لا يظهر واتساب لهذا الدور إطلاقاً.',
-      descEn: 'WhatsApp is hidden from this profile entirely.',
+      descAr: 'لا يظهر واتساب لهذا المستوى إطلاقاً.',
+      descEn: 'WhatsApp is hidden from this access level entirely.',
     },
   ];
 
@@ -107,22 +110,8 @@ export default function WhatsAppPermissionsPage() {
   const adminProfiles = profiles.filter((p) => p.is_admin);
 
   // ---- read current level off a profile -------------------------------------
-  const levelOf = (profile: Profile): Level | 'custom' => {
-    if (!chatsModel) return 'custom';
-    const mp = profile.model_permissions.find((m) => m.model_id === chatsModel.id);
-    if (!mp || !mp.permissions?.includes('view')) return 'none';
-    const vs = mp.view_scope;
-    if (!vs || vs.mode === 'all') return 'full';
-    if (vs.mode === 'filtered' && vs.conditions.length === 1) {
-      const c = vs.conditions[0];
-      if (!c) return 'custom';
-      const targets = (slug: string, fieldId?: string) =>
-        c.field.kind === 'field' && (c.field.field_slug === slug || (!!fieldId && c.field.field_id === fieldId));
-      if (targets('client_owner', ownerField?.id) && c.operator === 'equals' && c.source.kind === 'current_user') return 'own';
-      if (targets('client_link', clientLinkField?.id) && c.operator === 'is_not_empty') return 'client_only';
-    }
-    return 'custom';
-  };
+  // Shared reader (src/lib/whatsappAccessLevel.ts) — the People list shows the same value.
+  const levelOf = (profile: Profile): Level | 'custom' => chatAccessLevel(profile, chatsModel);
 
   // ---- build the new model_permissions for a chosen level -------------------
   const permsForLevel = (profile: Profile, level: Level): ProfileModelPermissions[] => {
@@ -207,7 +196,7 @@ export default function WhatsAppPermissionsPage() {
   }
 
   return (
-    <div className="p-6 md:p-8 max-w-4xl mx-auto">
+    <div className={embedded ? 'max-w-4xl mt-10 border-t border-sand/50 pt-8' : 'p-6 md:p-8 max-w-4xl mx-auto'}>
       <BackToSettings />
 
       <div className="flex items-center gap-3 mb-4">
@@ -215,13 +204,19 @@ export default function WhatsAppPermissionsPage() {
           <MessageCircle size={24} style={{ color: '#25D366' }} />
         </div>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-chocolate">
-            {isAr ? 'صلاحيات واتساب' : 'WhatsApp Permissions'}
-          </h1>
+          {embedded ? (
+            <h2 className="text-lg font-bold text-chocolate">
+              {isAr ? 'رؤية محادثات واتساب لكل مستوى وصول' : 'WhatsApp chat visibility per access level'}
+            </h2>
+          ) : (
+            <h1 className="text-2xl font-bold text-chocolate">
+              {isAr ? 'صلاحيات واتساب' : 'WhatsApp Permissions'}
+            </h1>
+          )}
           <p className="text-sm text-charcoal/50 mt-0.5">
             {isAr
-              ? 'حدّد لكل دور أي محادثات واتساب يمكنه رؤيتها. يسري ذلك على القائمة والرسائل معاً.'
-              : 'Choose which WhatsApp conversations each profile can see. Applies to the list and the messages alike.'}
+              ? 'حدّد لكل مستوى وصول أي محادثات واتساب يمكنه رؤيتها. يسري ذلك على القائمة والرسائل معاً.'
+              : 'Choose which WhatsApp conversations each access level can see. Applies to the list and the messages alike.'}
           </p>
         </div>
       </div>
@@ -259,8 +254,8 @@ export default function WhatsAppPermissionsPage() {
               {current === 'custom' && (
                 <p className="text-[11px] text-amber-700/80 mb-3">
                   {isAr
-                    ? 'هذا الدور لديه قاعدة رؤية مخصّصة للمحادثات أُنشئت من شاشة الصلاحيات. اختيار أحد الخيارات أدناه سيستبدلها.'
-                    : 'This profile has a custom chats visibility rule set in Profiles. Picking an option below will replace it.'}
+                    ? 'هذا المستوى لديه قاعدة رؤية مخصّصة للمحادثات أُنشئت من محرّر مستوى الوصول. اختيار أحد الخيارات أدناه سيستبدلها.'
+                    : 'This access level has a custom chats visibility rule set in its editor. Picking an option below will replace it.'}
                 </p>
               )}
 

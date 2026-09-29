@@ -4,16 +4,16 @@ import { useAppStore } from '@/stores/appStore';
 import { useIsAdmin } from '@/hooks/usePermission';
 import {
   Hammer, Zap, Languages,
-  Shield, Briefcase, Users, ChevronRight,
-  Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot, ShieldCheck, Wallet, Compass,
+  Briefcase, Users, ChevronRight,
+  Settings, ScrollText, ListOrdered, MessageCircle,
+  Globe, LayoutTemplate, FileText, MapPin, Activity, Film, Wallet, Compass,
 } from 'lucide-react';
 
-// Settings sections (architecture cleanup Phase 1 — D40 System Administration
-// area + D31 Webhooks under Workflow/integrations). Purely a nav grouping of
-// the existing cards; no route or access change. Some sections (Team & Access,
-// Website, WhatsApp) are collapsed into single unified pages in Phase 2 — until
-// then the related cards are grouped here.
+// Settings sections (architecture cleanup D40 System Administration area).
+// Team & Access (/settings/team) and WhatsApp (/settings/whatsapp) are single
+// tabbed pages since 2026-09-29, so each is ONE card here; Webhooks is a tab of
+// Workflows (D31) and has no card of its own. Website is still two cards
+// (D34, one Website Management page, is not built yet).
 type SectionId = 'system_admin' | 'team_access' | 'whatsapp' | 'website' | 'marketing' | 'documents';
 
 const SECTIONS: { id: SectionId; titleAr: string; titleEn: string }[] = [
@@ -66,8 +66,8 @@ const CARDS: SettingsCard[] = [
   {
     titleAr: 'سير العمل',
     titleEn: 'Workflows',
-    descAr: 'أتمتة الإجراءات عند إنشاء أو تعديل السجلات',
-    descEn: 'Automate actions on record create or update',
+    descAr: 'أتمتة الإجراءات عند إنشاء أو تعديل السجلات، ونقاط الخطافات الواردة من الأنظمة الخارجية',
+    descEn: 'Automate actions on record create or update, plus inbound webhooks from external systems',
     icon: Zap,
     color: '#059669',
     bg: '#05966914',
@@ -100,87 +100,27 @@ const CARDS: SettingsCard[] = [
     adminOnly: true,
   },
   {
-    titleAr: 'الصلاحيات',
-    titleEn: 'Profiles',
-    descAr: 'تحديد صلاحيات الوصول لكل نموذج',
-    descEn: 'Define access permissions per model',
-    icon: Shield,
-    color: '#D97706',
-    bg: '#D9770614',
-    route: '/settings/profiles',
-    section: 'team_access',
-    adminOnly: true,
-  },
-  {
-    titleAr: 'الأدوار',
-    titleEn: 'Roles',
-    descAr: 'إدارة الأدوار وحقولها وأعضائها',
-    descEn: 'Manage roles, their fields, and members',
-    icon: Briefcase,
-    color: '#0D9488',
-    bg: '#0D948814',
-    route: '/settings/roles',
-    section: 'team_access',
-    adminOnly: true,
-  },
-  {
-    titleAr: 'المستخدمون',
-    titleEn: 'Users',
-    descAr: 'إضافة المستخدمين وتعيين صلاحياتهم وأدوارهم',
-    descEn: 'Add users and assign profiles and roles',
+    titleAr: 'الفريق والصلاحيات',
+    titleEn: 'Team & Access',
+    descAr: 'الأشخاص، ومستويات الوصول (ومنها رؤية واتساب)، ووظائف المبيعات، وأدوار التسويق — في صفحة واحدة',
+    descEn: 'People, access levels (incl. WhatsApp visibility), Sales jobs and Marketing roles — one page',
     icon: Users,
     color: '#4F46E5',
     bg: '#4F46E514',
-    route: '/settings/users',
+    route: '/settings/team',
     section: 'team_access',
     adminOnly: true,
   },
   {
-    titleAr: 'نقاط الخطافات',
-    titleEn: 'Webhooks',
-    descAr: 'نقاط استقبال HTTP واردة للربط مع الأنظمة الخارجية وتشغيل سير العمل تلقائياً',
-    descEn: 'Inbound HTTP endpoints for external systems to POST to — fire workflows on receipt',
-    icon: Webhook,
-    color: '#DB2777',
-    bg: '#DB277714',
-    route: '/settings/webhooks',
-    section: 'system_admin',
-    adminOnly: true,
-  },
-  {
-    titleAr: 'أرقام واتساب',
-    titleEn: 'WhatsApp Numbers',
-    descAr: 'الأرقام المتصلة عبر Haberchat والرقم الافتراضي للمحادثات',
-    descEn: 'Connected Haberchat numbers and default for new chats',
+    titleAr: 'واتساب',
+    titleEn: 'WhatsApp',
+    descAr: 'الأرقام المتصلة، والرقم الافتراضي، ومتى يرد المساعد الذكي',
+    descEn: 'Connected numbers, the default number, and when the AI agent replies',
     icon: MessageCircle,
     color: '#25D366',
     bg: '#25D36614',
-    route: '/settings/whatsapp-numbers',
+    route: '/settings/whatsapp',
     section: 'whatsapp',
-    adminOnly: true,
-  },
-  {
-    titleAr: 'المساعد الذكي للواتساب',
-    titleEn: 'WhatsApp AI Agent',
-    descAr: 'متى يرد المساعد على العملاء وحدود الأمان',
-    descEn: 'When the agent answers customers, and its safety limits',
-    icon: Bot,
-    color: '#B8734F',
-    bg: '#B8734F14',
-    route: '/settings/whatsapp-ai',
-    section: 'whatsapp',
-    adminOnly: true,
-  },
-  {
-    titleAr: 'صلاحيات واتساب',
-    titleEn: 'WhatsApp Permissions',
-    descAr: 'من يرى أي محادثات — الكل أو العملاء فقط أو عملاء الموظف فقط',
-    descEn: 'Who sees which conversations — all, client-only, or own clients',
-    icon: ShieldCheck,
-    color: '#25D366',
-    bg: '#25D36614',
-    route: '/settings/whatsapp-permissions',
-    section: 'team_access',
     adminOnly: true,
   },
   {
@@ -312,18 +252,6 @@ const CARDS: SettingsCard[] = [
     color: '#4A2C2A',
     bg: '#4A2C2A14',
     route: '/settings/content-intelligence',
-    section: 'marketing',
-    adminOnly: true,
-  },
-  {
-    titleAr: 'المعلنون المدفوعون',
-    titleEn: 'Paid Advertisers',
-    descAr: 'اكتشاف وتأكيد معلني Meta للمنافسين — مقارنة المرشّحين، الأدلّة، والحماية من الأسواق العقارية',
-    descEn: 'Discover & confirm competitor Meta advertisers — candidate comparison, evidence, and marketplace safety',
-    icon: Megaphone,
-    color: '#B8734F',
-    bg: '#B8734F14',
-    route: '/settings/marketing-advertisers',
     section: 'marketing',
     adminOnly: true,
   },

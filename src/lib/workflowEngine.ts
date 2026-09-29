@@ -1235,7 +1235,7 @@ async function executeAction(
         //
         // Warm the lists first if this is a cold session — workflow
         // triggers fire from saveRecord, which can happen before the
-        // user has ever visited /settings/whatsapp-numbers or /model/chats
+        // user has ever visited /settings/whatsapp (Numbers tab) or /model/chats
         // in this tab. Without this, action.device_id being empty means
         // we hit the proxy with no deviceId and get HTTP 400.
         let storeState = useAppStore.getState();

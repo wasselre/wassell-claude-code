@@ -4,7 +4,7 @@
  * Lists every WhatsApp number (Haberchat device) connected to the account.
  * Browser-initiated; requires a valid Supabase JWT in Authorization header.
  *
- * Powers the /settings/whatsapp-numbers page — admin merges this live list
+ * Powers the /settings/whatsapp (Numbers tab) page — admin merges this live list
  * with the local `whatsapp_numbers` table to show friendly names + default
  * flag alongside the authoritative Haberchat state.
  */

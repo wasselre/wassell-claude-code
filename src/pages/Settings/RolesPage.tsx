@@ -11,6 +11,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import SectionManager from '@/pages/Builder/components/SectionManager';
 import BackToSettings from './components/BackToSettings';
+import { useSettingsEmbedded } from './components/settingsEmbed';
 import { MAPS_CONFIG_DEFAULT } from '@/types';
 import type { Role, AppModel, StoreMutationReason } from '@/types';
 
@@ -53,6 +54,8 @@ export default function RolesPage() {
   const navigate = useNavigate();
   const { roles, users, language, saveRole } = useAppStore();
   const isAr = language === 'ar';
+  // Shown as a tab of Team & Access → the shell carries the title.
+  const embedded = useSettingsEmbedded();
 
   // Sales-engine roles only. Marketing (`mos_*`) and Intelligence roles live in
   // the shared `roles` table but are managed in their own workspaces — showing
@@ -67,7 +70,7 @@ export default function RolesPage() {
     return editingRole ? (
       <RoleEditor
         role={editingRole}
-        onBack={() => navigate('/settings/roles')}
+        onBack={() => navigate('/settings/team?tab=jobs')}
       />
     ) : (
       <div className="text-center py-20 text-charcoal/30">404</div>
@@ -77,24 +80,26 @@ export default function RolesPage() {
   return (
     <div className="max-w-4xl">
       <BackToSettings />
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-teal-500/10 flex items-center justify-center">
-            <Briefcase size={24} className="text-teal-600" />
+      <div className={`flex items-center mb-8 ${embedded ? 'justify-end' : 'justify-between'}`}>
+        {!embedded && (
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-teal-500/10 flex items-center justify-center">
+              <Briefcase size={24} className="text-teal-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'وظائف المبيعات' : 'Sales jobs'}</h1>
+              <p className="text-sm text-charcoal/40">{isAr ? 'الوظائف التي تحدّد من يمكن إسناد العمل إليه، وحقول كل وظيفة' : "The jobs that decide who work can be assigned to, and each job's fields"}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'الأدوار' : 'Roles'}</h1>
-            <p className="text-sm text-charcoal/40">{isAr ? 'إدارة الأدوار وحقولها' : 'Manage roles and their fields'}</p>
-          </div>
-        </div>
+        )}
         <Button onClick={() => {
           const id = uuid();
           // Hardcoded placeholder in both languages — user renames in the
           // role editor where translation kicks in via the rename flow.
           saveRole({
             id,
-            label_ar: 'دور جديد',
-            label_en: 'New Role',
+            label_ar: 'وظيفة جديدة',
+            label_en: 'New job',
             is_system: false,
             schema: emptyRoleSchema(),
             created_at: new Date().toISOString(),
@@ -103,7 +108,7 @@ export default function RolesPage() {
           navigate(`/settings/roles/${id}`);
         }}>
           <Plus size={16} />
-          {isAr ? 'دور جديد' : 'New Role'}
+          {isAr ? 'وظيفة جديدة' : 'New job'}
         </Button>
       </div>
 
@@ -141,7 +146,7 @@ export default function RolesPage() {
         {salesRoles.length === 0 && (
           <div className="text-center py-16 text-charcoal/30">
             <Briefcase size={40} className="mx-auto mb-3 opacity-30" />
-            <p className="font-bold">{isAr ? 'لا توجد أدوار' : 'No roles yet'}</p>
+            <p className="font-bold">{isAr ? 'لا توجد وظائف' : 'No jobs yet'}</p>
           </div>
         )}
       </div>
@@ -310,7 +315,7 @@ function MembersTable({
       <div className="card p-8 text-center text-charcoal/30">
         <Users size={36} className="mx-auto mb-3 opacity-30" />
         <p className="font-bold">{isAr ? 'لا يوجد أعضاء بعد' : 'No members yet'}</p>
-        <p className="text-sm mt-1">{isAr ? 'أضف هذا الدور لمستخدم من صفحة المستخدمين' : 'Assign this role to a user from the Users page'}</p>
+        <p className="text-sm mt-1">{isAr ? 'أسند هذه الوظيفة لشخص من تبويب «الأشخاص»' : 'Assign this job to someone from the People tab'}</p>
       </div>
     );
   }
@@ -407,9 +412,9 @@ function MembersTable({
 
                 <td>
                   <button
-                    onClick={() => navigate(`/settings/users`)}
+                    onClick={() => navigate('/settings/team?tab=people')}
                     className="p-1.5 rounded-lg hover:bg-cream text-charcoal/30 hover:text-copper"
-                    title={isAr ? 'فتح صفحة المستخدم' : 'Open user page'}
+                    title={isAr ? 'فتح تبويب الأشخاص' : 'Open the People tab'}
                   >
                     <ArrowRight size={14} className="rtl:rotate-0 ltr:rotate-180" />
                   </button>

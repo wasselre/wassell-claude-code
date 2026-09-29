@@ -184,7 +184,11 @@ function CapMark({ on }: { on: boolean }) {
   return on ? <span className="mk2 mk-f">●</span> : <span className="mk2 mk-n">—</span>;
 }
 
-export default function SettingsAccess({ canManage, isAr }: { canManage: boolean; isAr: boolean }) {
+/**
+ * embedded — rendered as the «أدوار التسويق» tab of the Sales app's Team & Access
+ * page: the back-to-Marketing-settings crumb is dropped (that page has its own).
+ */
+export default function SettingsAccess({ canManage, isAr, embedded = false }: { canManage: boolean; isAr: boolean; embedded?: boolean }) {
   const addToast = useAppStore((s) => s.addToast);
   const navigate = useNavigate();
   const Back = isAr ? IconForward : IconBack;
@@ -309,11 +313,11 @@ export default function SettingsAccess({ canManage, isAr }: { canManage: boolean
       <PageHead
         title={isAr ? 'الأدوار والصلاحيات' : 'Roles and permissions'}
         sub={sub}
-        crumb={
+        crumb={embedded ? undefined : (
           <button type="button" onClick={() => navigate('/m/settings')}>
             <Back style={{ width: 11, height: 11, verticalAlign: -1 }} /> {isAr ? 'الإعدادات' : 'Settings'}
           </button>
-        }
+        )}
       />
       <div className="body">
         {error && <LoadError message={error} onRetry={() => void load()} isAr={isAr} />}

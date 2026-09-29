@@ -21,7 +21,7 @@ const LogsPage = lazy(() => import('@/pages/Logs/LogsPage'));
 const TranslationSettingsPage = lazy(() => import('@/pages/Settings/TranslationSettingsPage'));
 const ProfilesPage = lazy(() => import('@/pages/Settings/ProfilesPage'));
 const RolesPage = lazy(() => import('@/pages/Settings/RolesPage'));
-const UsersPage = lazy(() => import('@/pages/Settings/UsersPage'));
+const TeamAccessPage = lazy(() => import('@/pages/Settings/TeamAccessPage'));
 const AuditLogPage = lazy(() => import('@/pages/Settings/AuditLogPage'));
 const AiUsagePage = lazy(() => import('@/pages/Settings/AiUsagePage'));
 const GeoElementsPage = lazy(() => import('@/pages/Settings/GeoElementsPage'));
@@ -30,13 +30,9 @@ const GeoLabelingPage = lazy(() => import('@/pages/GeoLabeling/GeoLabelingPage')
 const GeoGradePage = lazy(() => import('@/pages/GeoGrade/GeoGradePage'));
 const MarketingOpsPage = lazy(() => import('@/pages/Settings/MarketingOpsPage'));
 const ContentIntelligencePage = lazy(() => import('@/pages/Settings/ContentIntelligencePage'));
-const MarketingAdvertisersPage = lazy(() => import('@/pages/Settings/MarketingAdvertisersPage'));
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
 const MenuArrangementPage = lazy(() => import('@/pages/Settings/MenuArrangementPage'));
-const WebhookSlugsPage = lazy(() => import('@/pages/Settings/WebhookSlugsPage'));
-const WhatsAppNumbersPage = lazy(() => import('@/pages/Settings/WhatsAppNumbersPage'));
-const WhatsAppAiPage = lazy(() => import('@/pages/Settings/WhatsAppAiPage'));
-const WhatsAppPermissionsPage = lazy(() => import('@/pages/Settings/WhatsAppPermissionsPage'));
+const WhatsAppSettingsPage = lazy(() => import('@/pages/Settings/WhatsAppSettingsPage'));
 const DocumentTemplatesPage = lazy(() => import('@/pages/DocumentTemplates/DocumentTemplatesPage'));
 const WebsiteSettingsPage = lazy(() => import('@/pages/Settings/WebsiteSettingsPage'));
 const ProjectDetailsListPage = lazy(() => import('@/pages/Settings/ProjectDetailsListPage'));
@@ -477,24 +473,32 @@ export default function App() {
           <Route path="/scheduled-reports" element={<Navigate to="/settings" replace />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/translations" element={<RequireAdmin><TranslationSettingsPage /></RequireAdmin>} />
-          <Route path="/settings/profiles" element={<RequireAdmin><ProfilesPage /></RequireAdmin>} />
+          {/* Team & Access (D28/D29): people, access levels (+ WhatsApp chat
+              visibility), Sales jobs and Marketing roles on ONE page. The old
+              list URLs redirect to its tabs; single profile / role editors keep
+              their own URLs and return to the right tab. */}
+          <Route path="/settings/team" element={<RequireAdmin><TeamAccessPage /></RequireAdmin>} />
+          <Route path="/settings/users" element={<Navigate to="/settings/team?tab=people" replace />} />
+          <Route path="/settings/profiles" element={<Navigate to="/settings/team?tab=access" replace />} />
+          <Route path="/settings/whatsapp-permissions" element={<Navigate to="/settings/team?tab=access" replace />} />
           <Route path="/settings/profiles/:profileId" element={<RequireAdmin><ProfilesPage /></RequireAdmin>} />
-          <Route path="/settings/roles" element={<RequireAdmin><RolesPage /></RequireAdmin>} />
+          <Route path="/settings/roles" element={<Navigate to="/settings/team?tab=jobs" replace />} />
           <Route path="/settings/roles/:roleId" element={<RequireAdmin><RolesPage /></RequireAdmin>} />
-          <Route path="/settings/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
           <Route path="/settings/audit-log" element={<RequireAdmin><AuditLogPage /></RequireAdmin>} />
           <Route path="/settings/ai-usage" element={<RequireAdmin><AiUsagePage /></RequireAdmin>} />
           <Route path="/settings/geo-elements" element={<RequireAdmin><GeoElementsPage /></RequireAdmin>} />
           <Route path="/settings/geo-zones" element={<RequireAdmin><GeoZonesPage /></RequireAdmin>} />
           <Route path="/settings/marketing-ops" element={<RequireAdmin><MarketingOpsPage /></RequireAdmin>} />
           <Route path="/settings/content-intelligence" element={<RequireAdmin><ContentIntelligencePage /></RequireAdmin>} />
-          <Route path="/settings/marketing-advertisers" element={<RequireAdmin><MarketingAdvertisersPage /></RequireAdmin>} />
+          {/* Marketing Advertisers page deleted (D07b) — bookmarks go to Settings. */}
+          <Route path="/settings/marketing-advertisers" element={<Navigate to="/settings" replace />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/settings/menu" element={<RequireAdmin><MenuArrangementPage /></RequireAdmin>} />
-          <Route path="/settings/webhooks" element={<RequireAdmin><WebhookSlugsPage /></RequireAdmin>} />
-          <Route path="/settings/whatsapp-numbers" element={<RequireAdmin><WhatsAppNumbersPage /></RequireAdmin>} />
-          <Route path="/settings/whatsapp-ai" element={<RequireAdmin><WhatsAppAiPage /></RequireAdmin>} />
-          <Route path="/settings/whatsapp-permissions" element={<RequireAdmin><WhatsAppPermissionsPage /></RequireAdmin>} />
+          {/* Webhooks are a tab of Workflows (D31); WhatsApp is one page (D30). */}
+          <Route path="/settings/webhooks" element={<Navigate to="/workflow?tab=webhooks" replace />} />
+          <Route path="/settings/whatsapp" element={<RequireAdmin><WhatsAppSettingsPage /></RequireAdmin>} />
+          <Route path="/settings/whatsapp-numbers" element={<Navigate to="/settings/whatsapp?tab=numbers" replace />} />
+          <Route path="/settings/whatsapp-ai" element={<Navigate to="/settings/whatsapp?tab=ai" replace />} />
           <Route path="/settings/document-templates" element={<RequireAdmin><DocumentTemplatesPage /></RequireAdmin>} />
           <Route path="/settings/website" element={<RequireAdmin><WebsiteSettingsPage /></RequireAdmin>} />
           <Route path="/settings/project-details" element={<RequireAdmin><ProjectDetailsListPage /></RequireAdmin>} />

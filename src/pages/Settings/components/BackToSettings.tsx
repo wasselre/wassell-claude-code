@@ -1,16 +1,22 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { useSettingsEmbedded } from './settingsEmbed';
 
 /**
  * Back link to the Settings home page (the cards grid). Rendered at the top
  * of every Settings sub-page so users can return without relying on the
  * sidebar or the browser back button. Kept as a shared component so the
  * affordance is identical across all settings pages.
+ *
+ * Hidden when the page is a tab inside a combined settings page — the shell
+ * renders the one back link for all of its tabs.
  */
 export default function BackToSettings({ className = '' }: { className?: string }) {
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language === 'ar');
+  const embedded = useSettingsEmbedded();
+  if (embedded) return null;
   return (
     <button
       onClick={() => navigate('/settings')}

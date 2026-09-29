@@ -77,9 +77,10 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
     if (path.startsWith('/workflow')) return t('workflow.title');
     if (path === '/settings') return isAr ? 'الإعدادات' : 'Settings';
     if (path.startsWith('/settings/translations')) return isAr ? 'إعدادات الترجمة' : 'Translation Settings';
-    if (path.startsWith('/settings/profiles')) return isAr ? 'الصلاحيات' : 'Profiles';
-    if (path.startsWith('/settings/roles')) return isAr ? 'الأدوار' : 'Roles';
-    if (path.startsWith('/settings/users')) return isAr ? 'المستخدمون' : 'Users';
+    if (path.startsWith('/settings/team')) return isAr ? 'الفريق والصلاحيات' : 'Team & Access';
+    if (path.startsWith('/settings/profiles')) return isAr ? 'مستوى الوصول' : 'Access level';
+    if (path.startsWith('/settings/roles')) return isAr ? 'وظيفة المبيعات' : 'Sales job';
+    if (path.startsWith('/settings/whatsapp')) return isAr ? 'واتساب' : 'WhatsApp';
 
     if (path.startsWith('/model/')) {
       const modelName = params.modelName ?? path.split('/')[2];

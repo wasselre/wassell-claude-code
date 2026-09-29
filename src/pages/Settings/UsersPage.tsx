@@ -1,16 +1,22 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { inviteUser, deleteAuthUser, isAuthAvailable } from '@/lib/auth';
-import { Users as UsersIcon, Plus, Pencil, Trash2, Shield, Mail, Loader2, Eye } from 'lucide-react';
+import { Users as UsersIcon, Plus, Pencil, Trash2, Shield, Mail, Loader2, Eye, MessageCircle, Megaphone } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
 import UserRoleFields from './components/UserRoleFields';
 import BackToSettings from './components/BackToSettings';
-import type { User, UserRoleAssignment, StoreMutationReason } from '@/types';
+import { useSettingsEmbedded } from './components/settingsEmbed';
+import type { Role, User, UserRoleAssignment, StoreMutationReason } from '@/types';
+import { grantRole, type MosPathRole } from '@/lib/marketingOS/client';
+import { chatAccessLevel, CHAT_ACCESS_LABELS } from '@/lib/whatsappAccessLevel';
+
+/** Marketing roles in the Marketing workspace's own order (senior → hands-on). */
+const MARKETING_ROLE_ORDER = ['mos_ceo', 'mos_marketing_manager', 'mos_ops_supervisor', 'mos_writer', 'mos_montage'];
 
 function reasonToKey(reason: StoreMutationReason): string {
   switch (reason) {
@@ -24,8 +30,10 @@ function reasonToKey(reason: StoreMutationReason): string {
 
 export default function UsersPage() {
   const { t } = useTranslation();
-  const { users, profiles, roles, language, currentUserId, saveUser, deleteUser, addToast } = useAppStore();
+  const { users, profiles, roles, models, language, currentUserId, saveUser, deleteUser, addToast } = useAppStore();
   const isAr = language === 'ar';
+  // Shown as a tab of Team & Access → the shell carries the title.
+  const embedded = useSettingsEmbedded();
 
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
@@ -35,6 +43,46 @@ export default function UsersPage() {
   const [roleAssignments, setRoleAssignments] = useState<UserRoleAssignment[]>([]);
   // "Preview app as another profile" grant — deliberately OFF by default.
   const [canPreviewProfiles, setCanPreviewProfiles] = useState(false);
+
+  const [grantBusy, setGrantBusy] = useState<string | null>(null);
+
+  const chatsModel = useMemo(() => models.find((m) => m.name === 'chats'), [models]);
+  const marketingRoles = useMemo(
+    () => roles
+      .filter((r) => r.domain === 'marketing' && typeof r.key === 'string' && MARKETING_ROLE_ORDER.includes(r.key))
+      .sort((a, b) => MARKETING_ROLE_ORDER.indexOf(a.key ?? '') - MARKETING_ROLE_ORDER.indexOf(b.key ?? '')),
+    [roles],
+  );
+  const roleById = useMemo(() => new Map(roles.map((r) => [r.id, r])), [roles]);
+
+  /**
+   * Give / take a Marketing role. Goes through the SAME atomic RPC as Marketing →
+   * «الأدوار ومن يشغلها» (mos_role_grant — no browser read-modify-write of
+   * role_assignments), then mirrors the server result into local state so the
+   * modal's Save (sales part) keeps it and the list shows it without a reload.
+   */
+  const toggleMarketingRole = async (target: User, role: Role, grant: boolean) => {
+    if (!role.key) return;
+    setGrantBusy(role.id);
+    try {
+      await grantRole(target.id, role.key.replace(/^mos_/, '') as MosPathRole, grant);
+      const apply = (list: UserRoleAssignment[]): UserRoleAssignment[] =>
+        grant
+          ? (list.some((ra) => ra.role_id === role.id) ? list : [...list, { role_id: role.id, field_values: {} }])
+          : list.filter((ra) => ra.role_id !== role.id);
+      setRoleAssignments((prev) => apply(prev));
+      // Local mirror only — the database row was already written by the RPC above.
+      useAppStore.setState((st) => ({
+        users: st.users.map((u) => (u.id === target.id ? { ...u, role_assignments: apply(u.role_assignments) } : u)),
+      }));
+      addToast(isAr ? 'تم تحديث دور التسويق.' : 'Marketing role updated.', 'success');
+    } catch (e) {
+      console.error('[team] marketing role grant failed:', e);
+      addToast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setGrantBusy(null);
+    }
+  };
 
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
   const [deactivatingUser, setDeactivatingUser] = useState<User | null>(null);
@@ -200,19 +248,21 @@ export default function UsersPage() {
   return (
     <div className="max-w-4xl">
       <BackToSettings />
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center">
-            <UsersIcon size={24} className="text-indigo-600" />
+      <div className={`flex items-center mb-8 ${embedded ? 'justify-end' : 'justify-between'}`}>
+        {!embedded && (
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center">
+              <UsersIcon size={24} className="text-indigo-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'الأشخاص' : 'People'}</h1>
+              <p className="text-sm text-charcoal/40">{isAr ? 'حسابات الفريق ومستوى وصول كل شخص ووظيفته وأدواره' : "Team accounts and each person's access level, job and roles"}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'المستخدمون' : 'Users'}</h1>
-            <p className="text-sm text-charcoal/40">{isAr ? 'إدارة المستخدمين' : 'Manage users'}</p>
-          </div>
-        </div>
-        <Button onClick={openNew} disabled={!canCreate} title={!canCreate ? (isAr ? 'أنشئ ملفاً شخصياً أولاً' : 'Create a profile first') : undefined}>
+        )}
+        <Button onClick={openNew} disabled={!canCreate} title={!canCreate ? (isAr ? 'أنشئ مستوى وصول أولاً' : 'Create an access level first') : undefined}>
           <Plus size={16} />
-          {isAr ? 'مستخدم جديد' : 'New User'}
+          {isAr ? 'شخص جديد' : 'New person'}
         </Button>
       </div>
 
@@ -242,9 +292,32 @@ export default function UsersPage() {
                       </span>
                     )}
                     {user.role_assignments.map((ra) => {
-                      const role = roles.find((r) => r.id === ra.role_id);
-                      return role ? <Badge key={ra.role_id} label={isAr ? role.label_ar : role.label_en} color="#14B8A6" /> : null;
+                      const role = roleById.get(ra.role_id);
+                      if (!role || (role.domain ?? 'sales') !== 'sales') return null;
+                      return <Badge key={ra.role_id} label={isAr ? role.label_ar : role.label_en} color="#14B8A6" />;
                     })}
+                    {user.role_assignments.map((ra) => {
+                      const role = roleById.get(ra.role_id);
+                      if (!role || role.domain !== 'marketing') return null;
+                      return (
+                        <span key={ra.role_id} className="flex items-center gap-1 text-xs text-copper bg-copper/10 px-2 py-0.5 rounded-full font-bold">
+                          <Megaphone size={10} />
+                          {isAr ? role.label_ar : role.label_en}
+                        </span>
+                      );
+                    })}
+                    {profile && (() => {
+                      const lvl = chatAccessLevel(profile, chatsModel);
+                      return (
+                        <span
+                          className="flex items-center gap-1 text-xs text-green-700 bg-green-50 px-2 py-0.5 rounded-full font-bold"
+                          title={isAr ? 'المحادثات التي يراها في واتساب (من مستوى الوصول)' : 'WhatsApp conversations this person sees (from the access level)'}
+                        >
+                          <MessageCircle size={10} />
+                          {isAr ? CHAT_ACCESS_LABELS[lvl].ar : CHAT_ACCESS_LABELS[lvl].en}
+                        </span>
+                      );
+                    })()}
                     {user.can_preview_profiles === true && (
                       <span
                         className="flex items-center gap-1 text-xs text-terracotta bg-gold/15 px-2 py-0.5 rounded-full font-bold"
@@ -297,7 +370,7 @@ export default function UsersPage() {
       <Modal
         open={showModal}
         onClose={() => setShowModal(false)}
-        title={editing ? (isAr ? 'تعديل المستخدم' : 'Edit User') : (isAr ? 'مستخدم جديد' : 'New User')}
+        title={editing ? (isAr ? 'تعديل الشخص' : 'Edit person') : (isAr ? 'شخص جديد' : 'New person')}
         maxWidth="max-w-lg"
         footer={
           <>
@@ -344,7 +417,7 @@ export default function UsersPage() {
           )}
           <div>
             <label className="block text-sm font-bold text-charcoal mb-1">
-              {isAr ? 'الملف الشخصي' : 'Profile'} <span className="text-red-500">*</span>
+              {isAr ? 'مستوى الوصول' : 'Access level'} <span className="text-red-500">*</span>
             </label>
             <select value={profileId} onChange={(e) => setProfileId(e.target.value)} className="form-input text-sm" required>
               {profiles.map((p) => (
@@ -378,7 +451,7 @@ export default function UsersPage() {
 
           {/* Roles — checkboxes with inline field editors */}
           <div>
-            <label className="block text-sm font-bold text-charcoal mb-2">{isAr ? 'الأدوار' : 'Roles'}</label>
+            <label className="block text-sm font-bold text-charcoal mb-2">{isAr ? 'وظائف المبيعات' : 'Sales jobs'}</label>
             <div className="space-y-2">
               {/* Sales-engine roles only. A user's marketing (`mos_*`) roles are
                   assigned in the Marketing workspace and preserved untouched on
@@ -415,6 +488,46 @@ export default function UsersPage() {
                 <p className="text-sm text-charcoal/30">{isAr ? 'لا توجد أدوار بعد' : 'No roles yet'}</p>
               )}
             </div>
+          </div>
+
+          {/* Marketing roles — saved immediately (atomic RPC), same field the
+              Marketing workspace edits, so the two screens can never disagree. */}
+          <div>
+            <label className="flex items-center gap-1.5 text-sm font-bold text-charcoal mb-1">
+              <Megaphone size={14} className="text-copper" />
+              {isAr ? 'أدوار التسويق' : 'Marketing roles'}
+            </label>
+            {editing ? (
+              <>
+                <p className="text-xs text-charcoal/45 mb-2">
+                  {isAr
+                    ? 'تُحفظ فوراً عند التحديد. مهام التسويق تذهب لمن يشغل الدور.'
+                    : 'Saved as soon as you tick it. Marketing tasks go to whoever holds the role.'}
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {marketingRoles.map((role) => {
+                    const held = roleAssignments.some((ra) => ra.role_id === role.id);
+                    return (
+                      <label key={role.id} className="flex items-center gap-2.5 cursor-pointer rounded-xl border border-sand/30 py-2 px-3 hover:bg-cream/50">
+                        <input
+                          type="checkbox"
+                          checked={held}
+                          disabled={grantBusy !== null}
+                          onChange={() => void toggleMarketingRole(editing, role, !held)}
+                          className="w-4 h-4 rounded border-sand text-copper focus:ring-copper/30"
+                        />
+                        <span className="text-sm font-bold text-charcoal">{isAr ? role.label_ar : role.label_en}</span>
+                        {grantBusy === role.id && <Loader2 size={13} className="animate-spin text-charcoal/40" />}
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-charcoal/45">
+                {isAr ? 'احفظ الشخص أولاً، ثم افتحه لإسناد أدوار التسويق.' : 'Save the person first, then open them to assign Marketing roles.'}
+              </p>
+            )}
           </div>
         </div>
       </Modal>

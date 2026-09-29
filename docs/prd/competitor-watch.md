@@ -1,7 +1,7 @@
 # PRD: Competitor Watch (مرصد المنافسين)
 
 **Status:** Live (all five surfaces: Content Library + Agents & runs, Content pipeline, Storage, Companies)
-**Last updated:** 2026-09-28 (**Creating a project works again.** The attribution catch-up that runs inside every project insert (`mkt_enqueue_attribution_rerun`) took 68 s and timed the save out, so no project could be created from the app since ~2026-09-14; rewritten set-based, now 165 ms with the same jobs queued.) | 2026-09-27 (**Relationships follow the project records** — a project's marketer in the CRM now becomes its marketer here automatically, and stale copies are retired; see `mkt_project_organizations` under «Data touched».) Also 2026-09-27 (**Companies surface rebuilt around the marketing read** — type, channels, cadence, format mix, dominant message, offers, projects and districts per competitor; «آخر نشاط» was our scrape time and is now «آخر نشر», theirs.) Previously 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
+**Last updated:** 2026-09-29 (**The «المعلنون المدفوعون» Settings page was deleted** — competitor paid-ad collection has no screen now. Nothing collected paid ads through it after 2026-07-22: 27 advertiser look-ups (last 2026-07-28), zero `paid_ads` queue jobs; the 10 stored paid ads (`mkt_paid_ads`, all 2026-07-22) stay. Server actions + data kept. See the new bullet under «How collection runs».) | 2026-09-28 (**Creating a project works again.** The attribution catch-up that runs inside every project insert (`mkt_enqueue_attribution_rerun`) took 68 s and timed the save out, so no project could be created from the app since ~2026-09-14; rewritten set-based, now 165 ms with the same jobs queued.) | 2026-09-27 (**Relationships follow the project records** — a project's marketer in the CRM now becomes its marketer here automatically, and stale copies are retired; see `mkt_project_organizations` under «Data touched».) Also 2026-09-27 (**Companies surface rebuilt around the marketing read** — type, channels, cadence, format mix, dominant message, offers, projects and districts per competitor; «آخر نشاط» was our scrape time and is now «آخر نشر», theirs.) Previously 2026-09-21 (**Collection made budget-aware** — see «How collection runs, and what it costs» below: incremental runs fetch only posts newer than the last stored one plus a 14-day engagement window, TikTok downloads only new videos, Apify storage is cleaned up, dormant accounts are checked weekly, and a spent Apify budget pauses collection with one alert instead of retrying for weeks.) Previously 2026-09-13 (**Project attribution rebuilt** — see «How a post gets its project» below: brand/place words are no longer evidence, full names are matched as phrases, a pick must carry a verbatim quote, corrections lock the post, and the Library has a «تصحيح المشروع» control.)
 
 > A NEW, from-scratch workspace that succeeds the **Marketing Intelligence**
 > page (`marketing-intelligence.md`), built because the operator found that page
@@ -188,6 +188,20 @@ that study the corpus (how competitors write posts, script reels, price offers).
     starved YouTube collection for 16 days. Settings → Marketing Ops' manual
     health check also reads the limit, so it shows `budget_exhausted` with the
     spend instead of "connected".
+- **Competitor PAID-ad collection has no screen any more (2026-09-29).** The
+  Settings page «المعلنون المدفوعون» (`/settings/marketing-advertisers`), the admin
+  screen for finding and confirming a competitor's advertiser account and
+  starting paid-ad collection, was deleted (architecture
+  cleanup D07b); the old URL now opens the Settings home. Measured before
+  deleting: the only jobs that page ever ran were 27 advertiser look-ups
+  (`discover_advertiser`, last on 2026-07-28), not one paid-ad collection
+  (`paid_ads`) queue job ever ran, and nothing enqueues either kind on its own.
+  `mkt_paid_ads` does hold 10 competitor paid ads, all from 2026-07-22 (an early
+  one-off collection); they are kept and still readable. So in practice this
+  retires a feature idle since July — organic posts, reels,
+  OCR and everything on this page are unaffected. The server actions
+  (`discover_advertiser`, `paid_ads`, `advertiser_list`, … in `api/marketing.ts`)
+  and all stored data were kept, so bringing it back is a UI job only.
 
 ## User flows
 
@@ -293,3 +307,7 @@ Reads, plus two admin writes (`attribution_set`, `attribution_rerun`).
   Apify. Engagement is refreshed only by the 14-day window of incremental runs.
 - **Follower / engagement completeness** inherits the pipeline's gaps (e.g. views
   absent on some platforms) — shown as-is, never faked.
+- **No competitor paid ads are collected.** With the advertisers page deleted
+  (2026-09-29) there is no way to start a paid-ad collection from the app; the
+  10 paid ads on file are from 2026-07-22. Competitor tracking here is organic
+  content only.

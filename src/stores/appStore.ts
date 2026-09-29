@@ -2146,6 +2146,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         // Preserve the engine namespace (sales / marketing / intel); absent
         // legacy rows read as 'sales' so the Sales pickers keep showing them.
         domain: r.domain ?? 'sales',
+        // Engine key (`mos_writer`, …) — Team & Access → People maps a Marketing
+        // role to its grant RPC by it. Null for sales roles.
+        key: r.key ?? null,
         created_at: r.created_at,
         updated_at: r.updated_at,
       };

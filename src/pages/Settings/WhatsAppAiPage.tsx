@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { Bot, Loader2, Save, Clock, ShieldAlert, CheckCircle2, PauseCircle } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import BackToSettings from './components/BackToSettings';
+import { useSettingsEmbedded } from './components/settingsEmbed';
 
 /**
  * Settings → WhatsApp AI agent.
@@ -43,6 +44,7 @@ export default function WhatsAppAiPage() {
   useTranslation();
   const { language, addToast } = useAppStore();
   const isAr = language === 'ar';
+  const embedded = useSettingsEmbedded();
 
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [now, setNow] = useState<{ would_reply: boolean; reason: string | null } | null>(null);
@@ -137,17 +139,21 @@ export default function WhatsAppAiPage() {
   const activeMode = MODES.find((m) => m.id === mode) ?? MODES[2]!;
 
   return (
-    <div className="p-6 max-w-3xl">
+    <div className={embedded ? 'max-w-3xl' : 'p-6 max-w-3xl'}>
       <BackToSettings />
 
       <div className="flex items-center gap-3 mt-4 mb-1">
-        <div className="w-10 h-10 rounded-xl bg-copper/10 flex items-center justify-center">
-          <Bot className="w-5 h-5 text-copper" />
-        </div>
+        {!embedded && (
+          <div className="w-10 h-10 rounded-xl bg-copper/10 flex items-center justify-center">
+            <Bot className="w-5 h-5 text-copper" />
+          </div>
+        )}
         <div>
-          <h1 className="text-xl font-bold text-charcoal">
-            {isAr ? 'المساعد الذكي للواتساب' : 'WhatsApp AI agent'}
-          </h1>
+          {!embedded && (
+            <h1 className="text-xl font-bold text-charcoal">
+              {isAr ? 'المساعد الذكي للواتساب' : 'WhatsApp AI agent'}
+            </h1>
+          )}
           <p className="text-sm text-charcoal/60">
             {isAr
               ? 'هذه الإعدادات تتحكم في الرد التلقائي فقط. التحويل اليدوي من داخل المحادثة يعمل دائماً.'

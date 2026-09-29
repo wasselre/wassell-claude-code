@@ -1155,7 +1155,7 @@ export interface WorkflowActionSendWhatsAppMessage {
   to_field_id?: string;
   // Haberchat device id. Optional — server falls back to
   // HABERCHAT_DEFAULT_DEVICE_ID when empty, then to whichever default the
-  // admin marked in /settings/whatsapp-numbers.
+  // admin marked in /settings/whatsapp (Numbers tab).
   device_id?: string;
   // Message body. Supports `{field_slug}` tokens resolved against the
   // trigger record via substituteFieldTokens().
@@ -2098,6 +2098,8 @@ export interface Role {
   is_system: boolean;
   /** Engine this role belongs to; absent legacy rows read as 'sales'. */
   domain?: RoleDomain;
+  /** Stable key for engine-owned roles (Marketing: `mos_writer`, …); null for sales roles. */
+  key?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2713,7 +2715,7 @@ export interface AppState {
   /**
    * Fetch the live Haberchat device list via the proxy AND the local
    * `whatsapp_numbers` overlay from Supabase; update both state slices.
-   * Admins call this on mount of /settings/whatsapp-numbers and after edits.
+   * Admins call this on mount of /settings/whatsapp (Numbers tab) and after edits.
    */
   loadWhatsAppNumbers: () => Promise<void>;
   /** Upsert one local overlay row. Used to rename, set default, activate/hide. */

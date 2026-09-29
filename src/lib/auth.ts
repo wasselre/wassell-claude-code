@@ -72,7 +72,7 @@ export async function sendPasswordResetEmail(
  * `auth.admin.inviteUserByEmail`, which works regardless of the project's
  * "Allow new sign-ups" setting. This means project-level sign-ups can be
  * (and SHOULD be) turned OFF: the only way to create an account is via an
- * admin clicking "invite" in `/settings/users`.
+ * admin clicking "invite" in Settings → Team & Access → People (`/settings/team`).
  *
  * The function verifies the caller is an admin before issuing the invite,
  * so a non-admin user calling it directly gets a 403.

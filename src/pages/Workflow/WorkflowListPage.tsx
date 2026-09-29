@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { Plus, Pencil, Trash2, Zap, ScrollText, Sparkles, Folder, FolderPlus, ChevronDown, ChevronRight, Check, X, FolderInput } from 'lucide-react';
+import { Plus, Pencil, Trash2, Zap, ScrollText, Sparkles, Folder, FolderPlus, ChevronDown, ChevronRight, Check, X, FolderInput, Webhook } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import BackToSettings from '@/pages/Settings/components/BackToSettings';
+import { SettingsEmbedded } from '@/pages/Settings/components/settingsEmbed';
+import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import type { Workflow, WorkflowGroup } from '@/types';
 
 // Sentinel id for the implicit "ungrouped" bucket. Workflows whose
@@ -13,7 +15,7 @@ import type { Workflow, WorkflowGroup } from '@/types';
 // represents it, it's purely a UI grouping.
 const UNGROUPED_ID = '__ungrouped__';
 
-export default function WorkflowListPage() {
+function WorkflowsList() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const {
@@ -282,7 +284,6 @@ export default function WorkflowListPage() {
 
   return (
     <div>
-      <BackToSettings />
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-bold text-charcoal">{t('workflow.title')}</h1>
         <div className="flex items-center gap-2">
@@ -340,6 +341,60 @@ export default function WorkflowListPage() {
             ),
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Workflows + Webhooks (architecture cleanup D31, 2026-09-29): webhooks are
+ * what trigger workflows from outside, so they are a tab here instead of a
+ * separate Settings card. The tab lives in `?tab=webhooks` so
+ * /settings/webhooks can redirect straight to it.
+ */
+export default function WorkflowListPage() {
+  const isAr = useAppStore((s) => s.language === 'ar');
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'webhooks' ? 'webhooks' : 'workflows';
+  const select = (id: 'workflows' | 'webhooks') => {
+    const next = new URLSearchParams(params);
+    if (id === 'workflows') next.delete('tab'); else next.set('tab', id);
+    setParams(next, { replace: true });
+  };
+  const TABS = [
+    { id: 'workflows' as const, ar: 'سير العمل', en: 'Workflows', icon: Zap },
+    { id: 'webhooks' as const, ar: 'نقاط الخطافات', en: 'Webhooks', icon: Webhook },
+  ];
+  return (
+    <div>
+      <BackToSettings />
+      <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-sand/50 mb-6">
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          const on = t.id === tab;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => select(t.id)}
+              className={`inline-flex items-center gap-1.5 whitespace-nowrap px-3.5 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+                on ? 'border-copper text-copper' : 'border-transparent text-charcoal/55 hover:text-charcoal'
+              }`}
+            >
+              <Icon size={15} />
+              {isAr ? t.ar : t.en}
+            </button>
+          );
+        })}
+      </div>
+      {tab === 'webhooks' ? (
+        <SettingsEmbedded>
+          <WebhookSlugsPage />
+        </SettingsEmbedded>
+      ) : (
+        <WorkflowsList />
       )}
     </div>
   );

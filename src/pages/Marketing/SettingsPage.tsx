@@ -24,6 +24,7 @@ import {
   WorkflowDef, fetchContentList, fetchSettings, saveSetting,
 } from '@/lib/marketingOS/client';
 import { useWorkspace, type Capability } from './MarketingWorkspace';
+import { useIsAdmin } from '@/hooks/usePermission';
 import { Field, LoadError, Modal, PageHead, Skeleton } from './components/kit';
 import { IconBack, IconForward } from './components/icons';
 import SettingsPlatforms from './components/SettingsPlatforms';
@@ -158,6 +159,16 @@ const IC = {
 };
 
 /* ── one state-declaring index card (the mockup's exact anatomy) ───── */
+
+/** One labelled group of settings cards on the home (Team / Content / Campaigns / Publishing). */
+function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section style={{ marginBottom: 22 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--mute)', letterSpacing: '.04em', margin: '4px 2px 9px' }}>{title}</div>
+      <div className="grid g2" style={{ gap: 13 }}>{children}</div>
+    </section>
+  );
+}
 
 function IndexCard({
   icon, late, title, desc, tags, action, actionPrimary, onOpen,
@@ -341,6 +352,8 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const roleLabel = ROLE_LABELS[role] ? (isAr ? ROLE_LABELS[role].ar : ROLE_LABELS[role].en) : role;
   const canManage = can('manage_settings' as Capability);
+  // The whole-app Team & Access page is admin-only (RequireAdmin), so its link shows only to admins.
+  const isSalesAdmin = useIsAdmin();
 
   const [data, setData] = useState<SettingsData | null>(null);
   const [inFlight, setInFlight] = useState(0);
@@ -418,7 +431,106 @@ export default function SettingsPage() {
         {loading && <Skeleton rows={6} />}
         {!loading && !error && view && (
           <>
-            <div className="grid g2" style={{ gap: 13 }}>
+            {/* Four groups (2026-09-29) instead of one unsorted grid of 16 cards:
+                the team, the content machine, campaigns, and publishing. */}
+            <SettingsGroup title={isAr ? 'الفريق' : 'Team'}>
+              <IndexCard
+                icon={IC.people}
+                title={isAr ? 'الأدوار والأشخاص' : 'Roles and people'}
+                desc={isAr
+                  ? 'من يشغل كل دور. الخطوات تشير إلى أدوار، فاستبدال شخص تغيير واحد هنا.'
+                  : 'Who fills each role. Steps point at roles, so replacing a person is one change here.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? `${num(view.rolesCount, true)} أدوار` : `${view.rolesCount} roles`}</span>
+                    <span className="tag">{isAr ? `${num(view.peopleCount, true)} أشخاص` : `${view.peopleCount} people`}</span>
+                    {view.noBackup && (
+                      <span className="pill p-wait">{isAr ? 'لا بديل للاعتمادات' : 'No backup for approvals'}</span>
+                    )}
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/people')}
+              />
+              <IndexCard
+                icon={IC.matrix}
+                title={isAr ? 'الأدوار والصلاحيات' : 'Roles and permissions'}
+                desc={isAr
+                  ? 'من يرى ماذا ومن يفعل ماذا — مصفوفة الشاشات الثلاثية لكل دور.'
+                  : 'Who sees what and who does what — the three-state screen matrix per role.'}
+                tags={
+                  <span className="tag">
+                    {isAr ? `${num(view.rolesCount, true)} أدوار · ثلاث حالات لكل شاشة` : `${view.rolesCount} roles · three states per surface`}
+                  </span>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/roles')}
+              />
+              <IndexCard
+                icon={IC.matrix}
+                title={isAr ? 'طاقة العمل والمُهَل' : 'Load & SLA'}
+                desc={isAr
+                  ? 'كم مهمة جديدة تصل لكل دور يوميًا، وكم ساعة تُمهَل كل مهمة قبل اعتبارها متأخرة.'
+                  : 'How many new tasks land per role per day, and the hours each task gets before it counts late.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? 'الكاتب ١٠ + ٣ يوميًا' : 'Writer 10 + 3 /day'}</span>
+                    <span className="tag">{isAr ? 'المونتير ٤ + ٢ يوميًا' : 'Montage 4 + 2 /day'}</span>
+                    <span className="tag">{isAr ? 'مُهَل ٤–٢٤ ساعة' : 'SLAs 4–24h'}</span>
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/load')}
+              />
+              <IndexCard
+                icon={IC.matrix}
+                title={isAr ? 'الطاقة والتقويم' : 'Capacity & calendar'}
+                desc={isAr
+                  ? 'كم يستوعب كل شخص يوميًا (بما فيها الاعتمادات)، وأيام العطلة والإجازات، وكم يستغرق كل عمل فعلًا.'
+                  : 'What each person can take per day (approvals included), the weekend and holidays, and how much work each stage actually is.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? 'منشور · فيديو · اعتمادات' : 'Post · Video · Approvals'}</span>
+                    <span className="tag">{isAr ? 'جهد لا مهلة' : 'Effort, not an allowance'}</span>
+                    <span className="tag">{isAr ? 'يخطّط عليها محرّك الجدولة' : 'What the scheduler plans against'}</span>
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/capacity')}
+              />
+              <IndexCard
+                icon={IC.bell}
+                title={isAr ? 'الإشعارات' : 'Notifications'}
+                desc={isAr
+                  ? 'متى يقاطع النظام أحدًا — فتح مهمة، أو مرور موعد، أو حلول وقت النشر.'
+                  : 'When the system interrupts someone — a task opening, a deadline passing, publish time arriving.'}
+                tags={
+                  <>
+                    <span className="tag">
+                      {view.extEnabled
+                        ? (isAr ? 'داخل التطبيق + واتساب' : 'In-app + WhatsApp')
+                        : (isAr ? 'داخل التطبيق فقط — القنوات الخارجية معطّلة' : 'In-app only — external channels off')}
+                    </span>
+                    <span className="tag">{isAr ? `${num(view.ruleEventCount, true)} قواعد` : `${view.ruleEventCount} rules`}</span>
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/notifications')}
+              />
+              {isSalesAdmin && (
+                <IndexCard
+                  icon={IC.people}
+                  title={isAr ? 'الفريق والصلاحيات (كل النظام)' : 'Team & Access (whole app)'}
+                  desc={isAr
+                    ? 'حسابات الأشخاص، ومستويات الوصول في المبيعات، ووظائف المبيعات، وأدوار التسويق — كلها في صفحة واحدة.'
+                    : 'Accounts, Sales access levels, Sales jobs and Marketing roles — all in one page.'}
+                  tags={<span className="tag">{isAr ? 'للمسؤول فقط' : 'Admin only'}</span>}
+                  action={isAr ? 'فتح' : 'Open'}
+                  onOpen={() => navigate('/settings/team?tab=people')}
+                />
+              )}
+            </SettingsGroup>
+            <SettingsGroup title={isAr ? 'المحتوى والمسارات' : 'Content and workflow'}>
               <IndexCard
                 icon={IC.workflows}
                 title={isAr ? 'مسارات العمل' : 'Workflows'}
@@ -441,31 +553,6 @@ export default function SettingsPage() {
                 action={isAr ? 'فتح' : 'Open'}
                 onOpen={() => navigate('/m/settings/workflows')}
               />
-
-              <IndexCard
-                icon={IC.platforms}
-                late={view.connected === 0}
-                title={isAr ? 'المنصات والحسابات' : 'Platforms and accounts'}
-                desc={isAr
-                  ? 'ربط انستقرام وتيك توك وغيرها — للنشر، ولسحب الأداء.'
-                  : 'Connecting Instagram, TikTok and the rest — to publish, and to pull performance.'}
-                tags={
-                  <>
-                    <span className={`pill ${view.connected === 0 ? 'p-late' : 'p-go'}`}>
-                      {isAr
-                        ? `${num(view.connected, true)} من ${num(view.totalAccounts, true)} مربوطة`
-                        : `${view.connected} of ${view.totalAccounts} connected`}
-                    </span>
-                    {view.connected === 0 && (
-                      <span className="tag tag-t">{isAr ? 'كل شيء يدوي' : 'Everything is manual'}</span>
-                    )}
-                  </>
-                }
-                action={view.connected === 0 ? (isAr ? 'إعداد' : 'Set up') : (isAr ? 'فتح' : 'Open')}
-                actionPrimary={view.connected === 0}
-                onOpen={() => navigate('/m/settings/platforms')}
-              />
-
               <IndexCard
                 icon={IC.types}
                 title={isAr ? 'أنواع المحتوى' : 'Content types'}
@@ -481,176 +568,6 @@ export default function SettingsPage() {
                 action={isAr ? 'فتح' : 'Open'}
                 onOpen={() => navigate('/m/settings/content-types')}
               />
-
-              <IndexCard
-                icon={IC.campaigns}
-                title={isAr ? 'معايير النجاح' : 'Success measures'}
-                desc={isAr
-                  ? 'المعايير التي تُحكم بها الحملات. أضف نوعًا جديدًا هنا أو مباشرةً في موجز الحملة.'
-                  : 'The measures campaigns are judged by. Add a new type here or straight from a campaign brief.'}
-                tags={
-                  <>
-                    <span className="tag">{isAr ? 'عدد · تكلفة' : 'Count · Cost'}</span>
-                    <span className="tag">{isAr ? 'الأكثر/الأقل أفضل' : 'Higher/lower is better'}</span>
-                  </>
-                }
-                action={isAr ? 'فتح' : 'Open'}
-                onOpen={() => navigate('/m/settings/measures')}
-              />
-
-              <IndexCard
-                icon={IC.people}
-                title={isAr ? 'الجماهير' : 'Audiences'}
-                desc={isAr
-                  ? 'الجماهير المحفوظة التي تُختار في موجز الحملة. أضف واحدًا هنا أو مباشرةً في الموجز.'
-                  : 'The saved audiences picked in the campaign brief. Add one here or straight from a brief.'}
-                tags={
-                  <span className="tag">{isAr ? 'اسم · تفاصيل' : 'Name · Details'}</span>
-                }
-                action={isAr ? 'فتح' : 'Open'}
-                onOpen={() => navigate('/m/settings/audiences')}
-              />
-
-              <IndexCard
-                icon={IC.people}
-                title={isAr ? 'الأدوار والأشخاص' : 'Roles and people'}
-                desc={isAr
-                  ? 'من يشغل كل دور. الخطوات تشير إلى أدوار، فاستبدال شخص تغيير واحد هنا.'
-                  : 'Who fills each role. Steps point at roles, so replacing a person is one change here.'}
-                tags={
-                  <>
-                    <span className="tag">{isAr ? `${num(view.rolesCount, true)} أدوار` : `${view.rolesCount} roles`}</span>
-                    <span className="tag">{isAr ? `${num(view.peopleCount, true)} أشخاص` : `${view.peopleCount} people`}</span>
-                    {view.noBackup && (
-                      <span className="pill p-wait">{isAr ? 'لا بديل للاعتمادات' : 'No backup for approvals'}</span>
-                    )}
-                  </>
-                }
-                action={isAr ? 'فتح' : 'Open'}
-                onOpen={() => navigate('/m/settings/people')}
-              />
-
-              <IndexCard
-                icon={IC.bell}
-                title={isAr ? 'الإشعارات' : 'Notifications'}
-                desc={isAr
-                  ? 'متى يقاطع النظام أحدًا — فتح مهمة، أو مرور موعد، أو حلول وقت النشر.'
-                  : 'When the system interrupts someone — a task opening, a deadline passing, publish time arriving.'}
-                tags={
-                  <>
-                    <span className="tag">
-                      {view.extEnabled
-                        ? (isAr ? 'داخل التطبيق + واتساب' : 'In-app + WhatsApp')
-                        : (isAr ? 'داخل التطبيق فقط — القنوات الخارجية معطّلة' : 'In-app only — external channels off')}
-                    </span>
-                    <span className="tag">{isAr ? `${num(view.ruleEventCount, true)} قواعد` : `${view.ruleEventCount} rules`}</span>
-                  </>
-                }
-                action={isAr ? 'فتح' : 'Open'}
-                onOpen={() => navigate('/m/settings/notifications')}
-              />
-
-              <IndexCard
-                icon={IC.matrix}
-                title={isAr ? 'طاقة العمل والمُهَل' : 'Load & SLA'}
-                desc={isAr
-                  ? 'كم مهمة جديدة تصل لكل دور يوميًا، وكم ساعة تُمهَل كل مهمة قبل اعتبارها متأخرة.'
-                  : 'How many new tasks land per role per day, and the hours each task gets before it counts late.'}
-                tags={
-                  <>
-                    <span className="tag">{isAr ? 'الكاتب ١٠ + ٣ يوميًا' : 'Writer 10 + 3 /day'}</span>
-                    <span className="tag">{isAr ? 'المونتير ٤ + ٢ يوميًا' : 'Montage 4 + 2 /day'}</span>
-                    <span className="tag">{isAr ? 'مُهَل ٤–٢٤ ساعة' : 'SLAs 4–24h'}</span>
-                  </>
-                }
-                action={isAr ? 'فتح' : 'Open'}
-                onOpen={() => navigate('/m/settings/load')}
-              />
-
-              {/* Capacity — the numbers the campaign scheduling engine plans
-                  against. Distinct from Load & SLA above: that one is a
-                  deadline allowance, this one is how much WORK a stage is. */}
-              <IndexCard
-                icon={IC.matrix}
-                title={isAr ? 'الطاقة والتقويم' : 'Capacity & calendar'}
-                desc={isAr
-                  ? 'كم يستوعب كل شخص يوميًا (بما فيها الاعتمادات)، وأيام العطلة والإجازات، وكم يستغرق كل عمل فعلًا.'
-                  : 'What each person can take per day (approvals included), the weekend and holidays, and how much work each stage actually is.'}
-                tags={
-                  <>
-                    <span className="tag">{isAr ? 'منشور · فيديو · اعتمادات' : 'Post · Video · Approvals'}</span>
-                    <span className="tag">{isAr ? 'جهد لا مهلة' : 'Effort, not an allowance'}</span>
-                    <span className="tag">{isAr ? 'يخطّط عليها محرّك الجدولة' : 'What the scheduler plans against'}</span>
-                  </>
-                }
-                action={isAr ? 'فتح' : 'Open'}
-                onOpen={() => navigate('/m/settings/capacity')}
-              />
-
-              <IndexCard
-                icon={IC.bell}
-                title={isAr ? 'إيقاع النشر' : 'Posting cadence'}
-                desc={isAr
-                  ? 'كم منشورًا وفيديو نريد يوميًا على كل منصة — أهداف تقويم التغطية.'
-                  : 'How many posts and videos we want per platform per day — the coverage calendar\'s targets.'}
-                tags={
-                  <>
-                    <span className="tag">{isAr ? 'الهدف مقابل المنشور فعلًا' : 'Target vs published'}</span>
-                    <span className="tag">{isAr ? 'ينبّه ولا ينشر بالنيابة' : 'Nudges, never auto-posts'}</span>
-                  </>
-                }
-                action={isAr ? 'فتح' : 'Open'}
-                onOpen={() => navigate('/m/settings/cadence')}
-              />
-
-              <IndexCard
-                icon={IC.campaigns}
-                title={isAr ? 'أنواع الحملات' : 'Campaign types'}
-                desc={isAr
-                  ? 'الحقول التي تطلبها الحملة المدفوعة مقابل العضوية، ومعايير النجاح الافتراضية.'
-                  : 'What a paid campaign asks for versus an organic one, and the default success criteria.'}
-                tags={
-                  <>
-                    <span className="tag">{isAr ? 'نوعان' : 'Two kinds'}</span>
-                    <span className="tag">{isAr ? 'مدفوعة · عضوية' : 'Paid · Organic'}</span>
-                    <span className="tag">
-                      {isAr
-                        ? `التوقيع فوق ${num(view.sigAmount, true)} ر.س`
-                        : `Signature above ${num(view.sigAmount, false)} SAR`}
-                    </span>
-                    <span className="tag">
-                      {isAr
-                        ? `الإسناد ${num(view.attrDays, true)} يومًا`
-                        : `Attribution ${view.attrDays} days`}
-                    </span>
-                    <span className="tag">
-                      {isAr
-                        ? `التصوير: ${num(view.shootMin, true)} لقطات أو ${num(view.shootWait, true)} يومًا`
-                        : `Shoots: ${view.shootMin} shots or ${view.shootWait} days`}
-                    </span>
-                  </>
-                }
-                action={isAr ? 'تعديل' : 'Edit'}
-                onOpen={() => setEditOpen(true)}
-              />
-
-              <IndexCard
-                icon={IC.matrix}
-                title={isAr ? 'الأدوار والصلاحيات' : 'Roles and permissions'}
-                desc={isAr
-                  ? 'من يرى ماذا ومن يفعل ماذا — مصفوفة الشاشات الثلاثية لكل دور.'
-                  : 'Who sees what and who does what — the three-state screen matrix per role.'}
-                tags={
-                  <span className="tag">
-                    {isAr ? `${num(view.rolesCount, true)} أدوار · ثلاث حالات لكل شاشة` : `${view.rolesCount} roles · three states per surface`}
-                  </span>
-                }
-                action={isAr ? 'فتح' : 'Open'}
-                onOpen={() => navigate('/m/settings/roles')}
-              />
-
-              {/* Post Creative Director — the brand kit, the writer rules, the
-                  AI-role routing, and the feature flags. All ship dark. */}
               <IndexCard
                 icon={IC.matrix}
                 title={isAr ? 'كتيّب العلامة' : 'Brand kit'}
@@ -691,7 +608,106 @@ export default function SettingsPage() {
                 action={isAr ? 'فتح' : 'Open'}
                 onOpen={() => navigate('/m/settings/creative-flags')}
               />
-            </div>
+            </SettingsGroup>
+            <SettingsGroup title={isAr ? 'الحملات' : 'Campaigns'}>
+              <IndexCard
+                icon={IC.campaigns}
+                title={isAr ? 'أنواع الحملات' : 'Campaign types'}
+                desc={isAr
+                  ? 'الحقول التي تطلبها الحملة المدفوعة مقابل العضوية، ومعايير النجاح الافتراضية.'
+                  : 'What a paid campaign asks for versus an organic one, and the default success criteria.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? 'نوعان' : 'Two kinds'}</span>
+                    <span className="tag">{isAr ? 'مدفوعة · عضوية' : 'Paid · Organic'}</span>
+                    <span className="tag">
+                      {isAr
+                        ? `التوقيع فوق ${num(view.sigAmount, true)} ر.س`
+                        : `Signature above ${num(view.sigAmount, false)} SAR`}
+                    </span>
+                    <span className="tag">
+                      {isAr
+                        ? `الإسناد ${num(view.attrDays, true)} يومًا`
+                        : `Attribution ${view.attrDays} days`}
+                    </span>
+                    <span className="tag">
+                      {isAr
+                        ? `التصوير: ${num(view.shootMin, true)} لقطات أو ${num(view.shootWait, true)} يومًا`
+                        : `Shoots: ${view.shootMin} shots or ${view.shootWait} days`}
+                    </span>
+                  </>
+                }
+                action={isAr ? 'تعديل' : 'Edit'}
+                onOpen={() => setEditOpen(true)}
+              />
+              <IndexCard
+                icon={IC.campaigns}
+                title={isAr ? 'معايير النجاح' : 'Success measures'}
+                desc={isAr
+                  ? 'المعايير التي تُحكم بها الحملات. أضف نوعًا جديدًا هنا أو مباشرةً في موجز الحملة.'
+                  : 'The measures campaigns are judged by. Add a new type here or straight from a campaign brief.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? 'عدد · تكلفة' : 'Count · Cost'}</span>
+                    <span className="tag">{isAr ? 'الأكثر/الأقل أفضل' : 'Higher/lower is better'}</span>
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/measures')}
+              />
+              <IndexCard
+                icon={IC.people}
+                title={isAr ? 'الجماهير' : 'Audiences'}
+                desc={isAr
+                  ? 'الجماهير المحفوظة التي تُختار في موجز الحملة. أضف واحدًا هنا أو مباشرةً في الموجز.'
+                  : 'The saved audiences picked in the campaign brief. Add one here or straight from a brief.'}
+                tags={
+                  <span className="tag">{isAr ? 'اسم · تفاصيل' : 'Name · Details'}</span>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/audiences')}
+              />
+            </SettingsGroup>
+            <SettingsGroup title={isAr ? 'النشر' : 'Publishing'}>
+              <IndexCard
+                icon={IC.platforms}
+                late={view.connected === 0}
+                title={isAr ? 'المنصات والحسابات' : 'Platforms and accounts'}
+                desc={isAr
+                  ? 'ربط انستقرام وتيك توك وغيرها — للنشر، ولسحب الأداء.'
+                  : 'Connecting Instagram, TikTok and the rest — to publish, and to pull performance.'}
+                tags={
+                  <>
+                    <span className={`pill ${view.connected === 0 ? 'p-late' : 'p-go'}`}>
+                      {isAr
+                        ? `${num(view.connected, true)} من ${num(view.totalAccounts, true)} مربوطة`
+                        : `${view.connected} of ${view.totalAccounts} connected`}
+                    </span>
+                    {view.connected === 0 && (
+                      <span className="tag tag-t">{isAr ? 'كل شيء يدوي' : 'Everything is manual'}</span>
+                    )}
+                  </>
+                }
+                action={view.connected === 0 ? (isAr ? 'إعداد' : 'Set up') : (isAr ? 'فتح' : 'Open')}
+                actionPrimary={view.connected === 0}
+                onOpen={() => navigate('/m/settings/platforms')}
+              />
+              <IndexCard
+                icon={IC.bell}
+                title={isAr ? 'إيقاع النشر' : 'Posting cadence'}
+                desc={isAr
+                  ? 'كم منشورًا وفيديو نريد يوميًا على كل منصة — أهداف تقويم التغطية.'
+                  : 'How many posts and videos we want per platform per day — the coverage calendar\'s targets.'}
+                tags={
+                  <>
+                    <span className="tag">{isAr ? 'الهدف مقابل المنشور فعلًا' : 'Target vs published'}</span>
+                    <span className="tag">{isAr ? 'ينبّه ولا ينشر بالنيابة' : 'Nudges, never auto-posts'}</span>
+                  </>
+                }
+                action={isAr ? 'فتح' : 'Open'}
+                onOpen={() => navigate('/m/settings/cadence')}
+              />
+            </SettingsGroup>
 
             {/* The risk banner — shown while both declared risks actually hold. */}
             {view.connected === 0 && view.noBackup && (

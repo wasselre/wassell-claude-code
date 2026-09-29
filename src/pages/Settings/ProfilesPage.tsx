@@ -10,6 +10,7 @@ import Modal from '@/components/ui/Modal';
 import PermissionMatrix from './components/PermissionMatrix';
 import PageAccessMatrix from './components/PageAccessMatrix';
 import BackToSettings from './components/BackToSettings';
+import { useSettingsEmbedded } from './components/settingsEmbed';
 import type { Profile, ProfileModelPermissions, StoreMutationReason } from '@/types';
 
 function reasonToKey(reason: StoreMutationReason): string {
@@ -27,6 +28,8 @@ export default function ProfilesPage() {
   const navigate = useNavigate();
   const { profiles, users, language, saveProfile } = useAppStore();
   const isAr = language === 'ar';
+  // Shown as a tab of Team & Access → the shell carries the title.
+  const embedded = useSettingsEmbedded();
 
   const editingProfile = profileId ? profiles.find((p) => p.id === profileId) : null;
 
@@ -34,7 +37,7 @@ export default function ProfilesPage() {
     return editingProfile ? (
       <ProfileEditor
         profile={editingProfile}
-        onBack={() => navigate('/settings/profiles')}
+        onBack={() => navigate('/settings/team?tab=access')}
       />
     ) : (
       <div className="text-center py-20 text-charcoal/30">404</div>
@@ -44,24 +47,26 @@ export default function ProfilesPage() {
   return (
     <div className="max-w-4xl">
       <BackToSettings />
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 flex items-center justify-center">
-            <Shield size={24} className="text-amber-600" />
+      <div className={`flex items-center mb-8 ${embedded ? 'justify-end' : 'justify-between'}`}>
+        {!embedded && (
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 flex items-center justify-center">
+              <Shield size={24} className="text-amber-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'مستويات الوصول' : 'Access levels'}</h1>
+              <p className="text-sm text-charcoal/40">{isAr ? 'ما يستطيع كل مستوى رؤيته وفعله في تطبيق المبيعات' : 'What each level can see and do in the Sales app'}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'الصلاحيات' : 'Profiles'}</h1>
-            <p className="text-sm text-charcoal/40">{isAr ? 'إدارة صلاحيات الوصول' : 'Manage access permissions'}</p>
-          </div>
-        </div>
+        )}
         <Button onClick={() => {
           const id = uuid();
           // Hardcoded placeholder in both languages — the user renames in
           // the profile editor where translation kicks in via the rename flow.
           saveProfile({
             id,
-            label_ar: 'ملف جديد',
-            label_en: 'New Profile',
+            label_ar: 'مستوى وصول جديد',
+            label_en: 'New access level',
             is_system: false,
             is_admin: false,
             model_permissions: [],
@@ -71,7 +76,7 @@ export default function ProfilesPage() {
           navigate(`/settings/profiles/${id}`);
         }}>
           <Plus size={16} />
-          {isAr ? 'ملف جديد' : 'New Profile'}
+          {isAr ? 'مستوى وصول جديد' : 'New access level'}
         </Button>
       </div>
 
@@ -111,7 +116,7 @@ export default function ProfilesPage() {
         {profiles.length === 0 && (
           <div className="text-center py-16 text-charcoal/30">
             <Shield size={40} className="mx-auto mb-3 opacity-30" />
-            <p className="font-bold">{isAr ? 'لا توجد ملفات' : 'No profiles yet'}</p>
+            <p className="font-bold">{isAr ? 'لا توجد مستويات وصول' : 'No access levels yet'}</p>
           </div>
         )}
       </div>
