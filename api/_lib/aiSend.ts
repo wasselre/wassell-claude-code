@@ -26,7 +26,11 @@ export interface EnqueueResult {
 
 export async function enqueueAiReply(
   supa: SupabaseClient,
-  opts: { chatWid: string; text: string; deviceId?: string | null; jobId?: string | null; force?: boolean; projectId?: string | null },
+  opts: {
+    chatWid: string; text: string; deviceId?: string | null; jobId?: string | null; force?: boolean; projectId?: string | null;
+    /** Deliver this many seconds from now (e.g. a follow-up that must land after a project's photos). */
+    delaySeconds?: number;
+  },
 ): Promise<EnqueueResult> {
   const chatWid = (opts.chatWid ?? '').trim();
   const text = (opts.text ?? '').trim();
@@ -63,7 +67,7 @@ export async function enqueueAiReply(
     p_body: text,
     p_media: null,
     p_reference: `ai:${opts.jobId ?? 'basic'}:${Date.now()}`,
-    p_deliver_at: new Date().toISOString(),
+    p_deliver_at: new Date(Date.now() + Math.max(0, opts.delaySeconds ?? 0) * 1000).toISOString(),
     p_user_id: null,
     p_project_id: opts.projectId ?? null,
   });

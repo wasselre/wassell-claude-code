@@ -1002,6 +1002,64 @@ async function inboundMediaPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// WhatsApp sales agent turns (wa_agent_turn_jobs, 2026-09-29). The queue is
+// debounced (a burst of customer messages → one turn) and serialised per chat
+// in SQL. The turn itself runs in /api/whatsapp/agent-turn because it needs
+// api/_lib (the Project Finder, the send flow), which this standalone package
+// cannot import — same posture as the workflow runner.
+
+async function claimAndRunOneAgentTurn(): Promise<boolean> {
+  if (!env.WHATSAPP_AI_SECRET) return false; // lane off until the secret is set
+  const { data, error } = await supabase.rpc('wa_agent_turn_claim_next', { p_worker: env.WORKER_ID });
+  if (error) { console.error(`[worker] agent-turn claim failed: ${error.message}`); return false; }
+  const rows = (data ?? []) as Array<{ id: string; chat_wid: string; attempts: number }>;
+  if (rows.length === 0) return false;
+  const job = rows[0]!;
+  try {
+    const res = await fetch(`${env.APP_URL.replace(/\/+$/, '')}/api/whatsapp/agent-turn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-wassel-ai-secret': env.WHATSAPP_AI_SECRET },
+      body: JSON.stringify({ chat_wid: job.chat_wid, job_id: job.id }),
+      signal: AbortSignal.timeout(150_000),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`agent-turn HTTP ${res.status}: ${text.slice(0, 300)}`);
+    const { error: cErr } = await supabase.rpc('wa_agent_turn_complete', { p_id: job.id });
+    if (cErr) console.error(`[worker] wa_agent_turn_complete failed job=${job.id}: ${cErr.message}`);
+    console.log(`[worker] agent turn done job=${job.id} chat=${job.chat_wid} ${text.slice(0, 200)}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] agent turn job=${job.id} chat=${job.chat_wid} FAILED (attempt ${job.attempts}): ${msg}`);
+    const { error: fErr } = await supabase.rpc('wa_agent_turn_fail', { p_id: job.id, p_error: msg });
+    if (fErr) console.error(`[worker] wa_agent_turn_fail failed job=${job.id}: ${fErr.message}`);
+  }
+  return true;
+}
+
+async function runAgentTurnWatchdog(): Promise<void> {
+  const { data, error } = await supabase.rpc('wa_agent_turn_watchdog');
+  if (error) { console.error(`[worker] agent-turn watchdog RPC error: ${error.message}`); return; }
+  const swept = typeof data === 'number' ? data : 0;
+  if (swept > 0) console.warn(`[worker] agent-turn watchdog failed ${swept} stale turn(s)`);
+}
+
+async function waAgentPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    let didClaim = false;
+    try { didClaim = await claimAndRunOneAgentTurn(); }
+    catch (err) { console.error('[worker] agent-turn poll iteration error:', err); }
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runAgentTurnWatchdog();
+    }
+    if (didClaim) continue;
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !shuttingDown) await sleep(200);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Bilingual value translation — translation_jobs queue (W1).
 
 async function claimAndRunOneTranslation(): Promise<boolean> {
@@ -3809,6 +3867,7 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     conflictWatchdogLoop(),
     marketingOpsPollLoop(), // always-on: ops monitoring runs even when collection is disabled
     inboundMediaPollLoop(), // durable save + voice transcription of inbound WhatsApp media
+    waAgentPollLoop(),      // WhatsApp sales agent turns (debounced) → /api/whatsapp/agent-turn
   ];
   // AI call-result analysis only runs when the DeepSeek key is set, so the
   // worker boots cleanly before the feature is switched on.

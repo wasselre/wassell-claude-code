@@ -32,6 +32,8 @@ import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { enqueueAiReply } from '../_lib/aiSend.js';
 import { sendProjectViaAiFlow } from '../_lib/aiSendProject.js';
 import { resolveProjectSheet } from '../_lib/projectSheet.js';
+import { hasDirectionWord } from '../_lib/salesAgent/decide.js';
+import { agentAllowedFor, startAgentConversation, enqueueAgentTurn, activeAgentConversation, loadAgentSettings } from '../_lib/salesAgent/conversation.js';
 import { uuidV5FromWidSync } from '../_lib/chatIngest.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -238,8 +240,6 @@ async function kimiClassify(message: string): Promise<Decision> {
 
 // ── Ad-click answering ──────────────────────────────────────────────────────
 
-const DIRECTION_WORD_RE = /(شمال|جنوب|شرق|غرب|وسط)/;
-
 /**
  * "Other projects (in <region>)". Project ads carry a second greeting button —
  * «مهتم بمشاريع سكنية اخرى في شمال الرياض» — so the customer who taps it has
@@ -251,7 +251,8 @@ export function isOtherProjectsAsk(t: string): boolean {
   const anyProject = /(مشاريع|مشروع)/.test(t) || /\bprojects?\b/.test(s);
   const other = /(اخرى|أخرى|ثانية|ثانيه)/.test(t) || /\bother\b/.test(s);
   const plural = /مشاريع/.test(t) || /\bprojects\b/.test(s);
-  const direction = DIRECTION_WORD_RE.test(t) || /\b(north|south|east|west|central|middle)\b/.test(s);
+  // Anchored: «المشرقية» (a project name) must not read as "east".
+  const direction = hasDirectionWord(t);
   return (anyProject && other) || (plural && direction);
 }
 
@@ -295,9 +296,20 @@ async function answerAdClick(
   a: {
     chatWid: string; chatRecordId: string; text: string; lang: 'ar' | 'en';
     deviceId?: string; adProjectId: string | null; namedProject?: string;
+    /** The sales agent may take this customer (rollout mode + kill switch). */
+    agentAllowed: boolean;
   },
 ): Promise<Record<string, unknown>> {
   const holding = a.lang === 'en' ? HOLDING_EN : HOLDING;
+
+  // "Other projects (in <region>)" → the qualifying sales agent, when it's
+  // switched on for this customer. It never offers the ad's project.
+  if (isOtherProjectsAsk(a.text) && a.agentAllowed) {
+    await startAgentConversation(supa, {
+      chatWid: a.chatWid, source: 'ad_other_projects', adProjectId: a.adProjectId, text: a.text, lang: a.lang,
+    });
+    return { action: 'agent_started', source: 'ad_other_projects' };
+  }
 
   if (isOtherProjectsAsk(a.text)) {
     const res = await enqueueAiReply(supa, {
@@ -365,6 +377,28 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 
   const supa = getServiceSupabase();
 
+  // ── Sales agent (Phase 2) ────────────────────────────────────────────────
+  // An ACTIVE qualifying conversation owns the chat: every customer message
+  // becomes a (debounced) agent turn, run by the worker — even after a rep has
+  // replied (operator choice). Rollout: agent_mode off / test (allowlisted
+  // phones) / on; the global kill switch always wins.
+  const agentCfg = await loadAgentSettings(supa);
+  const agentAllowed = agentAllowedFor(agentCfg, body.phone);
+  if (agentAllowed && await activeAgentConversation(supa, chatWid)) {
+    await enqueueAgentTurn(supa, chatWid);
+    return jsonRes(nodeRes, 200, { agent: 'turn_queued' });
+  }
+  // Test mode: an allowlisted phone can start the agent by typing the region ask
+  // itself («مهتم بمشاريع سكنية اخرى في شمال الرياض») — no ad click needed.
+  if (agentAllowed && agentCfg?.agent_mode === 'test' && !body.ad
+      && isOtherProjectsAsk(foldDigits((body.trigger_message ?? '').trim()))) {
+    await startAgentConversation(supa, {
+      chatWid, source: 'test', adProjectId: null,
+      text: body.trigger_message ?? '', lang: detectLang(body.trigger_message),
+    });
+    return jsonRes(nodeRes, 200, { agent: 'started', source: 'test' });
+  }
+
   // Mode routing: 'agent' → delegate to the heavy Claude-session runner (Saad).
   const { data: settings } = await supa.from('whatsapp_ai_settings').select('responder_mode').maybeSingle();
   if ((settings?.responder_mode ?? 'basic') === 'agent') {
@@ -429,6 +463,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       deviceId: body.device_id,
       adProjectId: body.ad.project_id ?? null,
       namedProject: d.action === 'project_sheet' ? d.projectName : undefined,
+      agentAllowed,
     });
     return jsonRes(nodeRes, 200, { ad: true, ...result });
   }
