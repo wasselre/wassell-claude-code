@@ -12,6 +12,12 @@ export interface AgentSettings {
   agent_mode: 'off' | 'test' | 'on';
   agent_test_phones: string[];
   agent_max_turns: number;
+  /** 'llm' = the brain (v2) with v1 as fallback; 'rules' = v1 only. */
+  agent_brain?: 'llm' | 'rules';
+  agent_model?: string;
+  agent_effort?: 'low' | 'medium' | 'high';
+  /** 'other_projects' = ad leads asking for other projects; 'all' = any inbound. */
+  agent_scope?: 'other_projects' | 'all';
 }
 
 export interface AgentConversation {
@@ -30,7 +36,7 @@ export interface AgentConversation {
 export async function loadAgentSettings(svc: SupabaseClient): Promise<AgentSettings | null> {
   const { data, error } = await svc
     .from('whatsapp_ai_settings')
-    .select('is_enabled, agent_mode, agent_test_phones, agent_max_turns')
+    .select('is_enabled, agent_mode, agent_test_phones, agent_max_turns, agent_brain, agent_model, agent_effort, agent_scope')
     .limit(1)
     .maybeSingle();
   if (error) {
@@ -76,11 +82,20 @@ export async function activeAgentConversation(svc: SupabaseClient, chatWid: stri
  */
 export async function startAgentConversation(
   svc: SupabaseClient,
-  a: { chatWid: string; source: 'ad_other_projects' | 'test'; adProjectId: string | null; text: string; lang: Lang },
+  a: {
+    chatWid: string; source: 'ad_other_projects' | 'test' | 'inbound' | 'ad_project'; adProjectId: string | null; text: string; lang: Lang;
+    /** false = this message was already answered (e.g. the ad's project was just
+     *  sent): only take over from the NEXT message. Default true. */
+    answerNow?: boolean;
+    /** Projects already sent in this chat by the caller. */
+    alreadySent?: string[];
+  },
 ): Promise<void> {
   const { data: prev } = await svc
     .from('wa_agent_conversations').select('sent_project_ids').eq('chat_wid', a.chatWid).maybeSingle();
   const slots: Slots = { city: 'الرياض', zone: parseZone(a.text), lang: a.lang };
+  const answerNow = a.answerNow !== false;
+  const sent = [...new Set([...((prev as { sent_project_ids?: string[] } | null)?.sent_project_ids ?? []), ...(a.alreadySent ?? [])])];
   const { error } = await svc.from('wa_agent_conversations').upsert({
     chat_wid: a.chatWid,
     status: 'active',
@@ -88,14 +103,42 @@ export async function startAgentConversation(
     ad_project_id: a.adProjectId,
     slots,
     asked: null,
-    sent_project_ids: (prev as { sent_project_ids?: string[] } | null)?.sent_project_ids ?? [],
+    sent_project_ids: sent,
     turns: 0,
-    last_turn_at: null,
+    // Not answering now → the watermark is NOW, so this message is not re-answered.
+    last_turn_at: answerNow ? null : new Date().toISOString(),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }, { onConflict: 'chat_wid' });
   if (error) throw new Error(`sales agent: could not start the conversation: ${error.message}`);
-  await enqueueAgentTurn(svc, a.chatWid);
+  if (answerNow) await enqueueAgentTurn(svc, a.chatWid);
+}
+
+/** Does the agent's reach include every inbound message for this customer?
+ *  Test mode: the allowlisted phones always get it. On: `agent_scope='all'`. */
+export function agentScopeAll(s: AgentSettings | null): boolean {
+  if (!s) return false;
+  return s.agent_mode === 'test' || s.agent_scope === 'all';
+}
+
+/**
+ * May a NEW agent conversation start for this chat (scope 'all')? In 'on' mode it
+ * must not grab a chat a rep is working (gate reason human_active), nor restart
+ * within a day of the customer saying stop or of a turn-cap handoff. Test mode
+ * (the operator's own phone) always may. Fails CLOSED on a read error — the
+ * basic bot then answers as before.
+ */
+export async function agentMayStart(svc: SupabaseClient, chatWid: string, s: AgentSettings): Promise<boolean> {
+  if (s.agent_mode === 'test') return true;
+  const { data: prev, error: pErr } = await svc
+    .from('wa_agent_conversations').select('status, updated_at').eq('chat_wid', chatWid).maybeSingle();
+  if (pErr) { console.error('[salesAgent] conversation read failed (not starting):', pErr.message); return false; }
+  const p = prev as { status: string; updated_at: string } | null;
+  if (p && p.status !== 'active' && Date.now() - new Date(p.updated_at).getTime() < 24 * 3_600_000) return false;
+  const { data: gate, error: gErr } = await svc.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });
+  if (gErr) { console.error('[salesAgent] gate check failed (not starting):', gErr.message); return false; }
+  const row = (Array.isArray(gate) ? gate[0] : gate) as { reason?: string } | null;
+  return row?.reason !== 'human_active';
 }
 
 /** Queue a turn ~8 s out; further messages in the burst push it (≤ 60 s). */

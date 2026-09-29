@@ -41,12 +41,15 @@ export const PRICING: Readonly<Record<string, ModelPrice>> = Object.freeze({
   'claude-fable-5': tier(10, 50),
   'claude-mythos-5-1': tier(10, 50),
   'claude-mythos-5': tier(10, 50),
+  // Opus 5.5 — $4 / $20, cache reads $0.20 (claude-api skill, cached 2026-09-25).
+  'claude-opus-5-5': tier(4, 20, 0.05),
   // Opus tier — $5 / $25.
   'claude-opus-5': OPUS_TIER,
   'claude-opus-4-8': OPUS_TIER,
   'claude-opus-4-7': OPUS_TIER,
   'claude-opus-4-6': OPUS_TIER,
-  // Sonnet.
+  // Sonnet. Sonnet 5.5 — $2 / $10, cache reads $0.20 (claude-api skill, cached 2026-09-25).
+  'claude-sonnet-5-5': tier(2, 10),
   'claude-sonnet-5': tier(2, 10),
   'claude-sonnet-4-6': tier(3, 15),
   // Haiku 4.5 (alias + dated snapshot).

@@ -33,7 +33,7 @@ import { enqueueAiReply } from '../_lib/aiSend.js';
 import { sendProjectViaAiFlow } from '../_lib/aiSendProject.js';
 import { resolveProjectSheet } from '../_lib/projectSheet.js';
 import { hasDirectionWord } from '../_lib/salesAgent/decide.js';
-import { agentAllowedFor, startAgentConversation, enqueueAgentTurn, activeAgentConversation, loadAgentSettings } from '../_lib/salesAgent/conversation.js';
+import { agentAllowedFor, startAgentConversation, enqueueAgentTurn, activeAgentConversation, loadAgentSettings, agentScopeAll, agentMayStart } from '../_lib/salesAgent/conversation.js';
 import { uuidV5FromWidSync } from '../_lib/chatIngest.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -298,6 +298,8 @@ async function answerAdClick(
     deviceId?: string; adProjectId: string | null; namedProject?: string;
     /** The sales agent may take this customer (rollout mode + kill switch). */
     agentAllowed: boolean;
+    /** Scope 'all': after the ad's project goes out, the agent takes the NEXT message. */
+    agentContinues?: boolean;
   },
 ): Promise<Record<string, unknown>> {
   const holding = a.lang === 'en' ? HOLDING_EN : HOLDING;
@@ -343,7 +345,22 @@ async function answerAdClick(
     chatWid: a.chatWid, projectId, deviceId: a.deviceId, jobId: 'basic',
     onlyOurProjects: true, allowAi: false, force: true, lang: a.lang,
   });
-  if (flow.queued) return { action: 'ad_project', sent: true, via, project_id: projectId };
+  if (flow.queued) {
+    if (a.agentContinues) {
+      // The project answered THIS message; the agent picks up from the next one,
+      // knowing the project was sent. A failure here only loses the follow-up
+      // (the basic bot answers instead), so it is logged, not thrown.
+      try {
+        await startAgentConversation(supa, {
+          chatWid: a.chatWid, source: 'ad_project', adProjectId: a.adProjectId, text: a.text, lang: a.lang,
+          answerNow: false, alreadySent: [projectId],
+        });
+      } catch (err) {
+        console.error(`[basic-reply] agent hand-over after ad project failed chat=${a.chatWid}:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+    return { action: 'ad_project', sent: true, via, project_id: projectId };
+  }
 
   // Could not send it (not one of ours / no sellable data) → a rep takes it.
   console.error(`[basic-reply] ad project send failed chat=${a.chatWid} project=${projectId}: ${flow.error ?? flow.reason ?? 'unknown'}`);
@@ -388,15 +405,25 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     await enqueueAgentTurn(supa, chatWid);
     return jsonRes(nodeRes, 200, { agent: 'turn_queued' });
   }
-  // Test mode: an allowlisted phone can start the agent by typing the region ask
-  // itself («مهتم بمشاريع سكنية اخرى في شمال الرياض») — no ad click needed.
-  if (agentAllowed && agentCfg?.agent_mode === 'test' && !body.ad
-      && isOtherProjectsAsk(foldDigits((body.trigger_message ?? '').trim()))) {
-    await startAgentConversation(supa, {
-      chatWid, source: 'test', adProjectId: null,
-      text: body.trigger_message ?? '', lang: detectLang(body.trigger_message),
-    });
-    return jsonRes(nodeRes, 200, { agent: 'started', source: 'test' });
+  // Starting a conversation without an ad click. Scope 'all' (the operator's
+  // test phones always; everyone when agent_scope='all') → the agent takes ANY
+  // message, except a unit code or a business pitch, which keep their
+  // deterministic handling below. Scope 'other_projects' → only the region ask
+  // on a test phone (ad leads start the agent in answerAdClick).
+  if (agentAllowed && agentCfg && !body.ad) {
+    const pre = classify(body.trigger_message);
+    const deterministicFirst = pre.action === 'unit_sheet' || (pre.action === 'handoff' && pre.reason === 'b2b');
+    const wantsAgent = agentScopeAll(agentCfg)
+      ? !deterministicFirst
+      : agentCfg.agent_mode === 'test' && isOtherProjectsAsk(foldDigits((body.trigger_message ?? '').trim()));
+    if (wantsAgent && await agentMayStart(supa, chatWid, agentCfg)) {
+      const source = agentCfg.agent_mode === 'test' ? 'test' : 'inbound';
+      await startAgentConversation(supa, {
+        chatWid, source, adProjectId: null,
+        text: body.trigger_message ?? '', lang: detectLang(body.trigger_message),
+      });
+      return jsonRes(nodeRes, 200, { agent: 'started', source });
+    }
   }
 
   // Mode routing: 'agent' → delegate to the heavy Claude-session runner (Saad).
@@ -464,6 +491,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       adProjectId: body.ad.project_id ?? null,
       namedProject: d.action === 'project_sheet' ? d.projectName : undefined,
       agentAllowed,
+      agentContinues: agentAllowed && agentScopeAll(agentCfg),
     });
     return jsonRes(nodeRes, 200, { ad: true, ...result });
   }

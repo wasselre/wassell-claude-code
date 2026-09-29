@@ -22,6 +22,11 @@ export interface Slots {
   lang?: Lang;
   /** Name of the last project we sent — so a rep's notification can name it. */
   last_project_name?: string;
+  /** Brain (v2) search criteria beyond v1's slots. */
+  readiness?: 'ready' | 'off_plan' | null;
+  districts?: string[];
+  /** When the agent last handed this customer to a rep. */
+  handed_off_at?: string;
   /** The last line we sent and when — a handoff line is never repeated. */
   last_reply?: string;
   last_reply_at?: string;

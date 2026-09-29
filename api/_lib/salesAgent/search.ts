@@ -24,14 +24,14 @@ export interface ProjectPick {
   relaxed: string | null;
 }
 
-const IN_ZONE_GROUPS = new Set(['exact_district_matches', 'nearby_district_matches']);
+export const IN_ZONE_GROUPS = new Set(['exact_district_matches', 'nearby_district_matches']);
 
-interface Master { id: string; data: Record<string, unknown> }
+export interface Master { id: string; data: Record<string, unknown> }
 
 /** Resolve a Finder match id to the all_projects master row. For source
  *  'our_projects' the engine may hand back either the our_projects record or the
  *  master — resolve defensively instead of assuming. */
-async function makeMasterResolver(svc: SupabaseClient): Promise<(id: string) => Promise<Master | null>> {
+export async function makeMasterResolver(svc: SupabaseClient): Promise<(id: string) => Promise<Master | null>> {
   const { data: models, error } = await svc.from('models').select('id, name').in('name', ['all_projects', 'our_projects']);
   if (error) throw new Error(`sales agent: models lookup failed: ${error.message}`);
   const apId = (models ?? []).find((m) => m.name === 'all_projects')?.id as string | undefined;
@@ -60,11 +60,11 @@ async function makeMasterResolver(svc: SupabaseClient): Promise<(id: string) => 
   };
 }
 
-function num(v: unknown): number | null {
+export function num(v: unknown): number | null {
   const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v.replace(/[,\s]/g, '')) : NaN;
   return Number.isFinite(n) ? n : null;
 }
-function range(v: unknown): { min: number | null; max: number | null } {
+export function range(v: unknown): { min: number | null; max: number | null } {
   const o = v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
   return { min: num(o.min), max: num(o.max) };
 }

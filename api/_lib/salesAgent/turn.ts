@@ -22,6 +22,8 @@ import { understandTurn, type ChatTurn } from './understand.js';
 import { findBestProject, type ProjectPick } from './search.js';
 import { agentText, type Gender, type Lang } from './texts.js';
 import { loadAgentSettings, type AgentConversation } from './conversation.js';
+import { BrainError, runBrain, type BrainOutcome } from './brain.js';
+import type { Zone } from './texts.js';
 
 /** Photos in a project package go out 4 s apart; the follow-up question must
  *  land after the last one (mirrors aiSendProject's SPACING_MS). */
@@ -47,11 +49,13 @@ export interface TurnResult {
   status?: AgentConversation['status'];
   sent?: boolean;
   model?: string;
+  /** Brain (v2) turns: what it did. */
+  brain?: Pick<BrainOutcome, 'toolTrace' | 'guardProblems' | 'replyFailed' | 'searches'> & { project?: string | null; handoff?: string | null };
 }
 
 async function loadRecentTurns(
   svc: SupabaseClient, chatWid: string, sinceIso: string,
-): Promise<{ turns: ChatTurn[]; newestCustomerAt: string | null; deviceId: string | null; newCustomerText: string }> {
+): Promise<{ turns: ChatTurn[]; newestCustomerAt: string | null; deviceId: string | null; newCustomerText: string; lastOursAt: string | null }> {
   const { data, error } = await svc
     .from('chat_messages')
     .select('flow, kind, body, transcript, media_caption, date, device_id')
@@ -65,6 +69,7 @@ async function loadRecentTurns(
   }>).reverse();
   let newestCustomerAt: string | null = null;
   let deviceId: string | null = null;
+  let lastOursAt: string | null = null;
   const newText: string[] = [];
   const turns: ChatTurn[] = rows.map((r) => {
     // A voice note counts as the customer's words once transcribed.
@@ -73,10 +78,12 @@ async function loadRecentTurns(
     if (r.flow === 'in') {
       deviceId = r.device_id ?? deviceId;
       if (isNew) { newestCustomerAt = r.date; newText.push(text); }
+    } else if (!isNew) {
+      lastOursAt = r.date;
     }
     return { who: r.flow === 'in' ? 'customer' : 'us', text, isNew };
   });
-  return { turns, newestCustomerAt, deviceId, newCustomerText: newText.join(' ') };
+  return { turns, newestCustomerAt, deviceId, newCustomerText: newText.join(' '), lastOursAt };
 }
 
 async function notifyRep(svc: SupabaseClient, chatWid: string, body: string): Promise<void> {
@@ -148,15 +155,32 @@ export async function runAgentTurn(
   // First turn: include the message that started the conversation.
   const sinceIso = conv.last_turn_at ?? new Date(new Date(conv.created_at).getTime() - 5 * 60_000).toISOString();
   let turns: ChatTurn[]; let newestCustomerAt: string | null; let deviceId: string | null; let newCustomerText: string;
+  let lastOursAt: string | null = null;
   if (sim) {
     turns = sim.messages.map((m) => ({ who: m.who, text: m.text, isNew: m.isNew ?? m.who === 'customer' }));
     newestCustomerAt = new Date().toISOString();
     deviceId = null;
     newCustomerText = turns.filter((t) => t.isNew && t.who === 'customer').map((t) => t.text).join(' ');
   } else {
-    ({ turns, newestCustomerAt, deviceId, newCustomerText } = await loadRecentTurns(svc, chatWid, sinceIso));
+    ({ turns, newestCustomerAt, deviceId, newCustomerText, lastOursAt } = await loadRecentTurns(svc, chatWid, sinceIso));
   }
   if (!turns.some((t) => t.isNew && t.who === 'customer')) return { skipped: 'nothing_new' };
+
+  // ── Brain (v2): writes its own reply, narrows, answers from facts ─────────
+  // v1 below is the fallback: it runs only when the brain failed BEFORE any side
+  // effect (nothing sent, watermark not committed), so it can never double-send.
+  if ((settings?.agent_brain ?? 'llm') === 'llm') {
+    try {
+      return await runBrainTurn(svc, {
+        chatWid, conv, turns, newestCustomerAt, deviceId, newCustomerText, lastOursAt, dryRun,
+        model: settings?.agent_model || 'claude-opus-5-5',
+        effort: settings?.agent_effort ?? 'low',
+      });
+    } catch (err) {
+      if (!(err instanceof BrainError) || err.sideEffects) throw err;
+      console.error(`[salesAgent] brain failed — falling back to the rules agent chat=${chatWid}: ${err.message}`);
+    }
+  }
 
   // ── Understand → decide ────────────────────────────────────────────────
   const { u, model } = await understandTurn(turns, conv.slots, conv.asked, { chatWid });
@@ -295,4 +319,185 @@ export async function runAgentTurn(
   if (notify) await notifyRep(svc, chatWid, notify);
 
   return { ...result, notify, sent: allSent };
+}
+
+// ── Brain (v2) turn ───────────────────────────────────────────────────────────
+
+const ZONE_AR: Record<string, string> = { north: 'شمال', south: 'جنوب', east: 'شرق', west: 'غرب', center: 'وسط' };
+
+async function projectNames(svc: SupabaseClient, ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!ids.length) return out;
+  const { data, error } = await svc.from('records').select('id, data').in('id', ids);
+  if (error) { console.error('[salesAgent] project name lookup failed:', error.message); return out; }
+  for (const r of (data ?? []) as Array<{ id: string; data: Record<string, unknown> | null }>) {
+    const n = r.data?.project_name;
+    if (typeof n === 'string' && n.trim()) out.set(r.id, n.trim());
+  }
+  return out;
+}
+
+function riyadhNow(): string {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Riyadh', weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+}
+
+async function runBrainTurn(
+  svc: SupabaseClient,
+  a: {
+    chatWid: string; conv: AgentConversation; turns: ChatTurn[]; newestCustomerAt: string | null;
+    deviceId: string | null; newCustomerText: string; lastOursAt: string | null; dryRun: boolean;
+    model: string; effort: 'low' | 'medium' | 'high';
+  },
+): Promise<TurnResult> {
+  const { chatWid, conv, dryRun } = a;
+  const slots: Slots = { ...conv.slots };
+  const lang: Lang = /[؀-ۿ]/.test(a.newCustomerText) ? 'ar' : /[A-Za-z]{2,}/.test(a.newCustomerText) ? 'en' : (slots.lang ?? 'ar');
+  slots.lang = lang;
+
+  // The lead passed on the ad's project when they asked for OTHER projects.
+  const exclude = conv.source === 'ad_other_projects' && conv.ad_project_id ? [conv.ad_project_id] : [];
+  const knownIds = [...new Set([...conv.sent_project_ids, ...(conv.ad_project_id ? [conv.ad_project_id] : [])])];
+  const names = await projectNames(svc, knownIds);
+  const nameOf = (id: string) => names.get(id) ?? id;
+
+  const stateLines: string[] = [`Now in Riyadh: ${riyadhNow()}.`];
+  if (conv.source === 'ad_other_projects' && conv.ad_project_id) {
+    stateLines.push(`Came from an ad for «${nameOf(conv.ad_project_id)}» and asked for OTHER projects — never offer «${nameOf(conv.ad_project_id)}».`);
+  } else if (conv.ad_project_id) {
+    stateLines.push(`Came from an ad for «${nameOf(conv.ad_project_id)}» (project_id ${conv.ad_project_id}).`);
+  } else {
+    stateLines.push('Wrote to us directly.');
+  }
+  if (conv.sent_project_ids.length) {
+    stateLines.push(`Already sent to them: ${conv.sent_project_ids.map((id) => `«${nameOf(id)}» (project_id ${id})`).join('، ')}.`);
+  }
+  const wants = [
+    slots.zone ? `${ZONE_AR[slots.zone] ?? slots.zone} الرياض` : null,
+    slots.districts?.length ? `أحياء: ${slots.districts.join('، ')}` : null,
+    slots.unit_types?.length ? slots.unit_types.join('/') : null,
+    slots.bedrooms_min ? `${slots.bedrooms_min}+ غرف` : null,
+    slots.budget_max ? `حد ${slots.budget_max}` : null,
+    slots.readiness ? (slots.readiness === 'ready' ? 'جاهز' : 'على الخارطة') : null,
+  ].filter(Boolean);
+  if (wants.length) stateLines.push(`Known wishes so far: ${wants.join('، ')}.`);
+  if (slots.gender === 'f') stateLines.push('The customer is a woman — use feminine forms.');
+  if (slots.handed_off_at) stateLines.push(`Already handed to a colleague at ${slots.handed_off_at} — don't promise that again.`);
+  if (a.lastOursAt) {
+    const hours = Math.round((Date.now() - new Date(a.lastOursAt).getTime()) / 3_600_000);
+    if (hours >= 20) stateLines.push(`Our last message was ${hours} hours ago — greet first.`);
+  }
+
+  // Commit the turn (watermark + count) exactly once, before the first thing the
+  // customer or a rep would see. Nothing seen yet ⇒ a crash is retried cleanly.
+  let committed = false;
+  const commit = async () => {
+    if (committed || dryRun) { committed = true; return; }
+    committed = true;
+    const { error } = await svc.from('wa_agent_conversations').update({
+      turns: conv.turns + 1,
+      last_turn_at: a.newestCustomerAt ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('chat_wid', chatWid);
+    if (error) throw new BrainError(`state save failed: ${error.message}`, false);
+  };
+
+  let sentIds = [...conv.sent_project_ids];
+  let mediaQueued = 0;
+  const outcome = await runBrain(
+    {
+      chatWid, lang, turns: a.turns, stateLines, sentProjectIds: conv.sent_project_ids,
+      excludeProjectIds: exclude, knownProjectIds: knownIds,
+    },
+    {
+      beforeSideEffect: commit,
+      sendProject: async (projectId) => {
+        const more = await projectNames(svc, [projectId]);
+        const name = more.get(projectId) ?? '';
+        if (dryRun) return { ok: true, name, mediaQueued: 0 };
+        const flow = await sendProjectViaAiFlow(svc, {
+          chatWid, projectId, deviceId: a.deviceId, jobId: 'agent', onlyOurProjects: true, allowAi: false, force: true, lang,
+        });
+        if (!flow.queued) return { ok: false, error: flow.error ?? flow.reason ?? 'not queued' };
+        mediaQueued = flow.media_queued ?? 0;
+        sentIds = [...sentIds, projectId];
+        const { error } = await svc.from('wa_agent_conversations').update({ sent_project_ids: sentIds }).eq('chat_wid', chatWid);
+        if (error) console.error(`[salesAgent] sent-list save failed chat=${chatWid}:`, error.message);
+        return { ok: true, name, mediaQueued };
+      },
+      handoff: async (reason, note) => {
+        slots.handed_off_at = new Date().toISOString();
+        if (dryRun) return;
+        await notifyRep(svc, chatWid, `المساعد الآلي (${reason}): ${note}`);
+      },
+    },
+    { model: a.model, effort: a.effort, svc },
+  );
+
+  // A reply that failed the guard after a side effect → a safe fixed line.
+  let reply = outcome.reply;
+  let notify: string | null = null;
+  if (outcome.replyFailed) {
+    reply = outcome.sent
+      ? agentText.afterProject(lang, slots.zone ?? null, false, true)
+      : agentText.holding(lang);
+    if (!outcome.sent && !outcome.handoff) notify = `المساعد الآلي لم يستطع صياغة رد آمن للعميل — يحتاج متابعة مندوب: «${a.newCustomerText.slice(0, 200)}»`;
+  }
+
+  // Never the same line twice in a row within the window (e.g. two quick messages).
+  const now = Date.now();
+  if (reply && reply === slots.last_reply && slots.last_reply_at && now - new Date(slots.last_reply_at).getTime() < REPEAT_WINDOW_MS) {
+    reply = null;
+  }
+
+  if (outcome.lastCriteria) {
+    const c = outcome.lastCriteria;
+    if (c.zone) slots.zone = c.zone as Zone;
+    if (c.unit_types?.length) slots.unit_types = c.unit_types;
+    if (c.bedrooms_min) slots.bedrooms_min = c.bedrooms_min;
+    if (c.budget_max) slots.budget_max = c.budget_max;
+    if (c.readiness) slots.readiness = c.readiness;
+    slots.districts = c.districts?.length ? c.districts : undefined;
+    if (c.city) slots.city = c.city;
+  }
+  if (outcome.sent) slots.last_project_name = outcome.sent.name;
+  if (reply) { slots.last_reply = reply; slots.last_reply_at = new Date(now).toISOString(); }
+
+  const stepKind: NextStep = outcome.ended
+    ? { kind: 'stop' }
+    : outcome.handoff
+      ? { kind: 'handoff', reason: 'question' }
+      : outcome.sent ? { kind: 'search' } : { kind: 'ask', slot: 'zone' };
+  const result: TurnResult = {
+    step: stepKind, slots, replies: reply ? [reply] : [], notify, status: outcome.ended ? 'done' : 'active', model: outcome.model,
+    brain: {
+      toolTrace: outcome.toolTrace, guardProblems: outcome.guardProblems, replyFailed: outcome.replyFailed,
+      searches: outcome.searches, project: outcome.sent?.name ?? null, handoff: outcome.handoff?.reason ?? null,
+    },
+  };
+  if (dryRun) return { ...result, sent: false };
+
+  await commit();
+  const { error: upErr } = await svc.from('wa_agent_conversations').update({
+    slots, asked: null, status: outcome.ended ? 'done' : 'active', updated_at: new Date().toISOString(),
+  }).eq('chat_wid', chatWid);
+  if (upErr) console.error(`[salesAgent] state save failed after the turn chat=${chatWid}:`, upErr.message);
+
+  let sent = true;
+  if (reply) {
+    // After a project package: a floor delay, and the queue holds the line until
+    // every photo/video/document of THAT package has gone (after_prefix).
+    const res = await enqueueAiReply(svc, {
+      chatWid, text: reply, deviceId: a.deviceId, jobId: 'agent', force: true,
+      delaySeconds: outcome.sent ? (mediaQueued + 1) * MEDIA_SPACING_S + MEDIA_SPACING_S : 0,
+      afterPrefix: outcome.sent ? `ai-project:agent:${outcome.sent.projectId}:` : null,
+    });
+    if (!res.queued) {
+      sent = false;
+      console.error(`[salesAgent] reply enqueue failed chat=${chatWid}: ${res.error ?? res.reason ?? 'unknown'}`);
+      notify = `${notify ? `${notify} — ` : ''}تعذّر إرسال رد المساعد الآلي للعميل — يحتاج مندوب.`;
+    }
+  }
+  if (notify) await notifyRep(svc, chatWid, notify);
+  console.log(`[salesAgent] brain chat=${chatWid} model=${outcome.model} tools=[${outcome.toolTrace.join(' ; ')}] reply=${reply ? 'yes' : 'none'}${outcome.replyFailed ? ' (fallback line)' : ''}`);
+  return { ...result, notify, sent };
 }

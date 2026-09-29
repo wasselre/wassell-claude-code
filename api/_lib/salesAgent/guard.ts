@@ -1,0 +1,125 @@
+/**
+ * The reply GUARD — every message the brain writes passes here before a customer
+ * sees it. Pure (no I/O), so it is unit-tested line by line.
+ *
+ * What it enforces is what the operator's voice rules (wassel-whatsapp-voice) and
+ * the "never lie" posture need mechanically:
+ *   · short: ≤ 420 characters, ≤ 4 lines — a WhatsApp line, not a brochure;
+ *   · no lists, headings, bold, or links (the project card carries the link);
+ *   · at most two questions;
+ *   · no formal-Arabic tells the reps never use («يسعدنا», «نود», «يُرجى»…);
+ *   · the customer's language;
+ *   · EVERY NUMBER must be grounded — it appears in what the tools returned this
+ *     turn or in the customer's own messages (price «مليون و219» is checked as its
+ *     parts). A price the model "remembers" is exactly the lie this stops.
+ * A failing reply gets one rewrite with the problems listed; a second failure
+ * falls back to the fixed-sentence agent. Never loosen a rule to make a reply pass.
+ */
+
+export interface GuardVerdict { ok: boolean; problems: string[] }
+
+const MAX_CHARS = 420;
+const MAX_LINES = 4;
+const MAX_QUESTIONS = 2;
+
+const FUSHA_TELLS = ['يسعدنا', 'نود ', 'يُرجى', 'يرجى', 'بالإضافة إلى', 'حيث أن', 'نحيطكم', 'عزيزي العميل', 'عميلنا العزيز'];
+
+const AR_DIGITS: Record<string, string> = {
+  '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+  '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
+};
+
+function foldDigits(s: string): string {
+  return s.replace(/[٠-٩۰-۹]/g, (d) => AR_DIGITS[d] ?? d);
+}
+
+/**
+ * Numbers as a reader would read them: «1,050,000» / «1.050.000» / «1٬050٬000» are
+ * one million fifty thousand; «2.8» / «2٫8» is two point eight.
+ */
+export function numbersInText(text: string): number[] {
+  const out: number[] = [];
+  const re = /[0-9٠-٩۰-۹]+(?:[.,٬٫][0-9٠-٩۰-۹]+)*/g;
+  for (const raw of foldDigits(text).match(re) ?? []) {
+    const t = foldDigits(raw);
+    const parts = t.split(/[.,٬٫]/);
+    const seps = t.replace(/[0-9]/g, '');
+    let n: number;
+    if (parts.length === 1) n = Number(t);
+    else if (parts.slice(1).every((p) => p.length === 3) && (parts.length > 2 || /[,٬]/.test(seps))) n = Number(parts.join(''));
+    else if (parts.length === 2) n = Number(`${parts[0]}.${parts[1]}`);
+    else n = Number(parts.join(''));
+    if (Number.isFinite(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * Everything a reply may quote, from the tool results + the customer's words.
+ * A grounded value also grounds the ways reps SAY it: 1,219,000 → 1219000,
+ * 1219 (ألف), 1.2 / 1.22 (مليون), 1 and 219 («مليون و219»); 725,330 → 725.
+ */
+export function groundedNumbers(sources: unknown[]): Set<number> {
+  const out = new Set<number>();
+  const add = (n: number) => {
+    if (!Number.isFinite(n)) return;
+    const r = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
+    out.add(n);
+    out.add(r(n, 0));
+    if (Math.abs(n) >= 1000) {
+      out.add(Math.round(n / 1000));
+      out.add(Math.floor(n / 1000));
+    }
+    if (Math.abs(n) >= 1_000_000) {
+      out.add(r(n / 1e6, 1)); out.add(r(n / 1e6, 2)); out.add(Math.floor(n / 1e6));
+      out.add(Math.round((n % 1e6) / 1000)); out.add(Math.floor((n % 1e6) / 1000));
+    }
+  };
+  const walk = (v: unknown): void => {
+    if (v === null || v === undefined) return;
+    if (typeof v === 'number') { add(v); return; }
+    if (typeof v === 'string') { for (const n of numbersInText(v)) add(n); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x); return; }
+    if (typeof v === 'object') { for (const x of Object.values(v as Record<string, unknown>)) walk(x); }
+  };
+  for (const s of sources) walk(s);
+  return out;
+}
+
+function isGrounded(n: number, allowed: Set<number>): boolean {
+  if (allowed.has(n)) return true;
+  for (const a of allowed) if (Math.abs(a - n) < 1e-9) return true;
+  return false;
+}
+
+export function checkReply(text: string, opts: { lang: 'ar' | 'en'; grounded: Set<number> }): GuardVerdict {
+  const problems: string[] = [];
+  const t = text.trim();
+  if (!t) return { ok: false, problems: ['empty message'] };
+
+  if (t.length > MAX_CHARS) problems.push(`too long: ${t.length} characters (max ${MAX_CHARS}) — say one thing`);
+  const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length > MAX_LINES) problems.push(`too many lines: ${lines.length} (max ${MAX_LINES})`);
+  if (lines.some((l) => /^([-•*▪️●]|\d+[.)-])\s/.test(foldDigits(l)))) problems.push('no bullet or numbered lists — say options in one sentence');
+  if (/\*\*|^#{1,6}\s|__/m.test(t)) problems.push('no bold/markdown/headings');
+  if (/https?:\/\/|www\./i.test(t)) problems.push('no links — the project card carries the link');
+  const questions = (t.match(/[؟?]/g) ?? []).length;
+  if (questions > MAX_QUESTIONS) problems.push(`too many questions: ${questions} (ask one)`);
+  for (const w of FUSHA_TELLS) if (t.includes(w.trim())) problems.push(`formal Arabic «${w.trim()}» — reps never write it`);
+
+  const arabic = /[؀-ۿ]/.test(t);
+  const latinWords = (t.match(/[A-Za-z]{3,}/g) ?? []).length;
+  if (opts.lang === 'ar' && !arabic) problems.push('the customer writes Arabic — reply in Arabic');
+  // A planning note leaking above the message («Area known (east) → ask.») —
+  // live dry run 2026-09-29. An Arabic reply has no English sentence in it.
+  if (opts.lang === 'ar' && lines.some((l) => (l.match(/[A-Za-z]{2,}/g) ?? []).length >= 3 || /→|=>/.test(l))) {
+    problems.push('the message contains notes or English sentences — write only the Arabic message itself');
+  }
+  if (opts.lang === 'en' && arabic && latinWords < 2) problems.push('the customer writes English — reply in English');
+
+  const ungrounded = numbersInText(t).filter((n) => !isGrounded(n, opts.grounded));
+  if (ungrounded.length) {
+    problems.push(`numbers not found in the tool results or the customer's words: ${[...new Set(ungrounded)].join(', ')} — only quote numbers the tools returned`);
+  }
+  return { ok: problems.length === 0, problems };
+}
