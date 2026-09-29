@@ -3,6 +3,7 @@ import { X, Loader2, Image as ImageIcon, Video, FileText, Check, FolderOpen, Pla
 import { useAppStore } from '@/stores/appStore';
 import { listSendableProjectFiles } from '@/lib/files/recordFiles';
 import { signThumbUrls, signViewUrl } from '@/lib/files/client';
+import { directVideoUrls } from '@/lib/matching/sendToClient';
 import Button from '@/components/ui/Button';
 import {
   buildPickerItems, isUnitPlanFile, orderSelectedRefs, orderSelectedRefsBulk,
@@ -38,6 +39,9 @@ export default function ProjectFilePickerModal({
   onClose,
   preselect = 'all',
   confirmLabel,
+  title,
+  includeVideoLinks = false,
+  busy = false,
 }: {
   allProjectId: string;
   projectName: string;
@@ -51,12 +55,24 @@ export default function ProjectFilePickerModal({
    * default, currently unused) pre-checks everything in photo-first order — kept
    * as an explicit opt-in for any future "send the whole folder" caller.
    */
-  preselect?: 'all' | 'bulk';
+  preselect?: 'all' | 'bulk' | 'none';
   /** Overrides the default "Continue" confirm-button label (e.g. "Next: message"). */
   confirmLabel?: string;
+  /** Overrides the header title (the library browser: «مكتبة التسويق»). */
+  title?: string;
+  /**
+   * Also list the project's hosted marketing VIDEOS that live as public links
+   * in `project_videos` (the collected reels are stored that way, not as CRM
+   * files — see directVideoUrls). The library browser turns this on so the
+   * rep sees the project's real videos; the message send flow keeps it off.
+   */
+  includeVideoLinks?: boolean;
+  /** Confirm in flight (the library's send) — disables the footer. */
+  busy?: boolean;
 }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
+  const records = useAppStore((s) => s.records);
 
   const allProjectsModel = useMemo(() => models.find((m) => m.name === 'all_projects'), [models]);
 
@@ -82,9 +98,12 @@ export default function ProjectFilePickerModal({
         // floor-plan files (internal drawings, and the bulk of a project's images).
         const entries = await listSendableProjectFiles(allProjectsModel.id, allProjectId);
         const sendable = entries.filter((e) => !isUnitPlanFile(e.file));
-        // External hosted video LINKS (project_videos URLs) are intentionally not
-        // offered here — only real CRM files (photos / videos / PDFs) are.
-        const fileItems = buildPickerItems(sendable, []);
+        // External hosted video LINKS (project_videos URLs) are offered only in
+        // library mode; the message send flow sends real CRM files only.
+        const videoLinks = includeVideoLinks
+          ? directVideoUrls((records[allProjectsModel.id] ?? []).find((r) => r.id === allProjectId)?.data.project_videos)
+          : [];
+        const fileItems = buildPickerItems(sendable, videoLinks);
 
         // Sign SMALL transformed thumbnails (with a full-size fallback) for image
         // files — downloading full-resolution originals into tiles was the drag.
@@ -109,7 +128,9 @@ export default function ProjectFilePickerModal({
         setSelected(
           preselect === 'bulk'
             ? defaultBulkSelection(withThumbs)
-            : new Set(withThumbs.map((it) => it.ref)),
+            : preselect === 'none'
+              ? new Set()
+              : new Set(withThumbs.map((it) => it.ref)),
         );
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -169,7 +190,7 @@ export default function ProjectFilePickerModal({
             <FolderOpen size={16} />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-bold text-chocolate truncate">{L('اختر الملفات للإرسال', 'Choose files to send')}</h2>
+            <h2 className="text-base font-bold text-chocolate truncate">{title ?? L('اختر الملفات للإرسال', 'Choose files to send')}</h2>
             <p className="text-xs text-charcoal/50 truncate">{projectName}</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-charcoal/50 hover:text-charcoal hover:bg-cream transition-colors" aria-label={L('إغلاق', 'Close')}>
@@ -297,8 +318,8 @@ export default function ProjectFilePickerModal({
           </span>
           <div className="flex gap-2">
             <Button variant="secondary" onClick={onClose}>{L('إلغاء', 'Cancel')}</Button>
-            <Button variant="primary" onClick={() => onConfirm(orderedSelectedRefs)} disabled={loading}>
-              <Check size={14} />
+            <Button variant="primary" onClick={() => onConfirm(orderedSelectedRefs)} disabled={loading || busy || (preselect === 'none' && selectedCount === 0)}>
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
               {confirmLabel
                 ? (selectedCount > 0 ? `${confirmLabel} (${selectedCount})` : confirmLabel)
                 : selectedCount > 0 ? L(`متابعة (${selectedCount})`, `Continue (${selectedCount})`) : L('متابعة بدون ملفات', 'Continue with no files')}

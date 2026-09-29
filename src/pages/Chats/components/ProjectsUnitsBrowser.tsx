@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, ArrowRight, Building2, Check, ExternalLink, ListPlus, Loader2,
-  Map as MapIcon, MapPin, Rows3, Search, SlidersHorizontal, Send, X,
+  Map as MapIcon, MapPin, Rows3, Search, SlidersHorizontal, Send, X, Images,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
@@ -25,6 +25,8 @@ import { buildColoredPinIcon } from '@/lib/locationUtils';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
 import PaymentPlansTabPane from '@/pages/Records/components/PaymentPlansTabPane';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
+import ProjectFilePickerModal from '@/pages/Chats/components/ProjectFilePickerModal';
+import { sendProjectImageMessages } from '@/lib/projectMessageImages';
 import BulkProjectSendFlow, { type BulkRecipientInput } from '@/pages/Chats/components/BulkProjectSendFlow';
 import { recordToPickedClient, resolveClientSlugs } from '@/pages/Chats/components/ClientPicker';
 import type { AppModel, AppRecord } from '@/types';
@@ -904,6 +906,24 @@ function ProjectDetail({
 
   // Does this project have a payment-plan menu? (The stored rollup of its
   // units' plan cards — same gate as the project page's Payment Plans tab.)
+  // «مكتبة التسويق» — browse the project's photos / videos / PDFs and send the
+  // chosen ones into this conversation as media (no message text). Only when
+  // there is a conversation to send into.
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [librarySending, setLibrarySending] = useState(false);
+  const sendFromLibrary = async (refs: string[]) => {
+    if (!chatPdf || refs.length === 0 || librarySending) return;
+    setLibrarySending(true);
+    try {
+      // sendProjectImageMessages owns its job entry + failure toast; close the
+      // library only when something actually went out.
+      const { sent } = await sendProjectImageMessages(chatPdf.chatWid, refs);
+      if (sent > 0) setLibraryOpen(false);
+    } finally {
+      setLibrarySending(false);
+    }
+  };
+
   const hasPaymentPlans = useMemo(() => {
     const menu = (v.raw.data as Record<string, unknown> | undefined)?.payment_plan_schedule;
     return Array.isArray(menu) && menu.length > 0;
@@ -967,6 +987,17 @@ function ProjectDetail({
               </>
             )}
             {chatPdf && (
+              <button
+                type="button"
+                onClick={() => setLibraryOpen(true)}
+                title={L('تصفح صور وفيديوهات وملفات المشروع وأرسل ما تختاره للعميل', 'Browse the project’s photos, videos and files and send what you pick to the client')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-copper/30 bg-copper/5 px-3 py-1.5 text-xs font-medium text-copper transition-colors hover:bg-copper/10"
+              >
+                <Images size={13} />
+                {L('مكتبة التسويق', 'Marketing library')}
+              </button>
+            )}
+            {chatPdf && (
               <SendLocationButton
                 chatWid={chatPdf.chatWid}
                 clientName={chatPdf.clientName}
@@ -991,6 +1022,21 @@ function ProjectDetail({
         </div>
       </div>
 
+      {libraryOpen && chatPdf && (
+        <ProjectFilePickerModal
+          allProjectId={v.id}
+          projectName={v.name ?? ''}
+          isAr={isAr}
+          preselect="none"
+          includeVideoLinks
+          title={L('مكتبة التسويق', 'Marketing library')}
+          confirmLabel={L('إرسال للعميل', 'Send to client')}
+          busy={librarySending}
+          onConfirm={(refs) => void sendFromLibrary(refs)}
+          onClose={() => { if (!librarySending) setLibraryOpen(false); }}
+        />
+      )}
+
       {/* Payment plans — same component as the project page's tab, so the rep
           can send the project's plans (as a PDF or as a text message) without
           leaving the conversation. Shown only when the project actually has a
@@ -1013,7 +1059,7 @@ function ProjectDetail({
         <UnitsInventory
           key={v.id}
           projectId={v.id}
-          projectName={v.name}
+          projectName={v.name ?? ''}
           isAr={isAr}
           project={v}
           chatPdf={chatPdf}
