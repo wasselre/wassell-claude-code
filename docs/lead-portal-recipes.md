@@ -167,7 +167,7 @@ read from its `id` attribute:
   "rows_selector": ".detail-col",
   "fields": { "ref": "@id", "name": ".profile-name", "phone": ".profile-contact-item--ltr",
               "status": ".profile-card-head .badge", "status_detail": ".outcome-badge-label" },
-  "ref_pattern": "(\d+)$", "ref_prefix": "#" }
+  "ref_pattern": "(\\d+)$", "ref_prefix": "#" }
 ```
 
 A portal without a `status_recipe` is simply never checked; its portal status is
