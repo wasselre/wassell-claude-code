@@ -34,6 +34,10 @@ interface Props {
 
 export default function RequestDetailModal({ requestId, line, onClose, onOutreachChanged }: Props) {
   const navigate = useNavigate();
+  // Every record opened from here carries state.backTo, so the record form's
+  // back / save / delete exits return to THIS request instead of dropping the
+  // rep on the raw model list (RecordFormPage exitTarget).
+  const openRecord = (path: string) => navigate(path, { state: { backTo: `/sales-workspace/requests?request=${requestId}` } });
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
   const users = useAppStore((s) => s.users);
@@ -187,12 +191,12 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-lg font-bold text-chocolate">{typeof cd.client_name === 'string' ? cd.client_name : t('عميل', 'Client')}</span>
               {client && (
-                <button type="button" onClick={() => navigate(`/model/clients/${client.id}`)} className="inline-flex items-center gap-1 text-xs font-semibold text-copper hover:underline">
+                <button type="button" onClick={() => openRecord(`/model/clients/${client.id}`)} className="inline-flex items-center gap-1 text-xs font-semibold text-copper hover:underline">
                   <ExternalLink size={12} /> {t('ملف العميل', 'Client profile')}
                 </button>
               )}
               {openTask && (
-                <button type="button" onClick={() => navigate(`/model/sales_tasks/${openTask.id}`)} className="inline-flex items-center gap-1 text-xs font-semibold text-copper hover:underline">
+                <button type="button" onClick={() => openRecord(`/model/sales_tasks/${openTask.id}`)} className="inline-flex items-center gap-1 text-xs font-semibold text-copper hover:underline">
                   <ClipboardList size={12} /> {t('مهمة البحث — سجّل النتيجة', 'Search task — record the result')}
                 </button>
               )}
@@ -365,7 +369,7 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
                     ? String(od.project_name ?? t('مشروع', 'Project'))
                     : [od.unit_code, od.unit_type].filter((x) => typeof x === 'string' && x).join(' · ') || t('وحدة', 'Unit');
                   return (
-                    <button key={o.record.id} type="button" onClick={() => navigate(`/model/${o.kind === 'project' ? 'all_projects' : 'units'}/${o.record.id}`)}
+                    <button key={o.record.id} type="button" onClick={() => openRecord(`/model/${o.kind === 'project' ? 'all_projects' : 'units'}/${o.record.id}`)}
                       className="flex w-full items-center gap-2 px-3 py-2 text-start text-sm hover:bg-cream">
                       <span className="rounded bg-cream px-1.5 text-[11px] font-semibold text-charcoal/70">
                         {o.kind === 'project' ? t('مشروع', 'Project') : od.unit_source === 'office' ? t('وحدة مكتب', 'Office unit') : t('وحدة', 'Unit')}

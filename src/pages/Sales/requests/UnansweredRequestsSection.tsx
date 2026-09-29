@@ -11,6 +11,7 @@
  * them; managers/admins see all with a mine/all switch — same rule as My Clients.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Inbox, CheckCircle2, UserX, AlarmClock, Settings2, Radio, Plus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useIsAdmin, usePermission } from '@/hooks/usePermission';
@@ -39,7 +40,18 @@ export default function UnansweredRequestsSection() {
 
   const [scope, setScope] = useState<'mine' | 'all'>(isManager ? 'all' : 'mine');
   const [statusFilter, setStatusFilter] = useState<'open' | 'closed' | 'all'>('open');
-  const [openRequestId, setOpenRequestId] = useState<string | null>(null);
+  // ?request=<id> reopens a request — the record forms opened from a request
+  // return here with it (RequestDetailModal passes state.backTo).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [openRequestId, setOpenRequestId] = useState<string | null>(() => searchParams.get('request'));
+  const closeRequest = () => {
+    setOpenRequestId(null);
+    if (searchParams.has('request')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('request');
+      setSearchParams(next, { replace: true });
+    }
+  };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [line, setLine] = useState<LineStatus | null>(null);
@@ -317,7 +329,7 @@ export default function UnansweredRequestsSection() {
         <RequestDetailModal
           requestId={openRequestId}
           line={line}
-          onClose={() => { setOpenRequestId(null); void refreshOutreach(); void refreshLine(); }}
+          onClose={() => { closeRequest(); void refreshOutreach(); void refreshLine(); }}
           onOutreachChanged={() => { void refreshOutreach(); void refreshLine(); }}
         />
       )}
