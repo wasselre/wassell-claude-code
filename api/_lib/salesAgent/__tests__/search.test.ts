@@ -35,6 +35,15 @@ describe('projectFits — the project\'s own data must match the ask', () => {
     expect(projectFits(RIYA_ALNAKHEEL, F({ budgetMax: 1_300_000 }))).toBe(true);
     expect(projectFits({ unit_types: ['apartment'] }, F({ budgetMax: 900_000 }))).toBe(true);
   });
+  it('checks the minimum size against AVAILABLE units', () => {
+    const d = { ...RIYA_ALNAKHEEL, available_area_range: { min: 98, max: 136 } };
+    expect(projectFits(d, F({ areaMin: 150 }))).toBe(false);
+    expect(projectFits(d, F({ areaMin: 120 }))).toBe(true);
+    expect(projectFits(RIYA_ALNAKHEEL, F({ areaMin: 150 }))).toBe(true); // unknown size passes
+  });
+  it('with a budget, an unknown price only passes when not required', () => {
+    expect(projectFits({ unit_types: ['apartment'] }, F({ budgetMax: 900_000, requireKnownPrice: true }))).toBe(false);
+  });
   it('never offers a sold-out project', () => {
     expect(projectFits({ ...RIYA_ALNAKHEEL, available_units: 0 }, F())).toBe(false);
   });

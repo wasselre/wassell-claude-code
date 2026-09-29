@@ -98,7 +98,7 @@ VOICE (the reps' measured style — never break it)
 - Numbers the way reps say them: «932 ألف», «مليون و219», «1.6 مليون», «3 غرف». Never «ر.س». At most two numbers in a message.
 - No bullets, lists, bold, headings, links, or adjectives like فاخر/مميز/راقي. At most one emoji, usually none.
 - If our last message was a day or more ago, open with «مساك الله بالخير» (or «صباح الخير» in the morning).
-- When they greet («السلام عليكم»), return it first: «وعليكم السلام…».
+- When their [NEW] message greets («السلام عليكم»), return it first: «وعليكم السلام…». Only then — never answer a greeting they didn't send now.
 - Sending: «أرسلك» / «برسلك» (never «أرسل لك»); with a named thing «أرسلك إياه/إياها/إياهم».
 - Areas as reps say them: whole metres («120 متر»), never decimals.
 - English customer → the same rules in plain, short English.
@@ -126,6 +126,7 @@ const TOOLS: Anthropic.Tool[] = [
         unit_types: { type: 'array', items: { type: 'string', enum: ['شقة', 'دور', 'فيلا', 'تاون هاوس', 'دبلكس'] } },
         bedrooms_min: { type: 'integer', minimum: 1, maximum: 10 },
         budget_max: { type: 'integer', description: 'Maximum budget in SAR, e.g. 1500000.' },
+        area_min: { type: 'integer', description: 'Minimum unit size in m² when the customer asks for a size, e.g. 150.' },
         readiness: { type: 'string', enum: ['ready', 'off_plan'] },
       },
       additionalProperties: false,
@@ -226,6 +227,7 @@ export function toCriteria(input: Record<string, unknown>): SearchCriteria {
     districts: asStringArray(input.districts),
     unit_types: asStringArray(input.unit_types).map(normalizeUnitType).filter((x): x is string => !!x),
     bedrooms_min: intOr(input.bedrooms_min, 1, 10),
+    area_min: intOr(input.area_min, 30, 2000),
     budget_max: intOr(input.budget_max, 100_000, 100_000_000),
     readiness,
   };

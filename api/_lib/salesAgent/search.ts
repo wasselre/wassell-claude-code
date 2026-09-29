@@ -79,6 +79,8 @@ export interface FitCheck {
   budgetMax: number | null;
   /** With a budget: an unknown available price does NOT count as within it. */
   requireKnownPrice?: boolean;
+  /** Minimum unit size (m²) the customer wants; checked against AVAILABLE units. */
+  areaMin?: number | null;
 }
 
 /**
@@ -100,6 +102,10 @@ export function projectFits(data: Record<string, unknown>, f: FitCheck): boolean
   if (f.bedroomsMin) {
     const beds = range(data.bedroom_range);
     if (beds.max !== null && beds.max < f.bedroomsMin) return false;
+  }
+  if (f.areaMin) {
+    const area = range(data.available_area_range);
+    if (area.max !== null && area.max < f.areaMin) return false;
   }
   if (f.budgetMax) {
     const price = range(data.available_price_range);

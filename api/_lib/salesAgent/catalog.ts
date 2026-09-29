@@ -32,6 +32,8 @@ export interface SearchCriteria {
   unit_types?: string[];
   bedrooms_min?: number | null;
   budget_max?: number | null;
+  /** Minimum unit size in m². */
+  area_min?: number | null;
   readiness?: Readiness | null;
 }
 
@@ -311,7 +313,8 @@ export async function searchProjects(
 
   const beds = criteria.bedrooms_min ?? null;
   const budget = criteria.budget_max ?? null;
-  const fit = (o: Partial<FitCheck>): FitCheck => ({ types, strictType: false, checkType: true, bedroomsMin: beds, budgetMax: budget, requireKnownPrice: true, ...o });
+  const areaMin = criteria.area_min ?? null;
+  const fit = (o: Partial<FitCheck>): FitCheck => ({ types, strictType: false, checkType: true, bedroomsMin: beds, budgetMax: budget, requireKnownPrice: true, areaMin, ...o });
 
   // Ladder: exact (type listed) → type unrecorded → any type → widened specs →
   // outside the requested area. Each rung only if the previous found nothing.
@@ -320,9 +323,9 @@ export async function searchProjects(
     { check: fit({}), areaOnly: true, relaxed: null },
   ];
   if (types.length) ladder.push({ check: fit({ checkType: false }), areaOnly: true, relaxed: 'unit_type' });
-  if (beds || budget) {
+  if (beds || budget || areaMin) {
     ladder.push({
-      check: fit({ checkType: false, bedroomsMin: null, budgetMax: budget ? Math.round(budget * 1.15) : null }),
+      check: fit({ checkType: false, bedroomsMin: null, areaMin: null, budgetMax: budget ? Math.round(budget * 1.15) : null }),
       areaOnly: true, relaxed: 'specs_and_budget',
     });
   }
