@@ -27,6 +27,8 @@ export interface Slots {
   districts?: string[];
   /** When the agent last handed this customer to a rep. */
   handed_off_at?: string;
+  /** Consecutive brain replies that asked a narrowing question instead of sending. */
+  narrow_turns?: number;
   /** The last line we sent and when — a handoff line is never repeated. */
   last_reply?: string;
   last_reply_at?: string;

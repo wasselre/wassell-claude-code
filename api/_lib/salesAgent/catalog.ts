@@ -68,6 +68,9 @@ export interface CatalogSearch {
     readiness: { ready: number; off_plan: number; unknown: number };
     price_bands: PriceBand[];
     unit_types: Record<string, number>;
+    /** Riyadh-wide search (no zone asked): how many fit per region — the
+     *  overview for a general «وش عندكم مشاريع؟». Absent when a zone was asked. */
+    zones?: Record<string, number>;
   };
   /** Projects already sent in this chat that also fit (not repeated in `projects`). */
   already_sent: string[];
@@ -146,6 +149,32 @@ async function zoneDistricts(svc: SupabaseClient, city: string, zone: Zone): Pro
   const { data, error } = await svc.rpc('wassell_city_zone_districts', { p_city: city, p_zone: zone });
   if (error) throw new Error(`catalog: zone → districts failed: ${error.message}`);
   return (data ?? []) as Array<{ district_id: string; district_name: string }>;
+}
+
+const ZONE_LIST: Zone[] = ['north', 'south', 'east', 'west', 'center'];
+const zoneNameCache = new Map<string, { at: number; value: Promise<Set<string>> }>();
+
+async function zoneNames(svc: SupabaseClient, city: string, zone: Zone): Promise<Set<string>> {
+  const key = `${city}|${zone}`;
+  const hit = zoneNameCache.get(key);
+  if (hit && Date.now() - hit.at < UNIVERSE_TTL_MS) return hit.value;
+  const value = zoneDistricts(svc, city, zone).then((rows) => new Set(rows.map((r) => districtKey(r.district_name))));
+  zoneNameCache.set(key, { at: Date.now(), value });
+  value.catch(() => zoneNameCache.delete(key));
+  return value;
+}
+
+/** Count fitting projects per Riyadh region by their own district. */
+async function zoneFacet(svc: SupabaseClient, city: string, ps: CatalogProject[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  const sets = await Promise.all(ZONE_LIST.map((z) => zoneNames(svc, city, z)));
+  for (const p of ps) {
+    const d = p.district ? districtKey(p.district) : '';
+    const i = d ? sets.findIndex((s) => s.has(d)) : -1;
+    const k = i >= 0 ? ZONE_LIST[i]! : 'unknown';
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
 }
 
 /** «حي النرجس» and «النرجس» are the same district. */
@@ -308,12 +337,14 @@ export async function searchProjects(
 
   const all = fits.map((f) => toProject(f.master, f.m, f.inArea));
   const fresh = all.filter((p) => !sentSet.has(p.project_id));
+  const facets = facetsOf(all);
+  if (!criteria.zone && /رياض|riyadh/i.test(city)) facets.zones = await zoneFacet(svc, city, all);
   return {
     criteria: { ...criteria, city, unit_types: types },
     total: all.length,
     relaxed,
     projects: fresh.slice(0, TOP),
-    facets: facetsOf(all),
+    facets,
     already_sent: all.filter((p) => sentSet.has(p.project_id)).map((p) => p.name),
   };
 }

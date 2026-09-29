@@ -43,6 +43,8 @@ export interface BrainContext {
   excludeProjectIds: string[];
   /** Projects the model may name/send without searching first (sent + ad project). */
   knownProjectIds: string[];
+  /** Consecutive earlier replies that asked a narrowing question instead of sending. */
+  narrowTurns: number;
 }
 
 export interface BrainHooks {
@@ -61,6 +63,8 @@ export interface BrainOutcome {
   handoff: { reason: string; note: string } | null;
   ended: boolean;
   lastCriteria: SearchCriteria | null;
+  /** Total of the LAST search this turn (null = no search). */
+  lastTotal: number | null;
   searches: number;
   model: string;
   toolTrace: string[];
@@ -72,6 +76,8 @@ HOW YOU WORK
 1. Understand what they want: area (in Riyadh: شمال/جنوب/شرق/غرب/وسط, or a district), unit type (شقة / دور / فيلا / تاون هاوس / دبلكس), bedrooms, budget, ready (جاهز) vs off-plan (على الخارطة).
 2. To search you need an area (or a project they named). Ask what is missing, ONE question per message, in this order: area → unit type → bedrooms → budget. Never ask what they already said or said doesn't matter («ما يهم», «أي شي», «بشوف المتاح»).
 3. When you know the area and the unit type, call search_projects (bedrooms/budget/readiness if known). Search again whenever their wishes change.
+   A GENERAL question («وش عندكم مشاريع؟», «وش عندكم بالرياض؟») gets a general answer: search with only the city (no zone, no type), then say in one line how many projects we have and where (the zones facet: e.g. most in the north and east) and ask which area they prefer. Never send a project for a general question.
+   "Known wishes" in the state come from EARLIER messages and may be stale. Follow what the customer says NOW: if their new message is broader or different, do not reuse the old wishes — ask, or search what they asked now.
 4. NARROW BEFORE SENDING. If the search total is more than 3, do not send yet: tell them honestly how many we have and ask the ONE question that splits the set best, using the facets — ready vs off-plan when both are sizable; budget when unknown and the price bands spread; a district when the projects spread over districts. At most two narrowing questions in a row; if they say it doesn't matter or want to see something, send the best.
 5. When the total is 3 or fewer (or narrowing is done), call send_project with the best project (the first in the search results that is not already sent). Then write ONE short line: why it fits (district, a real starting price) and ask if it suits them. The project card, photos and brochure are sent by the tool — never describe them or paste links.
 6. «غيره؟» / "doesn't suit" → send the next best not already sent, or ask briefly what didn't suit if you have nothing better.
@@ -100,7 +106,7 @@ const ZONES: Zone[] = ['north', 'south', 'east', 'west', 'center'];
 const TOOLS: Anthropic.Tool[] = [
   {
     name: 'search_projects',
-    description: 'Search OUR residential projects. Returns the total that fit, the best few with real facts (district, ready/off-plan, available price range, bedrooms, down payment), and facets showing how the whole set splits (districts, ready vs off-plan, price bands). Use the facets to pick a narrowing question when the total is large.',
+    description: 'Search OUR residential projects. Returns the total that fit, the best few with real facts (district, ready/off-plan, available price range, bedrooms, down payment), and facets showing how the whole set splits (districts, ready vs off-plan, price bands, and — for a Riyadh-wide search with no zone — how many per region). Use the facets to pick a narrowing question when the total is large, or to give an overview for a general question.',
     input_schema: {
       type: 'object',
       properties: {
@@ -127,10 +133,13 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'send_project',
-    description: 'Send one project to the customer: its card, photos, brochure and video. At most one per reply. Only a project_id from a search result this turn, and never one already sent.',
+    description: 'Send one project to the customer: its card, photos, brochure and video. At most one per reply. Only a project_id from a search result this turn, and never one already sent. Refused while more than 3 projects fit and you have not narrowed yet — unless the customer explicitly asked to just see one (set customer_asked_to_see).',
     input_schema: {
       type: 'object',
-      properties: { project_id: { type: 'string' } },
+      properties: {
+        project_id: { type: 'string' },
+        customer_asked_to_see: { type: 'boolean', description: 'true ONLY if the customer explicitly said to just send/show something (e.g. «ارسل لي أي واحد», «وريني»).' },
+      },
       required: ['project_id'],
       additionalProperties: false,
     },
@@ -223,7 +232,7 @@ export async function runBrain(
 
   const out: BrainOutcome = {
     reply: null, replyFailed: false, guardProblems: [], sent: null, handoff: null, ended: false,
-    lastCriteria: null, searches: 0, model: opts.model, toolTrace,
+    lastCriteria: null, lastTotal: null, searches: 0, model: opts.model, toolTrace,
   };
 
   const runTool = async (name: string, input: Record<string, unknown>): Promise<{ content: string; isError?: boolean }> => {
@@ -234,6 +243,7 @@ export async function runBrain(
           const r = await searchProjects(opts.svc, criteria, { exclude: [...excluded], sent: [...sentBefore, ...(out.sent ? [out.sent.projectId] : [])] });
           out.searches += 1;
           out.lastCriteria = r.criteria;
+          out.lastTotal = r.total;
           for (const p of r.projects) known.add(p.project_id);
           const view = searchView(r);
           grounding.push(view);
@@ -252,6 +262,12 @@ export async function runBrain(
         case 'send_project': {
           const id = String(input.project_id ?? '');
           if (out.sent) return { content: 'Already sent a project in this reply — one per message.', isError: true };
+          // Narrowing is enforced here, not only in the prompt: live 2026-09-29 the
+          // model sent a project from 4 fits on a general «وش عندكم مشاريع».
+          if (out.lastTotal !== null && out.lastTotal > 3 && ctx.narrowTurns < 2 && input.customer_asked_to_see !== true) {
+            toolTrace.push(`send REFUSED (${out.lastTotal} fit, not narrowed)`);
+            return { content: `${out.lastTotal} projects fit — too many to pick one yet. Tell them how many we have and ask ONE narrowing question from the facets (rule 4). Only if the customer explicitly asked to just see one, call again with customer_asked_to_see=true.`, isError: true };
+          }
           if (!known.has(id)) return { content: 'Unknown project_id — search first and use an id from the results.', isError: true };
           if (sentBefore.has(id)) return { content: 'This project was already sent to the customer — pick another.', isError: true };
           if (excluded.has(id)) return { content: 'The customer asked for OTHER projects than this one — pick another.', isError: true };

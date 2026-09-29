@@ -379,7 +379,10 @@ async function runBrainTurn(
     slots.budget_max ? `حد ${slots.budget_max}` : null,
     slots.readiness ? (slots.readiness === 'ready' ? 'جاهز' : 'على الخارطة') : null,
   ].filter(Boolean);
-  if (wants.length) stateLines.push(`Known wishes so far: ${wants.join('، ')}.`);
+  if (wants.length) {
+    const age = slots.last_reply_at ? Math.round((Date.now() - new Date(slots.last_reply_at).getTime()) / 60_000) : null;
+    stateLines.push(`Known wishes from EARLIER messages${age !== null ? ` (last used ${age >= 120 ? `${Math.round(age / 60)} hours` : `${age} minutes`} ago)` : ''} — may be stale, follow what they say now: ${wants.join('، ')}.`);
+  }
   if (slots.gender === 'f') stateLines.push('The customer is a woman — use feminine forms.');
   if (slots.handed_off_at) stateLines.push(`Already handed to a colleague at ${slots.handed_off_at} — don't promise that again.`);
   if (a.lastOursAt) {
@@ -406,7 +409,7 @@ async function runBrainTurn(
   const outcome = await runBrain(
     {
       chatWid, lang, turns: a.turns, stateLines, sentProjectIds: conv.sent_project_ids,
-      excludeProjectIds: exclude, knownProjectIds: knownIds,
+      excludeProjectIds: exclude, knownProjectIds: knownIds, narrowTurns: slots.narrow_turns ?? 0,
     },
     {
       beforeSideEffect: commit,
@@ -460,6 +463,10 @@ async function runBrainTurn(
     if (c.city) slots.city = c.city;
   }
   if (outcome.sent) slots.last_project_name = outcome.sent.name;
+  // Narrowing streak: a reply that searched a big set and did not send counts;
+  // a send or a small set resets it (the send gate lets go after two).
+  if (outcome.sent || (outcome.lastTotal !== null && outcome.lastTotal <= 3)) slots.narrow_turns = 0;
+  else if (outcome.lastTotal !== null && outcome.lastTotal > 3) slots.narrow_turns = (slots.narrow_turns ?? 0) + 1;
   if (reply) { slots.last_reply = reply; slots.last_reply_at = new Date(now).toISOString(); }
 
   const stepKind: NextStep = outcome.ended
