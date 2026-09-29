@@ -440,6 +440,15 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
           chat_record_id: uuidV5FromWidSync(chatWid),
           device_id: session,
           phone: counterpartyPhone,
+          // THIS message carries a Click-to-WhatsApp ad click (card, or card-less
+          // with an inferred campaign). The bot answers ad clicks even when we've
+          // talked before, and knows which project the ad was for.
+          ad: adMeta
+            ? {
+                project_id: resolvedAd && typeof resolvedAd.project_id === 'string' ? resolvedAd.project_id : null,
+                ad_id_missing: adWithoutId,
+              }
+            : null,
         }),
       });
       if (!resp.ok) console.error('[waha-webhook] basic-reply failed:', resp.status);

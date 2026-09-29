@@ -31,6 +31,7 @@ import { trackedAnthropic } from '../_lib/aiUsage.js';
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { enqueueAiReply } from '../_lib/aiSend.js';
 import { sendProjectViaAiFlow } from '../_lib/aiSendProject.js';
+import { resolveProjectSheet } from '../_lib/projectSheet.js';
 import { uuidV5FromWidSync } from '../_lib/chatIngest.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -235,6 +236,110 @@ async function kimiClassify(message: string): Promise<Decision> {
   }
 }
 
+// ── Ad-click answering ──────────────────────────────────────────────────────
+
+const DIRECTION_WORD_RE = /(شمال|جنوب|شرق|غرب|وسط)/;
+
+/**
+ * "Other projects (in <region>)". Project ads carry a second greeting button —
+ * «مهتم بمشاريع سكنية اخرى في شمال الرياض» — so the customer who taps it has
+ * seen the ad's project and PASSED on it. Such a lead must never be sent the
+ * ad's project. Measured 2026-09-29: 46 of 218 ad openers in 30 days.
+ */
+export function isOtherProjectsAsk(t: string): boolean {
+  const s = t.toLowerCase();
+  const anyProject = /(مشاريع|مشروع)/.test(t) || /\bprojects?\b/.test(s);
+  const other = /(اخرى|أخرى|ثانية|ثانيه)/.test(t) || /\bother\b/.test(s);
+  const plural = /مشاريع/.test(t) || /\bprojects\b/.test(s);
+  const direction = DIRECTION_WORD_RE.test(t) || /\b(north|south|east|west|central|middle)\b/.test(s);
+  return (anyProject && other) || (plural && direction);
+}
+
+/** Was this project already queued to this chat in the last `minutes`? Guards a
+ *  double-tap on the ad from sending the package twice. Reads the send queue
+ *  (written at ENQUEUE, so two taps seconds apart still see each other). Fails
+ *  OPEN — on a read error we send rather than drop an ad lead. */
+async function sentProjectRecently(supa: SupabaseClient, chatWid: string, projectId: string, minutes: number): Promise<boolean> {
+  const since = new Date(Date.now() - minutes * 60_000).toISOString();
+  const { data, error } = await supa
+    .from('scheduled_whatsapp_jobs')
+    .select('id')
+    .eq('chat_wid', chatWid)
+    .eq('project_id', projectId)
+    .gte('created_at', since)
+    .limit(1);
+  if (error) {
+    console.error('[basic-reply] recent-send check failed (sending anyway):', error.message);
+    return false;
+  }
+  return (data ?? []).length > 0;
+}
+
+async function notifyHandoff(supa: SupabaseClient, chatWid: string, chatRecordId: string, body: string): Promise<void> {
+  const { error } = await supa.from('ai_notifications').insert({
+    source: 'whatsapp', severity: 'action', title: null, body, chat_wid: chatWid, chat_record_id: chatRecordId,
+  });
+  if (error) console.error('[basic-reply] notify insert failed:', error.message);
+}
+
+/**
+ * Answer a message that carries an ad click. Sends are FORCED (the caller has
+ * already checked the kill switch): the ad click itself is the permission.
+ *   · "other projects (in <region>)" → never the ad's project; interim: ask the
+ *     preference questions + hand to a rep (the qualifying agent replaces this).
+ *   · a project they NAME that resolves to one of ours → that project;
+ *   · otherwise (greeting, "Hello", empty, vague, unresolvable name) → the ad's project.
+ */
+async function answerAdClick(
+  supa: SupabaseClient,
+  a: {
+    chatWid: string; chatRecordId: string; text: string; lang: 'ar' | 'en';
+    deviceId?: string; adProjectId: string | null; namedProject?: string;
+  },
+): Promise<Record<string, unknown>> {
+  const holding = a.lang === 'en' ? HOLDING_EN : HOLDING;
+
+  if (isOtherProjectsAsk(a.text)) {
+    const res = await enqueueAiReply(supa, {
+      chatWid: a.chatWid, text: a.lang === 'en' ? QUALIFY_EN : QUALIFY, deviceId: a.deviceId, jobId: 'basic', force: true,
+    });
+    await notifyHandoff(supa, a.chatWid, a.chatRecordId,
+      'عميل من إعلان يطلب مشاريع أخرى غير مشروع الإعلان — أُرسلت أسئلة التفضيلات، يحتاج متابعة مندوب للبحث.');
+    return { action: 'ad_other_projects', sent: res.queued, error: res.error, handoff: true };
+  }
+
+  // Which project: the one they NAME (if it resolves to one of ours), else the ad's.
+  let projectId: string | null = null;
+  if (a.namedProject) {
+    const sheet = await resolveProjectSheet(supa, supa, { projectName: a.namedProject, onlyOurProjects: true });
+    if (sheet.ok) projectId = sheet.project_id;
+  }
+  const via = projectId ? 'named' : 'ad';
+  projectId = projectId ?? a.adProjectId;
+
+  if (!projectId) {
+    const res = await enqueueAiReply(supa, { chatWid: a.chatWid, text: holding, deviceId: a.deviceId, jobId: 'basic', force: true });
+    await notifyHandoff(supa, a.chatWid, a.chatRecordId, 'عميل من إعلان لكن تعذّر تحديد المشروع — يحتاج متابعة مندوب.');
+    return { action: 'ad_no_project', sent: res.queued, handoff: true };
+  }
+
+  if (await sentProjectRecently(supa, a.chatWid, projectId, 30)) {
+    return { action: 'ad_project', sent: false, skipped: 'already_sent_recently', project_id: projectId };
+  }
+
+  const flow = await sendProjectViaAiFlow(supa, {
+    chatWid: a.chatWid, projectId, deviceId: a.deviceId, jobId: 'basic',
+    onlyOurProjects: true, allowAi: false, force: true, lang: a.lang,
+  });
+  if (flow.queued) return { action: 'ad_project', sent: true, via, project_id: projectId };
+
+  // Could not send it (not one of ours / no sellable data) → a rep takes it.
+  console.error(`[basic-reply] ad project send failed chat=${a.chatWid} project=${projectId}: ${flow.error ?? flow.reason ?? 'unknown'}`);
+  const res = await enqueueAiReply(supa, { chatWid: a.chatWid, text: holding, deviceId: a.deviceId, jobId: 'basic', force: true });
+  await notifyHandoff(supa, a.chatWid, a.chatRecordId, `عميل من إعلان — تعذّر إرسال بطاقة المشروع (${flow.error ?? flow.reason ?? ''}) — يحتاج متابعة مندوب.`);
+  return { action: 'ad_project_failed', sent: res.queued, handoff: true, error: flow.error ?? flow.reason };
+}
+
 export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
   if (nodeReq.method === 'GET') return jsonRes(nodeRes, 200, { ok: true, hint: 'POST { chat_wid, trigger_message } with x-wassel-ai-secret' });
   if (nodeReq.method !== 'POST') return jsonRes(nodeRes, 405, { error: 'Method not allowed' });
@@ -244,7 +349,11 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   const provided = (nodeReq.headers['x-wassel-ai-secret'] as string | undefined) ?? '';
   if (!constantTimeEqual(provided, secret)) return jsonRes(nodeRes, 401, { error: 'unauthorized' });
 
-  let body: { chat_wid?: string; trigger_message?: string; chat_record_id?: string; device_id?: string; phone?: string };
+  let body: {
+    chat_wid?: string; trigger_message?: string; chat_record_id?: string; device_id?: string; phone?: string;
+    /** Set by the webhook when THIS message carries a Click-to-WhatsApp ad click. */
+    ad?: { project_id: string | null; ad_id_missing?: boolean } | null;
+  };
   try { body = JSON.parse((await readNodeBody(nodeReq)).toString('utf-8') || '{}'); }
   catch { return jsonRes(nodeRes, 400, { error: 'invalid JSON body' }); }
 
@@ -279,6 +388,50 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   const { data: gate } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });
   const g = Array.isArray(gate) ? gate[0] : gate;
   const gateOk = g?.should_reply === true;
+
+  // ── Ad click (operator rule, 2026-09-29) ─────────────────────────────────
+  // THIS message carries a Click-to-WhatsApp ad click, so the customer always
+  // gets an answer — even if we've talked to them before. It overrides
+  // human_active (incl. the permanent stop), the reply cap and the schedule;
+  // ONLY the kill switch stops it. Spam, no-service and unit codes keep their
+  // normal handling below.
+  if (body.ad && !(d.action === 'handoff' && d.reason === 'b2b') && d.action !== 'no_service' && d.action !== 'unit_sheet') {
+    const r = g?.reason ?? '';
+    if (r === 'disabled' || r === 'disabled_globally_despite_takeover') {
+      return jsonRes(nodeRes, 200, { skipped: true, reason: r, ad: true });
+    }
+    const adLang = detectLang(body.trigger_message);
+    // An AMBIGUOUS opener still goes through the classifier: a complaint
+    // («التواصل معكم صعب…») or a vendor pitch («متخصصون بتنفيذ… المطبوعات», which
+    // the spam regex misses) must reach a rep, not receive a brochure. Both are
+    // real ad-click openers from the last 30 days. A Kimi OUTAGE (kimi_error)
+    // falls through to the project — a provider error must not silence an ad lead.
+    if (d.action === 'kimi') {
+      d = await kimiClassify(foldDigits((body.trigger_message ?? '').trim()));
+      if (d.action === 'no_service' || (d.action === 'handoff' && d.reason !== 'kimi_error')) {
+        const text = d.action === 'no_service'
+          ? (adLang === 'en' ? NO_SERVICE_EN : NO_SERVICE)
+          : (d.silent ? null : (adLang === 'en' ? HOLDING_EN : (d.holding || HOLDING)));
+        const res = text
+          ? await enqueueAiReply(supa, { chatWid, text, deviceId: body.device_id, jobId: 'basic', force: true })
+          : null;
+        if (d.action === 'handoff') {
+          await notifyHandoff(supa, chatWid, chatRecordId, 'عميل من إعلان أرسل رسالة تحتاج تدخّل بشري (شكوى/استفسار خارج النطاق) — يحتاج متابعة مندوب.');
+        }
+        return jsonRes(nodeRes, 200, { ad: true, action: `ad_${d.action}`, sent: res?.queued ?? false, handoff: d.action === 'handoff' });
+      }
+    }
+    const result = await answerAdClick(supa, {
+      chatWid,
+      chatRecordId,
+      text: foldDigits((body.trigger_message ?? '').trim()),
+      lang: detectLang(body.trigger_message),
+      deviceId: body.device_id,
+      adProjectId: body.ad.project_id ?? null,
+      namedProject: d.action === 'project_sheet' ? d.projectName : undefined,
+    });
+    return jsonRes(nodeRes, 200, { ad: true, ...result });
+  }
   // A message that NAMES one of our projects («مهتم بمشروع أكنان 25») is a safe,
   // deterministic auto-answer — the guarded project package — that we always want
   // to send: as a first touch, as a follow-up after the qualification block,

@@ -3502,9 +3502,14 @@ async function persistQueuedOutbound(
     ack: 'sent',
     date: new Date().toISOString(),
     reference: job.reference,
-    // An `ai:` reference is written by /api/whatsapp/ai-send; anything else
-    // reaching this queue is a scheduled or fanned-out send (WA-24).
-    send_source: job.reference?.startsWith('ai:') ? 'ai' : 'media_batch',
+    // The BOT's sends are 'ai': the text (`ai:` reference, /api/whatsapp/ai-send)
+    // AND the project brochure/photos/video that follow it (`ai-project:`,
+    // aiSendProject). Tagging only `ai:` left the bot's own media looking like a
+    // rep's file send ('media_batch'), which whatsapp_ai_should_reply counted as
+    // "a human replied" and permanently muted the bot in every chat it sent a
+    // project package to (65/65 on 2026-09-29). Anything else reaching this
+    // queue is a rep's scheduled or fanned-out send (WA-24).
+    send_source: job.reference?.startsWith('ai:') || job.reference?.startsWith('ai-project:') ? 'ai' : 'media_batch',
   }));
 
   const { error } = await supabase.from('chat_messages').upsert(rows, { onConflict: 'id', ignoreDuplicates: false });
