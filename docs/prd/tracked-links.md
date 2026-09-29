@@ -30,7 +30,7 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
   - the units window / unit drawer / client options («طريقة الإرسال: رابط متتبَّع | PDF» — link is the default; the PDF and Download remain).
 - **Interest score (0–100), computed in SQL** (`tracked_interest_score`), each part capped: opened 10 · photos 2 each (≤14) · videos 5 each (≤10) + 10 for one watched to ≥75% · brochure 1 per 6 s (≤10) + 1 per page (≤5) · units 4 each (≤16) + 1 per 20 s (≤5) · map tap 10 · came back on another day 5 each (≤10) · media time 1 per 30 s (≤5).
 - **Where the rep sees it:**
-  - under every tracked message in the chat: «لم يفتح الروابط بعد», or visits · photos · videos % · brochure time · units · what they filtered for · map · score (refreshed every minute while the chat is open);
+  - under every tracked message in the chat: «لم يفتح الروابط بعد», or visits · photos (opened + time on the tab) · videos (played, % and time) · units · what they filtered for · map · score (refreshed every minute while the chat is open);
   - Client → Options tab: «اهتمامه بالمشاريع» (hidden until a tracked message exists);
   - Project page → «اهتمام العملاء» tab. A row opens the conversation.
 - A tracked message no longer contains the website link, so the chat's project buttons resolve the project from the token.

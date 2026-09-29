@@ -35,18 +35,27 @@ export default function LinkEngagementChip({
       ? `فتحها ${engagement.sessions} ${engagement.sessions === 1 ? 'مرة' : 'مرات'}${engagement.open_days > 1 ? ` · ${engagement.open_days} أيام` : ''}`
       : `Opened ${engagement.sessions}×${engagement.open_days > 1 ? ` · ${engagement.open_days} days` : ''}`,
   });
-  if (engagement.photos_opened > 0) {
-    parts.push({ key: 'photos', icon: <ImageIcon size={11} />, text: isAr ? `${engagement.photos_opened} صور` : `${engagement.photos_opened} photos` });
+  // Photos: how many were opened full-size AND the time on the photos tab —
+  // a customer who scrolls the grid without tapping still shows up here.
+  const photoSec = Number(engagement.photos_seconds) || 0;
+  if (engagement.photos_opened > 0 || photoSec > 0) {
+    const bits = [
+      engagement.photos_opened > 0 ? (isAr ? `${engagement.photos_opened} صور` : `${engagement.photos_opened} photos`) : (isAr ? 'الصور' : 'Photos'),
+      photoSec > 0 ? duration(photoSec, isAr) : null,
+    ].filter(Boolean);
+    parts.push({ key: 'photos', icon: <ImageIcon size={11} />, text: bits.join(' · ') });
   }
-  if (engagement.videos_played > 0) {
+  const videoSec = Number(engagement.videos_seconds) || 0;
+  if (engagement.videos_played > 0 || videoSec > 0) {
     const pct = Math.round(Number(engagement.max_video_pct) || 0);
-    parts.push({
-      key: 'videos',
-      icon: <PlayCircle size={11} />,
-      text: isAr
-        ? `${engagement.videos_played} فيديو${pct > 0 ? ` · ${pct}%` : ''}`
-        : `${engagement.videos_played} video${engagement.videos_played === 1 ? '' : 's'}${pct > 0 ? ` · ${pct}%` : ''}`,
-    });
+    const bits = [
+      engagement.videos_played > 0
+        ? (isAr ? `${engagement.videos_played} فيديو` : `${engagement.videos_played} video${engagement.videos_played === 1 ? '' : 's'}`)
+        : (isAr ? 'الفيديوهات' : 'Videos'),
+      pct > 0 ? `${pct}%` : null,
+      videoSec > 0 ? duration(videoSec, isAr) : null,
+    ].filter(Boolean);
+    parts.push({ key: 'videos', icon: <PlayCircle size={11} />, text: bits.join(' · ') });
   }
   if (Number(engagement.brochure_seconds) > 0 || engagement.brochure_pages > 0) {
     parts.push({
