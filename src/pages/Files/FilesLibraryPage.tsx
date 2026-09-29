@@ -95,7 +95,13 @@ export default function FilesLibraryPage({ basePath = '/files', defaultView = nu
   const [searchInput, setSearchInput] = useState(q);
   // Keep the box in step when the query changes from anywhere else — opening a
   // view, following a shared link, pressing Back.
-  useEffect(() => { setSearchInput(q); }, [q]);
+  // The URL stores the query TRIMMED, so when our own debounced push lands,
+  // `q` is the box's text minus any trailing space. Overwriting the box then
+  // ate the space the user had just typed. Only sync when the text really
+  // differs, not just by surrounding whitespace.
+  useEffect(() => {
+    setSearchInput((prev) => (prev.trim() === q.trim() ? prev : q));
+  }, [q]);
 
   const pushState = useCallback(
     (next: Partial<typeof urlState>, replace = false) => {
@@ -124,7 +130,7 @@ export default function FilesLibraryPage({ basePath = '/files', defaultView = nu
 
   // Debounce ONLY the free text.
   useEffect(() => {
-    if (searchInput === q) return;
+    if (searchInput.trim() === q.trim()) return;
     const id = window.setTimeout(() => {
       // `replace` so a burst of typing leaves one history entry, not eight.
       pushState({ q: searchInput, view: null }, true);
