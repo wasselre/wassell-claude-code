@@ -27,7 +27,7 @@ Brokers ask for the same material over and over (price lists, plans, photos, bro
 - **Send limits live in the database** (`broker_portal_send_claim`, row-locked per portal): portal switch `send_enabled`, `daily_send_cap` (default 20/day, Riyadh day), the same client + project once per 24 h, one client at most 3 projects per 24 h, 10 sends per hashed IP per hour. Every attempt is logged in `broker_portal_sends` (who sent what to whom, outcome). These exist because each send is a first message to a stranger from the MAIN line — the traffic WhatsApp restricts (463) and bans.
 - **Share it yourself:** the send sheet also shows the exact project message with «نسخ رسالة المشروع» and brochure downloads. Every image tile has copy-image (PNG to clipboard, paste into WhatsApp; falls back to download) and download buttons; the lightbox has both too. Clipboard failures show a notice, never a blocking prompt.
 - **Library («مكتبة الرمز», `?view=library`):** every linked file across all the developer's projects and units (photos, designs, videos, floor plans, brochures) plus the projects' reel links (de-duplicated by URL). Filter by type and project, search names AND video transcripts. Metadata comes in one call (`library`); URLs are signed per visible page (`sign`, max 60 ids, only files linked to this developer's records).
-- **Transcripts:** shown only when they are real speech. Legacy English rows (wizper defaulted to English and translated Saudi Arabic speech — being repaired by `scripts/retranscribe-arabic.mjs`) and music-only "♪ Thank you" rows are hidden (`isPresentableTranscript`). Source: `files ← mkt_content_media.file_id → mkt_transcripts`.
+- **Transcripts:** shown only when they are real speech. Legacy English rows (wizper defaulted to English and translated Saudi Arabic speech — being repaired by `scripts/retranscribe-arabic.mjs`) and music-only "♪ Thank you" rows are hidden (`isPresentableTranscript`). Sources: collected reels `files ← mkt_content_media.file_id → mkt_transcripts`, and our own uploads `public.file_transcripts` (one row per file, added 2026-09-29). Filled for a whole developer by `scripts/transcribe-developer-videos.mjs --developer <id>` (fal wizper, language forced to Arabic, metered in `ai_usage` area `files`; music-only videos stored as language `none`).
 
 ## User flows
 1. **Broker happy path:** open link → developer hero (projects / total units / available, phone, website) → search or pick a project → overview (description, features, payment plans, warranties, map, landmarks, services) → Units → filter by status/type/bedrooms/building/max price → open a unit → share on WhatsApp.
@@ -66,11 +66,13 @@ Brokers ask for the same material over and over (price lists, plans, photos, bro
 | `api/_lib/aiSendProject.ts` | `introText` option + `resolveProjectMessagePreview` (added for the portal) |
 | `src/pages/BrokerPortal/components/SendToClientModal.tsx` | Send form, limit messages, copy message, brochure downloads |
 | `src/pages/BrokerPortal/components/LibraryView.tsx` | Developer-wide library: filters, transcript search, on-demand signing |
+| `supabase/migrations/2026-09-29_file_transcripts.sql` | `file_transcripts` table + `file_video_transcript()` falls back to it |
+| `scripts/transcribe-developer-videos.mjs` | Arabic transcripts for every video of one developer (dry-run / --confirm / --max-usd) |
 | `src/pages/BrokerPortal/lib/flash.ts` | Page-local toast (the CRM store/toasts don't boot here) |
 
 ## Open questions / known limitations
 - Turning sending off: `UPDATE broker_portals SET send_enabled=false …`; the cap: `daily_send_cap`. See who sent what: `SELECT * FROM broker_portal_sends ORDER BY created_at DESC`.
-- Transcript coverage for Al-Ramz is thin: of 111 videos, ~20 legacy English rows await the Arabic repair and 40 (our own marketing videos, not collected reels) have never been transcribed — no pipeline covers non-collected files yet.
+- Transcripts are filled by an operator script, not automatically: a video linked to the developer AFTER the run has none until the script is re-run (it skips videos already transcribed in Arabic).
 - Hosted reel links (`project_videos`) may duplicate collected video files; they cannot be matched by name.
 - No admin UI to create/revoke portals or see view counts — SQL only.
 - Anyone holding the link can open it (no password / per-broker identity); revoke by deactivating the row.

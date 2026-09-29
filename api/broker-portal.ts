@@ -441,14 +441,25 @@ function placeFiles(links: LinkRow[], files: Map<string, FileRow>, unitIds: Set<
  *  the Saudi Arabic speech (no `language` in the stored request; being repaired
  *  by scripts/retranscribe-arabic.mjs); (2) music-only reels whose "transcript"
  *  is Whisper's hallucinated "♪ Thank you". */
-function isPresentableTranscript(t: { text: string | null; language: string | null; raw: Json | null }): boolean {
+interface TranscriptRow { text: string | null; language: string | null; req: Json | null }
+
+function isPresentableTranscript(t: TranscriptRow): boolean {
   const text = (t.text ?? '').trim();
   if (!text || t.language === 'none') return false;
-  const req = (t.raw?._request ?? null) as Json | null;
+  const req = t.req;
   const legacyEnglish = t.language === 'en' && !(req && typeof req === 'object' && 'language' in req);
   if (legacyEnglish) return false;
   const words = text.replace(/[\u266A\u266B\u{1F3B5}*.,!?'"()[\]-]/gu, ' ').replace(/\b(thank you|thanks|you|so|oh my god)\b/gi, ' ').trim();
   return words.replace(/\s+/g, '').length >= 20;
+}
+
+/** Whisper's Arabic filler on music/intros («اشتركوا في القناة» = "subscribe to
+ *  the channel") often prefixes a REAL transcript; drop it before a broker sees it. */
+function cleanTranscript(text: string): string {
+  return text
+    .replace(/اشتركوا في القناة|اشترك في القناة|شكرا للمشاهدة|شكرا لكم على المشاهدة|ترجمة نانسي قنقر/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 /** Speech transcripts for video files (collected social reels are transcribed
@@ -456,23 +467,31 @@ function isPresentableTranscript(t: { text: string | null; language: string | nu
  *  Empty transcripts (music-only reels) are left out. */
 async function loadTranscripts(svc: SupabaseClient, fileIds: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
+  const keep = (fid: string | undefined, t: TranscriptRow) => {
+    if (!fid || !isPresentableTranscript(t)) return;
+    const text = cleanTranscript(t.text ?? '');
+    if (!text) return;
+    if ((out.get(fid)?.length ?? 0) < text.length) out.set(fid, text);
+  };
   for (let i = 0; i < fileIds.length; i += 150) {
-    const { data: media, error } = await svc
-      .from('mkt_content_media').select('id, file_id').in('file_id', fileIds.slice(i, i + 150));
+    const chunk = fileIds.slice(i, i + 150);
+    // (1) Collected reels: files ← mkt_content_media.file_id → mkt_transcripts.
+    const { data: media, error } = await svc.from('mkt_content_media').select('id, file_id').in('file_id', chunk);
     if (error) { console.error('[broker-portal] content media lookup failed:', error.message); return out; }
     const rows = (media ?? []) as Array<{ id: string; file_id: string }>;
-    if (!rows.length) continue;
-    const { data: tr, error: tErr } = await svc
-      .from('mkt_transcripts').select('content_media_id, text, language, raw').eq('status', 'done')
-      .in('content_media_id', rows.map((r) => r.id));
-    if (tErr) { console.error('[broker-portal] transcript lookup failed:', tErr.message); return out; }
-    const fileOf = new Map(rows.map((r) => [r.id, r.file_id]));
-    for (const t of (tr ?? []) as Array<{ content_media_id: string; text: string | null; language: string | null; raw: Json | null }>) {
-      if (!isPresentableTranscript(t)) continue;
-      const text = (t.text ?? '').trim();
-      const fid = fileOf.get(t.content_media_id);
-      if (fid && (out.get(fid)?.length ?? 0) < text.length) out.set(fid, text);
+    if (rows.length) {
+      const { data: tr, error: tErr } = await svc
+        .from('mkt_transcripts').select('content_media_id, text, language, req:raw->_request').eq('status', 'done')
+        .in('content_media_id', rows.map((r) => r.id));
+      if (tErr) { console.error('[broker-portal] transcript lookup failed:', tErr.message); return out; }
+      const fileOf = new Map(rows.map((r) => [r.id, r.file_id]));
+      for (const t of (tr ?? []) as Array<TranscriptRow & { content_media_id: string }>) keep(fileOf.get(t.content_media_id), t);
     }
+    // (2) Our own uploads: public.file_transcripts (scripts/transcribe-developer-videos.mjs).
+    const { data: own, error: oErr } = await svc
+      .from('file_transcripts').select('file_id, text, language, req:raw->_request').eq('status', 'done').in('file_id', chunk);
+    if (oErr) { console.error('[broker-portal] file transcript lookup failed:', oErr.message); return out; }
+    for (const t of (own ?? []) as Array<TranscriptRow & { file_id: string }>) keep(t.file_id, t);
   }
   return out;
 }
