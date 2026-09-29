@@ -36,7 +36,7 @@
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 5 | 15 | no | 2026-09-20 |
 | [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | — | 1 | 8 | no | 2026-09-27 |
 | [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | — | 2 | 16 | no | 2026-09-27 |
-| [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-08-20 |
+| [Project Details](project-details.md) | `project_details` | JSONB | — | 1 | 12 | yes | 2026-09-29 |
 | [Project Officers](project-officers.md) | `project_officers` | JSONB | Projects | 1 | 7 | no | 2026-09-29 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Real Estate Offices](real-estate-offices.md) | `real_estate_offices` | JSONB | Unresponded Requests | 1 | 6 | no | 2026-07-30 |
@@ -44,7 +44,7 @@
 | [Regions](regions.md) | `regions` | frozen `regions` | Geography | 1 | 8 | no | 2026-07-30 |
 | [Reservations](reservations.md) | `reservations` | JSONB | — | 1 | 9 | no | 2026-09-27 |
 | [Sales Tasks](sales-tasks.md) | `sales_tasks` | JSONB | — | 3 | 16 | no | 2026-09-27 |
-| [Website Settings](site-settings.md) | `site_settings` | JSONB | — | 15 | 223 | yes | 2026-08-20 |
+| [Website Settings](site-settings.md) | `site_settings` | JSONB | — | 14 | 190 | yes | 2026-09-29 |
 | [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 1 | 7 | no | 2026-09-20 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 3 | 13 | no | 2026-09-20 |

@@ -5,7 +5,7 @@
 # Model: Website Settings / إعدادات الموقع  `site_settings`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-09-29
 **Model id:** `0fcb55a5-f7e7-452f-90db-d05c728798c2`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -13,8 +13,8 @@
 **Icon:** `globe`   ·   **Color:** `#B8734F`
 
 ## Overview
-- Sections: **15** (1 base, 14 non-base)
-- Fields: **223**
+- Sections: **14** (1 base, 13 non-base)
+- Fields: **190**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -1015,41 +1015,3 @@
   - API value `unit_plan` → "Plan" / "المخطط"
   - API value `block` → "Block" / "البلك"
   - API value `street_width` → "Street Width" / "حجم الشارع"
-
-### 15. Project Details Page Template / قالب صفحة تفاصيل المشروع  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `pd_hero_eyebrow_label` | Hero Eyebrow Label / علامة العنوان (نص قصير فوق العنوان) | Text | no | half | no |  |
-| `pd_scroll_label` | Scroll Prompt / نص "تصفّح المشروع" | Text | no | half | no |  |
-| `pd_about_eyebrow` | About Section Eyebrow / علامة قسم "عن المشروع" | Text | no | half | no |  |
-| `pd_about_headline` | About Section Headline / عنوان قسم "عن المشروع" | Text area | no | full | no |  |
-| `pd_gallery_eyebrow` | Gallery Section Eyebrow / علامة قسم "المعرض" | Text | no | half | no |  |
-| `pd_gallery_headline` | Gallery Section Headline / عنوان قسم "المعرض" | Text | no | half | no |  |
-| `pd_gallery_view_all` | Gallery View-All Label / نص "عرض جميع الصور" | Text | no | full | no |  |
-| `pd_features_eyebrow` | Features Section Eyebrow / علامة قسم "المميزات" | Text | no | half | no |  |
-| `pd_features_headline` | Features Section Headline / عنوان قسم "المميزات" | Text | no | half | no |  |
-| `pd_features_intro` | Features Section Intro / وصف قسم "المميزات" | Text area | no | full | no |  |
-| `pd_map_eyebrow` | Map Section Eyebrow / علامة قسم "الموقع" | Text | no | half | no |  |
-| `pd_map_headline` | Map Section Headline / عنوان قسم "الموقع" | Text | no | half | no |  |
-| `pd_map_landmarks_heading` | Landmarks Heading / عنوان قائمة المعالم القريبة | Text | no | full | no |  |
-| `pd_brochure_eyebrow` | Brochure Section Eyebrow / علامة قسم "الكتيب" | Text | no | half | no |  |
-| `pd_brochure_headline` | Brochure Section Headline / عنوان قسم "الكتيب" | Text | no | half | no |  |
-| `pd_brochure_body` | Brochure Body Paragraph / نص فقرة الكتيب | Text area | no | full | no |  |
-| `pd_brochure_cta` | Brochure Download Button / نص زر تنزيل الكتيب | Text | no | full | no |  |
-| `pd_units_badge` | Units Coming-Soon Badge / شارة "قريباً" لقسم الوحدات | Text | no | half | no |  |
-| `pd_units_headline` | Units Block Headline / عنوان قسم الوحدات | Text | no | half | no |  |
-| `pd_units_body` | Units Block Description / وصف قسم الوحدات (Placeholder) | Text area | no | full | no |  |
-| `pd_form_badge` | Form Coming-Soon Badge / شارة "قريباً" لنموذج الاهتمام | Text | no | half | no |  |
-| `pd_form_headline` | Form Block Headline / عنوان نموذج الاهتمام | Text | no | half | no |  |
-| `pd_form_body` | Form Block Description / وصف نموذج الاهتمام (Placeholder) | Text area | no | full | no |  |
-| `pd_agent_eyebrow` | Agent Section Eyebrow / علامة قسم المستشار | Text | no | half | no |  |
-| `pd_agent_headline` | Agent Section Headline / عنوان قسم المستشار | Text area | no | full | no |  |
-| `pd_agent_body` | Agent Section Body / نص قسم المستشار | Text area | no | full | no |  |
-| `pd_agent_status` | Agent Status Text / نص "متاح الآن للرد" | Text | no | half | no |  |
-| `pd_agent_whatsapp_label` | WhatsApp Button Label / نص زر "تواصل عبر واتساب" | Text | no | half | no |  |
-| `pd_bottom_cta_eyebrow` | Bottom CTA Eyebrow / علامة قسم الدعوة السفلية | Text | no | half | no |  |
-| `pd_bottom_cta_suffix` | Bottom CTA Suffix Phrase / الجملة بعد اسم المشروع | Text | no | half | no |  |
-| `pd_bottom_cta_body` | Bottom CTA Body / وصف قسم الدعوة السفلية | Text area | no | full | no |  |
-| `pd_bottom_cta_primary` | Bottom CTA Primary Button / زر الدعوة الأساسي | Text | no | half | no |  |
-| `pd_bottom_cta_secondary` | Bottom CTA Secondary / زر الدعوة الثانوي | Text | no | half | no |  |
