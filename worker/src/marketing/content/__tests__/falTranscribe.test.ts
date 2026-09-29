@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
-  chunksToSegments, aggregateWords, normalizeFalResponse, transcribeAudioUrl, isMeaninglessTranscript, isAutoDetectMisfire,
+  chunksToSegments, aggregateWords, normalizeFalResponse, transcribeAudioUrl, isMeaninglessTranscript, isAutoDetectMisfire, collapseRepeats,
   WORD_AGG_MAX_MS, WORD_AGG_MIN_MS,
 } from '../falTranscribe';
 
@@ -106,6 +106,19 @@ describe('normalizeFalResponse', () => {
     expect(isMeaninglessTranscript('♪ مشروع يمام بارك ♪')).toBe(false);
     expect(isMeaninglessTranscript('*Splash*')).toBe(true);
     expect(isMeaninglessTranscript('[music] ')).toBe(true);
+  });
+  it('Arabic "music / subscribe" hallucinations alone are no speech; inside real speech they stay', () => {
+    expect(isMeaninglessTranscript('موسيقى اشتركوا في القناة')).toBe(true);
+    expect(isMeaninglessTranscript('ترجمة نانسي قنقر')).toBe(true);
+    expect(isMeaninglessTranscript('موسيقى هادئة في مشروع الماجدية 155 بحي عرقة')).toBe(false);
+  });
+  it('collapses decoder loops but keeps genuine repeats', () => {
+    expect(collapseRepeats('ماذا عنك؟ ماذا عنك؟ ماذا عنك؟ رجل')).toBe('ماذا عنك؟ ماذا عنك؟ ماذا عنك؟ رجل');
+    expect(collapseRepeats('قبل ' + 'لا '.repeat(300) + 'بعد')).toBe('قبل لا بعد');
+    expect(collapseRepeats('ب ' + 'و تفتح الجانب المفتاحي على النافذة '.repeat(25) + 'ج')).toBe('ب و تفتح الجانب المفتاحي على النافذة ج');
+    expect(collapseRepeats('مرتب اه' + 'ه'.repeat(400) + ' دورة')).toBe('مرتب اههه دورة');
+    const plain = 'مشروع  وكن 45\nفي حي النسيم';
+    expect(collapseRepeats(plain)).toBe(plain); // untouched, whitespace included
   });
   it('an auto-detect that lands outside ar/en is music, not speech', () => {
     // Real rows from the 2026-09-29 backfill batch.

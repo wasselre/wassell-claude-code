@@ -93,12 +93,49 @@ function falEnv() {
 // Whisper emits these on silent / music-only audio (no real speech). Treated as
 // "no meaningful speech" so a music reel isn't stored as a bogus English line.
 const HALLUCINATIONS = new Set(['you', 'thank you', 'thank you.', 'thanks for watching', 'thanks for watching!', 'bye', 'bye.', '.', '..', '...', 'subscribe', 'the end']);
+// Arabic equivalents, measured 2026-09-29: a music-only video came back as
+// «موسيقى اشتركوا في القناة» ("music, subscribe to the channel"). A transcript
+// made of ONLY these phrases is no speech; a real transcript that happens to
+// contain one keeps everything.
+const AR_HALLUCINATION_PHRASES = ['اشتركوا في القناة', 'اشترك في القناة', 'شكرا لكم على المشاهدة', 'شكرا للمشاهدة', 'ترجمة نانسي قنقر', 'موسيقى'];
 export function isMeaninglessTranscript(text: string): boolean {
   // Music-only audio also comes back as bare music notes («♪♪ ♪♪»): 110 rows
   // were stored that way as if they were speech (language NULL, not 'none').
   // Sound-effect captions («*Splash*», «[music]») are not speech either.
   const t = text.trim().toLowerCase().replace(/\*[^*]*\*|\[[^\]]*\]/g, ' ').replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
-  return t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase());
+  if (t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase())) return true;
+  let rest = t;
+  for (const p of AR_HALLUCINATION_PHRASES) rest = rest.split(p).join(' ');
+  return rest.replace(/\s+/g, ' ').trim().length < 3;
+}
+
+/** A phrase repeated back-to-back more than this many times is a decoder loop. */
+const MAX_REPEAT = 3;
+/**
+ * Whisper sometimes gets stuck on long / noisy audio and emits the same thing
+ * hundreds of times — measured 2026-09-29 on a 35-minute walkthrough: «ههههه…»
+ * for several hundred characters, «لا» ~300 times, and «و تفتح الجانب المفتاحي
+ * على النافذة» ~25 times in a row. Collapses (1) one character repeated 7+
+ * times to 3, and (2) any 1–12-word phrase repeated back-to-back more than
+ * MAX_REPEAT times to ONE copy. Three genuine repeats («ماذا عنك؟» ×3) are
+ * kept. Returns the input unchanged when nothing looped.
+ */
+export function collapseRepeats(text: string): string {
+  const chars = text.replace(/(.)\1{6,}/gu, '$1$1$1');
+  const words = chars.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let looped = chars !== text;
+  let i = 0;
+  while (i < words.length) {
+    let skip = 0;
+    for (let n = 1; n <= 12 && i + n * (MAX_REPEAT + 1) <= words.length; n++) {
+      let k = 1;
+      while (i + (k + 1) * n <= words.length && words.slice(i + k * n, i + (k + 1) * n).every((w, x) => w === words[i + x])) k++;
+      if (k > MAX_REPEAT) { out.push(...words.slice(i, i + n)); skip = k * n; break; }
+    }
+    if (skip) { i += skip; looped = true; } else { out.push(words[i]); i++; }
+  }
+  return looped ? out.join(' ') : text;
 }
 
 /**
@@ -191,7 +228,7 @@ export function normalizeFalResponse(
   request: Record<string, unknown>,
   chunkLevel: 'segment' | 'word',
 ): TranscriptResult {
-  const rawText = (j.text ?? '').trim();
+  const rawText = collapseRepeats((j.text ?? '').trim());
   const inferred = j.languages ?? j.inferred_languages;
   const { segments: ordered, reordered } = chunksToSegments(j.chunks);
   const lastEndMs = ordered.reduce((m, s) => Math.max(m, s.end_ms), 0);
@@ -207,7 +244,8 @@ export function normalizeFalResponse(
   if (isMeaninglessTranscript(rawText) || isAutoDetectMisfire(request, inferred ?? undefined)) {
     return { text: '', segments: [], language: 'none', model, provider: 'fal', costUsd, raw };
   }
-  const segments = chunkLevel === 'word' ? aggregateWords(ordered) : ordered;
+  const segments = (chunkLevel === 'word' ? aggregateWords(ordered) : ordered)
+    .map((s) => ({ ...s, text: collapseRepeats(s.text) }));
   // fal's `text` is the chunks concatenated in RESPONSE order. If that order was
   // not chronological, the text is scrambled too — rebuild it from the sorted
   // segments. When the response was already in order, `text` is left verbatim.

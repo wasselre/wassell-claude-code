@@ -154,10 +154,30 @@ function aggregateWords(words, MIN = 5000, MAX = 8000, PAUSE = 700) {
   if (cur) out.push(cur);
   return out;
 }
+
+// Same as worker falTranscribe.collapseRepeats (decoder loops → one copy).
+const MAX_REPEAT = 3;
+function collapseRepeats(text) {
+  const chars = text.replace(/(.)\1{6,}/gu, '$1$1$1');
+  const words = chars.split(/\s+/).filter(Boolean);
+  const out = [];
+  let looped = chars !== text;
+  let i = 0;
+  while (i < words.length) {
+    let skip = 0;
+    for (let n = 1; n <= 12 && i + n * (MAX_REPEAT + 1) <= words.length; n++) {
+      let k = 1;
+      while (i + (k + 1) * n <= words.length && words.slice(i + k * n, i + (k + 1) * n).every((w, x) => w === words[i + x])) k++;
+      if (k > MAX_REPEAT) { out.push(...words.slice(i, i + n)); skip = k * n; break; }
+    }
+    if (skip) { i += skip; looped = true; } else { out.push(words[i]); i++; }
+  }
+  return looped ? out.join(' ') : text;
+}
 function normalizeFal(j, durationMs, level) {
   const { segments: ordered, reordered } = chunksToSegments(j.chunks);
-  const segments = level === 'word' ? aggregateWords(ordered) : ordered;
-  const rawText = (j.text ?? '').trim();
+  const segments = (level === 'word' ? aggregateWords(ordered) : ordered).map((s) => ({ ...s, text: collapseRepeats(s.text) }));
+  const rawText = collapseRepeats((j.text ?? '').trim());
   const text = reordered && segments.length ? segments.map((s) => s.text).join(' ') : rawText;
   const lastEnd = ordered.reduce((m, s) => Math.max(m, s.end_ms), 0);
   const billedMs = durationMs || lastEnd;
@@ -559,10 +579,13 @@ function detectLanguage(text, inferred) {
   return ar >= en ? 'ar' : 'en';
 }
 const HALLUCINATIONS = new Set(['you', 'thank you', 'thank you.', 'thanks for watching', 'thanks for watching!', 'bye', 'bye.', '.', '..', '...', 'subscribe', 'the end']);
+const AR_HALLUCINATION_PHRASES = ['اشتركوا في القناة', 'اشترك في القناة', 'شكرا لكم على المشاهدة', 'شكرا للمشاهدة', 'ترجمة نانسي قنقر', 'موسيقى'];
 function isMeaningless(text) {
-  // Sound-effect captions («*Splash*», «[music]») are not speech either.
   const t = text.trim().toLowerCase().replace(/\*[^*]*\*|\[[^\]]*\]/g, ' ').replace(/[!.?،♪♫♩♬\s]+/g, ' ').trim();
-  return t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase());
+  if (t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase())) return true;
+  let rest = t;
+  for (const p of AR_HALLUCINATION_PHRASES) rest = rest.split(p).join(' ');
+  return rest.replace(/\s+/g, ' ').trim().length < 3;
 }
 
 const FAIL_LOG = path.join(REPO, 'scripts', '.retranscribe-failures.local');
@@ -686,6 +709,44 @@ async function runBackfill() {
   if (fail) process.exitCode = 1;
 }
 
+/**
+ * --reclean [--dry-run]: re-apply the CURRENT text rules (no-speech phrases,
+ * loop collapse, auto-detect misfire) to every already-repaired row, from the
+ * fal response it already stores in `raw`. No fal call, no cost.
+ */
+async function runReclean() {
+  const dry = flag('dry-run');
+  const rows = [];
+  for (let from = 0; ; from += 200) {
+    const { data, error } = await sb.from('mkt_transcripts').select('id,content_media_id,content_post_id,language,text,segments,duration_ms,cost_usd,source_checksum,raw')
+      .eq('model', MODEL_A).eq('status', 'done').not('raw->_replaced', 'is', null).order('id').range(from, from + 199);
+    if (error) throw new Error(`reclean load: ${error.message}`);
+    rows.push(...data); if (data.length < 200) break;
+  }
+  let changed = 0;
+  for (const row of rows) {
+    const raw = row.raw ?? {};
+    const r = normalizeFal(raw, row.duration_ms, 'segment');
+    const lid = (raw.languages ?? raw.inferred_languages ?? [])[0];
+    const misfire = raw._request?.language === null && !!lid && lid !== 'ar' && lid !== 'en';
+    const none = isMeaningless(r.text) || misfire;
+    const language = none ? 'none' : detectLanguage(r.text, raw.languages ?? raw.inferred_languages ?? undefined);
+    const text = none ? '' : r.text;
+    if (text === (row.text ?? '') && language === row.language) continue;
+    changed++;
+    console.log(`[reclean] ${row.content_media_id} ${row.language}/${(row.text ?? '').length} → ${language}/${text.length}${dry ? ' (dry run)' : ''}`);
+    if (dry) continue;
+    const { error } = await sb.rpc('mkt_transcript_upsert', {
+      p_media: row.content_media_id, p_post: row.content_post_id, p_provider: 'fal', p_model: MODEL_A, p_language: language,
+      p_text: text, p_segments: none ? [] : r.segments, p_duration_ms: row.duration_ms, p_confidence: null, p_cost: row.cost_usd,
+      p_status: 'done', p_failure: null, p_source_checksum: row.source_checksum,
+      p_raw: { ...raw, _recleaned: { at: new Date().toISOString(), from_language: row.language, from_chars: (row.text ?? '').length } },
+    });
+    if (error) { console.error(`[reclean] FAIL ${row.content_media_id}: ${error.message}`); process.exitCode = 1; }
+  }
+  console.log(`[reclean] ${rows.length} repaired rows checked, ${changed} ${dry ? 'would change' : 'changed'}`);
+}
+
 /** Recompute every metric from results.json with the CURRENT scorer (no fal spend) and rewrite the markdown. */
 async function runRescore() {
   const p = path.join(OUT_DIR, 'results.json');
@@ -708,4 +769,5 @@ async function runRescore() {
 if (flag('ab')) await runAb();
 else if (flag('backfill')) await runBackfill();
 else if (flag('rescore')) await runRescore();
-else { console.error('usage: node scripts/retranscribe-arabic.mjs --ab [--n 10] [--dry-run] [--no-store] [--store-word] | --rescore | --backfill --limit N [--dry-run] [--concurrency 2] [--max-usd 15] [--language auto|ar] [--retry-failed] --confirm'); process.exit(2); }
+else if (flag('reclean')) await runReclean();
+else { console.error('usage: node scripts/retranscribe-arabic.mjs --ab [--n 10] [--dry-run] [--no-store] [--store-word] | --rescore | --reclean [--dry-run] | --backfill --limit N [--dry-run] [--concurrency 2] [--max-usd 15] [--language auto|ar] [--retry-failed] --confirm'); process.exit(2); }
