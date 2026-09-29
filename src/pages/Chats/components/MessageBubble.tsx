@@ -40,6 +40,7 @@ export default function MessageBubble({
   onRetry,
   projectActions,
   linkEngagement,
+  senderLabel,
 }: {
   message: ChatMessage;
   isAr: boolean;
@@ -53,6 +54,8 @@ export default function MessageBubble({
   /** When the message carries a tracked link: what the customer did with it.
    *  `undefined` = not a tracked message; `null` = tracked, not loaded yet. */
   linkEngagement?: TrackedLinkEngagement | null;
+  /** Group chats only: who wrote this inbound post (name, else phone). */
+  senderLabel?: string | null;
 }) {
   const isOut = message.flow === 'out';
   const failed = isOut && message.ack === 'failed';
@@ -88,6 +91,10 @@ export default function MessageBubble({
             : 'bg-sand/20 text-charcoal rounded-bl-md'
         } ${failed ? 'border border-red-300' : ''}`}
       >
+        {senderLabel && (
+          <div className="mb-0.5 text-[11px] font-semibold text-copper" dir="auto">{senderLabel}</div>
+        )}
+
         {message.quoted && (
           <div className="mb-1.5 pl-2 border-s-2 border-copper/40 text-xs text-charcoal/60">
             <div className="font-medium opacity-80">

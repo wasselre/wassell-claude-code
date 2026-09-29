@@ -1130,3 +1130,26 @@ export async function patchChat(
   }
   // status: intentionally no-op (CRM-owned).
 }
+
+/**
+ * A WhatsApp group's subject (its display name), or null when WAHA can't say.
+ * Best-effort: a group chat without a name still works (the list falls back to
+ * its id), so a failure is logged, never thrown into the webhook.
+ */
+export async function getGroupSubject(session: string, groupId: string): Promise<string | null> {
+  try {
+    const g = await request<Record<string, unknown>>(
+      `/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(groupId)}`,
+    );
+    for (const k of ['subject', 'Subject', 'name', 'Name']) {
+      const v = g?.[k];
+      if (typeof v === 'string' && v.trim()) return v.trim();
+    }
+    const info = g?.GroupName as Record<string, unknown> | undefined;
+    if (info && typeof info.Name === 'string' && info.Name.trim()) return info.Name.trim();
+    return null;
+  } catch (e) {
+    console.error(`[waha] group subject lookup failed for ${groupId}:`, e instanceof Error ? e.message : String(e));
+    return null;
+  }
+}

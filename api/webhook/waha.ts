@@ -33,7 +33,7 @@ import {
   type ChatMessageRow,
 } from '../_lib/chatIngest.js';
 import { wakeWorker } from '../_lib/leadPortals.js';
-import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, mirrorWahaHostedMedia, recoverWahaText, type WahaMessageRaw } from '../_lib/waha.js';
+import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, mirrorWahaHostedMedia, recoverWahaText, getGroupSubject, type WahaMessageRaw } from '../_lib/waha.js';
 
 export const config = {
   runtime: 'edge',
@@ -189,8 +189,13 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // Fall back to keying the conversation by its LID. The thread is preserved and
   // visible; only the phone link is missing, and it heals by itself once the LID
   // map fills in. Losing the message is never the better trade.
+  // A GROUP post belongs to the group's own conversation. The phone resolved
+  // above is then the SENDER's (kept on from_phone so the bubble can say who
+  // wrote it) — it must never pick the chat, or the post lands in that person's
+  // private thread (64 posts filed that way on the ops line, 2026-09-05→29).
+  const groupWid = rawChat.endsWith('@g.us') ? rawChat : null;
   const digits = counterpartyPhone?.replace(/\D/g, '') ?? '';
-  const chatWid = digits ? `${digits}@c.us` : rawChat;
+  const chatWid = groupWid ?? (digits ? `${digits}@c.us` : rawChat);
   if (!counterpartyPhone) {
     if (!rawChat) {
       console.error('[webhook.waha] no chat identity at all for', p.id, '— cannot store');
@@ -229,7 +234,9 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // diagnosable if a new message layout appears. Recovered BEFORE the ad
   // resolution: an ad lead without an ad ID is attributed from this text.
   const recovered = recoverWahaText(p);
-  const adReferral = flow === 'in' && !isOps ? extractAdReferral(p) : null;
+  // A group is never a lead: no ad attribution, no bot, no follow-ups.
+  const inFunnel = !isOps && !groupWid;
+  const adReferral = flow === 'in' && inFunnel ? extractAdReferral(p) : null;
   const adMeta = adReferral ? await attachAdResolution(adReferral, { body: recovered?.text ?? null }) : null;
 
   if (flow === 'in' && !(p.body ?? '').trim()) {
@@ -252,7 +259,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     subtype: null,
     body: recovered?.text ?? null,
     from_phone: flow === 'in' ? counterpartyPhone : null,
-    to_phone: flow === 'out' ? counterpartyPhone : null,
+    to_phone: flow === 'out' && !groupWid ? counterpartyPhone : null,
     // Ack is a delivery receipt for messages WE sent. NOWEB reports -1/"ERROR"
     // on INBOUND messages, which rendered delivered client messages as red
     // "failed" bubbles. Only trust ack on outbound. (Live 2026-07-26.)
@@ -274,7 +281,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // transcription worker so the transcript can drive a real answer instead of an
   // immediate "we got your media" hand-off — set true only once the media job is
   // safely enqueued, so an enqueue failure falls back to the immediate reply.
-  const botEligible = flow === 'in' && isNew && !!counterpartyPhone && !isOps;
+  const botEligible = flow === 'in' && isNew && !!counterpartyPhone && inFunnel;
   let deferBotToTranscription = false;
 
   // Proactively mirror WAHA-hosted media the instant it arrives, while the
@@ -341,7 +348,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
       ? (adMeta.resolved as Record<string, unknown>)
       : null;
   const adWithoutId = adMeta?.ad_id_missing === true;
-  if (flow === 'in' && isNew && counterpartyPhone && (resolvedAd || adWithoutId) && !isOps) {
+  if (flow === 'in' && isNew && counterpartyPhone && (resolvedAd || adWithoutId) && inFunnel) {
     if (adWithoutId) {
       console.log(`[waha-webhook] ad lead without an ad ID chat=${chatWid} entry=${String(adMeta?.entry_point_source ?? '')} campaign=${resolvedAd ? String(resolvedAd.campaign_id ?? '') : 'not inferred'}`);
     }
@@ -364,7 +371,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     deviceId: session,
     // The composer's identity gate needs the phone on the record. We already
     // resolved it above (may be null for a LID-only chat with no map entry yet).
-    phone: counterpartyPhone,
+    phone: groupWid ? null : counterpartyPhone,
     lastBody: row.body ?? '[media]',
     lastAt: date,
     lastFlow: flow,
@@ -373,6 +380,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     // No reopen push-back for WAHA — chat status is fully CRM-owned.
     // Operations-line threads skip client-linking + the sales-funnel reconcile.
     isOperations: isOps,
+    group: groupWid ? { name: () => getGroupSubject(session, groupWid) } : null,
   });
 
   // Portal code relay (2026-09-24): a lead portal that signs in with an SMS
@@ -382,7 +390,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // restart and a NEW code is texted). Only inbound, new, ops-line messages
   // from a known phone; a phone that relays no portal is a no-op in SQL.
   // Fire-safe: the message is already stored above.
-  if (flow === 'in' && isNew && counterpartyPhone && isOps) {
+  if (flow === 'in' && isNew && counterpartyPhone && isOps && !groupWid) {
     try {
       const svc = getServiceSupabase();
       const { data, error } = await svc.rpc('portal_otp_relay_inbound', {
@@ -423,7 +431,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // Requires a phone: the agent qualifies the lead against the client record,
   // which is matched by number. A LID-only chat has nothing to match on, so
   // storing the message (above) is the whole job here.
-  if (flow === 'in' && isNew && counterpartyPhone && !isOps && !deferBotToTranscription) {
+  if (flow === 'in' && isNew && counterpartyPhone && inFunnel && !deferBotToTranscription) {
     // Route to the BASIC responder (fast, deterministic + one Kimi fallback — no
     // Claude session). It internally delegates to the heavy Claude-session queue
     // (whatsapp_ai_enqueue) only when responder_mode='agent'. The isNew guard
@@ -481,6 +489,7 @@ async function handleReaction(event: WahaEvent, session: string): Promise<void> 
   // ("false_<ourOwnLid>_<hash>"), so deriving the chat from it resolved to our
   // OWN number and filed every reaction into the self-chat (live 2026-07-19).
   const rawChat = String(p.from ?? '') || (chatIdFromMessageId(targetId) ?? '');
+  const reactionGroup = rawChat.endsWith('@g.us') ? rawChat : (chatIdFromMessageId(targetId)?.endsWith('@g.us') ? chatIdFromMessageId(targetId) : null);
   let counterpartyPhone = phoneFromJid(rawChat) ?? resolveWahaCounterpartyPhone(p, flow);
   if (!counterpartyPhone && rawChat.endsWith('@lid')) {
     counterpartyPhone = await resolveLidToPhone(session, rawChat);
@@ -489,7 +498,8 @@ async function handleReaction(event: WahaEvent, session: string): Promise<void> 
     console.warn('[webhook.waha] reaction: could not resolve chat for target', targetId, 'rawChat=', rawChat);
     return;
   }
-  const chatWid = `${counterpartyPhone.replace(/\D/g, '')}@c.us`;
+  // A reaction inside a group stays in the group's chat, not the reactor's DM.
+  const chatWid = reactionGroup ?? `${counterpartyPhone.replace(/\D/g, '')}@c.us`;
   const rowId = `reaction_${targetId}_${flow === 'out' ? 'me' : counterpartyPhone.replace(/\D/g, '')}`;
 
   // Reaction REMOVED — drop the stored reaction rather than leaving a stale one.

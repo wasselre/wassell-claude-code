@@ -292,6 +292,13 @@ export async function bumpConversationRecord(args: {
    *  lead, and creating "your turn" follow-up tasks off their replies would be
    *  wrong. See the ops/sales separation in api/webhook/waha.ts. */
   isOperations?: boolean;
+  /** Set for a WhatsApp GROUP (`<id>@g.us`). The conversation is recorded as its
+   *  own chat (kind 'group', named after the group) with NO phone, so it can
+   *  never be client-linked, matched to a contact, or answered by the bot — and
+   *  it skips the sales-funnel reconcile exactly like an operations thread.
+   *  `name` is fetched only while the record has none. Until 2026-09-29 group
+   *  posts were filed under the SENDER's private chat (64 posts in two DMs). */
+  group?: { name: () => Promise<string | null> } | null;
 }): Promise<void> {
   if (!isValidChatWid(args.chatWid)) {
     // Loud, not silent: a wid we cannot parse means an upstream shape changed,
@@ -318,7 +325,10 @@ export async function bumpConversationRecord(args: {
     // The send path (composer identity gate) requires a phone. Fill it once so a
     // conversation first created by the webhook is sendable without waiting on a
     // separate sync. Never overwrite an existing value.
-    phone: prevData.phone ?? args.phone ?? phoneFromChatWid(args.chatWid) ?? null,
+    phone: args.group ? null : (prevData.phone ?? args.phone ?? phoneFromChatWid(args.chatWid) ?? null),
+    ...(args.group
+      ? { kind: 'group', name: (typeof prevData.name === 'string' && prevData.name.trim()) ? prevData.name : await args.group.name() }
+      : {}),
     device_id: prevData.device_id ?? args.deviceId,
     last_message_at: args.lastAt,
     last_message_preview: truncate(args.lastBody, 120),
@@ -344,7 +354,7 @@ export async function bumpConversationRecord(args: {
   // Operations-line thread: the conversation record above is all we do. No
   // client-link resolution, no sales-funnel reconcile — an officer is not a
   // lead. This is the inbound half of the sales/ops separation.
-  if (args.isOperations) return;
+  if (args.isOperations || args.group) return;
 
   // WhatsApp activity bridge (2026-07-21) — the follow-up engine tracks the
   // real conversation on a client-linked chat:

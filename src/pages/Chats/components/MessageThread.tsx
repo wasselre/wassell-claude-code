@@ -40,6 +40,28 @@ export default function MessageThread({
   const linkEngagement = useAppStore((s) => s.linkEngagement);
   const retryChatMessage = useAppStore((s) => s.retryChatMessage);
 
+  // Group chat: every inbound post shows its sender. Name from that person's own
+  // conversation record when we have one, else the phone.
+  const isGroup = chatWid.endsWith('@g.us');
+  const models = useAppStore((s) => s.models);
+  const records = useAppStore((s) => s.records);
+  const senderNames = useMemo(() => {
+    const out = new Map<string, string>();
+    if (!isGroup) return out;
+    const chatsModel = models.find((m) => m.name === 'chats');
+    for (const r of chatsModel ? records[chatsModel.id] ?? [] : []) {
+      const d = r.data as Record<string, unknown>;
+      const phone = typeof d.phone === 'string' ? d.phone.replace(/\D/g, '') : '';
+      const name = typeof d.name === 'string' ? d.name.trim() : '';
+      if (phone && name) out.set(phone, name);
+    }
+    return out;
+  }, [isGroup, models, records]);
+  const senderOf = (m: ChatMessage): string | null => {
+    if (!isGroup || m.flow !== 'in' || !m.from_phone) return null;
+    return senderNames.get(m.from_phone.replace(/\D/g, '')) ?? m.from_phone;
+  };
+
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -308,6 +330,7 @@ export default function MessageThread({
                   onRetry={m.flow === 'out' ? () => void retryChatMessage(chatWid, m.id) : undefined}
                   projectActions={projectActions}
                   linkEngagement={tracked}
+                  senderLabel={senderOf(m)}
                 />
               );
             })}
