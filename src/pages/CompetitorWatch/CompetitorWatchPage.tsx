@@ -17,9 +17,10 @@ import PipelineSurface from './components/PipelineSurface';
 import StorageSurface from './components/StorageSurface';
 import CompaniesSurface from './components/CompaniesSurface';
 import ConfirmSurface from './components/ConfirmSurface';
+import ProjectsSurface from './components/ProjectsSurface';
 import './watch.css';
 
-type Surface = 'library' | 'visual' | 'confirm' | 'agents' | 'pipeline' | 'storage' | 'companies';
+type Surface = 'library' | 'visual' | 'confirm' | 'agents' | 'pipeline' | 'storage' | 'companies' | 'projects';
 
 export default function CompetitorWatchPage() {
   const { language } = useAppStore();
@@ -35,6 +36,8 @@ export default function CompetitorWatchPage() {
     { id: 'pipeline', ar: 'مسار المحتوى', en: 'Content pipeline' },
     { id: 'storage', ar: 'التخزين', en: 'Storage' },
     { id: 'companies', ar: 'الشركات', en: 'Companies' },
+    // One row per project: its developer, its marketers, and who posts about it.
+    { id: 'projects', ar: 'المشاريع', en: 'Projects' },
   ];
 
   return (
@@ -69,6 +72,7 @@ export default function CompetitorWatchPage() {
       {surface === 'pipeline' && <PipelineSurface isAr={isAr} />}
       {surface === 'storage' && <StorageSurface isAr={isAr} />}
       {surface === 'companies' && <CompaniesSurface isAr={isAr} />}
+      {surface === 'projects' && <ProjectsSurface isAr={isAr} />}
     </div>
   );
 }

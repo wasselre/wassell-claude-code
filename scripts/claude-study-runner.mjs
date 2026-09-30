@@ -430,9 +430,119 @@ const OCR_BATCH_MAX = 24;         // images per session; keeps one run bounded
 const OCR_FIELDS = ['project_names','developer_names','prices','payment_plans','unit_types',
   'districts','locations','phones','urls','offers','amenities','selling_points','dates','ctas'];
 
+/** One Skill session over the manifest; returns the rows that map back to it. */
+async function runVisualOcrSession(manifest, manifestFile, resultFile) {
+  writeFileSync(manifestFile, JSON.stringify(manifest));
+  const prompt = [
+    `/visual-ocr ${manifestFile} ${resultFile}`,
+    '',
+    'Run headless — read every image listed in the manifest and write ONLY the',
+    'result JSON file. Do not ask questions. Do not print the JSON to stdout.',
+  ].join('\n');
+  const byId = new Map(manifest.map((x) => [x.media_id, x]));
+  let lastErr = '';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    // a stale result from attempt 1 must never be read as attempt 2's answer
+    rmSync(resultFile, { force: true });
+    const { code, out, err } = await runClaude(prompt, ROOT);
+    const combined = `${out}\n${err}`;
+    if (isSubscriptionLimit(combined)) throw new RateLimitError('Claude subscription/usage limit reached');
+    if (!existsSync(resultFile)) { lastErr = `session ended (code ${code}) without result file: ${combined.slice(-300)}`; continue; }
+    let parsed;
+    try { parsed = JSON.parse(readFileSync(resultFile, 'utf-8')); }
+    catch (e) { lastErr = `result JSON parse failed: ${e.message}`; continue; }
+    if (!Array.isArray(parsed) || parsed.length === 0) { lastErr = 'result was not a non-empty array'; continue; }
+    const rows = parsed.filter((r) => r && typeof r.media_id === 'string' && byId.has(r.media_id));
+    if (rows.length === 0) { lastErr = 'no result row matched a manifest media_id'; continue; }
+    return rows;
+  }
+  throw new Error(`visual-ocr failed after retry: ${lastErr}`);
+}
+
+/**
+ * OCR for sampled VIDEO FRAMES. The manifest's media_id is the FRAME row id (so
+ * six frames of one video stay distinguishable); the text is written against
+ * the video's media row with source 'frame' + frame_ts_ms — the same shape the
+ * paid vision path writes, so every reader of mkt_visual_text already handles it.
+ * mkt_video_frames_finish then re-checks each post whose frames are all read.
+ */
+async function handleVideoFrameOcr(job) {
+  const frameIds = job.payload.frame_ids.slice(0, OCR_BATCH_MAX);
+  const { data: frames, error: fErr } = await supa
+    .from('mkt_video_frames')
+    .select('id, content_media_id, content_post_id, frame_ts_ms, stored_url, bucket, path, ocr_status')
+    .in('id', frameIds);
+  if (fErr) throw new Error(`frame query failed: ${fErr.message}`);
+  const todo = (frames ?? []).filter((f) => f.ocr_status === 'pending' && f.stored_url && f.frame_ts_ms >= 0);
+  if (todo.length === 0) return { frames: 0, skipped_already_done: frameIds.length };
+
+  const workDir = mkdtempSync(path.join(tmpdir(), 'mkt-frames-'));
+  const manifestFile = path.join(workDir, 'manifest.json').replace(/\\/g, '/');
+  const resultFile = path.join(workDir, 'result.json').replace(/\\/g, '/');
+  try {
+    const manifest = [];
+    const unread = [];
+    for (let i = 0; i < todo.length; i++) {
+      const f = todo[i];
+      const res = await fetch(f.stored_url);
+      if (!res.ok) { console.warn(`[runner] frames: skip frame ${f.id} — fetch ${res.status}`); unread.push(f.id); continue; }
+      const p = path.join(workDir, `${i}.jpg`).replace(/\\/g, '/');
+      writeFileSync(p, Buffer.from(await res.arrayBuffer()));
+      manifest.push({ media_id: f.id, post_id: f.content_post_id, source: 'frame', frame_ts_ms: f.frame_ts_ms, path: p });
+    }
+    if (manifest.length === 0) {
+      // count the attempt so a frame whose object is gone fails after 3, not never
+      const { error } = await supa.rpc('mkt_video_frames_finish', { p_done: [], p_unread: unread });
+      if (error) console.error('[runner] frames finish rpc failed:', error.message);
+      throw new Error('every frame failed to download');
+    }
+
+    const rows = await runVisualOcrSession(manifest, manifestFile, resultFile);
+    const byFrame = new Map(todo.map((f) => [f.id, f]));
+    const done = [];
+    for (const r of rows) {
+      const f = byFrame.get(r.media_id);
+      const structured = { visible_text: String(r.visible_text ?? '') };
+      for (const k of OCR_FIELDS) structured[k] = Array.isArray(r[k]) ? r[k].map(String) : [];
+      const { error } = await supa.rpc('mkt_visual_text_upsert', {
+        p_media: f.content_media_id, p_post: f.content_post_id, p_source: 'frame', p_frame_ts_ms: f.frame_ts_ms,
+        p_model: 'claude-runner:visual-ocr', p_text: structured.visible_text, p_structured: structured,
+        p_confidence: null, p_cost: 0,   // subscription — no incremental API charge
+        p_status: 'done', p_failure: null, p_raw: null,
+      });
+      if (error) { console.error(`[runner] frame ocr upsert failed for ${f.id}: ${error.message}`); continue; }
+      done.push(f.id);
+    }
+    const doneSet = new Set(done);
+    for (const f of todo) if (!doneSet.has(f.id) && !unread.includes(f.id)) unread.push(f.id);
+
+    const { data: requeued, error: finErr } = await supa.rpc('mkt_video_frames_finish', { p_done: done, p_unread: unread });
+    if (finErr) throw new Error(`frames finish rpc failed: ${finErr.message}`);
+
+    // The stills have done their job; their text is stored. Remove the bytes so
+    // ~7,000 frames do not sit in the bucket. A failed removal only leaves a
+    // small orphan object — it must not fail a job whose text is already saved.
+    const byBucket = new Map();
+    for (const f of todo) {
+      if (!doneSet.has(f.id) || !f.bucket || !f.path) continue;
+      byBucket.set(f.bucket, [...(byBucket.get(f.bucket) ?? []), f.path]);
+    }
+    for (const [bucket, paths] of byBucket) {
+      const { error } = await supa.storage.from(bucket).remove(paths);
+      if (error) console.error(`[runner] frames: could not remove ${paths.length} read frame(s) from ${bucket}: ${error.message}`);
+    }
+    return { frames: manifest.length, written: done.length, unread: unread.length, posts_rechecked: requeued ?? 0 };
+  } finally {
+    try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
 async function handleMktVisualOcr(job) {
+  // Video frames (payload.frame_ids) are staged by the worker in
+  // mkt_video_frames; everything else is stored images / covers by post.
+  if (Array.isArray(job.payload?.frame_ids) && job.payload.frame_ids.length > 0) return handleVideoFrameOcr(job);
   const postIds = Array.isArray(job.payload?.post_ids) ? job.payload.post_ids : [];
-  if (postIds.length === 0) throw new Error('payload.post_ids is required');
+  if (postIds.length === 0) throw new Error('payload.post_ids or payload.frame_ids is required');
 
   // Only images/frames/thumbnails that are permanently STORED — never the CDN.
   const { data: media, error: mErr } = await supa
@@ -1116,7 +1226,9 @@ async function acquireLease() {
   const { data, error } = await supa.rpc('claude_runner_lease_acquire', {
     p_lease: LEASE, p_owner: WORKER, p_host: HOSTNAME, p_pid: process.pid, p_ttl_seconds: LEASE_TTL_S,
   });
-  if (error) { console.error('[runner] lease rpc failed:', error.message); return { acquired: false, current_owner: null }; }
+  // rpc_error marks "we could not ASK", which is not the same as "someone else
+  // owns it". The heartbeat must tell them apart — see the interval below.
+  if (error) { console.error('[runner] lease rpc failed:', error.message); return { acquired: false, current_owner: null, rpc_error: true }; }
   return data?.[0] ?? { acquired: false, current_owner: null };
 }
 
@@ -1145,7 +1257,12 @@ async function shutdown(signal) {
   }
   try { await supa.rpc('claude_runner_lease_release', { p_lease: LEASE, p_owner: WORKER }); } catch (e) { console.error('[runner] lease release failed:', e); }
   console.log('[runner] lease released — bye');
-  process.exit(0);
+  // Exit 0 ONLY for a requested stop. Fly does not restart a machine that exits
+  // 0, so any other reason to stop (the lease really went to another runner)
+  // exits non-zero: the machine restarts, waits at boot, and either takes the
+  // lane back or stays a standby. On 2026-09-28 a clean exit after one failed
+  // heartbeat left the whole lane down for 2.5 days with nothing restarting it.
+  process.exit(['SIGINT', 'SIGTERM', 'SIGBREAK'].includes(signal) ? 0 : 1);
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, () => { void shutdown(sig); });
 
@@ -1211,6 +1328,7 @@ try {
 // that still heartbeats is invisible. So: if the loop stops advancing while NO
 // job is running, stop pretending to be alive and exit non-zero so Fly restarts.
 let lastTickAt = Date.now();
+let leaseRpcFailures = 0;
 const STALL_MS = 5 * 60_000; // >> POLL_MS (10s); only fires on a genuine wedge
 
 heartbeatTimer = setInterval(() => {
@@ -1220,10 +1338,19 @@ heartbeatTimer = setInterval(() => {
     process.exit(1); // deliberately NOT exit(0) — Fly does not restart on 0
   }
   acquireLease().then((r) => {
-    if (!r.acquired && !shuttingDown) {
-      console.error(`[runner] LOST the lease to ${r.current_owner} — shutting down`);
-      void shutdown('lease-lost');
+    if (r.acquired) { leaseRpcFailures = 0; return; }
+    if (shuttingDown) return;
+    if (r.rpc_error) {
+      // A failed renewal CALL (network blip, database restart) is not a lost
+      // lease. Keep working: the lease has a TTL, so a run of failures long
+      // enough to matter lets another runner take over, and the next successful
+      // call then reports a real owner below.
+      leaseRpcFailures++;
+      console.error(`[runner] lease heartbeat call failed (${leaseRpcFailures} in a row) — still running`);
+      return;
     }
+    console.error(`[runner] LOST the lease to ${r.current_owner} — shutting down`);
+    void shutdown('lease-lost');
   });
 }, HEARTBEAT_MS);
 

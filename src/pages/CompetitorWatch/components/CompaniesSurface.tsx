@@ -246,7 +246,15 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
                               <div className="cw-chips">
                                 {(co.top_projects ?? []).length === 0 && <span className="cw-muted">{isAr ? 'لا مشروع مرتبط بعد' : 'No project linked yet'}</span>}
                                 {(co.top_projects ?? []).map((p, i) => (
-                                  <span className="cw-softchip" key={i} dir="rtl">{p.name} <span className="cw-mono">{num(p.posts)}</span></span>
+                                  <span className="cw-softchip" key={i} dir="rtl"
+                                    title={p.role === 'developer' ? (isAr ? 'مطوّر المشروع' : 'Developer of this project')
+                                      : p.role === 'marketer' ? (isAr ? 'مسوّق المشروع' : 'Marketer of this project')
+                                      : (isAr ? 'ينشر عنه وليس مسجَّلًا على المشروع' : 'Posts about it; not listed on the project')}>
+                                    {p.name}{' '}
+                                    {p.posts > 0
+                                      ? <span className="cw-mono">{num(p.posts)}</span>
+                                      : <span className="cw-muted">{isAr ? 'بلا منشورات' : 'no posts'}</span>}
+                                  </span>
                                 ))}
                               </div>
                               <div className="cw-kv" style={{ marginTop: 10 }}>{isAr ? 'الأحياء' : 'Districts'}</div>

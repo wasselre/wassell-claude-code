@@ -18,6 +18,7 @@ import { narrowProjects, RULE_VERSION, type NarrowedCandidate } from './enrich.j
 import { loadAttributionContext, publisherProjects, scopedIndex } from './attributionContext.js';
 import { sha256Hex } from '../adIntel.js';
 import { cvEnabled } from '../cv/settings.js';
+import { runFramesOnly, stageVideoFrames } from './videoFrames.js';
 
 export interface ContentProcessStats {
   post_id: string; media_total: number; media_stored: number; media_failed: number;
@@ -49,6 +50,13 @@ export interface ContentProcessOptions {
    */
   mediaOnly?: boolean;
   /**
+   * Frames-only pass (2026-09-30): sample six frames from each stored video of
+   * an ALREADY processed post and queue them for OCR on the subscription lane
+   * (mkt_video_frames). Calls no model and leaves processing_status alone. The
+   * post's project match is re-checked by the runner once the frames are read.
+   */
+  framesOnly?: boolean;
+  /**
    * Attribution-only pass (2026-09-13): re-score an ALREADY processed post's
    * project candidates from the evidence it already has (caption + stored
    * transcript + stored visual text), reset its machine-made attributions and
@@ -77,6 +85,13 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   const { data: post } = await sb.from('mkt_content_posts').select('id, platform, external_id, social_account_id, organization_id, post_type, caption, processing_status').eq('id', contentPostId).maybeSingle();
   if (!post) throw new Error(`content post not found: ${contentPostId}`);
   if (opts.narrowOnly) return narrowOnlyPass(sb, contentPostId, post as PostRow, stats);
+  if (opts.framesOnly) {
+    const f = await runFramesOnly(sb, contentPostId);
+    stats.videos = f.videos;
+    stats.errors.push(...f.errors);
+    stats.status = f.frames_staged > 0 ? 'frames_staged' : (f.videos_failed > 0 ? 'frames_unavailable' : 'frames_nothing_to_do');
+    return stats;
+  }
   await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'processing' });
 
   // latest raw payload holds the media URLs (media_refs was historically empty)
@@ -251,10 +266,35 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   // vision call (a reprocess shouldn't re-pay for OCR — and lets us re-run the
   // downstream intelligence handoff without re-spending on vision).
   let visualTextBlob = '';
-  const { data: existingVt } = await sb.from('mkt_visual_text').select('text').eq('content_post_id', contentPostId);
+  const { data: existingVt } = await sb.from('mkt_visual_text').select('text, content_media_id, source').eq('content_post_id', contentPostId);
   if (existingVt && existingVt.length > 0) {
     visualTextBlob = existingVt.map((v) => (v.text as string) ?? '').filter(Boolean).join(' ');
     stats.images_analyzed = existingVt.length;
+    // "The post has visual text" used to mean "skip everything" — but the text
+    // on hand is usually just the COVER, read earlier by the subscription OCR
+    // lane, and the six video frames sampled above were dropped unread. That is
+    // how 1,167 of 1,406 stored videos ended up read from their cover only.
+    // Frames of a video with no frame text yet are queued for that same lane
+    // (no paid vision call); the runner re-checks the post once they are read.
+    const framedMedia = new Set(existingVt.filter((v) => v.source === 'frame').map((v) => v.content_media_id as string));
+    const unreadFrames = new Map<string, Array<{ tsMs: number; jpeg: Buffer }>>();
+    for (const inp of visionInputs) {
+      if (inp.source !== 'frame' || inp.frameTsMs === null || framedMedia.has(inp.mediaId)) continue;
+      const list = unreadFrames.get(inp.mediaId) ?? [];
+      list.push({ tsMs: inp.frameTsMs, jpeg: inp.buffer });
+      unreadFrames.set(inp.mediaId, list);
+    }
+    for (const [mediaId, frames] of unreadFrames) {
+      try {
+        await stageVideoFrames(sb, contentPostId, mediaId, frames);
+      } catch (e) {
+        // Not fatal for the post: it still has its cover text, and the sweep's
+        // mkt_videos_needing_frames pass offers this video again next tick.
+        const reason = e instanceof Error ? e.message : String(e);
+        stats.errors.push(`frames: ${reason}`);
+        console.error(`[content] post=${contentPostId} media=${mediaId} frames not queued: ${reason}`);
+      }
+    }
   } else if (visionInputs.length > 0) {
     // Batches of ≤ MAX_IMAGES, NOT a slice. A carousel of 10 images or a video
     // with 6 sampled frames plus a thumbnail used to lose everything past the

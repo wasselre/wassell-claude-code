@@ -43,7 +43,7 @@ import { sweepApifyStorage } from '../apifyStorageSweep.js';
 import { repairFileMediaMeta } from '../../repairFileMediaMeta.js';
 import { backfillContentEtags } from '../../backfillContentEtags.js';
 
-export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { media_recover: number; visual_ocr: number; frame_jobs: number; frame_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
 /** Stage 5 ceilings. A cv_process job is a multi-minute GPU run on Modal, so
  *  the re-enqueue is deliberately small per tick; anything it does not reach
@@ -116,6 +116,12 @@ const OCR_POSTS_PER_BATCH = 15;
 /** Stop enqueueing entirely above this backlog so the sweep can't outrun the workers. */
 const QUEUE_HIGH_WATER = 900;
 const OCR_QUEUE_HIGH_WATER = 150;
+/** Video-frame stages. FRAME_JOBS_PER_TICK worker jobs (download + ffmpeg, no
+ *  model) per 5-minute tick; frames are then read FRAMES_PER_BATCH at a time —
+ *  the runner's own per-session image cap — so one session reads four videos. */
+const FRAME_JOBS_PER_TICK = 40;
+const FRAMES_PER_BATCH = 24;
+const MAX_FRAME_BATCHES = 10;
 /** Stage 4 ceilings. Deliberately the tightest in the file: this is the ONLY
  *  stage that spends model capacity per post, on a singleton lane shared with
  *  the owner's other work. Enough to keep the lane fed, never enough to build a
@@ -195,7 +201,7 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, etags_filled: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, frame_jobs: 0, frame_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, etags_filled: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
 
@@ -359,6 +365,42 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
         const { error } = await sb.from('claude_jobs').insert({ kind: 'mkt_visual_ocr', payload: { post_ids: batch, from: 'sweep' }, status: 'pending' });
         if (error) throw new Error(`sweep: ocr enqueue failed: ${error.message}`);
         stats.visual_ocr++;
+      }
+    }
+  }
+
+  // ── stage 2a: stored videos whose frames were never taken ─────────────────
+  // The cover picture is read in stage 2, and full processing then used to
+  // treat "has visual text" as "done" — so the frames, where the price / offer /
+  // phone overlays are, went unread for 1,167 of 1,406 videos. The backlog
+  // lives in the data (mkt_videos_needing_frames), not in a one-off script.
+  {
+    const { data, error } = await sb.rpc('mkt_videos_needing_frames', { p_limit: FRAME_JOBS_PER_TICK });
+    if (error) throw new Error(`sweep: videos-needing-frames failed: ${error.message}`);
+    for (const row of (data ?? []) as Array<{ content_post_id: string }>) {
+      const { error: enqErr } = await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: row.content_post_id, from: 'sweep', mode: 'frames_only' }, p_priority: 60, p_requested_by: null, p_fallback_of: null });
+      if (enqErr) throw new Error(`sweep: frames job enqueue failed: ${enqErr.message}`);
+      stats.frame_jobs++;
+    }
+  }
+
+  // ── stage 2b: staged frames → the same free OCR lane, under the same cap ──
+  {
+    const { count: ocrQueued } = await sb.from('claude_jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('kind', 'mkt_visual_ocr').in('status', ['pending', 'running']);
+    if ((ocrQueued ?? 0) < OCR_QUEUE_HIGH_WATER) {
+      // mkt_video_frames_pending excludes frames already inside a queued or
+      // running job, so each batch is inserted before the next is asked for.
+      for (let i = 0; i < MAX_FRAME_BATCHES; i++) {
+        const { data, error } = await sb.rpc('mkt_video_frames_pending', { p_limit: FRAMES_PER_BATCH });
+        if (error) throw new Error(`sweep: pending-frames failed: ${error.message}`);
+        const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+        if (ids.length === 0) break;
+        const { error: insErr } = await sb.from('claude_jobs').insert({ kind: 'mkt_visual_ocr', payload: { frame_ids: ids, from: 'sweep-frames' }, status: 'pending' });
+        if (insErr) throw new Error(`sweep: frame ocr enqueue failed: ${insErr.message}`);
+        stats.frame_ocr++;
+        if (ids.length < FRAMES_PER_BATCH) break;
       }
     }
   }

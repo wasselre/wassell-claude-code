@@ -479,7 +479,8 @@ export default async function handler(req: Request): Promise<Response> {
       case 'agent_activity':
       case 'pipeline_health':
       case 'storage_usage':
-      case 'company_roster': {
+      case 'company_roster':
+      case 'project_roster': {
         // Competitor Watch monitoring surfaces — read-only composites, service
         // client like intelligence_index; the /competitor-watch route gates access.
         const svc = makeServiceClient('api:marketing');
@@ -489,12 +490,14 @@ export default async function handler(req: Request): Promise<Response> {
           pipeline_health: 'mkt_pipeline_health',
           storage_usage: 'mkt_storage_usage',
           company_roster: 'mkt_company_roster',
+          project_roster: 'mkt_project_roster',
         } as const)[action];
         const field = ({
           agent_activity: 'activity',
           pipeline_health: 'pipeline',
           storage_usage: 'storage',
           company_roster: 'roster',
+          project_roster: 'projects',
         } as const)[action];
         const { data, error } = await svc.rpc(fn);
         if (error) return jsonError(500, error.message);

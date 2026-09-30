@@ -147,7 +147,10 @@ export interface CompanyRow {
   purposes: Record<PurposeKey, number>;
   offer_posts: number; offer_text: string | null; offer_at: string | null;
   avg_likes: number | null; avg_views: number | null;
-  top_projects: Array<{ name: string; posts: number }>;
+  /** Every project the company is linked to in the CRM or has posted about —
+   *  not capped. `role` is its recorded relationship (null = posts about it but
+   *  the project record does not list it); `posts` 0 = linked, never posted. */
+  top_projects: Array<{ name: string; posts: number; role?: 'developer' | 'marketer' | null }>;
   top_districts: Array<{ name: string; posts: number }>;
   account_list: CompanyAccount[];
 }
@@ -157,6 +160,23 @@ export const fetchAgentActivity = () => callAction<AgentActivity>('agent_activit
 export const fetchPipelineHealth = () => callAction<PipelineHealth>('pipeline_health', 'pipeline');
 export const fetchStorageUsage = () => callAction<StorageUsage>('storage_usage', 'storage');
 export const fetchCompanyRoster = () => callAction<CompanyRoster>('company_roster', 'roster');
+
+/** A company connected to a project: by the project record (role) and/or by posting about it. */
+export interface ProjectCompany {
+  org: string; name: string | null; name_en: string | null; org_type: string | null;
+  /** From the project record. null = posts about it but is not listed on it. */
+  role: 'developer' | 'marketer' | null;
+  posts: number; posts_90d: number; last_post: string | null;
+}
+export interface ProjectRosterRow {
+  id: string; name: string | null; developer: string | null; marketers: string[];
+  /** In our portfolio (our_projects). */
+  ours: boolean;
+  posts: number; posts_90d: number; last_post: string | null;
+  companies: ProjectCompany[];
+}
+export interface ProjectRoster { projects: ProjectRosterRow[]; }
+export const fetchProjectRoster = () => callAction<ProjectRoster>('project_roster', 'projects');
 
 // ── Confirm links (attribution review) ─────────────────────────────────────
 export interface QueueProject {
