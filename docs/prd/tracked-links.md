@@ -14,6 +14,8 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
 
 ## Key behaviors
 - **One interest per customer × project, summed over every kind of link.** A whole-project message, a units-list link and a single-unit link all carry the project, so their activity adds into ONE score for that customer and project (`v_project_interest`). Each link records what it was (`tracked_links.focus` = `project` / `units` / `unit`), and the interest lists show the mix — «أرسلنا: 2 رسالة مشروع · 1 قائمة وحدات · 1 رابط وحدة» — so the rep sees what the total was made of.
+- **History with points.** In the interest lists, tapping a row opens its timeline: every link we sent and every action the customer took, oldest first, grouped by day, each with the points it added — e.g. «18:45 فتح الصور وبقي 6 ث +10», «فتح الموقع في الخريطة +10», «فتح الوحدة U-49431 +4» — ending in «مجموع نقاط المشروع 37 / 100». The points come from SQL (`tracked_interest_timeline` replays the events through the one scoring function), so the rows always add up to the score; an action shows «—» when it adds nothing (its part is capped, or it is not scored). One stay on a tab is one line (the open plus the seconds).
+- **Client total.** The client's list header shows «مجموع نقاط العميل N» = the sum of that client's project scores. It is a points total, not out of 100.
 - **One token per sent message.** The same project sent twice (different days) gets two tokens, so each message has its own numbers; the per-project view sums them.
 - **Only real opens count.** Events are written by the page's own JavaScript, so WhatsApp's link-preview crawler (which runs no JS) never counts as an open. No IP address or user agent is stored.
 - **An "open" is a VISIT, not a page view.** Switching tabs (photos → units), reloading, or coming back from Google Maps stays in the same visit; a new visit starts after 30 minutes idle or in a new browser tab (visit id in `sessionStorage`, per link). Until 2026-09-29 every tab switch counted as an open — one test link showed 13 opens for 3 visits. If the browser blocks storage, each page view counts as its own visit (over-counts rather than breaks).
@@ -48,7 +50,7 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
 - Writes: `tracked_link_events` (link_id, session_id, kind ∈ view/time/photo_open/video_play/video_progress/brochure_page/unit_open/units_filter/map_open, section, item, value) — only through the anonymous `POST /api/tracked-link {action:'track'}`, validated (kinds, sections, time ≤ 120 s per beat, ≤ 40 events per call).
 - Reads (anonymous page): the project record, `file_links` → `files` (signed URLs), `project_videos`, available units, districts.
 - Reads (app): `v_tracked_link_engagement` (per message) and `v_project_interest` (per customer × project) — both `security_invoker`, RLS on `tracked_links` mirrors `chat_messages`, so a rep sees engagement only for chats they can see.
-- Migrations: `2026-09-29_tracked_links.sql`, `2026-09-29_tracked_links_units.sql`, `2026-09-29_tracked_links_filter.sql`, `2026-09-30_tracked_links_focus.sql` (`focus` + the three per-kind counts on `v_project_interest`) (`units_filter` kind + `last_units_filter` on the engagement view).
+- Migrations: `2026-09-29_tracked_links.sql`, `2026-09-29_tracked_links_units.sql`, `2026-09-29_tracked_links_filter.sql`, `2026-09-30_tracked_links_focus.sql`, `2026-09-30_tracked_interest_timeline.sql` (the timeline function) (`focus` + the three per-kind counts on `v_project_interest`) (`units_filter` kind + `last_units_filter` on the engagement view).
 
 ## Key files
 | File | What it does |
@@ -63,6 +65,7 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
 | `src/pages/Chats/components/SendUnitsPdfModal.tsx` | «رابط متتبَّع / PDF» choice for units |
 | `src/lib/projects/bulkProjectSend.ts` | Bulk send with one link per project |
 | `src/pages/Followups/components/ProjectWhatsAppFlow.tsx` | Single-project flow with links |
+| `src/components/interest/InterestTimeline.tsx`, `src/lib/trackedLinks/timeline.ts` | The per-project history with points (folding only — scoring is SQL) |
 | `src/components/interest/TrackedInterestList.tsx` | Interest lists (project page tab, client options) |
 
 ## Open questions / known limitations

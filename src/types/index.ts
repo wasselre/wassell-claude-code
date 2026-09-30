@@ -2762,6 +2762,10 @@ export interface AppState {
    *  for one project (its interested customers) or one client (their projects).
    *  `name` is the OTHER side's display name. Throws on a read failure. */
   loadTrackedInterest: (filter: { projectId?: string; clientId?: string }) => Promise<TrackedInterestRow[]>;
+  /** The history behind one customer × project score: every action, oldest
+   *  first, with the points it added (SQL `tracked_interest_timeline` — the one
+   *  scoring implementation). Throws on a read failure. */
+  loadInterestTimeline: (chatWid: string, projectId: string) => Promise<InterestTimelineEvent[]>;
   /**
    * Load the latest page of messages for one conversation from Haberchat
    * (via the proxy). Writes to `chatMessages[chatWid]`. When `before` is
@@ -2972,4 +2976,22 @@ export interface TrackedInterestRow {
   unit_links: number;
   /** Client name (project view) or project name (client view); null = unknown. */
   name: string | null;
+}
+
+/** One row of `tracked_interest_timeline`: an action (or a link going out) with
+ *  the points it added to the project score and the score right after it. */
+export interface InterestTimelineEvent {
+  at: string;
+  link_id: string;
+  focus: 'project' | 'units' | 'unit';
+  sent_via: string;
+  session_id: string | null;
+  kind: string;
+  section: string | null;
+  item: string | null;
+  value: number | null;
+  points: number;
+  running: number;
+  /** Unit code for a unit_open / unit link (resolved by the loader). */
+  unit_label?: string | null;
 }

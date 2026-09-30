@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Flame, Loader2, AlertCircle, Eye, Image as ImageIcon, PlayCircle, FileText, LayoutGrid, MapPin, Link2 } from 'lucide-react';
+import { Flame, Loader2, AlertCircle, Eye, Image as ImageIcon, PlayCircle, FileText, LayoutGrid, MapPin, Link2, ChevronDown, MessageCircle } from 'lucide-react';
+import InterestTimeline from './InterestTimeline';
 import { useAppStore } from '@/stores/appStore';
 import type { TrackedInterestRow } from '@/types';
 
@@ -29,6 +30,8 @@ export default function TrackedInterestList({
   const loadTrackedInterest = useAppStore((s) => s.loadTrackedInterest);
   const [rows, setRows] = useState<TrackedInterestRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The row whose history (timeline + points) is open.
+  const [openKey, setOpenKey] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -68,6 +71,9 @@ export default function TrackedInterestList({
   }
 
   const opened = rows.filter((r) => r.sessions > 0).length;
+  // Client mark = the sum of the client's project scores (each 0–100). It is a
+  // points total, not a percentage: three projects at 30 read 90.
+  const clientTotal = rows.reduce((a, r) => a + Math.round(Number(r.score) || 0), 0);
 
   return (
     <div className="rounded-2xl border border-sand/30 bg-white">
@@ -79,15 +85,29 @@ export default function TrackedInterestList({
         <span className="text-xs text-charcoal/55">
           {L(`فتح ${opened} من ${rows.length}`, `${opened} of ${rows.length} opened`)}
         </span>
+        {mode === 'client' && (
+          <span
+            className="ms-auto inline-flex items-center gap-1 rounded-full bg-copper/10 px-2.5 py-1 text-xs font-bold text-copper"
+            title={L('مجموع نقاط اهتمامه في كل المشاريع التي أرسلناها له', 'The sum of his interest points across every project we sent him')}
+          >
+            <Flame size={12} />
+            {L(`مجموع نقاط العميل ${clientTotal}`, `Client total ${clientTotal}`)}
+          </span>
+        )}
       </div>
       <ul className="divide-y divide-sand/20">
-        {rows.map((r) => (
-          <li key={`${r.chat_wid}:${r.project_id}`}>
+        {rows.map((r) => {
+          const key = `${r.chat_wid}:${r.project_id}`;
+          const isOpen = openKey === key;
+          return (
+          <li key={key}>
+            <div className="flex items-center">
             <button
               type="button"
-              disabled={!r.conversation_record_id}
-              onClick={() => r.conversation_record_id && navigate(`/model/chats/${r.conversation_record_id}`)}
-              className="flex w-full items-center gap-3 px-4 py-2.5 text-start transition-colors hover:bg-cream/60 disabled:cursor-default"
+              aria-expanded={isOpen}
+              onClick={() => setOpenKey(isOpen ? null : key)}
+              title={L('عرض السجل والنقاط', 'Show the history and points')}
+              className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-start transition-colors hover:bg-cream/60"
             >
               <ScorePill score={r.score} opened={r.sessions > 0} isAr={isAr} />
               <div className="min-w-0 flex-1">
@@ -115,9 +135,24 @@ export default function TrackedInterestList({
               <span className="shrink-0 text-[11px] text-charcoal/45">
                 {when(r.last_activity_at ?? r.last_sent_at, isAr)}
               </span>
+              <ChevronDown size={14} className={`shrink-0 text-charcoal/40 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
             </button>
+            {r.conversation_record_id && (
+              <button
+                type="button"
+                onClick={() => navigate(`/model/chats/${r.conversation_record_id}`)}
+                title={L('فتح المحادثة', 'Open the chat')}
+                aria-label={L('فتح المحادثة', 'Open the chat')}
+                className="me-3 shrink-0 rounded-lg p-1.5 text-charcoal/50 transition-colors hover:bg-cream hover:text-copper"
+              >
+                <MessageCircle size={15} />
+              </button>
+            )}
+            </div>
+            {isOpen && <InterestTimeline chatWid={r.chat_wid} projectId={r.project_id} score={r.score} isAr={isAr} />}
           </li>
-        ))}
+          );
+        })}
       </ul>
     </div>
   );

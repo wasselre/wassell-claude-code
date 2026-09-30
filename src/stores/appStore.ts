@@ -51,6 +51,7 @@ import { isRetiredModel } from '@/lib/featureFlags';
 import type {
   TrackedLinkEngagement,
   TrackedInterestRow,
+  InterestTimelineEvent,
   AppState,
   AppModel,
   ModelGroup,
@@ -1818,6 +1819,36 @@ export const useAppStore = create<AppState>((set, get) => ({
       score: Number(r.score) || 0,
       name: names.get((filter.projectId ? r.client_id : r.project_id) ?? '') ?? null,
     }));
+  },
+  loadInterestTimeline: async (chatWid, projectId) => {
+    if (!supabase) return [];
+    const { data, error } = await supabase.rpc('tracked_interest_timeline', { p_chat_wid: chatWid, p_project_id: projectId });
+    if (error) throw new Error(error.message);
+    const rows = ((data ?? []) as InterestTimelineEvent[]).map((r) => ({
+      ...r,
+      points: Number(r.points) || 0,
+      running: Number(r.running) || 0,
+      value: r.value === null ? null : Number(r.value),
+    }));
+    // Unit ids → unit codes, so the timeline says which unit was opened.
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const unitIds = [...new Set(rows
+      .filter((r) => (r.kind === 'unit_open' || r.kind === 'sent') && r.item && UUID.test(r.item))
+      .map((r) => r.item as string))];
+    const labels = new Map<string, string>();
+    for (let i = 0; i < unitIds.length; i += 200) {
+      const { data: units, error: uErr } = await supabase
+        .from('records')
+        .select('id, code:data->>unit_code')
+        .in('id', unitIds.slice(i, i + 200));
+      if (uErr) {
+        // Codes are a nicety — the timeline still renders without them.
+        console.error('[loadInterestTimeline] unit code read failed:', uErr.message);
+        break;
+      }
+      for (const u of (units ?? []) as unknown as Array<{ id: string; code: string | null }>) if (u.code) labels.set(u.id, u.code);
+    }
+    return rows.map((r) => ({ ...r, unit_label: r.item ? labels.get(r.item) ?? null : null }));
   },
   webhookSlugs: [],
   webhookPayloads: [],
