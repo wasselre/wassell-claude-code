@@ -109,7 +109,9 @@ export function parseTiktokVideo(it: Record<string, unknown>, handle: string): N
   const id = s(it.id); if (!id) return null;
   const vm = it.videoMeta as Record<string, unknown> | undefined;
   return withDedupKeys({
-    platform: 'tiktok', externalId: id, postUrl: s(it.webVideoUrl) ?? `https://www.tiktok.com/@${handle}/video/${id}`, postType: 'video',
+    platform: 'tiktok', externalId: id, postUrl: s(it.webVideoUrl) ?? `https://www.tiktok.com/@${handle}/video/${id}`,
+    // A photo post ("slideshow") is pictures, not a video — see extractTiktok.
+    postType: it.isSlideshow === true ? (Array.isArray(it.slideshowImageLinks) && it.slideshowImageLinks.length > 1 ? 'carousel' : 'image') : 'video',
     caption: s(it.text) ?? s(it.description), publishedAt: typeof it.createTimeISO === 'string' ? it.createTimeISO : undefined,
     thumbnailRef: s(vm?.coverUrl), durationMs: n(vm?.duration) != null ? n(vm?.duration)! * 1000 : undefined,
     metrics: { views: n(it.playCount), likes: n(it.diggCount), comments: n(it.commentCount), shares: n(it.shareCount), saves: n(it.collectCount) }, raw: it,

@@ -247,6 +247,14 @@ not re-bought forever. The sweep's stage 2c (`mkt_enqueue_tiktok_redownloads`)
 keeps this self-healing, one bounded job per account per 20 h, and enqueues
 nothing while Apify is disabled or paused.
 
+**What the recovery found (same day):** only 6 of the 175 were videos. The other
+169 are TikTok PHOTO posts ("slideshows") — there is no video file to fetch. The
+parser called every TikTok item a video, so each photo post got a false "failed
+video" row and its pictures were never stored or read. Now a photo post is typed
+`image` / `carousel`, its slides are stored as images (`tiktokSlides` in
+`mediaExtract.ts`) and read on the subscription OCR lane like any other picture,
+and `mkt_tiktok_videos_missing` only offers real videos.
+
 ### Video frames (2026-09-30)
 
 A stored video's on-screen text — price, offer and phone overlays — is in its

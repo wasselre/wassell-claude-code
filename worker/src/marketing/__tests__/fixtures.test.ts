@@ -48,6 +48,10 @@ describe('Apify TikTok fixture normalization (spec §5)', () => {
     expect(p.canonicalUrl).toBe('https://www.tiktok.com/@menaco_sa/video/7420108274738990354');
     expect(p.contentHash).toHaveLength(32);
   });
+  it('a photo post is an image / carousel, never a video', () => {
+    expect(parseTiktokVideo({ id: '1', isSlideshow: true, slideshowImageLinks: [{ tiktokLink: 'a' }] }, 'h')!.postType).toBe('image');
+    expect(parseTiktokVideo({ id: '2', isSlideshow: true, slideshowImageLinks: [{ tiktokLink: 'a' }, { tiktokLink: 'b' }] }, 'h')!.postType).toBe('carousel');
+  });
   it('returns null when the item has no id', () => {
     expect(parseTiktokVideo({ text: 'x' }, 'h')).toBeNull();
   });

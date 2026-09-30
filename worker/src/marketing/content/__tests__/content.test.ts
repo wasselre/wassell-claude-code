@@ -9,6 +9,19 @@ describe('media extraction from raw payloads', () => {
     expect(m.find((x) => x.kind === 'video')).toMatchObject({ url: 'https://cdn/v.mp4', durationMs: 30000, carouselIndex: 0 });
     expect(m.find((x) => x.kind === 'thumbnail')?.url).toBe('https://cdn/cover.jpg');
   });
+  it('tiktok photo post → one image per slide, in order, and no video', () => {
+    const m = extractMedia('tiktok', {
+      isSlideshow: true, mediaUrls: [], videoMeta: { duration: 0, coverUrl: 'https://kv/cover.jpg' },
+      slideshowImageLinks: [{ tiktokLink: 'https://cdn/a.jpeg', downloadLink: 'https://kv/a.jpeg' }, { tiktokLink: 'https://cdn/b.jpeg' }],
+    });
+    expect(m.some((x) => x.kind === 'video')).toBe(false);
+    expect(m.filter((x) => x.kind === 'image').map((x) => [x.carouselIndex, x.url])).toEqual([[0, 'https://kv/a.jpeg'], [1, 'https://cdn/b.jpeg']]);
+    expect(m.find((x) => x.kind === 'thumbnail')?.url).toBe('https://kv/cover.jpg');
+  });
+  it('tiktok video → video only, no slide images', () => {
+    const m = extractMedia('tiktok', { mediaUrls: ['https://kv/v.mp4'], videoMeta: { duration: 12 } });
+    expect(m.map((x) => x.kind)).toEqual(['video']);
+  });
   it('instagram image → single image, no thumbnail', () => {
     const m = extractMedia('instagram', { displayUrl: 'https://cdn/i.jpg', type: 'Image' });
     expect(m).toHaveLength(1);

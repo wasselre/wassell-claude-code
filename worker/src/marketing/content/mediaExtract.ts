@@ -57,9 +57,22 @@ function extractTiktok(raw: Record<string, unknown>): MediaDescriptor[] {
   const video = mediaUrls[0] ?? str(vm?.downloadAddr) ?? str(raw.videoUrl) ?? str(raw.webVideoUrl && vm?.downloadAddr);
   const durationMs = msFromSeconds(vm?.duration);
   if (video && !video.includes('tiktok.com/@')) out.push({ carouselIndex: 0, kind: 'video', url: video, width: num(vm?.width), height: num(vm?.height), durationMs });
+  // A TikTok PHOTO post ("slideshow") has no video file at all — its content is
+  // the slides. Until 2026-09-30 these were treated as videos whose file never
+  // arrived (169 of the 175 "missing videos"), so their pictures were never
+  // stored or read.
+  for (const [i, url] of tiktokSlides(raw).entries()) out.push({ carouselIndex: i, kind: 'image', url });
   const cover = str(vm?.coverUrl) ?? str(vm?.originalCoverUrl);
   if (cover) out.push({ carouselIndex: 0, kind: 'thumbnail', url: cover });
   return dedupeByUrl(out);
+}
+
+/** Slide image links of a TikTok photo post, in order; empty for a video. */
+export function tiktokSlides(raw: Record<string, unknown>): string[] {
+  if (!Array.isArray(raw.slideshowImageLinks)) return [];
+  return (raw.slideshowImageLinks as unknown[])
+    .map((l) => (typeof l === 'string' ? str(l) : str((l as Record<string, unknown> | null)?.downloadLink) ?? str((l as Record<string, unknown> | null)?.tiktokLink)))
+    .filter((u): u is string => !!u);
 }
 
 function extractYouTube(raw: Record<string, unknown>): MediaDescriptor[] {
