@@ -525,6 +525,14 @@ function ChatRow({
           </h3>
           {/* AI takeover marker — at a glance, who owns this conversation:
               the agent or a human. Set from the chat's header toggle. */}
+          {(data.ai_paused as boolean | undefined) === true && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-px text-[9px] font-semibold text-amber-800 shrink-0"
+              title={isAr ? 'المساعد موقوف في هذه المحادثة — مندوب يتولاها' : 'The AI is stopped in this chat — a rep has it'}
+            >
+              {isAr ? 'مندوب' : 'Rep'}
+            </span>
+          )}
           {(data.ai_managed as boolean | undefined) === true && (
             <span
               className="inline-flex items-center gap-0.5 rounded-full bg-green-500/15 px-1.5 py-px text-[9px] font-semibold text-green-700 shrink-0"

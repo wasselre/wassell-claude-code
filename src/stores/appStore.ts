@@ -52,6 +52,7 @@ import type {
   TrackedLinkEngagement,
   TrackedInterestRow,
   InterestTimelineEvent,
+  AgentQuestion,
   AppState,
   AppModel,
   ModelGroup,
@@ -1819,6 +1820,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       score: Number(r.score) || 0,
       name: names.get((filter.projectId ? r.client_id : r.project_id) ?? '') ?? null,
     }));
+  },
+  loadAgentQuestions: async (chatWid) => {
+    if (!supabase || !chatWid) return [];
+    const { data, error } = await supabase
+      .from('wa_agent_questions')
+      .select('id, chat_wid, project_id, question, note, status, created_at')
+      .eq('chat_wid', chatWid).eq('status', 'open')
+      .order('created_at', { ascending: true }).limit(20);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as AgentQuestion[];
   },
   loadInterestTimeline: async (chatWid, projectId) => {
     if (!supabase) return [];

@@ -6,6 +6,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { parseZone, type Slots } from './decide.js';
 import type { Lang } from './texts.js';
+import { uuidV5FromWidSync } from '../chatIngest.js';
 
 export interface AgentSettings {
   is_enabled: boolean;
@@ -122,23 +123,16 @@ export function agentScopeAll(s: AgentSettings | null): boolean {
 }
 
 /**
- * May a NEW agent conversation start for this chat (scope 'all')? In 'on' mode it
- * must not grab a chat a rep is working (gate reason human_active), nor restart
- * within a day of the customer saying stop or of a turn-cap handoff. Test mode
- * (the operator's own phone) always may. Fails CLOSED on a read error — the
- * basic bot then answers as before.
+ * May a NEW agent conversation start for this chat (scope 'all')? The agent
+ * handles every chat unless a rep pressed «إيقاف المساعد» in it (operator rule,
+ * 2026-09-30) — a rep having written in the chat, or an earlier conversation
+ * having ended, no longer keeps it out. Fails CLOSED on a read error — the basic
+ * bot's own gate then decides, as before.
  */
-export async function agentMayStart(svc: SupabaseClient, chatWid: string, s: AgentSettings): Promise<boolean> {
-  if (s.agent_mode === 'test') return true;
-  const { data: prev, error: pErr } = await svc
-    .from('wa_agent_conversations').select('status, updated_at').eq('chat_wid', chatWid).maybeSingle();
-  if (pErr) { console.error('[salesAgent] conversation read failed (not starting):', pErr.message); return false; }
-  const p = prev as { status: string; updated_at: string } | null;
-  if (p && p.status !== 'active' && Date.now() - new Date(p.updated_at).getTime() < 24 * 3_600_000) return false;
-  const { data: gate, error: gErr } = await svc.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });
-  if (gErr) { console.error('[salesAgent] gate check failed (not starting):', gErr.message); return false; }
-  const row = (Array.isArray(gate) ? gate[0] : gate) as { reason?: string } | null;
-  return row?.reason !== 'human_active';
+export async function agentMayStart(svc: SupabaseClient, chatWid: string, _s: AgentSettings): Promise<boolean> {
+  const { data, error } = await svc.from('records').select('data->ai_paused').eq('id', uuidV5FromWidSync(chatWid)).maybeSingle();
+  if (error) { console.error('[salesAgent] chat read failed (not starting):', error.message); return false; }
+  return (data as { ai_paused?: unknown } | null)?.ai_paused !== true;
 }
 
 /** Queue a turn ~8 s out; further messages in the burst push it (≤ 60 s). */

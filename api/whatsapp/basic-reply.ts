@@ -394,6 +394,18 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 
   const supa = getServiceSupabase();
 
+  // A rep pressed «إيقاف المساعد» in this chat: no automatic reply of any kind —
+  // not the agent, not the basic bot, not even for an ad click — until a rep
+  // presses «تشغيل المساعد». (A read error does not silence the chat: the gates
+  // below still decide.)
+  {
+    const { data: chatRow, error: pausedErr } = await supa.from('records').select('data->ai_paused').eq('id', chatRecordId).maybeSingle();
+    if (pausedErr) console.error('[basic-reply] paused check failed:', pausedErr.message);
+    if ((chatRow as { ai_paused?: unknown } | null)?.ai_paused === true) {
+      return jsonRes(nodeRes, 200, { skipped: true, reason: 'paused_by_rep' });
+    }
+  }
+
   // ── Sales agent (Phase 2) ────────────────────────────────────────────────
   // An ACTIVE qualifying conversation owns the chat: every customer message
   // becomes a (debounced) agent turn, run by the worker — even after a rep has

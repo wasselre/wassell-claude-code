@@ -26,6 +26,7 @@ import type { ChatTurn } from './understand.js';
 import type { Lang, Zone } from './texts.js';
 import { clip } from './clip.js';
 import { searchUnits, unitSearchView, type UnitCriteria } from './units.js';
+import { projectRepAnswers, isIsoDay, type VisitSlot } from './escalation.js';
 
 const CALL_SITE = 'api/_lib/salesAgent/brain';
 const MAX_ROUNDS = 7;
@@ -50,6 +51,9 @@ export interface BrainContext {
   conversationStartedAt?: string;
   /** Consecutive earlier replies that asked a narrowing question instead of sending. */
   narrowTurns: number;
+  /** Set when this turn has NO new customer message: what to do instead (pass
+   *  on a colleague's answer to a question the agent asked). */
+  instruction?: string | null;
 }
 
 export interface BrainHooks {
@@ -60,6 +64,12 @@ export interface BrainHooks {
    *  these units. */
   sendUnits(projectId: string, unitIds: string[]): Promise<{ ok: boolean; name?: string; error?: string }>;
   handoff(reason: string, note: string): Promise<void>;
+  /** Ask the client's rep a question the agent cannot answer. */
+  askRep(question: string, note: string, projectId: string | null): Promise<{ ok: boolean; error?: string }>;
+  /** Book the visit the customer agreed to (silently — no system message). */
+  bookVisit(projectId: string, day: string, slot: VisitSlot | null, time: string | null): Promise<{ ok: boolean; error?: string }>;
+  /** Record a visit the customer says already happened. */
+  recordVisit(projectId: string, day: string | null): Promise<{ ok: boolean; error?: string }>;
 }
 
 export interface BrainOutcome {
@@ -71,6 +81,10 @@ export interface BrainOutcome {
   /** Units sent this turn (one unit page, or a list of `count` units). */
   sentUnits: { projectId: string; name: string; count: number } | null;
   handoff: { reason: string; note: string } | null;
+  /** The agent asked the rep a question this turn. */
+  asked: boolean;
+  /** A visit booked this turn. */
+  booked: { projectId: string; day: string } | null;
   ended: boolean;
   lastCriteria: SearchCriteria | null;
   /** Total of the LAST search this turn (null = no search). */
@@ -94,8 +108,12 @@ HOW YOU WORK
 6. «غيره؟» / "doesn't suit" → send the next best not already sent, or ask briefly what didn't suit if you have nothing better.
 6a. UNITS INSIDE A PROJECT. When the customer asks about the units of a project we are discussing («وش المتاح 3 غرف؟», «ابي دور أرضي», «كم أرخص وحدة؟», «فيه شي تحت مليون؟») call search_units with that project's id and what they said (unit_type, bedrooms, budget_max, area_min, floor). Answer from the result with real numbers — at most two units described in text. To SHOW units call send_units: one unit_id sends that unit's own page (details + floor plan); several unit_ids, or all_matching=true, sends one list page with just those units. Then ONE short line. If matched is 0, say plainly what the project does have (the facets) and ask — never pretend a unit exists. If the project itself was never sent, send_project first in one reply and offer the units in the next.
 6b. The customer NAMES a project («مهتم بصفا 78», «عندكم أكنان 25؟») → find_project. If it is ours and not already sent, send_project it right away and add one short line; answer any question they asked with its facts. If ambiguous, ask which one (one line, their names). If it is not ours, say so plainly and ask what they're after so you can offer something similar — never pretend.
-7. Questions about a project (price, payment plan, down payment, sizes, handover, how many options) → use get_project_facts / the search results and answer with the real numbers. If the facts don't have it, say you'll check with a colleague and call handoff_to_rep.
-8. Hand off (handoff_to_rep, then one short line that a colleague will contact them): a visit or a call, wants a person, price negotiation or discounts, a complaint, renting, selling their own property, anything that is not buying one of our homes. If you already told them a colleague will contact them, don't say it again — answer briefly or send nothing.
+7. Questions about a project (price, payment plan, down payment, sizes, handover, how many options) → use get_project_facts / the search results and answer with the real numbers. "colleague_answers" in the facts are answers our reps gave before — use them like any other fact.
+7a. YOU DON'T KNOW. When the facts and tools do not answer the question (a discount policy, a specific finish, a fee, a date we don't have…): call ask_rep with the question as the customer meant it, then tell the customer in one short line that you'll check and get back («بتأكد لك وأرد عليك»). Never guess, and don't hand the whole chat over for a question. Ask each question once — if the state says it is still with a colleague, say you're still checking.
+7b. A COLLEAGUE ANSWERED. When the state gives you a colleague's answer to a question you asked, pass it on now in your own short voice — the numbers exactly as given — and continue the conversation.
+8. VISITS — you arrange them yourself, like a rep would. When the customer wants to see a project: agree the project, the day and a rough time in normal conversation, one question at a time («أي يوم يناسبك؟», «الصبح ولا العصر؟»). Use the date in the state to turn «بكرة» / «الخميس» into a real day. When project + day are agreed (time can be rough), call book_visit and confirm in one warm line («تمام، بكرة العصر في صفا 82 إن شاء الله»). Never say «تم حجز موعد», never mention a booking, a system or a reference — the customer visits, we arrange. Working days only if they ask; never promise a named person.
+8a. THEY ALREADY VISITED. If the customer says they visited one of our projects («زرت صفا 82 أمس», «رحت للمشروع»), call record_visit (with the day if they said it) and carry on — ask how it was. Don't mention that you noted it.
+8b. Hand off (handoff_to_rep, then one short line that a colleague will contact them): they want a call or a person, price negotiation or discounts, a complaint, renting, selling their own property, anything that is not buying one of our homes. If you already told them a colleague will contact them, don't say it again — answer briefly or send nothing.
 9. Not interested / stop → end_conversation and close warmly in a few words.
 10. If a search came back relaxed (relaxed ≠ null), say plainly what we don't have and that this is the closest. relaxed="budget" means nothing fits their budget: say so, give the lowest real starting price we have, and ask if they can stretch or consider another type/area — do not send a project as if it fit.
 
@@ -205,12 +223,51 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'handoff_to_rep',
-    description: 'Alert a human sales rep to take over this customer now. Use for visits, calls, wanting a person, negotiation, complaints, renting/selling, or a question the facts cannot answer.',
+    name: 'ask_rep',
+    description: 'You cannot answer the customer\'s question from the facts: ask the client\'s rep. The rep answers and you pass it on later. Then tell the customer you will check and get back. Once per question.',
     input_schema: {
       type: 'object',
       properties: {
-        reason: { type: 'string', enum: ['visit', 'call', 'human', 'question', 'negotiation', 'complaint', 'not_buying', 'other'] },
+        question: { type: 'string', description: 'The question in Arabic, as the customer meant it, complete enough to answer without reading the chat.' },
+        note_for_rep: { type: 'string', description: 'One line of context: what they are looking at, what was already sent.' },
+        project_id: { type: 'string', description: 'The project the question is about, if any.' },
+      },
+      required: ['question'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'book_visit',
+    description: 'Record the visit the customer agreed to: project + day (+ a rough time). Call only after the customer agreed the day. Nothing is sent to the customer by this tool — you confirm in your own words.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        day: { type: 'string', description: 'The agreed day as YYYY-MM-DD (use the date in the state).' },
+        time_of_day: { type: 'string', enum: ['morning', 'noon', 'afternoon', 'evening', 'night'], description: 'Rough time: الصبح / الظهر / العصر / المغرب / المساء.' },
+        time: { type: 'string', description: 'Exact time HH:MM (24h) only if the customer gave one.' },
+      },
+      required: ['project_id', 'day'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'record_visit',
+    description: 'The customer says they ALREADY visited one of our projects: note it. day = YYYY-MM-DD if they said when, else omit.',
+    input_schema: {
+      type: 'object',
+      properties: { project_id: { type: 'string' }, day: { type: 'string' } },
+      required: ['project_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'handoff_to_rep',
+    description: 'Alert the client\'s sales rep that a person is needed: a call, wanting a human, negotiation, a complaint, renting/selling. NOT for visits (book_visit) and NOT for a question you cannot answer (ask_rep).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', enum: ['call', 'human', 'negotiation', 'complaint', 'not_buying', 'other'] },
         note_for_rep: { type: 'string', description: 'One or two lines in Arabic for the rep: what the customer wants and what was already sent.' },
       },
       required: ['reason', 'note_for_rep'],
@@ -308,7 +365,7 @@ export async function runBrain(
   const commit = async () => { if (!committed) { committed = true; await hooks.beforeSideEffect(); } };
 
   const out: BrainOutcome = {
-    reply: null, replyFailed: false, guardProblems: [], sent: null, sentUnits: null, handoff: null, ended: false,
+    reply: null, replyFailed: false, guardProblems: [], sent: null, sentUnits: null, handoff: null, asked: false, booked: null, ended: false,
     lastCriteria: null, lastTotal: null, searches: 0, model: opts.model, toolTrace,
   };
 
@@ -357,9 +414,11 @@ export async function runBrain(
           if (!known.has(id)) return { content: 'Unknown project_id — search first and use an id from the results.', isError: true };
           const f: ProjectFacts | null = await projectFacts(opts.svc, id);
           if (!f) return { content: 'Project not found.', isError: true };
-          grounding.push(f);
-          toolTrace.push(`facts ${f.name}`);
-          return { content: JSON.stringify(f) };
+          const answers = await projectRepAnswers(opts.svc, id);
+          const view = answers.length ? { ...f, colleague_answers: answers } : f;
+          grounding.push(view);
+          toolTrace.push(`facts ${f.name}${answers.length ? ` +${answers.length} answers` : ''}`);
+          return { content: JSON.stringify(view) };
         }
         case 'send_project': {
           const id = String(input.project_id ?? '');
@@ -421,6 +480,52 @@ export async function runBrain(
           toolTrace.push(`send_units ${res.name ?? id} ×${ids.length}`);
           return { content: JSON.stringify({ sent: true, units: ids.length, kind: ids.length === 1 ? 'unit page' : 'units list' }) };
         }
+        case 'ask_rep': {
+          const question = clip(String(input.question ?? '').trim(), 600);
+          if (!question) return { content: 'question is required', isError: true };
+          if (out.asked) return { content: 'Already asked a colleague in this reply — one question per message.', isError: true };
+          const pid = typeof input.project_id === 'string' && known.has(input.project_id) ? input.project_id : null;
+          await commit();
+          const res = await hooks.askRep(question, clip(String(input.note_for_rep ?? ''), 600), pid);
+          if (!res.ok) {
+            toolTrace.push(`ask_rep FAILED: ${res.error ?? ''}`);
+            return { content: `Could not reach a colleague (${res.error ?? 'unknown error'}). Tell the customer you will check, and call handoff_to_rep.`, isError: true };
+          }
+          out.asked = true;
+          toolTrace.push('ask_rep');
+          return { content: JSON.stringify({ asked: true, next: 'Tell the customer you will check and get back. Do not guess the answer.' }) };
+        }
+        case 'book_visit': {
+          const id = String(input.project_id ?? '');
+          const day = String(input.day ?? '');
+          if (!known.has(id)) return { content: 'Unknown project_id — use find_project or search_projects first.', isError: true };
+          if (!isIsoDay(day)) return { content: 'day must be a real date as YYYY-MM-DD — work it out from the date in the state.', isError: true };
+          if (out.booked) return { content: 'A visit was already booked in this reply.', isError: true };
+          const slot = typeof input.time_of_day === 'string' ? (input.time_of_day as VisitSlot) : null;
+          const time = typeof input.time === 'string' ? input.time : null;
+          await commit();
+          const res = await hooks.bookVisit(id, day, slot, time);
+          if (!res.ok) {
+            toolTrace.push(`book_visit REFUSED ${day}: ${res.error ?? ''}`);
+            return { content: `Could not book (${res.error ?? 'unknown error'}). Agree another day with the customer, or hand off to a rep.`, isError: true };
+          }
+          out.booked = { projectId: id, day };
+          toolTrace.push(`book_visit ${id.slice(0, 8)} ${day} ${time ?? slot ?? ''}`);
+          return { content: JSON.stringify({ booked: true, day, next: 'Confirm the day and rough time in one warm line. Do not mention a booking or a system.' }) };
+        }
+        case 'record_visit': {
+          const id = String(input.project_id ?? '');
+          if (!known.has(id)) return { content: 'Unknown project_id — use find_project first.', isError: true };
+          const day = typeof input.day === 'string' && isIsoDay(input.day) ? input.day : null;
+          await commit();
+          const res = await hooks.recordVisit(id, day);
+          if (!res.ok) {
+            toolTrace.push(`record_visit FAILED: ${res.error ?? ''}`);
+            return { content: `Could not note the visit (${res.error ?? 'unknown error'}). Carry on with the conversation.`, isError: true };
+          }
+          toolTrace.push(`record_visit ${id.slice(0, 8)} ${day ?? 'today'}`);
+          return { content: JSON.stringify({ noted: true }) };
+        }
         case 'handoff_to_rep': {
           const reason = String(input.reason ?? 'other');
           const note = clip(String(input.note_for_rep ?? ''), 600);
@@ -453,7 +558,7 @@ export async function runBrain(
     content: [
       `<state>\n${ctx.stateLines.join('\n')}\n</state>`,
       `<chat oldest_first="true">\n${renderTranscript(ctx.turns, ctx.conversationStartedAt)}\n</chat>`,
-      'Reply to the customer\'s [NEW] messages now.',
+      ctx.instruction ?? 'Reply to the customer\'s [NEW] messages now.',
     ].join('\n\n'),
   }];
 

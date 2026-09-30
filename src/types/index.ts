@@ -2766,6 +2766,9 @@ export interface AppState {
    *  first, with the points it added (SQL `tracked_interest_timeline` — the one
    *  scoring implementation). Throws on a read failure. */
   loadInterestTimeline: (chatWid: string, projectId: string) => Promise<InterestTimelineEvent[]>;
+  /** OPEN questions the AI sales agent asked a rep in this chat
+   *  (wa_agent_questions). Throws on a read failure. */
+  loadAgentQuestions: (chatWid: string) => Promise<AgentQuestion[]>;
   /**
    * Load the latest page of messages for one conversation from Haberchat
    * (via the proxy). Writes to `chatMessages[chatWid]`. When `before` is
@@ -2994,4 +2997,15 @@ export interface InterestTimelineEvent {
   running: number;
   /** Unit code for a unit_open / unit link (resolved by the loader). */
   unit_label?: string | null;
+}
+
+/** A question the AI sales agent could not answer and asked the client's rep. */
+export interface AgentQuestion {
+  id: string;
+  chat_wid: string;
+  project_id: string | null;
+  question: string;
+  note: string | null;
+  status: 'open' | 'answered' | 'answered_directly' | 'dismissed';
+  created_at: string;
 }

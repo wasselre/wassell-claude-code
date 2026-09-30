@@ -32,6 +32,8 @@ import LogInteractionModal from './LogInteractionModal';
 import NotifyOfficerModal from './NotifyOfficerModal';
 import RegisterLeadPortalModal from './RegisterLeadPortalModal';
 import { Globe as PortalIcon } from 'lucide-react';
+import AiAgentSwitch from './AiAgentSwitch';
+import AgentQuestionsCard from './AgentQuestionsCard';
 import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointmentModal';
 import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import GeoPrefCard from './GeoPrefCard';
@@ -121,6 +123,17 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   // AI takeover for THIS conversation (set from the header toggle). While on,
   // the agent answers every inbound message regardless of global policy.
   const aiManaged = (data?.ai_managed as boolean | undefined) === true;
+  // The AI sales agent answers every customer chat unless a rep stopped it here
+  // (data.ai_paused). No switch on the operations line or in a group — the agent
+  // never answers those.
+  const chatDeviceId = typeof data?.device_id === 'string'
+    ? data.device_id
+    : ((data?.device_id as { id?: string } | null | undefined)?.id ?? null);
+  const isOpsLine = (waDevices ?? []).some((dv) => dv.device_id === chatDeviceId && dv.is_operations === true);
+  const aiSwitch = !isOpsLine && !!chatWid && !chatWid.endsWith('@g.us')
+    ? { paused: data?.ai_paused === true, reason: (data?.ai_paused_reason as string | null | undefined) ?? null }
+    : null;
+  const threadCount = useAppStore((s) => (chatWid ? (s.chatMessages[chatWid]?.length ?? 0) : 0));
 
   // Look up the linked client. Prefer an explicit stored `client_link` (an
   // admin may have linked to someone other than the phone owner), but FALL
@@ -504,6 +517,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     matchedOfficerName,
     recordId,
     aiManaged,
+    aiSwitch,
     onOpenProjectsBrowser: () => setShowProjectsBrowser(true),
     onOpenClient: openClientProfile,
     onOpenContact: openContactRecord,
@@ -756,6 +770,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           would be rejected on the way out (see conversationIdentity.ts).
           Edge-to-edge and pinned at the bottom on mobile; inset on desktop. */}
       <div className="px-0 pb-0 md:px-3 md:pb-3 shrink-0 safe-bottom md:pb-3">
+        {aiSwitch && chatWid && <AgentQuestionsCard chatWid={chatWid} isAr={isAr} messageCount={threadCount} />}
         {identity.status === 'ready' ? (
           <Composer identity={identity} />
         ) : (
@@ -1068,6 +1083,7 @@ function CrmActions({
   matchedOfficerName,
   recordId,
   aiManaged,
+  aiSwitch,
   onOpenProjectsBrowser,
   onOpenClient,
   onOpenContact,
@@ -1095,6 +1111,8 @@ function CrmActions({
   matchedOfficerName: string | null;
   recordId: string;
   aiManaged: boolean;
+  /** null = no AI switch for this chat (operations line / group). */
+  aiSwitch: { paused: boolean; reason: string | null } | null;
   onOpenProjectsBrowser: () => void;
   onOpenClient: (() => void) | null;
   onOpenContact: (() => void) | null;
@@ -1260,6 +1278,7 @@ function CrmActions({
           )}
         </>
       )}
+      {aiSwitch && <AiAgentSwitch chatRecordId={recordId} paused={aiSwitch.paused} reason={aiSwitch.reason} isAr={isAr} compact />}
     </div>
   );
 }

@@ -26,6 +26,7 @@ import { BrainError, runBrain, type BrainOutcome } from './brain.js';
 import type { Zone } from './texts.js';
 import { clip } from './clip.js';
 import { createTrackedLink, loadAvailableUnits, summarizeUnit } from '../trackedLinks.js';
+import { alertRep, askRep, bookVisit, loadChatContext, recordVisit } from './escalation.js';
 
 /** Photos in a project package go out 4 s apart; the follow-up question must
  *  land after the last one (mirrors aiSendProject's SPACING_MS). */
@@ -92,11 +93,29 @@ async function loadRecentTurns(
 }
 
 async function notifyRep(svc: SupabaseClient, chatWid: string, body: string): Promise<void> {
-  const { error } = await svc.from('ai_notifications').insert({
-    source: 'whatsapp', severity: 'action', title: null, body,
-    chat_wid: chatWid, chat_record_id: uuidV5FromWidSync(chatWid),
-  });
-  if (error) console.error('[salesAgent] rep notification failed:', error.message);
+  try {
+    const ctx = await loadChatContext(svc, chatWid);
+    await alertRep(svc, ctx, {
+      title: 'المساعد الآلي يحتاج مندوب', body, kind: 'handoff', dedupe: `agent-h:${chatWid}:${Date.now()}`,
+    });
+  } catch (err) {
+    console.error('[salesAgent] rep notification failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+interface PendingAnswer { id: string; question: string; answer: string }
+
+/** Rep answers waiting to be passed on, and questions still with a rep. */
+async function loadQuestions(svc: SupabaseClient, chatWid: string): Promise<{ pending: PendingAnswer[]; open: string[] }> {
+  const { data, error } = await svc.from('wa_agent_questions')
+    .select('id, question, answer, status, relayed_at').eq('chat_wid', chatWid)
+    .in('status', ['open', 'answered']).order('created_at', { ascending: true }).limit(20);
+  if (error) { console.error('[salesAgent] questions read failed:', error.message); return { pending: [], open: [] }; }
+  const rows = (data ?? []) as Array<{ id: string; question: string; answer: string | null; status: string; relayed_at: string | null }>;
+  return {
+    pending: rows.filter((r) => r.status === 'answered' && !r.relayed_at && r.answer).map((r) => ({ id: r.id, question: r.question, answer: r.answer as string })),
+    open: rows.filter((r) => r.status === 'open').map((r) => r.question),
+  };
 }
 
 function slotsSummary(s: Slots): string {
@@ -141,6 +160,14 @@ export async function runAgentTurn(
   }
   if (!conv || conv.status !== 'active') return { skipped: 'no_active_conversation' };
 
+  // A rep pressed «إيقاف المساعد» in this chat — the agent stays silent, even
+  // for a turn queued a moment before the press.
+  if (!sim) {
+    const { data: chatRow, error: pErr } = await svc.from('records').select('data->ai_paused').eq('id', uuidV5FromWidSync(chatWid)).maybeSingle();
+    if (pErr) throw new Error(`sales agent: chat read failed: ${pErr.message}`);
+    if ((chatRow as { ai_paused?: unknown } | null)?.ai_paused === true) return { skipped: 'paused_by_rep' };
+  }
+
   const maxTurns = settings?.agent_max_turns ?? 20;
   const lang0: Lang = conv.slots.lang ?? 'ar';
 
@@ -151,7 +178,15 @@ export async function runAgentTurn(
     if (!dryRun) {
       await enqueueAiReply(svc, { chatWid, text: replies[0]!, jobId: 'agent', force: true });
       await notifyRep(svc, chatWid, notify);
-      await svc.from('wa_agent_conversations').update({ status: 'handed_off', updated_at: new Date().toISOString() }).eq('chat_wid', chatWid);
+      // Stop the agent in this chat the same way a rep would: the chat shows as
+      // stopped and a rep presses «تشغيل المساعد» to hand it back.
+      const { error: capErr } = await svc.rpc('whatsapp_ai_set_chat_paused', {
+        p_chat_record_id: uuidV5FromWidSync(chatWid), p_paused: true, p_user_id: null, p_reason: 'turn_cap',
+      });
+      if (capErr) {
+        console.error(`[salesAgent] turn-cap pause failed chat=${chatWid}:`, capErr.message);
+        await svc.from('wa_agent_conversations').update({ status: 'handed_off', updated_at: new Date().toISOString() }).eq('chat_wid', chatWid);
+      }
     }
     return { skipped: 'turn_cap', replies, notify, status: 'handed_off' };
   }
@@ -169,7 +204,9 @@ export async function runAgentTurn(
   } else {
     ({ turns, newestCustomerAt, deviceId, newCustomerText, lastOursAt } = await loadRecentTurns(svc, chatWid, sinceIso));
   }
-  if (!turns.some((t) => t.isNew && t.who === 'customer')) return { skipped: 'nothing_new' };
+  const questions = sim ? { pending: [], open: [] } : await loadQuestions(svc, chatWid);
+  const hasNew = turns.some((t) => t.isNew && t.who === 'customer');
+  if (!hasNew && !questions.pending.length) return { skipped: 'nothing_new' };
 
   // ── Brain (v2): writes its own reply, narrows, answers from facts ─────────
   // v1 below is the fallback: it runs only when the brain failed BEFORE any side
@@ -180,11 +217,24 @@ export async function runAgentTurn(
         chatWid, conv, turns, newestCustomerAt, deviceId, newCustomerText, lastOursAt, dryRun,
         model: settings?.agent_model || 'claude-opus-5-5',
         effort: settings?.agent_effort ?? 'low',
+        pending: questions.pending, openQuestions: questions.open, hasNew,
       });
     } catch (err) {
       if (!(err instanceof BrainError) || err.sideEffects) throw err;
       console.error(`[salesAgent] brain failed — falling back to the rules agent chat=${chatWid}: ${err.message}`);
     }
+  }
+
+  // Nothing new from the customer, only a colleague's answer to pass on, and the
+  // brain is unavailable: send the rep's own words rather than lose the answer.
+  if (!hasNew) {
+    if (dryRun) return { skipped: 'nothing_new' };
+    for (const p of questions.pending) {
+      const res = await enqueueAiReply(svc, { chatWid, text: p.answer, deviceId, jobId: 'agent', force: true });
+      if (!res.queued) { console.error(`[salesAgent] answer relay failed chat=${chatWid}: ${res.error ?? res.reason ?? 'unknown'}`); continue; }
+      await svc.from('wa_agent_questions').update({ relayed_at: new Date().toISOString() }).eq('id', p.id);
+    }
+    return { skipped: 'relayed_verbatim' };
   }
 
   // ── Understand → decide ────────────────────────────────────────────────
@@ -343,7 +393,11 @@ async function projectNames(svc: SupabaseClient, ids: string[]): Promise<Map<str
 }
 
 function riyadhNow(): string {
-  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Riyadh', weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+  const now = new Date();
+  // Weekday + DATE + time: the agent turns «بكرة» / «الخميس» into a real day.
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh' }).format(now);
+  const rest = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Riyadh', weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+  return `${rest}, date ${day}`;
 }
 
 async function runBrainTurn(
@@ -352,6 +406,7 @@ async function runBrainTurn(
     chatWid: string; conv: AgentConversation; turns: ChatTurn[]; newestCustomerAt: string | null;
     deviceId: string | null; newCustomerText: string; lastOursAt: string | null; dryRun: boolean;
     model: string; effort: 'low' | 'medium' | 'high';
+    pending: PendingAnswer[]; openQuestions: string[]; hasNew: boolean;
   },
 ): Promise<TurnResult> {
   const { chatWid, conv, dryRun } = a;
@@ -393,6 +448,8 @@ async function runBrainTurn(
   }
   if (slots.gender === 'f') stateLines.push('The customer is a woman — use feminine forms.');
   if (slots.handed_off_at) stateLines.push(`Already handed to a colleague at ${slots.handed_off_at} — don't promise that again.`);
+  for (const p of a.pending) stateLines.push(`A colleague ANSWERED the question you asked («${p.question}»): «${p.answer}» — pass it on now.`);
+  for (const q of a.openQuestions) stateLines.push(`Still with a colleague, no answer yet: «${q}» — don't ask it again; if the customer asks, say you're still checking.`);
   if (a.lastOursAt) {
     const hours = Math.round((Date.now() - new Date(a.lastOursAt).getTime()) / 3_600_000);
     if (hours >= 20) stateLines.push(`Our last message was ${hours} hours ago — greet first.`);
@@ -406,7 +463,9 @@ async function runBrainTurn(
     committed = true;
     const { error } = await svc.from('wa_agent_conversations').update({
       turns: conv.turns + 1,
-      last_turn_at: a.newestCustomerAt ?? new Date().toISOString(),
+      // A relay-only turn (no new customer message) must not move the watermark
+      // past a message that arrives while it runs.
+      last_turn_at: a.newestCustomerAt ?? conv.last_turn_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('chat_wid', chatWid);
     if (error) throw new BrainError(`state save failed: ${error.message}`, false);
@@ -420,6 +479,7 @@ async function runBrainTurn(
       // The conversation started ~5 min before created_at (the message that started it).
       conversationStartedAt: new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString(),
       excludeProjectIds: exclude, knownProjectIds: knownIds, narrowTurns: slots.narrow_turns ?? 0,
+      instruction: a.hasNew ? null : 'There is NO new customer message. A colleague answered the question you asked (see the state): pass the answer on to the customer now, in your own short voice, numbers exactly as given.',
     },
     {
       beforeSideEffect: commit,
@@ -473,6 +533,42 @@ async function runBrainTurn(
           return { ok: false, error: msg };
         }
       },
+      askRep: async (question, note, projectId) => {
+        if (dryRun) return { ok: true };
+        try {
+          const pname = projectId ? ((await projectNames(svc, [projectId])).get(projectId) ?? null) : null;
+          await askRep(svc, chatWid, { question, note, projectId, projectName: pname });
+          return { ok: true };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[salesAgent] ask_rep failed chat=${chatWid}:`, msg);
+          return { ok: false, error: msg };
+        }
+      },
+      bookVisit: async (projectId, day, slot, time) => {
+        if (dryRun) return { ok: true };
+        try {
+          const pname = (await projectNames(svc, [projectId])).get(projectId) ?? '';
+          const r = await bookVisit(svc, chatWid, { projectId, projectName: pname, day, slot, time });
+          return r.ok ? { ok: true } : { ok: false, error: r.error };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[salesAgent] book_visit failed chat=${chatWid} project=${projectId}:`, msg);
+          return { ok: false, error: msg };
+        }
+      },
+      recordVisit: async (projectId, day) => {
+        if (dryRun) return { ok: true };
+        try {
+          const pname = (await projectNames(svc, [projectId])).get(projectId) ?? '';
+          const r = await recordVisit(svc, chatWid, { projectId, projectName: pname, day });
+          return r.ok ? { ok: true } : { ok: false, error: r.error };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[salesAgent] record_visit failed chat=${chatWid} project=${projectId}:`, msg);
+          return { ok: false, error: msg };
+        }
+      },
       handoff: async (reason, note) => {
         slots.handed_off_at = new Date().toISOString();
         if (dryRun) return;
@@ -490,8 +586,10 @@ async function runBrainTurn(
     // is better than a generic "one moment" line after them.
     reply = outcome.sent
       ? agentText.afterProject(lang, slots.zone ?? null, false, true)
-      : outcome.sentUnits ? null : agentText.holding(lang);
-    if (!outcome.sent && !outcome.sentUnits && !outcome.handoff) notify = `المساعد الآلي لم يستطع صياغة رد آمن للعميل — يحتاج متابعة مندوب: «${clip(a.newCustomerText, 200)}»`;
+      : outcome.sentUnits ? null
+        : (!a.hasNew && a.pending.length) ? a.pending.map((p) => p.answer).join('\n')
+          : agentText.holding(lang);
+    if (!outcome.sent && !outcome.sentUnits && !outcome.handoff && !outcome.asked && !outcome.booked && a.hasNew) notify = `المساعد الآلي لم يستطع صياغة رد آمن للعميل — يحتاج متابعة مندوب: «${clip(a.newCustomerText, 200)}»`;
   }
 
   // Never the same line twice in a row within the window (e.g. two quick messages).
@@ -555,6 +653,12 @@ async function runBrainTurn(
       console.error(`[salesAgent] reply enqueue failed chat=${chatWid}: ${res.error ?? res.reason ?? 'unknown'}`);
       notify = `${notify ? `${notify} — ` : ''}تعذّر إرسال رد المساعد الآلي للعميل — يحتاج مندوب.`;
     }
+  }
+  // The colleague's answer reached the customer (in this reply): mark it passed on.
+  if (a.pending.length && reply && sent) {
+    const { error: rErr } = await svc.from('wa_agent_questions')
+      .update({ relayed_at: new Date().toISOString() }).in('id', a.pending.map((p) => p.id));
+    if (rErr) console.error(`[salesAgent] relay stamp failed chat=${chatWid}:`, rErr.message);
   }
   if (notify) await notifyRep(svc, chatWid, notify);
   console.log(`[salesAgent] brain chat=${chatWid} model=${outcome.model} tools=[${outcome.toolTrace.join(' ; ')}] reply=${reply ? 'yes' : 'none'}${outcome.replyFailed ? ' (fallback line)' : ''}`);
