@@ -147,7 +147,6 @@ export default function BrokerPortalPage() {
     };
   }, [data]);
 
-  const shareBaseUrl = `${window.location.origin}/brokers/${token}?p=${projectId ?? ''}${isAr ? '' : '&lang=en'}`;
 
   return (
     <div className="min-h-screen bg-cream-light text-charcoal overflow-x-hidden" style={{ fontFamily: '"Amiri", serif' }}>
@@ -269,7 +268,6 @@ export default function BrokerPortalPage() {
                 tab={tab}
                 onTab={(k) => update({ tab: k === 'overview' ? null : k, u: null }, false)}
                 initialUnitId={params.get('u')}
-                shareBaseUrl={shareBaseUrl}
               />
             )}
           </>

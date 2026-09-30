@@ -3,15 +3,19 @@
  *
  * Body:
  *   { token, action: 'message', projectId }
- *       → { message: { ar, en } | null }   the exact text our line would send
+ *       → { message: { ar, en } | null, tracked }   the text our line would send
  *         (saved template when its numbers are current, else the deterministic
- *         sheet — no AI call), for the broker's "copy message" button.
+ *         sheet — no AI call) with its own tracked links, for "copy message".
+ *   { token, action: 'unit-link', projectId, unitId }
+ *       → { ok, url }   a tracked, customer-facing page for one unit, for the
+ *         broker's own "share unit" (WhatsApp / copy link).
  *   { token, action: 'send', projectId, clientPhone, clientName?, brokerName,
  *     brokerPhone?, lang? }
  *       → { ok: true, media_queued } | { ok: false, reason }
  *
  * The send reuses sendProjectViaAiFlow — the SAME package the WhatsApp bot
- * sends (message → brochure → photos) on the default (sales) line — with a
+ * sends (card + cover photo + per-customer tracked links; files only if a link
+ * cannot be minted) on the default (sales) line — with a
  * first paragraph naming the broker, so the client knows who sent it and a rep
  * who picks up the reply knows the source.
  *
@@ -31,6 +35,8 @@ import { makeServiceClient } from './_lib/serviceClient.js';
 import { portalProject, resolvePortal } from './_lib/brokerPortal.js';
 import { resolveProjectMessagePreview, sendProjectViaAiFlow } from './_lib/aiSendProject.js';
 import { canonKsaPhone } from './_lib/careers.js';
+import { createTrackedLink, withTrackedLinks } from './_lib/trackedLinks.js';
+import { replaceLinksInMessage } from '../src/lib/trackedLinks/text.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
@@ -56,6 +62,21 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(body));
+}
+
+/** Links a broker mints for messages they send THEMSELVES (copy message, share
+ *  a unit) have no chat behind them, so the send limits do not cover them.
+ *  This bounds how many such rows an anonymous page can create per hour; past
+ *  it the broker still gets the text, just without tracked links. */
+const SELF_SHARE_LINKS_PER_HOUR = 300;
+
+async function selfShareAllowed(svc: NonNullable<ReturnType<typeof makeServiceClient>>): Promise<boolean> {
+  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { count, error } = await svc
+    .from('tracked_links').select('id', { count: 'exact', head: true })
+    .eq('sent_via', 'broker').is('chat_wid', null).gte('created_at', since);
+  if (error) { console.error('[broker-portal-send] self-share cap check failed:', error.message); return false; }
+  return (count ?? 0) < SELF_SHARE_LINKS_PER_HOUR;
 }
 
 const s = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -94,8 +115,45 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     if (!project) { send(res, 404, { error: 'project not available' }); return; }
 
     if (body.action === 'message') {
-      const message = await resolveProjectMessagePreview(svc, project.id);
-      send(res, 200, { message, can_send: portal.send_enabled });
+      // The text a broker copies and sends from their OWN WhatsApp. It follows
+      // the same shape our line sends (see docs/prd/tracked-links.md): the card
+      // + tracked links to our customer pages instead of the website link. One
+      // link per opened sheet; if it can't be minted the message still comes
+      // back, with its link line removed rather than pointing at the old page.
+      const preview = await resolveProjectMessagePreview(svc, project.id);
+      let message = preview;
+      let tracked = false;
+      if (preview) {
+        try {
+          if (await selfShareAllowed(svc)) {
+            const link = await createTrackedLink(svc, { projectId: project.id, sentVia: 'broker' });
+            if (link.sections.length) {
+              message = { ar: withTrackedLinks(preview.ar, link.urls, 'ar'), en: withTrackedLinks(preview.en, link.urls, 'en') };
+              tracked = true;
+            }
+          }
+        } catch (err) {
+          console.error('[broker-portal-send] copy-message link failed — returning the text without links:', err instanceof Error ? err.message : String(err));
+        }
+        if (!tracked) message = { ar: replaceLinksInMessage(preview.ar, ''), en: replaceLinksInMessage(preview.en, '') };
+      }
+      send(res, 200, { message, tracked, can_send: portal.send_enabled });
+      return;
+    }
+
+    if (body.action === 'unit-link') {
+      // A customer-facing page for ONE unit (never a link into the broker portal).
+      const unitId = s(body.unitId, 64);
+      const { data: unit, error: uErr } = await svc.from('records').select('id, data').eq('id', unitId).maybeSingle();
+      if (uErr) throw new Error(`unit lookup failed: ${uErr.message}`);
+      const d = (unit as { data?: Record<string, unknown> } | null)?.data;
+      if (!d || d.project_id !== project.id) { send(res, 404, { error: 'unit not available' }); return; }
+      // The customer unit page never shows a sold/reserved unit — don't hand out a dead link.
+      const status = typeof d.unit_status === 'string' ? d.unit_status.trim().toLowerCase() : '';
+      if (!['available', 'متاح', 'متاحة'].includes(status)) { send(res, 200, { ok: false, reason: 'unit_unavailable' }); return; }
+      if (!(await selfShareAllowed(svc))) { send(res, 200, { ok: false, reason: 'rate_limited' }); return; }
+      const link = await createTrackedLink(svc, { projectId: project.id, unitId, sentVia: 'broker' });
+      send(res, 200, { ok: true, url: link.unitUrl });
       return;
     }
 

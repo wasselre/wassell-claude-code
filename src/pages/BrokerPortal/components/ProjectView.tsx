@@ -17,7 +17,7 @@ import UnitsSection, { ScheduleList } from './UnitsSection';
 export type TabKey = 'overview' | 'units' | 'plans' | 'photos' | 'videos' | 'library' | 'documents';
 
 export default function ProjectView({
-  token, canSend, detail, isAr, onBack, tab, onTab, initialUnitId, shareBaseUrl,
+  token, canSend, detail, isAr, onBack, tab, onTab, initialUnitId,
 }: {
   token: string;
   canSend: boolean;
@@ -27,7 +27,6 @@ export default function ProjectView({
   tab: TabKey;
   onTab: (t: TabKey) => void;
   initialUnitId: string | null;
-  shareBaseUrl: string;
 }) {
   const t = makeT(isAr);
   const { project: p, units, files, hosted_videos } = detail;
@@ -158,7 +157,8 @@ export default function ProjectView({
             focusUnitIds={focusUnits}
             onClearFocus={() => setFocusUnits(null)}
             initialUnitId={initialUnitId}
-            shareBaseUrl={shareBaseUrl}
+            token={token}
+            projectId={p.id}
           />
         )}
         {tab === 'plans' && (

@@ -3,9 +3,9 @@
  * sheet (floor plan, components, payment plans with SAR amounts, share).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BedDouble, Bath, Check, Copy, Maximize2, MessageCircle, Ruler, X } from 'lucide-react';
-import type { PortalFile, PortalUnit, UnitStatus } from '../lib/api';
+import { fetchUnitLink, type PortalFile, type PortalUnit, type UnitStatus } from '../lib/api';
 import { bi, fmtMoney, fmtNum, fmtPct, makeT } from '../lib/i18n';
 import { Lightbox } from './Media';
 import { flash } from '../lib/flash';
@@ -61,8 +61,10 @@ function numKey(v: string | null): number {
 }
 
 export default function UnitsSection({
-  units, filesById, isAr, projectName, focusUnitIds, onClearFocus, initialUnitId, shareBaseUrl,
+  token, projectId, units, filesById, isAr, projectName, focusUnitIds, onClearFocus, initialUnitId,
 }: {
+  token: string;
+  projectId: string;
   units: PortalUnit[];
   filesById: Map<string, PortalFile>;
   isAr: boolean;
@@ -71,7 +73,6 @@ export default function UnitsSection({
   focusUnitIds: string[] | null;
   onClearFocus: () => void;
   initialUnitId: string | null;
-  shareBaseUrl: string;
 }) {
   const t = makeT(isAr);
   const hasAvailable = units.some((u) => u.status === 'available');
@@ -246,7 +247,8 @@ export default function UnitsSection({
           plan={openUnit.plan_file_id ? filesById.get(openUnit.plan_file_id) ?? null : null}
           isAr={isAr}
           projectName={projectName}
-          shareUrl={`${shareBaseUrl}&u=${openUnit.id}`}
+          token={token}
+          projectId={projectId}
           onClose={() => setOpenId(null)}
         />
       )}
@@ -255,13 +257,14 @@ export default function UnitsSection({
 }
 
 function UnitSheet({
-  unit, plan, isAr, projectName, shareUrl, onClose,
+  unit, plan, isAr, projectName, token, projectId, onClose,
 }: {
   unit: PortalUnit;
   plan: PortalFile | null;
   isAr: boolean;
   projectName: string;
-  shareUrl: string;
+  token: string;
+  projectId: string;
   onClose: () => void;
 }) {
   const t = makeT(isAr);
@@ -274,22 +277,57 @@ function UnitSheet({
     return () => window.removeEventListener('keydown', onKey);
   }, [zoom, onClose]);
 
-  const shareText = [
+  // The client gets a tracked page made for THIS unit (the same kind our own
+  // line sends — docs/prd/tracked-links.md), never a link into the broker
+  // portal. Minted once per opened sheet, on the first share/copy.
+  const linkRef = useRef<Promise<string> | null>(null);
+  const unitLink = (): Promise<string> => {
+    linkRef.current ??= fetchUnitLink(token, projectId, unit.id).then((r) => {
+      if (!r.ok || !r.url) throw new Error(r.reason ?? 'no unit link');
+      return r.url;
+    });
+    // A failed mint must not be cached — the next tap tries again.
+    linkRef.current.catch(() => { linkRef.current = null; });
+    return linkRef.current;
+  };
+
+  const shareText = (url: string) => [
     `${projectName} — ${unitTitle(unit, isAr)}`,
     unit.area != null ? `${t('area')}: ${fmtNum(unit.area, 1)} ${t('m2')}` : null,
     unit.bedrooms != null ? `${t('bedrooms')}: ${unit.bedrooms}` : null,
-    unit.price != null && unit.status !== 'sold' ? `${t('price')}: ${fmtMoney(unit.price, isAr)}` : null,
-    shareUrl,
+    unit.price != null ? `${t('price')}: ${fmtMoney(unit.price, isAr)}` : null,
+    url,
   ].filter(Boolean).join('\n');
+
+  const shareWhatsapp = async () => {
+    // Open the tab inside the click (popup blockers), point it once the link exists.
+    const w = window.open('', '_blank');
+    try {
+      const url = await unitLink();
+      const target = `https://wa.me/?text=${encodeURIComponent(shareText(url))}`;
+      if (w) w.location.href = target; else window.location.href = target;
+    } catch (e) {
+      console.error('[broker-portal] unit link failed:', e);
+      w?.close();
+      flash(t('linkFailed'), 'error');
+    }
+  };
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+        // Built inside the click with a PROMISE, so Safari allows the write
+        // even though the link arrives a moment later.
+        const blob = unitLink().then((url) => new Blob([url], { type: 'text/plain' }));
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+      } else {
+        await navigator.clipboard.writeText(await unitLink());
+      }
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch (e) {
-      console.error('[broker-portal] clipboard write failed:', e);
-      flash(t('copyFailed'), 'error');
+      console.error('[broker-portal] unit link copy failed:', e);
+      flash(t(linkRef.current ? 'copyFailed' : 'linkFailed'), 'error');
     }
   };
 
@@ -385,19 +423,23 @@ function UnitSheet({
             </div>
           )}
 
-          <div className="flex flex-wrap gap-2 pt-1">
-            <a
-              href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#25D366] text-white text-sm font-bold hover:opacity-90"
-            >
-              <MessageCircle size={16} /> {t('shareWhatsapp')}
-            </a>
-            <button type="button" onClick={copy} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-sand text-sm font-bold text-charcoal hover:border-copper">
-              {copied ? <Check size={16} className="text-emerald-600" /> : <Copy size={16} />} {copied ? t('copied') : t('copyLink')}
-            </button>
-          </div>
+          {unit.status === 'available' && (
+            <div className="pt-1">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void shareWhatsapp()}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#25D366] text-white text-sm font-bold hover:opacity-90"
+                >
+                  <MessageCircle size={16} /> {t('shareWhatsapp')}
+                </button>
+                <button type="button" onClick={() => void copy()} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-sand text-sm font-bold text-charcoal hover:border-copper">
+                  {copied ? <Check size={16} className="text-emerald-600" /> : <Copy size={16} />} {copied ? t('copied') : t('copyLink')}
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] text-charcoal/50">{t('unitLinkNote')}</div>
+            </div>
+          )}
         </div>
       </div>
       {zoom && plan && (

@@ -1,7 +1,7 @@
 # PRD: Broker Portal (بوابة الوسطاء)
 
 **Status:** Live (first portal: الرمز / Al-Ramz)
-**Last updated:** 2026-09-29
+**Last updated:** 2026-09-30
 **Related PRDs:** [files.md](files.md) (file links, signed URLs, `/share/:token` pattern), [record-management.md](record-management.md) (all_projects / units), [public-website.md](public-website.md) (the other anon surface)
 
 ## What it is (in plain English)
@@ -24,6 +24,11 @@ Brokers ask for the same material over and over (price lists, plans, photos, bro
 - **Views are counted** (`view_count`, `last_viewed_at`) on every overview load.
 
 - **Send to client (from Wassel's sales line).** Every project with units shows «أرسل لعميلك» (on its card and in the project hero). The broker enters the client's mobile (KSA mobiles only), optional client name, their own name (required) and optional mobile. `api/broker-portal-send.ts` (nodejs) calls the SAME `sendProjectViaAiFlow` the WhatsApp bot uses — project message (saved template if its numbers are current, else the deterministic sheet; no AI call), then the brochure, then the photos — on the default (sales) line, with a first line naming the broker. The reply lands in Wassel's inbox like any bot-sent project.
+- **Everything a client receives follows the tracked-links way** ([tracked-links.md](tracked-links.md), since 2026-09-29/30):
+  - *Send from Wassel's line* = project card + ONE cover photo + that client's tracked links (photos / videos / brochure / units / location) — no brochure PDF, gallery or video uploads (files only as the fallback when a link can't be minted). Links are `sent_via='broker'`, so engagement shows on the chat like any tracked message.
+  - *Copy project message* carries its own tracked links (one link minted per opened send sheet, `sent_via='broker'`, no chat) instead of the wassel.re website line; if minting fails the text comes back with the link line removed.
+  - *Share unit* (available units only) mints a tracked, customer-facing unit page `/v/<token>` — a client is never sent a link into the broker portal.
+  - Self-share links (copy / unit share) have no chat behind them, so they are capped at 300 per hour across the portal endpoint; past that the broker still gets text, without links.
 - **Send limits live in the database** (`broker_portal_send_claim`, row-locked per portal): portal switch `send_enabled`, `daily_send_cap` (default 20/day, Riyadh day), the same client + project once per 24 h, one client at most 3 projects per 24 h, 10 sends per hashed IP per hour. Every attempt is logged in `broker_portal_sends` (who sent what to whom, outcome). These exist because each send is a first message to a stranger from the MAIN line — the traffic WhatsApp restricts (463) and bans.
 - **Share it yourself:** the send sheet also shows the exact project message with «نسخ رسالة المشروع» and brochure downloads. Every image tile has copy-image (PNG to clipboard, paste into WhatsApp; falls back to download) and download buttons; the lightbox has both too. Clipboard failures show a notice, never a blocking prompt.
 - **Library («مكتبة الرمز», `?view=library`):** every linked file across all the developer's projects and units (photos, designs, videos, floor plans, brochures) plus the projects' reel links (de-duplicated by URL). Filter by type and project, search names AND video transcripts. Metadata comes in one call (`library`); URLs are signed per visible page (`sign`, max 60 ids, only files linked to this developer's records).
@@ -62,7 +67,7 @@ Brokers ask for the same material over and over (price lists, plans, photos, bro
 | `src/pages/BrokerPortal/lib/api.ts` / `lib/i18n.ts` | Response types + fetchers; bilingual copy and number formatting |
 | `src/App.tsx` | Public route + `isSelfContainedPublicPath()` store-boot skip |
 | `supabase/migrations/2026-09-29_broker_portal_sends.sql` | `send_enabled` / `daily_send_cap`, `broker_portal_sends` log, claim/finish RPCs |
-| `api/broker-portal-send.ts` | nodejs: `message` preview + `send` via `sendProjectViaAiFlow` (intro line, `force`, no AI) |
+| `api/broker-portal-send.ts` | nodejs: `message` (text + tracked links), `unit-link` (tracked unit page), `send` via `sendProjectViaAiFlow` (intro line, `force`, no AI) |
 | `api/_lib/brokerPortal.ts` | Shared token → portal resolver + project-belongs-to-developer check |
 | `api/_lib/aiSendProject.ts` | `introText` option + `resolveProjectMessagePreview` (added for the portal) |
 | `src/pages/BrokerPortal/components/SendToClientModal.tsx` | Send form, limit messages, copy message, brochure downloads |
@@ -72,6 +77,7 @@ Brokers ask for the same material over and over (price lists, plans, photos, bro
 | `src/pages/BrokerPortal/lib/flash.ts` | Page-local toast (the CRM store/toasts don't boot here) |
 
 ## Open questions / known limitations
+- Engagement on links a broker sent THEMSELVES (copied message, shared unit) is recorded but not shown anywhere yet — it has no chat or client to hang on; one copied message reused for several clients shares one link.
 - Turning sending off: `UPDATE broker_portals SET send_enabled=false …`; the cap: `daily_send_cap`. See who sent what: `SELECT * FROM broker_portal_sends ORDER BY created_at DESC`.
 - Transcripts are filled by an operator script, not automatically: a video linked to the developer AFTER the run has none until the script is re-run (it skips videos already transcribed in Arabic).
 - Hosted reel links (`project_videos`) may duplicate collected video files; they cannot be matched by name.

@@ -28,6 +28,7 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
   - a rep picking a project template in the composer (links replace the website line; images become the cover only);
   - the Follow-up/Finder «WhatsApp this project» flow (skips the file picker when the link mints);
   - bulk project send (one link per project, `sent_via='bulk'`, works for a brand-new number too);
+  - the broker portal ([broker-portal.md](broker-portal.md), `sent_via='broker'`): the send from our line (same `aiSendProject` path), the broker's «copy project message» and «share unit» (`api/broker-portal-send.ts` — these two have no chat, so they appear in no engagement list yet);
   - the units window / unit drawer / client options («طريقة الإرسال: رابط متتبَّع | PDF» — link is the default; the PDF and Download remain).
 - **Interest score (0–100), computed in SQL** (`tracked_interest_score`), each part capped: opened 10 · photos 2 each (≤14) · videos 5 each (≤10) + 10 for one watched to ≥75% · brochure 1 per 6 s (≤10) + 1 per page (≤5) · units 4 each (≤16) + 1 per 20 s (≤5) · map tap 10 · came back on another day 5 each (≤10) · media time 1 per 30 s (≤5).
 - **Where the rep sees it:**

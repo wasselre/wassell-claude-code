@@ -201,8 +201,13 @@ async function callSend<T>(body: Record<string, unknown>): Promise<T> {
   return json;
 }
 
-export function fetchProjectMessage(token: string, projectId: string): Promise<{ message: Bi | null; can_send: boolean }> {
+export function fetchProjectMessage(token: string, projectId: string): Promise<{ message: Bi | null; tracked?: boolean; can_send: boolean }> {
   return callSend({ token, action: 'message', projectId });
+}
+
+/** A tracked, customer-facing page for one unit (the broker's own share). */
+export function fetchUnitLink(token: string, projectId: string, unitId: string): Promise<{ ok: boolean; url?: string | null; reason?: string }> {
+  return callSend({ token, action: 'unit-link', projectId, unitId });
 }
 
 export interface SendInput {
