@@ -2965,6 +2965,11 @@ export interface TrackedInterestRow {
   units_opened: number;
   opened_map: boolean;
   score: number;
+  /** How the `messages` total is made up: whole-project messages, units-list
+   *  links and single-unit links. They all count toward the one score. */
+  project_messages: number;
+  units_links: number;
+  unit_links: number;
   /** Client name (project view) or project name (client view); null = unknown. */
   name: string | null;
 }

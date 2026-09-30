@@ -95,7 +95,7 @@ export default function TrackedInterestList({
                   {r.name ?? (mode === 'project' ? phoneOf(r.chat_wid) : L('مشروع', 'Project'))}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-charcoal/60">
-                  <span>{L(`أرسلنا ${r.messages} رسالة`, `${r.messages} msg sent`)}</span>
+                  <span>{sentMix(r, isAr)}</span>
                   {r.sessions > 0 ? (
                     <>
                       <Stat icon={<Eye size={11} />} text={L(`دخل الصفحة ${r.sessions === 1 ? 'مرة' : `${r.sessions} مرات`}`, `opened the page ${r.sessions}×`)} />
@@ -121,6 +121,16 @@ export default function TrackedInterestList({
       </ul>
     </div>
   );
+}
+
+/** «أرسلنا: 2 رسالة مشروع · 1 قائمة وحدات · 1 رابط وحدة» — what the one score is summed from. */
+function sentMix(r: TrackedInterestRow, isAr: boolean): string {
+  const parts = [
+    r.project_messages > 0 ? (isAr ? `${r.project_messages} رسالة مشروع` : `${r.project_messages} project msg`) : null,
+    r.units_links > 0 ? (isAr ? `${r.units_links} قائمة وحدات` : `${r.units_links} units list`) : null,
+    r.unit_links > 0 ? (isAr ? `${r.unit_links} رابط وحدة` : `${r.unit_links} unit link`) : null,
+  ].filter(Boolean);
+  return `${isAr ? 'أرسلنا' : 'Sent'}: ${parts.length ? parts.join(' · ') : (isAr ? `${r.messages} رسالة` : `${r.messages} msg`)}`;
 }
 
 function ScorePill({ score, opened, isAr }: { score: number; opened: boolean; isAr: boolean }) {

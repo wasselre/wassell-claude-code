@@ -204,6 +204,10 @@ export async function createTrackedLink(
   svc: SupabaseClient,
   a: {
     projectId: string; unitId?: string | null; chatWid?: string | null; conversationRecordId?: string | null;
+    /** What the message is about: the whole project (default), its units list,
+     *  or one unit (implied by `unitId`). Only labels the link — the project's
+     *  interest sums every kind. */
+    focus?: 'project' | 'units' | null;
     clientId?: string | null; deviceId?: string | null; sentVia: SentVia; userId?: string | null;
   },
 ): Promise<CreatedLink> {
@@ -218,6 +222,7 @@ export async function createTrackedLink(
   const clientId = a.clientId ?? (a.conversationRecordId ? await chatClientId(svc, a.conversationRecordId) : null);
   const { error } = await svc.from('tracked_links').insert({
     token, project_id: a.projectId, unit_id: a.unitId ?? null, chat_wid: a.chatWid ?? null,
+    focus: a.unitId ? 'unit' : a.focus === 'units' ? 'units' : 'project',
     conversation_record_id: a.conversationRecordId ?? null, client_id: clientId, device_id: a.deviceId ?? null,
     sent_via: a.sentVia, sections, created_by_user_id: a.userId ?? null,
   });

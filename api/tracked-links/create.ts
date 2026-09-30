@@ -2,7 +2,7 @@
  * POST /api/tracked-links/create — mint a tracked link for a message a REP is
  * about to send (templates, the units window, bulk sends).
  *
- * Body: { projectId, chatWid, unitId?, lang?, sentVia? }
+ * Body: { projectId, chatWid, unitId?, lang?, sentVia?, focus? ('units' = a units-list link) }
  * → { token, sections, urls, unitUrl, block, coverFileId }
  *    `block` is the ready-to-paste links text for a project message; a unit link
  *    returns `unitUrl` (one line the caller puts in its message).
@@ -30,7 +30,7 @@ const REP_SENT_VIA = new Set<SentVia>(['rep', 'bulk']);
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
   return withAuth(req, async (user) => {
-    let body: { projectId?: unknown; chatWid?: unknown; unitId?: unknown; lang?: unknown; sentVia?: unknown };
+    let body: { projectId?: unknown; chatWid?: unknown; unitId?: unknown; lang?: unknown; sentVia?: unknown; focus?: unknown };
     try {
       body = (await req.json()) as typeof body;
     } catch {
@@ -70,6 +70,7 @@ export default async function handler(req: Request): Promise<Response> {
     try {
       const link = await createTrackedLink(svc, {
         projectId, unitId, chatWid, conversationRecordId, sentVia,
+        focus: body.focus === 'units' ? 'units' : 'project',
         userId: (appUser as { id?: string } | null)?.id ?? null,
       });
       return jsonOk({

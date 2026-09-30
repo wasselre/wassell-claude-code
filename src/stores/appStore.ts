@@ -1792,7 +1792,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!supabase) return [];
     let q = supabase
       .from('v_project_interest')
-      .select('chat_wid, project_id, client_id, conversation_record_id, messages, last_sent_at, sessions, open_days, last_activity_at, photos_opened, videos_played, max_video_pct, media_seconds, brochure_seconds, units_seconds, brochure_pages, units_opened, opened_map, score');
+      .select('chat_wid, project_id, client_id, conversation_record_id, messages, last_sent_at, sessions, open_days, last_activity_at, photos_opened, videos_played, max_video_pct, media_seconds, brochure_seconds, units_seconds, brochure_pages, units_opened, opened_map, score, project_messages, units_links, unit_links');
     if (filter.projectId) q = q.eq('project_id', filter.projectId);
     if (filter.clientId) q = q.eq('client_id', filter.clientId);
     const { data, error } = await q.order('score', { ascending: false }).limit(1000);

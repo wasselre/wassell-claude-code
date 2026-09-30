@@ -31,6 +31,8 @@ export async function mintTrackedLink(input: {
   unitId?: string | null;
   lang: 'ar' | 'en';
   sentVia?: 'rep' | 'bulk';
+  /** 'units' when the message is the project's units list (not the whole project). */
+  focus?: 'project' | 'units';
 }): Promise<MintedLink> {
   const res = await fetch('/api/tracked-links/create', {
     method: 'POST',
@@ -62,6 +64,7 @@ export async function sendTrackedUnitsLink(input: {
     chatWid: input.chatWid,
     unitId: input.unitId ?? null,
     lang: input.lang,
+    focus: input.unitId ? undefined : 'units',
   });
   const url = input.unitId ? link.unitUrl : link.urls.units;
   if (!url) {

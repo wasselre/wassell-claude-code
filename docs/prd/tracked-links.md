@@ -1,7 +1,7 @@
 # PRD: Tracked Links (per-customer project & unit pages)
 
 **Status:** Live
-**Last updated:** 2026-09-29
+**Last updated:** 2026-09-30
 **Related PRDs:** [chats.md](chats.md) (project messages, composer, bubbles), [ai-agent.md](ai-agent.md) / the WhatsApp sales agent (sends through the same path), [record-management.md](record-management.md) (project detail + client options)
 
 ## What it is (in plain English)
@@ -13,6 +13,7 @@ Everything the customer does on those pages is recorded against the message: whi
 We had no idea whether a customer looked at what we sent. A rep sent ten projects and could not tell which one the customer actually studied. Now the rep sees it on the message itself, the client's record lists the projects they cared about, and the project page lists the customers who cared about it — most interested first.
 
 ## Key behaviors
+- **One interest per customer × project, summed over every kind of link.** A whole-project message, a units-list link and a single-unit link all carry the project, so their activity adds into ONE score for that customer and project (`v_project_interest`). Each link records what it was (`tracked_links.focus` = `project` / `units` / `unit`), and the interest lists show the mix — «أرسلنا: 2 رسالة مشروع · 1 قائمة وحدات · 1 رابط وحدة» — so the rep sees what the total was made of.
 - **One token per sent message.** The same project sent twice (different days) gets two tokens, so each message has its own numbers; the per-project view sums them.
 - **Only real opens count.** Events are written by the page's own JavaScript, so WhatsApp's link-preview crawler (which runs no JS) never counts as an open. No IP address or user agent is stored.
 - **An "open" is a VISIT, not a page view.** Switching tabs (photos → units), reloading, or coming back from Google Maps stays in the same visit; a new visit starts after 30 minutes idle or in a new browser tab (visit id in `sessionStorage`, per link). Until 2026-09-29 every tab switch counted as an open — one test link showed 13 opens for 3 visits. If the browser blocks storage, each page view counts as its own visit (over-counts rather than breaks).
@@ -46,7 +47,7 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
 - Writes: `tracked_link_events` (link_id, session_id, kind ∈ view/time/photo_open/video_play/video_progress/brochure_page/unit_open/units_filter/map_open, section, item, value) — only through the anonymous `POST /api/tracked-link {action:'track'}`, validated (kinds, sections, time ≤ 120 s per beat, ≤ 40 events per call).
 - Reads (anonymous page): the project record, `file_links` → `files` (signed URLs), `project_videos`, available units, districts.
 - Reads (app): `v_tracked_link_engagement` (per message) and `v_project_interest` (per customer × project) — both `security_invoker`, RLS on `tracked_links` mirrors `chat_messages`, so a rep sees engagement only for chats they can see.
-- Migrations: `2026-09-29_tracked_links.sql`, `2026-09-29_tracked_links_units.sql`, `2026-09-29_tracked_links_filter.sql` (`units_filter` kind + `last_units_filter` on the engagement view).
+- Migrations: `2026-09-29_tracked_links.sql`, `2026-09-29_tracked_links_units.sql`, `2026-09-29_tracked_links_filter.sql`, `2026-09-30_tracked_links_focus.sql` (`focus` + the three per-kind counts on `v_project_interest`) (`units_filter` kind + `last_units_filter` on the engagement view).
 
 ## Key files
 | File | What it does |
