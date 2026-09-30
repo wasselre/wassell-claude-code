@@ -332,7 +332,16 @@ async function answerAdClick(
   projectId = projectId ?? a.adProjectId;
 
   if (!projectId) {
-    const res = await enqueueAiReply(supa, { chatWid: a.chatWid, text: holding, deviceId: a.deviceId, jobId: 'basic', force: true });
+    // An ad lead whose project we cannot tell is still a customer to talk to:
+    // the agent greets and qualifies instead of the fixed "a colleague will
+    // contact you" line (live 2026-09-30: a plain «مرحبا» got that line).
+    if (a.agentAllowed) {
+      await startAgentConversation(supa, {
+        chatWid: a.chatWid, source: 'inbound', adProjectId: null, text: a.text, lang: a.lang,
+      });
+      return { action: 'agent_started', source: 'ad_no_project' };
+    }
+    const res =await enqueueAiReply(supa, { chatWid: a.chatWid, text: holding, deviceId: a.deviceId, jobId: 'basic', force: true });
     await notifyHandoff(supa, a.chatWid, a.chatRecordId, 'عميل من إعلان لكن تعذّر تحديد المشروع — يحتاج متابعة مندوب.');
     return { action: 'ad_no_project', sent: res.queued, handoff: true };
   }
@@ -364,7 +373,13 @@ async function answerAdClick(
 
   // Could not send it (not one of ours / no sellable data) → a rep takes it.
   console.error(`[basic-reply] ad project send failed chat=${a.chatWid} project=${projectId}: ${flow.error ?? flow.reason ?? 'unknown'}`);
-  const res = await enqueueAiReply(supa, { chatWid: a.chatWid, text: holding, deviceId: a.deviceId, jobId: 'basic', force: true });
+  if (a.agentAllowed) {
+    await startAgentConversation(supa, {
+      chatWid: a.chatWid, source: 'inbound', adProjectId: null, text: a.text, lang: a.lang,
+    });
+    return { action: 'agent_started', source: 'ad_project_failed', error: flow.error ?? flow.reason };
+  }
+  const res =await enqueueAiReply(supa, { chatWid: a.chatWid, text: holding, deviceId: a.deviceId, jobId: 'basic', force: true });
   await notifyHandoff(supa, a.chatWid, a.chatRecordId, `عميل من إعلان — تعذّر إرسال بطاقة المشروع (${flow.error ?? flow.reason ?? ''}) — يحتاج متابعة مندوب.`);
   return { action: 'ad_project_failed', sent: res.queued, handoff: true, error: flow.error ?? flow.reason };
 }
