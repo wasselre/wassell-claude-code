@@ -34,7 +34,6 @@ import RegisterLeadPortalModal from './RegisterLeadPortalModal';
 import { Globe as PortalIcon } from 'lucide-react';
 import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointmentModal';
 import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
-import StudyJobCard from './StudyJobCard';
 import GeoPrefCard from './GeoPrefCard';
 import OpenRequestPill from '@/pages/Sales/requests/OpenRequestPill';
 import ChatToolsMenu from './ChatToolsMenu';
@@ -704,10 +703,10 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         </div>
       </div>
 
-      {/* App-triggered client study (claude_jobs) — button + status/review
-          strip. Client-linked chats only: a study is a client deliverable.
-          Hidden when the header is collapsed (desktop focus-the-chat mode). */}
-      {clientLinkId && !collapsedHeader && <StudyJobCard chatRecordId={recordId} />}
+      {/* The «توليد دراسة» study strip (StudyJobCard) was removed from the chat
+          on 2026-09-30 (operator request). The component and the study
+          pipeline stay in the repo; studies are produced from a Claude Code
+          session (/client-study) instead. */}
 
       {/* AI suggestions card — two tabs: the client's preferences read from
           THIS chat and the calls (the rep's tap saves them to the client), and
