@@ -207,9 +207,14 @@ export async function bookVisit(
   const when = `${a.day}T${hhmm}`;
   if (dup && dup.length) return { ok: true, when };   // already booked for that day — nothing to add
 
+  // The «م ع###» number a rep-created appointment gets in the browser.
+  const { data: appId, error: idErr } = await svc.rpc('record_assign_auto_id_system', { p_model_name: 'appointments', p_field_name: 'app_id' });
+  if (idErr) console.error('[salesAgent] appointment number failed (saving without one):', idErr.message);
+
   const { error } = await svc.rpc('record_save', {
     p_model_id: apptModel, p_id: crypto.randomUUID(),
     p_data: {
+      ...(typeof appId === 'string' && appId ? { app_id: appId } : {}),
       client_id: clientId, phone_number: ctx.phone, client_name: ctx.clientName ?? ctx.name ?? ctx.phone,
       appointment_date: when, project_id: a.projectId, sales_rep: ctx.repUserId, appointment_status: 'scheduled',
       notes: `حجزه المساعد الآلي من محادثة واتساب — الوقت: ${approx}. لم تُرسل للعميل رسالة تأكيد آلية.`,
