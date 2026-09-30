@@ -164,6 +164,26 @@ export async function loadAvailableUnits(svc: SupabaseClient, projectId: string)
   return out;
 }
 
+/** A unit as the customer pages and the sales agent describe it. */
+export interface UnitSummary {
+  id: string; code: string | null; type: string | null; bedrooms: number | null; bathrooms: number | null;
+  area: number | null; price: number | null; floor: string | null;
+}
+
+export function summarizeUnit(u: UnitRow): UnitSummary {
+  const d = u.data;
+  return {
+    id: u.id,
+    code: str(d.unit_code) ?? str(d.unit_number),
+    type: str(d.unit_type),
+    bedrooms: num(d.bedrooms),
+    bathrooms: num(d.bathrooms),
+    area: num(d.unit_area) ?? num(d.total_area),
+    price: num(d.total_price),
+    floor: str(d.floor),
+  };
+}
+
 /** Which links this project can offer right now. */
 export async function availableSections(svc: SupabaseClient, projectId: string): Promise<{ sections: LinkSection[]; media: ProjectMedia | null }> {
   const media = await loadProjectMedia(svc, projectId);
@@ -208,6 +228,9 @@ export async function createTrackedLink(
      *  or one unit (implied by `unitId`). Only labels the link — the project's
      *  interest sums every kind. */
     focus?: 'project' | 'units' | null;
+    /** A units-list link limited to these units (a rep's filtered selection, or
+     *  the units the agent found). Absent = every available unit. */
+    unitIds?: string[] | null;
     clientId?: string | null; deviceId?: string | null; sentVia: SentVia; userId?: string | null;
   },
 ): Promise<CreatedLink> {
@@ -222,7 +245,8 @@ export async function createTrackedLink(
   const clientId = a.clientId ?? (a.conversationRecordId ? await chatClientId(svc, a.conversationRecordId) : null);
   const { error } = await svc.from('tracked_links').insert({
     token, project_id: a.projectId, unit_id: a.unitId ?? null, chat_wid: a.chatWid ?? null,
-    focus: a.unitId ? 'unit' : a.focus === 'units' ? 'units' : 'project',
+    focus: a.unitId ? 'unit' : (a.focus === 'units' || (a.unitIds?.length ?? 0) > 0) ? 'units' : 'project',
+    unit_ids: !a.unitId && a.unitIds?.length ? a.unitIds : null,
     conversation_record_id: a.conversationRecordId ?? null, client_id: clientId, device_id: a.deviceId ?? null,
     sent_via: a.sentVia, sections, created_by_user_id: a.userId ?? null,
   });

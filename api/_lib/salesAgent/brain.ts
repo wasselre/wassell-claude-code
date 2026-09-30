@@ -25,6 +25,7 @@ import { normalizeUnitType } from './decide.js';
 import type { ChatTurn } from './understand.js';
 import type { Lang, Zone } from './texts.js';
 import { clip } from './clip.js';
+import { searchUnits, unitSearchView, type UnitCriteria } from './units.js';
 
 const CALL_SITE = 'api/_lib/salesAgent/brain';
 const MAX_ROUNDS = 7;
@@ -55,6 +56,9 @@ export interface BrainHooks {
   /** Called once, before the first outbound side effect (commits the watermark). */
   beforeSideEffect(): Promise<void>;
   sendProject(projectId: string): Promise<{ ok: boolean; name?: string; mediaQueued?: number; error?: string }>;
+  /** Send the customer a link to ONE unit's page, or to a list page limited to
+   *  these units. */
+  sendUnits(projectId: string, unitIds: string[]): Promise<{ ok: boolean; name?: string; error?: string }>;
   handoff(reason: string, note: string): Promise<void>;
 }
 
@@ -64,6 +68,8 @@ export interface BrainOutcome {
   replyFailed: boolean;
   guardProblems: string[];
   sent: { projectId: string; name: string; mediaQueued: number } | null;
+  /** Units sent this turn (one unit page, or a list of `count` units). */
+  sentUnits: { projectId: string; name: string; count: number } | null;
   handoff: { reason: string; note: string } | null;
   ended: boolean;
   lastCriteria: SearchCriteria | null;
@@ -86,6 +92,7 @@ HOW YOU WORK
 5. When the total is 3 or fewer (or narrowing is done), call send_project with the best project (the first in the search results that is not already sent). Then write ONE short line: why it fits (district, a real starting price) and ask if it suits them. The tool sends the project card with a cover photo and the customer's own links (photos, videos, brochure, units, location) — never describe them or paste links yourself. If they ask for photos/brochure/units/location of a project already sent, point them to the links in that message in a few words.
    NEVER ask a question you already asked in this conversation. If they skipped it and answered something else, they don't care about it — narrow on something different, or send the best.
 6. «غيره؟» / "doesn't suit" → send the next best not already sent, or ask briefly what didn't suit if you have nothing better.
+6a. UNITS INSIDE A PROJECT. When the customer asks about the units of a project we are discussing («وش المتاح 3 غرف؟», «ابي دور أرضي», «كم أرخص وحدة؟», «فيه شي تحت مليون؟») call search_units with that project's id and what they said (unit_type, bedrooms, budget_max, area_min, floor). Answer from the result with real numbers — at most two units described in text. To SHOW units call send_units: one unit_id sends that unit's own page (details + floor plan); several unit_ids, or all_matching=true, sends one list page with just those units. Then ONE short line. If matched is 0, say plainly what the project does have (the facets) and ask — never pretend a unit exists. If the project itself was never sent, send_project first in one reply and offer the units in the next.
 6b. The customer NAMES a project («مهتم بصفا 78», «عندكم أكنان 25؟») → find_project. If it is ours and not already sent, send_project it right away and add one short line; answer any question they asked with its facts. If ambiguous, ask which one (one line, their names). If it is not ours, say so plainly and ask what they're after so you can offer something similar — never pretend.
 7. Questions about a project (price, payment plan, down payment, sizes, handover, how many options) → use get_project_facts / the search results and answer with the real numbers. If the facts don't have it, say you'll check with a colleague and call handoff_to_rep.
 8. Hand off (handoff_to_rep, then one short line that a colleague will contact them): a visit or a call, wants a person, price negotiation or discounts, a complaint, renting, selling their own property, anything that is not buying one of our homes. If you already told them a colleague will contact them, don't say it again — answer briefly or send nothing.
@@ -161,6 +168,37 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {
         project_id: { type: 'string' },
         customer_asked_to_see: { type: 'boolean', description: 'true ONLY if the customer explicitly said to just send/show something (e.g. «ارسل لي أي واحد», «وريني»).' },
+      },
+      required: ['project_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'search_units',
+    description: 'Search the AVAILABLE units inside one of our projects. Returns how many match, the cheapest few (unit_id, code, type, bedrooms, area, price, floor) and facets of everything the project has available (bedroom counts, types, floors, price and area range). Use for any question about specific units, prices of a unit size, floors, or "what is available".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string', description: 'A project_id from a search/find result or one already sent.' },
+        unit_type: { type: 'string', enum: ['شقة', 'دور', 'فيلا', 'تاون هاوس', 'دبلكس'] },
+        bedrooms: { type: 'integer', minimum: 0, maximum: 10, description: 'Exact bedroom count.' },
+        budget_max: { type: 'integer', description: 'Maximum unit price in SAR.' },
+        area_min: { type: 'integer', description: 'Minimum unit size in m².' },
+        floor: { type: 'string', description: 'Floor as the customer said it, e.g. أرضي, أول, روف, 4.' },
+      },
+      required: ['project_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'send_units',
+    description: 'Send the customer tracked links to units of a project: ONE unit_id sends that unit\'s own page; several unit_ids — or all_matching=true for every unit the last search_units matched — sends one list page showing only those units. At most one per reply, and not in the same reply as send_project. Only unit_ids returned by search_units this turn.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        unit_ids: { type: 'array', items: { type: 'string' }, description: 'Unit ids from search_units.' },
+        all_matching: { type: 'boolean', description: 'true = every unit the last search_units for this project matched.' },
       },
       required: ['project_id'],
       additionalProperties: false,
@@ -270,9 +308,13 @@ export async function runBrain(
   const commit = async () => { if (!committed) { committed = true; await hooks.beforeSideEffect(); } };
 
   const out: BrainOutcome = {
-    reply: null, replyFailed: false, guardProblems: [], sent: null, handoff: null, ended: false,
+    reply: null, replyFailed: false, guardProblems: [], sent: null, sentUnits: null, handoff: null, ended: false,
     lastCriteria: null, lastTotal: null, searches: 0, model: opts.model, toolTrace,
   };
+
+  // Units the model may send: only ones a search_units returned this turn.
+  const knownUnits = new Map<string, string>();          // unit_id → project_id
+  const lastMatched = new Map<string, string[]>();       // project_id → every matching unit id
 
   const runTool = async (name: string, input: Record<string, unknown>): Promise<{ content: string; isError?: boolean }> => {
     try {
@@ -322,6 +364,7 @@ export async function runBrain(
         case 'send_project': {
           const id = String(input.project_id ?? '');
           if (out.sent) return { content: 'Already sent a project in this reply — one per message.', isError: true };
+          if (out.sentUnits) return { content: 'Units were sent in this reply — send the project in the next message.', isError: true };
           // Narrowing is enforced here, not only in the prompt: live 2026-09-29 the
           // model sent a project from 4 fits on a general «وش عندكم مشاريع».
           if (out.lastTotal !== null && out.lastTotal > 3 && ctx.narrowTurns < 2 && input.customer_asked_to_see !== true) {
@@ -340,6 +383,43 @@ export async function runBrain(
           out.sent = { projectId: id, name: res.name ?? '', mediaQueued: res.mediaQueued ?? 0 };
           toolTrace.push(`send ${res.name ?? id}`);
           return { content: JSON.stringify({ sent: true, name: res.name }) };
+        }
+        case 'search_units': {
+          const id = String(input.project_id ?? '');
+          if (!known.has(id)) return { content: 'Unknown project_id — use find_project or search_projects first.', isError: true };
+          const c: UnitCriteria = {};
+          if (typeof input.unit_type === 'string' && input.unit_type.trim()) c.unit_type = input.unit_type.trim();
+          if (typeof input.bedrooms === 'number' && Number.isFinite(input.bedrooms)) c.bedrooms = Math.round(input.bedrooms);
+          if (typeof input.budget_max === 'number' && input.budget_max > 0) c.budget_max = input.budget_max;
+          if (typeof input.area_min === 'number' && input.area_min > 0) c.area_min = input.area_min;
+          if (typeof input.floor === 'string' && input.floor.trim()) c.floor = input.floor.trim();
+          const r = await searchUnits(opts.svc, id, c);
+          for (const uid of r.matchedIds) knownUnits.set(uid, id);
+          lastMatched.set(id, r.matchedIds);
+          const view = unitSearchView(r);
+          grounding.push(view);
+          toolTrace.push(`units ${id.slice(0, 8)} ${JSON.stringify(c)} → ${r.matched}/${r.total_available}`);
+          return { content: JSON.stringify(view) };
+        }
+        case 'send_units': {
+          const id = String(input.project_id ?? '');
+          if (out.sentUnits) return { content: 'Already sent units in this reply — one per message.', isError: true };
+          if (out.sent) return { content: 'A project was sent in this reply — offer its units in the next message.', isError: true };
+          if (!known.has(id)) return { content: 'Unknown project_id.', isError: true };
+          const asked = Array.isArray(input.unit_ids) ? input.unit_ids.filter((x): x is string => typeof x === 'string') : [];
+          const ids = input.all_matching === true ? (lastMatched.get(id) ?? []) : [...new Set(asked)];
+          if (!ids.length) return { content: 'No units to send — call search_units first, then pass unit_ids from its result (or all_matching=true).', isError: true };
+          const foreign = ids.filter((u) => knownUnits.get(u) !== id);
+          if (foreign.length) return { content: 'Some unit_ids did not come from search_units for this project this turn — search again and use its ids.', isError: true };
+          await commit();
+          const res = await hooks.sendUnits(id, ids);
+          if (!res.ok) {
+            toolTrace.push(`send_units FAILED ${id}: ${res.error ?? ''}`);
+            return { content: `Could not send the units (${res.error ?? 'unknown error'}). Hand off to a rep.`, isError: true };
+          }
+          out.sentUnits = { projectId: id, name: res.name ?? '', count: ids.length };
+          toolTrace.push(`send_units ${res.name ?? id} ×${ids.length}`);
+          return { content: JSON.stringify({ sent: true, units: ids.length, kind: ids.length === 1 ? 'unit page' : 'units list' }) };
         }
         case 'handoff_to_rep': {
           const reason = String(input.reason ?? 'other');

@@ -25,6 +25,7 @@ import { loadAgentSettings, type AgentConversation } from './conversation.js';
 import { BrainError, runBrain, type BrainOutcome } from './brain.js';
 import type { Zone } from './texts.js';
 import { clip } from './clip.js';
+import { createTrackedLink, loadAvailableUnits, summarizeUnit } from '../trackedLinks.js';
 
 /** Photos in a project package go out 4 s apart; the follow-up question must
  *  land after the last one (mirrors aiSendProject's SPACING_MS). */
@@ -436,6 +437,42 @@ async function runBrainTurn(
         if (error) console.error(`[salesAgent] sent-list save failed chat=${chatWid}:`, error.message);
         return { ok: true, name, mediaQueued };
       },
+      sendUnits: async (projectId, unitIds) => {
+        const name = (await projectNames(svc, [projectId])).get(projectId) ?? '';
+        if (dryRun) return { ok: true, name };
+        try {
+          const link = await createTrackedLink(svc, {
+            projectId, chatWid, conversationRecordId: uuidV5FromWidSync(chatWid), deviceId: a.deviceId, sentVia: 'agent',
+            ...(unitIds.length === 1 ? { unitId: unitIds[0] } : { focus: 'units' as const, unitIds }),
+          });
+          const url = unitIds.length === 1 ? link.unitUrl : link.urls.units;
+          if (!url) return { ok: false, error: 'no units link for this project' };
+          let text: string;
+          if (unitIds.length === 1) {
+            // The unit's own facts, from the record — never from the model.
+            const u = (await loadAvailableUnits(svc, projectId)).map(summarizeUnit).find((x) => x.id === unitIds[0]);
+            if (!u) return { ok: false, error: 'unit is no longer available' };
+            const facts = lang === 'en'
+              ? [u.type, u.bedrooms !== null ? `${u.bedrooms} bedrooms` : null, u.area !== null ? `${Math.round(u.area)} m²` : null, u.price !== null ? `${u.price.toLocaleString('en-US')} SAR` : null]
+              : [u.type, u.bedrooms !== null ? `${u.bedrooms} غرف` : null, u.area !== null ? `${Math.round(u.area)} م²` : null, u.price !== null ? `${u.price.toLocaleString('en-US')} ريال` : null];
+            text = `🏠 ${name}${u.code ? ` · ${u.code}` : ''}\n${facts.filter(Boolean).join(' · ')}\n${url}`;
+          } else {
+            text = lang === 'en'
+              ? `🏠 ${name}: ${unitIds.length} available units for you\n${url}`
+              : `🏠 ${name}: ${unitIds.length} وحدات متاحة تناسب طلبك\n${url}`;
+          }
+          const res = await enqueueAiReply(svc, {
+            chatWid, text, deviceId: a.deviceId, jobId: 'agent', force: true, projectId,
+            reference: `ai-project:agent:${projectId}:units:${Date.now()}`,
+          });
+          if (!res.queued) return { ok: false, error: res.error ?? res.reason ?? 'not queued' };
+          return { ok: true, name };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[salesAgent] units send failed chat=${chatWid} project=${projectId}:`, msg);
+          return { ok: false, error: msg };
+        }
+      },
       handoff: async (reason, note) => {
         slots.handed_off_at = new Date().toISOString();
         if (dryRun) return;
@@ -449,10 +486,12 @@ async function runBrainTurn(
   let reply = outcome.reply;
   let notify: string | null = null;
   if (outcome.replyFailed) {
+    // Units already went out with their own caption + link: nothing more to say
+    // is better than a generic "one moment" line after them.
     reply = outcome.sent
       ? agentText.afterProject(lang, slots.zone ?? null, false, true)
-      : agentText.holding(lang);
-    if (!outcome.sent && !outcome.handoff) notify = `المساعد الآلي لم يستطع صياغة رد آمن للعميل — يحتاج متابعة مندوب: «${clip(a.newCustomerText, 200)}»`;
+      : outcome.sentUnits ? null : agentText.holding(lang);
+    if (!outcome.sent && !outcome.sentUnits && !outcome.handoff) notify = `المساعد الآلي لم يستطع صياغة رد آمن للعميل — يحتاج متابعة مندوب: «${clip(a.newCustomerText, 200)}»`;
   }
 
   // Never the same line twice in a row within the window (e.g. two quick messages).
@@ -504,8 +543,12 @@ async function runBrainTurn(
     // every photo/video/document of THAT package has gone (after_prefix).
     const res = await enqueueAiReply(svc, {
       chatWid, text: reply, deviceId: a.deviceId, jobId: 'agent', force: true,
-      delaySeconds: outcome.sent ? (mediaQueued + 1) * MEDIA_SPACING_S + MEDIA_SPACING_S : 0,
-      afterPrefix: outcome.sent ? `ai-project:agent:${outcome.sent.projectId}:` : null,
+      delaySeconds: outcome.sent ? (mediaQueued + 1) * MEDIA_SPACING_S + MEDIA_SPACING_S : outcome.sentUnits ? MEDIA_SPACING_S : 0,
+      // Held until the project package / the units link has gone out, so the
+      // line never lands before what it talks about.
+      afterPrefix: outcome.sent
+        ? `ai-project:agent:${outcome.sent.projectId}:`
+        : outcome.sentUnits ? `ai-project:agent:${outcome.sentUnits.projectId}:` : null,
     });
     if (!res.queued) {
       sent = false;

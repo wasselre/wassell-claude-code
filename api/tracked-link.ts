@@ -39,7 +39,7 @@ const TOKEN_RE = /^[A-Za-z0-9]{8,32}$/;
 const KINDS = new Set(['view', 'photo_open', 'video_play', 'video_progress', 'time', 'brochure_page', 'map_open', 'unit_open', 'units_filter']);
 const SECTIONS = new Set(['photos', 'videos', 'brochure', 'location', 'units', 'unit']);
 
-interface LinkRow { id: string; project_id: string; unit_id: string | null; sections: string[]; created_at: string }
+interface LinkRow { id: string; project_id: string; unit_id: string | null; unit_ids: string[] | null; sections: string[]; created_at: string }
 
 function str(v: unknown): string | null { return typeof v === 'string' && v.trim() ? v.trim() : null; }
 function num(v: unknown): number | null {
@@ -55,7 +55,7 @@ function list(v: unknown): string[] {
 }
 
 async function resolveLink(svc: SupabaseClient, token: string): Promise<LinkRow | null> {
-  const { data, error } = await svc.from('tracked_links').select('id, project_id, unit_id, sections, created_at').eq('token', token).maybeSingle();
+  const { data, error } = await svc.from('tracked_links').select('id, project_id, unit_id, unit_ids, sections, created_at').eq('token', token).maybeSingle();
   if (error) throw new Error(`link lookup failed: ${error.message}`);
   const l = data as LinkRow | null;
   if (!l) return null;
@@ -172,8 +172,12 @@ async function page(svc: SupabaseClient, link: LinkRow, section: string): Promis
       ? { id: media.brochure.id, url: await sign(svc, media.brochure), name: media.brochure.title || media.brochure.original_name }
       : { id: 'external', url: media.brochureUrl, external: true };
   } else if (s === 'units') {
-    const units = await loadAvailableUnits(svc, link.project_id);
+    // A link minted for a chosen set of units shows only those — and only the
+    // ones still available now (a unit sold since the send simply drops out).
+    const only = link.unit_ids?.length ? new Set(link.unit_ids) : null;
+    const units = (await loadAvailableUnits(svc, link.project_id)).filter((u) => !only || only.has(u.id));
     out.units = units.map(unitSummary).sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+    out.units_filtered = !!only;
   } else if (s === 'location') {
     out.location = { maps_url: mapsUrl(media.record), district: head.district, city: head.city };
   }

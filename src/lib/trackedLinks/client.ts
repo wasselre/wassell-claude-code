@@ -33,6 +33,8 @@ export async function mintTrackedLink(input: {
   sentVia?: 'rep' | 'bulk';
   /** 'units' when the message is the project's units list (not the whole project). */
   focus?: 'project' | 'units';
+  /** Limit a units-list link to these units (the rep's filtered selection). */
+  unitIds?: string[];
 }): Promise<MintedLink> {
   const res = await fetch('/api/tracked-links/create', {
     method: 'POST',
@@ -58,6 +60,8 @@ export async function sendTrackedUnitsLink(input: {
   lang: 'ar' | 'en';
   caption: string;
   deliverAt?: string;
+  /** Units list only: send just these units instead of every available one. */
+  unitIds?: string[];
 }): Promise<void> {
   const link = await mintTrackedLink({
     projectId: input.projectId,
@@ -65,6 +69,7 @@ export async function sendTrackedUnitsLink(input: {
     unitId: input.unitId ?? null,
     lang: input.lang,
     focus: input.unitId ? undefined : 'units',
+    unitIds: !input.unitId && input.unitIds?.length ? input.unitIds : undefined,
   });
   const url = input.unitId ? link.unitUrl : link.urls.units;
   if (!url) {

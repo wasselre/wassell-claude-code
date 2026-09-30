@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { AlertCircle, Clock, Download, FileText, Link2, Loader2, Send } from 'lucide-react';
+import { AlertCircle, Clock, Download, Link2, Loader2, Send } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
@@ -31,6 +31,10 @@ interface Props {
   /** Several units in one message — one tracked link per unit. Takes the place
    *  of `trackedLink` (pass one or the other). */
   trackedUnits?: Array<{ projectId: string; unitId: string; label: string }> | null;
+  /** Units list only, when the rep has filters on: the dialog ASKS whether to
+   *  send every available unit or only the filtered ones (no default — the rep
+   *  must pick). Counts are AVAILABLE units, since that is what the page shows. */
+  unitFilter?: { unitIds: string[]; filteredCount: number; allCount: number } | null;
 }
 
 /**
@@ -53,6 +57,7 @@ export default function SendUnitsPdfModal({
   buildFor,
   trackedLink,
   trackedUnits,
+  unitFilter,
 }: Props) {
   const canLink = !!trackedLink || (!!trackedUnits && trackedUnits.length > 0);
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -68,7 +73,11 @@ export default function SendUnitsPdfModal({
   const captionEdited = useRef(false);
   const [busy, setBusy] = useState<'send' | 'download' | null>(null);
   const [showSchedule, setShowSchedule] = useState(false);
-  const [sendAs, setSendAs] = useState<'link' | 'pdf'>(canLink ? 'link' : 'pdf');
+  // Units go out as tracked links only (operator, 2026-09-30) — the PDF is a
+  // send format only where no link can be made (a unit with no project).
+  const sendAs: 'link' | 'pdf' = canLink ? 'link' : 'pdf';
+  const askScope = !!unitFilter && !!trackedLink && !trackedLink.unitId;
+  const [scope, setScope] = useState<'all' | 'filtered' | null>(null);
   const blobCache = useRef<Record<'ar' | 'en', Blob | null>>({ ar: null, en: null });
 
   const L = (ar: string, en: string) => (isAr ? ar : en);
@@ -87,7 +96,7 @@ export default function SendUnitsPdfModal({
     if (!captionEdited.current) setCaption(captionFor(next === 'ar'));
   };
 
-  const canSend = !!clientPhone && busy === null;
+  const canSend = !!clientPhone && busy === null && (!askScope || scope !== null);
 
   const handleDownload = async () => {
     if (busy) return;
@@ -123,6 +132,7 @@ export default function SendUnitsPdfModal({
           } else if (trackedLink) {
             await sendTrackedUnitsLink({
               chatWid, projectId: trackedLink.projectId, unitId: trackedLink.unitId ?? null,
+              unitIds: askScope && scope === 'filtered' ? unitFilter?.unitIds : undefined,
               lang: docLang, caption: cap, deliverAt,
             });
           }
@@ -174,7 +184,7 @@ export default function SendUnitsPdfModal({
           </Button>
           <Button variant="secondary" disabled={busy !== null} onClick={() => void handleDownload()}>
             {busy === 'download' ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            {L('تنزيل', 'Download')}
+            {L('تنزيل PDF', 'Download PDF')}
           </Button>
           <div className="relative">
             <Button
@@ -205,26 +215,41 @@ export default function SendUnitsPdfModal({
         {/* Send as a tracked link (default) or the PDF. The link opens our own
             page for this customer and records what they look at. */}
         {canLink && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-charcoal/50">{L('طريقة الإرسال', 'Send as')}</span>
-            <div className="inline-flex rounded-lg border border-sand/40 overflow-hidden">
-              <button type="button" onClick={() => setSendAs('link')}
-                className={`inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold transition-colors ${sendAs === 'link' ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream'}`}>
-                <Link2 size={12} />{L('رابط متتبَّع', 'Tracked link')}
-              </button>
-              <button type="button" onClick={() => setSendAs('pdf')}
-                className={`inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold transition-colors ${sendAs === 'pdf' ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream'}`}>
-                <FileText size={12} />PDF
-              </button>
-            </div>
-          </div>
-        )}
-        {canLink && sendAs === 'link' && (
-          <p className="text-xs text-charcoal/55">
+          <p className="flex items-start gap-1.5 text-xs text-charcoal/55">
+            <Link2 size={13} className="mt-0.5 shrink-0 text-copper" />
+            <span>
             {(trackedUnits && trackedUnits.length > 0) || trackedLink?.unitId
               ? L('يصل العميل رابط لصفحة الوحدة، ونعرف متى فتحها وكم بقي فيها.', 'The client gets a link to the unit page; we see when they open it and how long they stay.')
               : L('يصل العميل رابط لصفحة الوحدات المتاحة، ونعرف أي وحدة فتح وكم بقي في الصفحة.', 'The client gets a link to the available-units page; we see which units they open and how long they stay.')}
+            </span>
           </p>
+        )}
+
+        {/* Filters are on: ask which units the link should show. No default. */}
+        {askScope && unitFilter && (
+          <div>
+            <div className="mb-1 text-xs font-bold text-charcoal/50">{L('أي وحدات ترسل؟', 'Which units to send?')}</div>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { key: 'filtered' as const, title: L('المفلترة فقط', 'Filtered only'), count: unitFilter.filteredCount },
+                { key: 'all' as const, title: L('كل الوحدات المتاحة', 'All available units'), count: unitFilter.allCount },
+              ]).map((o) => (
+                <button
+                  key={o.key}
+                  type="button"
+                  disabled={o.count === 0}
+                  onClick={() => setScope(o.key)}
+                  className={`rounded-xl border px-3 py-2 text-start transition-colors disabled:opacity-40 ${scope === o.key ? 'border-copper bg-copper/10' : 'border-sand/50 hover:bg-cream'}`}
+                >
+                  <div className="text-sm font-bold text-charcoal">{o.title}</div>
+                  <div className="text-xs text-charcoal/55">{L(`${o.count} وحدة متاحة`, `${o.count} available`)}</div>
+                </button>
+              ))}
+            </div>
+            {scope === null && (
+              <p className="mt-1 text-[11px] text-amber-700">{L('اختر أحد الخيارين قبل الإرسال.', 'Choose one before sending.')}</p>
+            )}
+          </div>
         )}
 
         {/* PDF language — the rep picks Arabic or English for the document,

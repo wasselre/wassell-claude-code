@@ -227,6 +227,17 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
     (search.trim() ? 1 : 0) + (status ? 1 : 0) + (type ? 1 : 0) + (floor ? 1 : 0) +
     (bedMin || bedMax ? 1 : 0) + (priceMin || priceMax ? 1 : 0) + (areaMin || areaMax ? 1 : 0);
 
+  // Sending the units link while filters are on: the dialog asks "all or only
+  // the filtered ones". The customer page shows AVAILABLE units only, so both
+  // counts (and the ids sent) are the available ones.
+  const sendFilter = useMemo(() => {
+    const isAvailable = (u: UnitView) => u.status?.value === 'available';
+    const all = allUnits.filter(isAvailable);
+    const some = filtered.filter(isAvailable);
+    if (activeFilterCount === 0 || some.length === all.length) return null;
+    return { unitIds: some.map((u) => u.id), filteredCount: some.length, allCount: all.length };
+  }, [allUnits, filtered, activeFilterCount]);
+
   const clearFilters = () => {
     setSearch(''); setStatus(''); setType(''); setFloor('');
     setBedMin(''); setBedMax(''); setPriceMin(''); setPriceMax(''); setAreaMin(''); setAreaMax('');
@@ -394,7 +405,7 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
             {chatPdf ? (
               <Button variant="secondary" className="text-xs !py-1" onClick={() => setPdfOpen(true)}>
                 <FileText size={13} className="inline -mt-0.5 me-1" />
-                {isAr ? `PDF الوحدات (${filtered.length})` : `Units PDF (${filtered.length})`}
+                {isAr ? `إرسال رابط الوحدات (${filtered.length})` : `Send units link (${filtered.length})`}
               </Button>
             ) : (
               <Button variant="secondary" className="text-xs !py-1" disabled={downloading} onClick={() => void downloadTable()}>
@@ -596,6 +607,7 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
           captionFor={(a) => (a ? `قائمة وحدات ${projectViewByLang(true)?.name ?? ''}`.trim() : `${projectViewByLang(false)?.name ?? 'Project'} — units list`)}
           buildFor={(a) => buildUnitsTablePdf({ project: projectViewByLang(a) ?? projectView, units: unitsByLang(a), isAr: a })}
           trackedLink={{ projectId }}
+          unitFilter={sendFilter}
         />
       )}
     </div>

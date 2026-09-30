@@ -868,11 +868,11 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
                 onClick={() => void openUnitPdf([String(d.source_id)])}
                 className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-[11px] font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
                 title={chatPdf
-                  ? L('إرسال ملف PDF للوحدة للعميل عبر واتساب', 'Send the unit PDF to the client over WhatsApp')
+                  ? L('إرسال رابط صفحة الوحدة للعميل عبر واتساب', 'Send the unit page link to the client over WhatsApp')
                   : L('تنزيل ملف PDF للوحدة (لا يوجد رقم جوال للعميل)', 'Download the unit PDF (the client has no phone number)')}
               >
                 {unitPdfDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-                {chatPdf ? L('إرسال PDF', 'Send PDF') : L('تنزيل PDF', 'Download PDF')}
+                {chatPdf ? L('إرسال الرابط', 'Send link') : L('تنزيل PDF', 'Download PDF')}
               </button>
             )}
 
@@ -1140,12 +1140,12 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
                 type="button"
                 disabled={bulkBusy || unitPdfDownloading}
                 onClick={() => void openUnitPdf(selectedUnitIds)}
-                title={L('ملف PDF واحد فيه بطاقة كل وحدة محددة', 'One PDF with a sheet for every selected unit')}
+                title={chatPdf ? L('رسالة واحدة فيها رابط لكل وحدة محددة', 'One message with a link for every selected unit') : L('ملف PDF واحد فيه بطاقة كل وحدة محددة', 'One PDF with a sheet for every selected unit')}
                 className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-xs font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
               >
                 {unitPdfDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
                 {chatPdf
-                  ? L(`إرسال الوحدات PDF (${selectedUnitIds.length})`, `Send units PDF (${selectedUnitIds.length})`)
+                  ? L(`إرسال روابط الوحدات (${selectedUnitIds.length})`, `Send unit links (${selectedUnitIds.length})`)
                   : L(`تنزيل الوحدات PDF (${selectedUnitIds.length})`, `Download units PDF (${selectedUnitIds.length})`)}
               </button>
             )}

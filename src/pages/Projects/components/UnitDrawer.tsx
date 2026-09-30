@@ -247,7 +247,7 @@ export default function UnitDrawer({ unit, projectName, isAr, project, chatPdf, 
               {project && (chatPdf ? (
                 <Button variant="primary" className="text-sm !py-1.5" onClick={() => setPdfOpen(true)}>
                   <FileText size={14} className="inline -mt-0.5 me-1" />
-                  {isAr ? 'إرسال PDF للعميل' : 'Send unit PDF'}
+                  {isAr ? 'إرسال رابط الوحدة للعميل' : 'Send unit link'}
                 </Button>
               ) : (
                 <Button variant="secondary" className="text-sm !py-1.5" disabled={downloading} onClick={() => void downloadUnit()}>

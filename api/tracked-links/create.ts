@@ -2,7 +2,7 @@
  * POST /api/tracked-links/create — mint a tracked link for a message a REP is
  * about to send (templates, the units window, bulk sends).
  *
- * Body: { projectId, chatWid, unitId?, lang?, sentVia?, focus? ('units' = a units-list link) }
+ * Body: { projectId, chatWid, unitId?, lang?, sentVia?, focus? ('units' = a units-list link), unitIds? (limit that list to these units) }
  * → { token, sections, urls, unitUrl, block, coverFileId }
  *    `block` is the ready-to-paste links text for a project message; a unit link
  *    returns `unitUrl` (one line the caller puts in its message).
@@ -30,7 +30,7 @@ const REP_SENT_VIA = new Set<SentVia>(['rep', 'bulk']);
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
   return withAuth(req, async (user) => {
-    let body: { projectId?: unknown; chatWid?: unknown; unitId?: unknown; lang?: unknown; sentVia?: unknown; focus?: unknown };
+    let body: { projectId?: unknown; chatWid?: unknown; unitId?: unknown; lang?: unknown; sentVia?: unknown; focus?: unknown; unitIds?: unknown };
     try {
       body = (await req.json()) as typeof body;
     } catch {
@@ -43,6 +43,12 @@ export default async function handler(req: Request): Promise<Response> {
     const sentVia: SentVia = typeof body.sentVia === 'string' && REP_SENT_VIA.has(body.sentVia as SentVia) ? (body.sentVia as SentVia) : 'rep';
     if (!UUID_RE.test(projectId)) return jsonError(400, 'projectId is required');
     if (unitId && !UUID_RE.test(unitId)) return jsonError(400, 'unitId is invalid');
+    // A units-list link for a chosen set of units (the rep's filtered selection).
+    const unitIds = Array.isArray(body.unitIds)
+      ? [...new Set(body.unitIds.filter((x): x is string => typeof x === 'string' && UUID_RE.test(x)))]
+      : [];
+    if (Array.isArray(body.unitIds) && unitIds.length !== body.unitIds.length) return jsonError(400, 'unitIds is invalid');
+    if (unitIds.length > 2000) return jsonError(400, 'too many units');
     if (!/^[^\s@]+@(c\.us|s\.whatsapp\.net|lid)$/.test(chatWid)) return jsonError(400, 'chatWid is required');
 
     const conversationRecordId = uuidV5FromWidSync(chatWid);
@@ -66,11 +72,25 @@ export default async function handler(req: Request): Promise<Response> {
       if (unitProject !== projectId) return jsonError(400, 'the unit does not belong to this project');
     }
 
+    if (unitIds.length) {
+      // Every chosen unit must belong to this project — a link never shows
+      // another project's units.
+      let own = 0;
+      for (let i = 0; i < unitIds.length; i += 200) {
+        const { count, error: cErr } = await svc.from('records').select('id', { count: 'exact', head: true })
+          .in('id', unitIds.slice(i, i + 200)).eq('data->>project_id', projectId);
+        if (cErr) return jsonError(500, `units check failed: ${cErr.message}`);
+        own += count ?? 0;
+      }
+      if (own !== unitIds.length) return jsonError(400, 'some units do not belong to this project');
+    }
+
     const { data: appUser } = await jwt.from('users').select('id').eq('auth_uid', user.userId).maybeSingle();
     try {
       const link = await createTrackedLink(svc, {
         projectId, unitId, chatWid, conversationRecordId, sentVia,
         focus: body.focus === 'units' ? 'units' : 'project',
+        unitIds: unitId ? null : unitIds,
         userId: (appUser as { id?: string } | null)?.id ?? null,
       });
       return jsonOk({
