@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
-import { X, Loader2, Image as ImageIcon, Video, FileText, Check, FolderOpen, Play, Eye, ExternalLink } from 'lucide-react';
+import { X, Loader2, Image as ImageIcon, Video, FileText, Check, FolderOpen, Play, Eye, ExternalLink, AlignLeft } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { listSendableProjectFiles } from '@/lib/files/recordFiles';
 import { signThumbUrls, signViewUrl } from '@/lib/files/client';
 import { directVideoUrls } from '@/lib/matching/sendToClient';
+import { fetchVideoTranscripts, type VideoTranscript } from '@/lib/files/transcripts';
 import Button from '@/components/ui/Button';
+import TranscriptModal from '@/components/files/TranscriptModal';
+import VideoDurationBadge from '@/components/files/VideoDurationBadge';
 import {
   buildPickerItems, isUnitPlanFile, orderSelectedRefs, orderSelectedRefsBulk,
   defaultBulkSelection, type PickerGroup, type PickerItem,
@@ -71,6 +75,7 @@ export default function ProjectFilePickerModal({
   busy?: boolean;
 }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
+  const { t } = useTranslation();
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
 
@@ -81,6 +86,9 @@ export default function ProjectFilePickerModal({
   const [items, setItems] = useState<PickerItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<PickerItem | null>(null);
+  const [tab, setTab] = useState<PickerGroup>('photo');
+  const [transcripts, setTranscripts] = useState<Record<string, VideoTranscript>>({});
+  const [transcriptFor, setTranscriptFor] = useState<PickerItem | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,9 +113,10 @@ export default function ProjectFilePickerModal({
           : [];
         const fileItems = buildPickerItems(sendable, videoLinks);
 
-        // Sign SMALL transformed thumbnails (with a full-size fallback) for image
-        // files — downloading full-resolution originals into tiles was the drag.
-        const imageIds = fileItems.filter((it) => it.group === 'photo' && !it.isUrl).map((it) => it.ref);
+        // Sign SMALL thumbnails for every CRM file: a transformed image for
+        // photos (with a full-size fallback), the stored poster for videos and
+        // PDFs. A file with no poster yet is simply absent → icon tile.
+        const imageIds = fileItems.filter((it) => !it.isUrl).map((it) => it.ref);
         let thumb: Record<string, string> = {};
         let full: Record<string, string> = {};
         if (imageIds.length > 0) {
@@ -123,6 +132,18 @@ export default function ProjectFilePickerModal({
 
         if (cancelled) return;
         setItems(withThumbs);
+        // Open on the first tab that has something in it.
+        const firstTab = (['photo', 'video', 'document'] as PickerGroup[]).find((g) => withThumbs.some((it) => it.group === g));
+        if (firstTab) setTab(firstTab);
+        // Spoken-word transcripts for the videos — one batch, never blocking the
+        // grid. A failure is logged and the "read transcript" buttons just don't
+        // appear; nothing else on the picker depends on it.
+        const videoIds = withThumbs.filter((it) => it.group === 'video' && !it.isUrl).map((it) => it.ref);
+        if (videoIds.length > 0) {
+          fetchVideoTranscripts(videoIds)
+            .then((m) => { if (!cancelled) setTranscripts(m); })
+            .catch((e) => console.error('[ProjectFilePickerModal] transcripts failed to load', e));
+        }
         // 'all' → everything pre-checked (single flow). 'bulk' → documents +
         // the first 3 photos (the "top 3" pre-selection the rep asked for).
         setSelected(
@@ -209,19 +230,40 @@ export default function ProjectFilePickerModal({
           ) : items.length === 0 ? (
             <p className="text-sm text-charcoal/40 py-12 text-center">{L('لا توجد ملفات مرتبطة بهذا المشروع', 'No files linked to this project')}</p>
           ) : (
-            <div className="space-y-5">
-              {groups.map(({ key, label, icon: Icon }) => {
+            <div>
+              {/* Tabs — one kind at a time; the selection spans all three. */}
+              <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                {groups.map(({ key, label, icon: Icon }) => {
+                  const n = groupItems(key).length;
+                  const picked = groupItems(key).filter((it) => selected.has(it.ref)).length;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setTab(key)}
+                      disabled={n === 0}
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                        tab === key ? 'border-copper bg-copper/10 font-bold text-copper' : 'border-sand/60 text-charcoal/60 hover:bg-cream'
+                      }`}
+                    >
+                      <Icon size={14} />
+                      {label}
+                      <span className="font-normal text-charcoal/40">({n})</span>
+                      {picked > 0 && (
+                        <span className="rounded-full bg-copper px-1.5 text-[10px] font-bold leading-4 text-white">{picked}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {(() => {
+                const key = tab;
                 const its = groupItems(key);
                 if (its.length === 0) return null;
                 const allOn = its.every((it) => selected.has(it.ref));
                 return (
                   <div key={key}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2 text-xs font-bold text-charcoal/60 uppercase tracking-wide">
-                        <Icon size={14} className="text-copper" />
-                        {label}
-                        <span className="text-charcoal/40 font-normal normal-case">({its.length})</span>
-                      </div>
+                    <div className="flex items-center justify-end mb-2">
                       <button
                         type="button"
                         onClick={() => setGroup(key, !allOn)}
@@ -259,8 +301,8 @@ export default function ProjectFilePickerModal({
                               className="group w-full text-start"
                               title={L('عرض', 'View')}
                             >
-                              <div className="relative w-full h-24 bg-charcoal/5 flex items-center justify-center">
-                                {it.group === 'photo' && it.thumb ? (
+                              <div className="relative w-full h-32 bg-charcoal/5 flex items-center justify-center">
+                                {it.thumb ? (
                                   <img
                                     src={it.thumb}
                                     alt={it.name}
@@ -276,6 +318,10 @@ export default function ProjectFilePickerModal({
                                   />
                                 ) : it.group === 'photo' ? (
                                   <ImageIcon size={24} className="text-charcoal/40" />
+                                ) : it.group === 'video' && it.isUrl ? (
+                                  // A hosted video link has no files row, so no
+                                  // stored poster — show its own first frame.
+                                  <video src={`${it.ref}#t=1`} preload="metadata" muted playsInline className="w-full h-full object-cover" />
                                 ) : it.group === 'video' ? (
                                   <Video size={24} className="text-charcoal/40" />
                                 ) : (
@@ -283,13 +329,19 @@ export default function ProjectFilePickerModal({
                                 )}
                                 {/* View overlay hint */}
                                 <div className="absolute inset-0 flex items-center justify-center bg-charcoal/0 group-hover:bg-charcoal/30 transition-colors">
-                                  <span className="opacity-0 group-hover:opacity-100 transition-opacity w-9 h-9 rounded-full bg-white/90 text-charcoal flex items-center justify-center shadow">
+                                  <span className={`${it.group === 'video' ? 'opacity-90' : 'opacity-0 group-hover:opacity-100'} transition-opacity w-9 h-9 rounded-full bg-white/90 text-charcoal flex items-center justify-center shadow`}>
                                     {it.group === 'video' ? <Play size={16} className="ms-0.5" fill="currentColor" /> : <Eye size={16} />}
                                   </span>
                                 </div>
+                                {it.group === 'video' && <VideoDurationBadge seconds={it.durationSeconds} />}
                               </div>
                               <div className="px-2 py-1.5">
-                                <div className="text-[11px] text-charcoal/70 truncate" title={it.name}>{it.name}</div>
+                                <div className="text-[11px] font-medium text-charcoal/80 truncate" title={it.name} dir="auto">{it.name}</div>
+                                {it.group === 'video' && it.description && (
+                                  <div className="mt-0.5 text-[10px] leading-snug text-charcoal/55 line-clamp-2" title={it.description} dir="auto">
+                                    {it.description}
+                                  </div>
+                                )}
                                 {it.isUrl && <div className="text-[9px] text-charcoal/40">{L('رابط فيديو', 'video link')}</div>}
                                 {it.isSocial && (
                                   <div className="text-[9px] text-copper/80" title={L('مأخوذ من حسابات التواصل الاجتماعي', 'Taken from social media accounts')}>
@@ -298,13 +350,23 @@ export default function ProjectFilePickerModal({
                                 )}
                               </div>
                             </button>
+                            {it.group === 'video' && transcripts[it.ref] && (
+                              <button
+                                type="button"
+                                onClick={() => setTranscriptFor(it)}
+                                className="mx-2 mb-2 inline-flex items-center justify-center gap-1 rounded-md border border-copper/30 bg-copper/5 px-2 py-1 text-[10px] font-medium text-copper transition-colors hover:bg-copper/10"
+                              >
+                                <AlignLeft size={11} />
+                                {t('files.transcript.button')}
+                              </button>
+                            )}
                           </div>
                         );
                       })}
                     </div>
                   </div>
                 );
-              })}
+              })()}
             </div>
           )}
         </div>
@@ -331,6 +393,16 @@ export default function ProjectFilePickerModal({
       {/* Preview lightbox — plays videos, shows images, opens PDFs/documents. */}
       {preview && (
         <FilePreviewLightbox item={preview} isAr={isAr} onClose={() => setPreview(null)} />
+      )}
+
+      {transcriptFor && transcripts[transcriptFor.ref] && (
+        <TranscriptModal
+          title={transcriptFor.name}
+          text={transcripts[transcriptFor.ref]?.text ?? ''}
+          durationSeconds={transcriptFor.durationSeconds}
+          description={transcriptFor.description}
+          onClose={() => setTranscriptFor(null)}
+        />
       )}
     </div>
   );
@@ -429,6 +501,9 @@ function FilePreviewLightbox({
           </a>
         )}
         <div className="text-white/70 text-xs truncate max-w-[92vw]" dir="auto">{item.name}</div>
+        {item.group === 'video' && item.description && (
+          <p className="max-w-xl text-center text-xs leading-relaxed text-white/60" dir="auto">{item.description}</p>
+        )}
       </div>
     </div>
   );

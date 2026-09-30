@@ -214,7 +214,10 @@ export default function FilesLibraryPage({ basePath = '/files', defaultView = nu
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [fullUrls, setFullUrls] = useState<Record<string, string>>({});
   useEffect(() => {
-    const imageIds = rows.filter((r) => r.kind === 'image').map((r) => r.id);
+    // Images get a transformed thumbnail; videos and PDFs their stored poster
+    // (files.thumb_path). One without a poster yet is absent from the map and
+    // its tile keeps the kind icon.
+    const imageIds = rows.filter((r) => r.kind === 'image' || r.kind === 'video' || r.kind === 'pdf').map((r) => r.id);
     if (imageIds.length === 0) { setThumbs({}); setFullUrls({}); return; }
     let cancelled = false;
     void (async () => {

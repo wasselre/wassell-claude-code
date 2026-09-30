@@ -283,6 +283,20 @@ export async function runEnrichmentJob(
             language: null, // auto-detect: Saudi Arabic stays Arabic, English stays English
           });
           transcript = (tx.text ?? '').trim().slice(0, 6000);
+          // Keep what was just paid for: until 2026-09-30 this transcript was
+          // used for the description and then thrown away, so our own videos had
+          // nothing to read. One row per file; never overwrite an existing one
+          // (an operator re-transcription with forced Arabic is the better copy).
+          // Empty text is kept too — language 'none' means "transcribed, no speech".
+          const { error: txErr } = await supabase.from('file_transcripts').upsert(
+            {
+              file_id: job.fileId, provider: tx.provider, model: tx.model, language: tx.language,
+              text: (tx.text ?? '').trim(), segments: tx.segments ?? [], duration_ms: durationMs || null,
+              cost_usd: tx.costUsd ?? null, status: 'done', raw: { _source: 'worker/runEnrichmentJob' },
+            },
+            { onConflict: 'file_id', ignoreDuplicates: true },
+          );
+          if (txErr) console.error(`[enrich] job=${job.id} could not store transcript: ${txErr.message}`);
         } catch (e) {
           console.log(`[enrich] job=${job.id} transcribe failed: ${e instanceof Error ? e.message : String(e)}`);
         }

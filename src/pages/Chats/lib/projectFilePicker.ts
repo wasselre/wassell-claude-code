@@ -42,6 +42,10 @@ export interface PickerItem {
   isSocial: boolean;
   /** Where the bytes came from, for the badge: developer's own account vs another company. */
   acquisitionSource: string | null;
+  /** Video length in seconds (CRM video files only; hosted links have none). */
+  durationSeconds?: number | null;
+  /** The file's short AI-written description, when it has one. */
+  description?: string | null;
   /** Signed thumbnail URL for image items (filled in later, best-effort). Small
    *  transformed image when Storage transforms are on, else the full URL. */
   thumb?: string;
@@ -78,7 +82,7 @@ export function nameFromUrl(url: string): string {
 /** The minimal file shape the picker tiles need — satisfied by both the full
  *  RecordFileEntry and the lean SendableFile path (listSendableProjectFiles).
  *  `primary_category` is included so the tile can tell a brochure apart. */
-type PickerSource = { file: Pick<BusinessFileRow, 'id' | 'kind' | 'title' | 'original_name' | 'primary_category'> & Pick<Partial<BusinessFileRow>, 'origin' | 'usage_rights' | 'acquisition_source'> };
+type PickerSource = { file: Pick<BusinessFileRow, 'id' | 'kind' | 'title' | 'original_name' | 'primary_category'> & Pick<Partial<BusinessFileRow>, 'origin' | 'usage_rights' | 'acquisition_source' | 'duration_seconds' | 'ai_description'> };
 
 /**
  * Usage rights that must never reach a customer. The picker is the send
@@ -167,6 +171,8 @@ export function buildPickerItems(entries: PickerSource[], externalVideoUrls: str
       isBrochure: group === 'document' && isBrochureFile(e.file, name),
       isSocial: e.file.origin === 'social_intake',
       acquisitionSource: e.file.acquisition_source ?? null,
+      durationSeconds: e.file.duration_seconds ?? null,
+      description: e.file.ai_description ?? null,
     });
   }
   for (const url of externalVideoUrls) {

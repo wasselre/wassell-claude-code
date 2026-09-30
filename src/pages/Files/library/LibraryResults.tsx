@@ -230,6 +230,8 @@ export default function LibraryResults({
                   file={f}
                   types={types}
                   links={links.get(f.id)}
+                  thumbUrl={thumbs[f.id] ?? null}
+                  fullUrl={fullUrls?.[f.id] ?? null}
                   active={selectedId === f.id}
                   selected={selectedIds.has(f.id)}
                   selectionActive={selectedIds.size > 0}

@@ -20,6 +20,7 @@
  * it is not enough. `updateFileMetadata` still checks the row count, because
  * an affordance is not a guard.
  */
+import VideoTranscriptSection from '@/components/files/VideoTranscriptSection';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -605,6 +606,15 @@ export default function LibraryDetailPanel({ file, types, onClose, onSaved, onOp
               );
             })}
           </div>
+
+          {file.kind === 'video' && (
+            <VideoTranscriptSection
+              fileId={file.id}
+              title={file.title}
+              durationSeconds={file.duration_seconds}
+              description={file.ai_description}
+            />
+          )}
 
           {/* AI description — machine-written; a badge marks it while unreviewed. */}
           {file.ai_description && (

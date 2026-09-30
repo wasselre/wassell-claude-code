@@ -182,7 +182,7 @@ export async function listRecordFiles(
 export type SendableFile = Pick<
   BusinessFileRow,
   'id' | 'kind' | 'title' | 'original_name' | 'document_type' | 'primary_category'
-> & Pick<Partial<BusinessFileRow>, 'origin' | 'usage_rights' | 'acquisition_source'>;
+> & Pick<Partial<BusinessFileRow>, 'origin' | 'usage_rights' | 'acquisition_source' | 'duration_seconds' | 'ai_description'>;
 
 /**
  * Lean sibling of listRecordFiles for the project→customer file picker.
@@ -211,7 +211,7 @@ export async function listSendableProjectFiles(
 
   const { data: files, error: fileErr } = await supabase
     .from('files')
-    .select('id, kind, title, original_name, document_type, primary_category, origin, usage_rights, acquisition_source')
+    .select('id, kind, title, original_name, document_type, primary_category, origin, usage_rights, acquisition_source, duration_seconds, ai_description')
     .in('id', ids);
   if (fileErr) throw surfaceError('load project files', fileErr);
 

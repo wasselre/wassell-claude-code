@@ -57,17 +57,29 @@ export default async function handler(req: Request): Promise<Response> {
     const jwtClient = getJwtClient(req);
     const { data, error } = await jwtClient
       .from('files')
-      .select('id, storage_bucket, storage_path')
+      .select('id, kind, storage_bucket, storage_path, thumb_path')
       .in('id', ids);
     if (error) return jsonError(500, `file lookup failed: ${error.message}`);
 
-    const rows = (data ?? []) as Array<{ id: string; storage_bucket: string; storage_path: string }>;
+    const rows = (data ?? []) as Array<{
+      id: string; kind: string; storage_bucket: string; storage_path: string; thumb_path: string | null;
+    }>;
 
     // Sign every viewable file in parallel. A single failed sign drops just
     // that id from the map rather than failing the whole grid.
     const entries = await Promise.all(
       rows.map(async (r) => {
         try {
+          // Thumbnail of a NON-image (video / PDF): the stored poster JPEG
+          // (files.thumb_path), already small — no transform. There is nothing
+          // else to show in an <img>, so a file with no poster yet is omitted
+          // and its tile keeps the kind icon; `full` is the poster too, never
+          // the video/PDF itself.
+          if (wantThumb && r.kind !== 'image') {
+            if (!r.thumb_path) return null;
+            const poster = await signFileUrl(r.storage_bucket, r.thumb_path, VIEW_URL_TTL_SECONDS);
+            return { id: r.id, url: poster, full: poster } as const;
+          }
           const full = await signFileUrl(r.storage_bucket, r.storage_path, VIEW_URL_TTL_SECONDS);
           if (!wantThumb) return { id: r.id, url: full } as const;
           // Small, web-quality thumbnail. Falls back to `full` client-side.

@@ -11,12 +11,13 @@
  * a page that can show 60 images at once.
  */
 import { useTranslation } from 'react-i18next';
-import { Check, Link2 } from 'lucide-react';
+import { Check, Link2, Play } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import type { BusinessFileRow, FileDocumentTypeRow } from '@/types';
 import LibraryBadges from './LibraryBadges';
 import ThumbImg from '../components/ThumbImg';
+import VideoDurationBadge from '@/components/files/VideoDurationBadge';
 
 interface Props {
   file: BusinessFileRow;
@@ -88,6 +89,16 @@ export default function LibraryFileTile({ file, types, thumbUrl, fullUrl, active
         ) : (
           <Icon size={30} className={accent.fg} aria-hidden />
         )}
+        {file.kind === 'video' && (
+          <>
+            <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-charcoal shadow">
+                <Play size={15} className="ms-0.5" fill="currentColor" />
+              </span>
+            </span>
+            <VideoDurationBadge seconds={file.duration_seconds} />
+          </>
+        )}
         {file.link_count > 0 && (
           <span
             className="absolute top-2 end-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/90 border border-sand/40 text-[10px] font-bold text-charcoal/70"
@@ -111,6 +122,11 @@ export default function LibraryFileTile({ file, types, thumbUrl, fullUrl, active
         >
           {file.title}
         </div>
+        {file.kind === 'video' && file.ai_description && (
+          <div className="text-[11px] leading-snug text-charcoal/55 line-clamp-2" dir="auto" title={file.ai_description}>
+            {file.ai_description}
+          </div>
+        )}
         <LibraryBadges file={file} types={types} max={2} />
         <div className="text-[11px] text-charcoal/45">{formatBytes(file.size_bytes, isAr)}</div>
       </div>

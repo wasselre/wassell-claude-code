@@ -6,6 +6,7 @@
 //
 //   node scripts/transcribe-developer-videos.mjs --developer <records.id> --dry-run
 //   node scripts/transcribe-developer-videos.mjs --developer <records.id> --confirm [--max-usd 3] [--concurrency 3] [--force]
+//   node scripts/transcribe-developer-videos.mjs --all --missing-only --dry-run   (every active video file with no transcript text)
 //
 // Where each result goes:
 //   • the video came from the collection lane (mkt_content_media.file_id) →
@@ -160,7 +161,13 @@ async function inChunks(ids, size, fn) {
   return out;
 }
 
-async function loadVideos(developerId) {
+/** Video files in scope: one developer's projects + units, or (developerId
+ *  null = --all) every active video file in the CRM. */
+async function scopedVideoFiles(developerId) {
+  const cols = 'id,original_name,kind,status,archived_at,storage_bucket,storage_path,duration_seconds';
+  if (!developerId) {
+    return pageAll((a, b) => sb.from('files').select(cols).eq('kind', 'video').eq('status', 'active').is('archived_at', null).order('id').range(a, b));
+  }
   const { data: models, error } = await sb.from('models').select('id,name').in('name', ['all_projects', 'units']);
   if (error) throw new Error(error.message);
   const ap = models.find((m) => m.name === 'all_projects').id;
@@ -176,11 +183,15 @@ async function loadVideos(developerId) {
   });
   const fileIds = [...new Set(links.map((l) => l.file_id))];
   const files = await inChunks(fileIds, 150, async (chunk) => {
-    const { data, error: e } = await sb.from('files').select('id,original_name,kind,status,archived_at,storage_bucket,storage_path,duration_seconds').in('id', chunk);
+    const { data, error: e } = await sb.from('files').select(cols).in('id', chunk);
     if (e) throw new Error(e.message);
     return data;
   });
-  const videos = files.filter((f) => f.kind === 'video' && f.status === 'active' && !f.archived_at);
+  return files.filter((f) => f.kind === 'video' && f.status === 'active' && !f.archived_at);
+}
+
+async function loadVideos(developerId) {
+  const videos = await scopedVideoFiles(developerId);
   const media = await inChunks(videos.map((v) => v.id), 150, async (chunk) => {
     const { data, error: e } = await sb.from('mkt_content_media').select('id,file_id,content_post_id,stored_url,checksum_sha256,download_status').in('file_id', chunk);
     if (e) throw new Error(e.message);
@@ -259,8 +270,9 @@ async function write(item, result, raw) {
 }
 
 async function main() {
-  const developerId = opt('developer', '');
-  if (!/^[0-9a-f-]{36}$/i.test(developerId)) { console.error('--developer <records.id> is required'); process.exit(2); }
+  const all = flag('all');
+  const developerId = all ? null : opt('developer', '');
+  if (!all && !/^[0-9a-f-]{36}$/i.test(developerId)) { console.error('--developer <records.id> (or --all) is required'); process.exit(2); }
   const dry = flag('dry-run');
   if (!dry && !flag('confirm')) { console.error('Refusing to run without --confirm. Use --dry-run to preview.'); process.exit(2); }
   if (!dry && !FAL_KEY) { console.error('FAL_KEY is required (vercel env pull → export)'); process.exit(2); }
@@ -268,7 +280,11 @@ async function main() {
   const conc = Math.max(1, Math.min(4, Number(opt('concurrency', 3))));
 
   const items = await loadVideos(developerId);
-  const todo = flag('force') ? items : items.filter((i) => !alreadyArabic(i));
+  // --missing-only: leave any video that already has readable transcript text
+  // alone (even a legacy auto-detect one) — fill gaps, don't redo good rows.
+  const hasText = (i) => [...i.mediaRows, i.own].some((r) => r && typeof r.text === 'string' && r.text.trim() !== '');
+  const todo = (flag('force') ? items : items.filter((i) => !alreadyArabic(i)))
+    .filter((i) => !flag('missing-only') || !hasText(i));
   const minutes = (xs) => xs.reduce((a, i) => a + (i.file.duration_seconds ?? 0), 0) / 60;
   console.log(`[videos] ${items.length} linked video files; ${items.length - todo.length} already done (Arabic transcript, or no audio track) — skipped`);
   console.log(`[videos] to transcribe: ${todo.length} — ${todo.filter((i) => i.media).length} collected reels, ${todo.filter((i) => !i.media).length} own uploads`);

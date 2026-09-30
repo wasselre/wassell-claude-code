@@ -266,7 +266,8 @@ export default function FilesPage({ forceShared = false }: Props) {
   // request whenever it changes (was one /sign-view-url per tile). `displayFiles`
   // is the search results when a search is active, else the current view.
   useEffect(() => {
-    const imageIds = displayFiles.filter((f) => f.kind === 'image').map((f) => f.id);
+    // Images → transformed thumbnail; videos + PDFs → their stored poster.
+    const imageIds = displayFiles.filter((f) => f.kind === 'image' || f.kind === 'video' || f.kind === 'pdf').map((f) => f.id);
     if (imageIds.length === 0) {
       setThumbUrls({});
       setFullUrls({});
@@ -901,8 +902,8 @@ export default function FilesPage({ forceShared = false }: Props) {
                     shared={view === 'shared' || f.uploaded_by_user_id !== currentUserId}
                     canEdit={canEditFile(f)}
                     canDelete={canDeleteFile(f)}
-                    thumbUrl={f.kind === 'image' ? thumbUrls[f.id] ?? null : undefined}
-                    fullUrl={f.kind === 'image' ? fullUrls[f.id] ?? null : undefined}
+                    thumbUrl={f.kind === 'image' || f.kind === 'video' || f.kind === 'pdf' ? thumbUrls[f.id] ?? null : undefined}
+                    fullUrl={f.kind === 'image' || f.kind === 'video' || f.kind === 'pdf' ? fullUrls[f.id] ?? null : undefined}
                     selected={selection.isSelected('file', f.id)}
                     selectionActive={selection.totalSelected > 0}
                     onSelectClick={(e) => onCardClick({ kind: 'file', id: f.id }, e)}

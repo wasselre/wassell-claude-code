@@ -14,11 +14,16 @@ import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import type { BusinessFileRow, FileDocumentTypeRow, PageLinkSummary } from '@/types';
 import { documentTypeLabel, ownerLabel, shortDate } from './labels';
 import LibraryBadges from './LibraryBadges';
+import ThumbImg from '../components/ThumbImg';
+import { formatVideoDuration } from '@/lib/files/transcripts';
 
 interface Props {
   file: BusinessFileRow;
   types: FileDocumentTypeRow[];
   links: PageLinkSummary[] | undefined;
+  /** Batch-signed by the page (image thumbnail, or a video/PDF poster). */
+  thumbUrl?: string | null;
+  fullUrl?: string | null;
   active: boolean;
   selected: boolean;
   selectionActive: boolean;
@@ -26,12 +31,13 @@ interface Props {
   onToggle: (f: BusinessFileRow, additive: boolean) => void;
 }
 
-export default function LibraryFileRow({ file, types, links, active, selected, selectionActive, onOpen, onToggle }: Props) {
+export default function LibraryFileRow({ file, types, links, thumbUrl, fullUrl, active, selected, selectionActive, onOpen, onToggle }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const users = useAppStore((s) => s.users);
   const Icon = kindIcon[file.kind];
   const accent = kindAccent[file.kind];
+  const duration = formatVideoDuration(file.duration_seconds);
 
   const linkText = links
     ? links.length === 0
@@ -60,8 +66,12 @@ export default function LibraryFileRow({ file, types, links, active, selected, s
       }`}
       aria-pressed={selected || active}
     >
-      <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${accent.bg}`}>
-        <Icon size={15} className={accent.fg} aria-hidden />
+      <span className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${accent.bg}`}>
+        {thumbUrl ? (
+          <ThumbImg src={thumbUrl} fallbackSrc={fullUrl} className="w-full h-full object-cover" />
+        ) : (
+          <Icon size={15} className={accent.fg} aria-hidden />
+        )}
       </span>
 
       <span className="min-w-0">
@@ -87,7 +97,10 @@ export default function LibraryFileRow({ file, types, links, active, selected, s
 
       <span className="text-xs text-charcoal/45 whitespace-nowrap text-end">
         {shortDate(file.created_at, isAr)}
-        <span className="block text-[11px]">{formatBytes(file.size_bytes, isAr)}</span>
+        <span className="block text-[11px]">
+          {formatBytes(file.size_bytes, isAr)}
+          {file.kind === 'video' && duration ? <span dir="ltr"> · {duration}</span> : null}
+        </span>
       </span>
     </button>
   );

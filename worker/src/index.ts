@@ -46,6 +46,7 @@ import { runImageJob, type ImageJob } from './runImageJob.js';
 import { runMigrationJob, type MigrationJob } from './runMigrationJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 import { runEnrichmentJob, type EnrichmentJob } from './runEnrichmentJob.js';
+import { ensureFileThumb } from './lib/fileThumb.js';
 import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
 import { runPortalRegistrationJob, type PortalRegistrationJob } from './runPortalRegistrationJob.js';
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
@@ -1475,6 +1476,15 @@ async function claimAndRunOneEnrichment(): Promise<boolean> {
     documentType: row.document_type,
   };
   console.log(`[worker] claimed enrichment job=${job.id} file=${job.fileId} kind=${job.kind} attempts=${job.attempts}`);
+
+  // Poster for a video / PDF (files.thumb_path) — decoration, so a failure is
+  // logged and the enrichment carries on; the tile just keeps its kind icon.
+  try {
+    const outcome = await ensureFileThumb(supabase, job);
+    if (outcome === 'written') console.log(`[worker] thumb written file=${job.fileId} kind=${job.kind}`);
+  } catch (thumbErr) {
+    console.error(`[worker] thumb FAILED file=${job.fileId} kind=${job.kind}:`, (thumbErr as Error).message);
+  }
 
   try {
     const result = await runEnrichmentJob({ supabase, env, job });

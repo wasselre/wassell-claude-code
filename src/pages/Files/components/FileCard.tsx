@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Download, Eye, FolderInput, MoreVertical, Pencil, Share2, Shield, Shrink, Trash2 } from 'lucide-react';
+import { Check, Download, Eye, FolderInput, MoreVertical, Pencil, Play, Share2, Shield, Shrink, Trash2 } from 'lucide-react';
 import type { FileRow } from '@/types';
 import { kindAccent, kindIcon, formatBytes } from '@/lib/files/format';
 import { useAppStore } from '@/stores/appStore';
 import { signViewUrl } from '@/lib/files/client';
 import TileMenu from './TileMenu';
 import ThumbImg from './ThumbImg';
+import VideoDurationBadge from '@/components/files/VideoDurationBadge';
 
 interface Props {
   file: FileRow;
@@ -132,7 +133,7 @@ export default function FileCard({
 
       {/* Thumb area */}
       <div className={`aspect-[4/3] flex items-center justify-center relative ${accent.bg}`}>
-        {file.kind === 'image' && shownThumb ? (
+        {shownThumb ? (
           <ThumbImg
             src={shownThumb}
             fallbackSrc={parentManaged ? fullUrl : null}
@@ -141,6 +142,18 @@ export default function FileCard({
           />
         ) : (
           <Icon size={40} className={accent.fg} />
+        )}
+        {file.kind === 'video' && (
+          <>
+            {shownThumb && (
+              <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-charcoal shadow">
+                  <Play size={16} className="ms-0.5" fill="currentColor" />
+                </span>
+              </span>
+            )}
+            <VideoDurationBadge seconds={file.duration_seconds} />
+          </>
         )}
         {shared && (
           <div className="absolute top-2 start-2 inline-flex items-center gap-1 text-[0.6875rem] font-bold text-white bg-charcoal/70 backdrop-blur-sm px-2 py-0.5 rounded-md">

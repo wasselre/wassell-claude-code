@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, lazy, Suspense } from 'react';
+import VideoTranscriptSection from '@/components/files/VideoTranscriptSection';
 import { useTranslation } from 'react-i18next';
 import { Check, Download, Link2, Loader2, Pencil, RefreshCw, Share2, Shield, X, Trash2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -375,7 +376,23 @@ function PreviewBody({ file, url, onDownload }: { file: FileRow; url: string; on
   }
   if (file.kind === 'video') {
     return (
-      <video src={url} controls autoPlay className="max-w-full max-h-[85vh] shadow-2xl rounded-lg" />
+      // The player, then what the video says: its short AI description and the
+      // spoken-word transcript, readable without leaving the preview.
+      <div className="flex max-h-[88vh] w-full max-w-3xl flex-col items-center gap-3 overflow-y-auto">
+        <video src={url} controls autoPlay className="max-w-full max-h-[60vh] shadow-2xl rounded-lg" />
+        <div className="w-full space-y-2 px-1">
+          {file.ai_description && (
+            <p className="text-xs leading-relaxed text-white/70" dir="auto">{file.ai_description}</p>
+          )}
+          <VideoTranscriptSection
+            fileId={file.id}
+            title={file.original_name}
+            durationSeconds={file.duration_seconds}
+            description={file.ai_description}
+            tone="dark"
+          />
+        </div>
+      </div>
     );
   }
   if (file.kind === 'audio') {
