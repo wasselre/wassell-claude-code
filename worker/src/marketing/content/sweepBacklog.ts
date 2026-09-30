@@ -405,6 +405,15 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
     }
   }
 
+  // ── stage 2c: TikTok videos whose file never arrived ──────────────────────
+  // The RPC enqueues nothing unless Apify is enabled and not paused, so this
+  // cannot spend while collection is stopped. One bounded job per account per
+  // 20 h, three attempts per video.
+  {
+    const { error } = await sb.rpc('mkt_enqueue_tiktok_redownloads', { p_max_jobs: 3 });
+    if (error) throw new Error(`sweep: tiktok redownload enqueue failed: ${error.message}`);
+  }
+
   // ── stage 3: full processing, once the evidence is on hand ────────────────
   // Eligible = media stored AND (visual text present OR nothing to OCR). The
   // second arm covers video-only posts, whose evidence is the transcript.

@@ -445,3 +445,51 @@ export async function collectViaApify(sb: SupabaseClient, input: CollectInput): 
   };
   return { posts, runId: meta.runId, rawItems: [...meta.rawItems, ...downloadRaw], cost, warnings };
 }
+
+export interface RedownloadInput {
+  handle: string;
+  /** TikTok post links whose video file we never received. */
+  postUrls: string[];
+  timeoutMs?: number;
+  /**
+   * Run even though the provider is paused. ONLY for a recovery the operator
+   * explicitly approved while regular collection is stopped — the standing
+   * sweep never sets it (mkt_enqueue_tiktok_redownloads refuses while paused).
+   */
+  operatorApproved?: boolean;
+}
+
+/**
+ * The TikTok download pass on its own, for videos collected earlier whose file
+ * never arrived (the pass only ever ran for the NEW videos of a run, so a miss
+ * was permanent). No metadata pass, no date window: exactly these links.
+ * The run's storage holds the files until our copy exists — it is returned in
+ * pending_storage_runs so the storage sweep cleans it up like any download run.
+ */
+export async function redownloadTikTokVideos(sb: SupabaseClient, input: RedownloadInput): Promise<ApifyCollectResult> {
+  const sourceType = sourceTypeFor('tiktok');
+  const cfg = await readActorConfig(sb, sourceType);
+  if (!cfg) throw new ProviderError(`No actor configured for ${sourceType}`, 'config_invalid');
+  if (!cfg.isEnabled) throw new ProviderError(`Actor for ${sourceType} is disabled (vet + enable in mkt_actor_configs)`, 'config_invalid');
+  const parser = PARSERS[cfg.resultParser];
+  if (!parser) throw new ProviderError(`No parser named "${cfg.resultParser}"`, 'config_invalid');
+  if (!input.operatorApproved) await assertProviderNotPaused(sb);
+  if (input.postUrls.length === 0) return { posts: [], runId: '', rawItems: [], cost: {}, warnings: [] };
+
+  const dl = await runApifyActor(cfg.actorId, buildInput(sourceType, input.handle, input.postUrls.length, { postUrls: input.postUrls }), input.postUrls.length, input.timeoutMs);
+  const posts = dl.rawItems.map((it) => parser(it, input.handle)).filter((p): p is NormalizedContentPost => p !== null);
+  const warnings: string[] = [];
+  // Match on the video id, not the URL string: TikTok hands links back in more
+  // than one spelling, and a string mismatch would report a delivered video as lost.
+  const returned = new Set(posts.map((p) => p.externalId));
+  const videoId = (u: string): string => /\/video\/(\d+)/.exec(u)?.[1] ?? u;
+  const missing = input.postUrls.filter((u) => !returned.has(videoId(u)));
+  if (missing.length > 0) warnings.push(`re-download returned nothing for ${missing.length} of ${input.postUrls.length} video(s) (deleted or private?): ${missing.slice(0, 5).join(', ')}`);
+  const cost: Record<string, unknown> = {
+    ...dl.cost,
+    runs: [{ run_id: dl.runId, pass: 'redownload', items: dl.rawItems.length, usage_total_usd: dl.cost.usage_total_usd ?? null }],
+    storage_deleted_runs: [],
+    pending_storage_runs: [dl.runId],
+  };
+  return { posts, runId: dl.runId, rawItems: dl.rawItems, cost, warnings };
+}

@@ -11,8 +11,7 @@ import {
   type NormalizedContentPost, type NormalizedMetrics, type ProviderKey,
 } from './providers.js';
 import {
-  collectViaApify, incrementalWindow, apifyBudgetState, decideBudgetAction, ProviderPausedError,
-} from './apifyLifecycle.js';
+  collectViaApify, incrementalWindow, apifyBudgetState, decideBudgetAction, ProviderPausedError, redownloadTikTokVideos } from './apifyLifecycle.js';
 import { collectMetaAdsByPage, discoverAdvertiser } from './metaAdsLifecycle.js';
 import { storeCreative } from './creativeStore.js';
 import { normalizeLandingUrl, campaignSignature, urlKey, insightKey } from './adIntel.js';
@@ -195,6 +194,42 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         stats.received = 1;
       } else {
         stats.errors.push(`discover not implemented for ${job.provider} (handle already known)`);
+      }
+    } else if (job.kind === 'backfill' && job.params.mode === 'tiktok_redownload') {
+      // Recover TikTok videos whose file never arrived (see
+      // 2026-09-30_05_tiktok_video_redownload.sql). Only the download pass, only
+      // for this account's missing videos, capped per video at 3 attempts.
+      if (job.provider !== 'apify' || acct!.platform !== 'tiktok') throw new ProviderError('tiktok_redownload needs an Apify TikTok account', 'config_invalid');
+      const want = typeof job.params.limit === 'number' ? Math.min(50, Math.max(1, job.params.limit)) : 25;
+      const { data: missingRows, error: missErr } = await sb.rpc('mkt_tiktok_videos_missing', { p_account: acct!.id, p_limit: want, p_max_attempts: 3 });
+      if (missErr) throw new ProviderError(`tiktok_redownload: list missing videos: ${missErr.message}`, 'unavailable');
+      const missing = (missingRows ?? []) as Array<{ post_id: string; external_id: string; post_url: string }>;
+      stats.received = missing.length;
+      if (missing.length > 0) {
+        const result = await redownloadTikTokVideos(sb, {
+          handle: acct!.handle as string, postUrls: missing.map((m) => m.post_url),
+          operatorApproved: job.params.operator_approved === true,
+        });
+        apifyCost = result.cost;
+        for (const w of result.warnings) stats.errors.push(`apify: ${w}`);
+        // The attempt is spent whether or not a file came back — that is what
+        // stops a deleted video being re-bought on every sweep.
+        const { error: markErr } = await sb.rpc('mkt_tiktok_redownload_mark', { p_post_ids: missing.map((m) => m.post_id) });
+        if (markErr) stats.errors.push(`tiktok_redownload: could not record attempts: ${markErr.message}`);
+
+        const { index, matchOpts } = await attributionScope(sb, orgId);
+        const wanted = new Set(missing.map((m) => m.external_id));
+        for (const post of result.posts) {
+          if (!wanted.has(post.externalId)) continue; // never ingest something we did not ask for
+          try {
+            const id = await ingestPost(ctx, post, orgId, acct!.id as string, runId, index, matchOpts, minIntervalHours, stats);
+            // FULL processing, not media_only: the post was processed long ago
+            // without its video, so it needs the file stored, a transcript, its
+            // frames queued and its project match redone — and the file link
+            // expires, so it goes ahead of routine work.
+            if (id) await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: id, organization_id: orgId, from: 'tiktok_redownload' }, p_priority: 20, p_requested_by: null, p_fallback_of: null });
+          } catch (e) { stats.errors.push(`${post.externalId}: ${e instanceof Error ? e.message : String(e)}`); }
+        }
       }
     } else if (job.kind === 'incremental' || job.kind === 'backfill') {
       const { index, matchOpts } = await attributionScope(sb, orgId);

@@ -233,6 +233,20 @@ that study the corpus (how competitors write posts, script reels, price offers).
 3. **Study one competitor** — click a competitor's name on any entry → the list
    filters to their content; combine with a shelf to see, e.g., their walkthroughs.
 
+### TikTok videos that never got their file (2026-09-30)
+
+TikTok is collected in two passes — post list, then a download pass for the NEW
+videos of that run. A video the download pass missed was recorded as failed and
+never retried: 175 of 548 TikTok videos (Riva 124 of 236), 141 of them from the
+first bulk pull in July. A `backfill` job with `mode: 'tiktok_redownload'`
+re-runs only the download pass for an account's missing videos
+(`redownloadTikTokVideos`), then sends each recovered post through full
+processing (store → transcript → frames → project match). Each video gets at
+most 3 attempts (`mkt_content_media.redownload_attempts`) — a deleted video is
+not re-bought forever. The sweep's stage 2c (`mkt_enqueue_tiktok_redownloads`)
+keeps this self-healing, one bounded job per account per 20 h, and enqueues
+nothing while Apify is disabled or paused.
+
 ### Video frames (2026-09-30)
 
 A stored video's on-screen text — price, offer and phone overlays — is in its
