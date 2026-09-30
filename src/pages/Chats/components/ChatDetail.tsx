@@ -517,7 +517,8 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     matchedOfficerName,
     recordId,
     aiManaged,
-    aiSwitch,
+    // The agent answers CLIENT chats only — no switch where it never speaks.
+    aiSwitch: linkedClient ? aiSwitch : null,
     onOpenProjectsBrowser: () => setShowProjectsBrowser(true),
     onOpenClient: openClientProfile,
     onOpenContact: openContactRecord,
@@ -770,7 +771,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           would be rejected on the way out (see conversationIdentity.ts).
           Edge-to-edge and pinned at the bottom on mobile; inset on desktop. */}
       <div className="px-0 pb-0 md:px-3 md:pb-3 shrink-0 safe-bottom md:pb-3">
-        {aiSwitch && chatWid && <AgentQuestionsCard chatWid={chatWid} isAr={isAr} messageCount={threadCount} />}
+        {aiSwitch && linkedClient && chatWid && <AgentQuestionsCard chatWid={chatWid} isAr={isAr} messageCount={threadCount} />}
         {identity.status === 'ready' ? (
           <Composer identity={identity} />
         ) : (

@@ -33,7 +33,7 @@ import { enqueueAiReply } from '../_lib/aiSend.js';
 import { sendProjectViaAiFlow } from '../_lib/aiSendProject.js';
 import { resolveProjectSheet } from '../_lib/projectSheet.js';
 import { hasDirectionWord } from '../_lib/salesAgent/decide.js';
-import { agentAllowedFor, startAgentConversation, enqueueAgentTurn, activeAgentConversation, loadAgentSettings, agentScopeAll, agentMayStart } from '../_lib/salesAgent/conversation.js';
+import { agentAllowedFor, startAgentConversation, enqueueAgentTurn, activeAgentConversation, loadAgentSettings, agentScopeAll, agentMayStart, chatIsClient } from '../_lib/salesAgent/conversation.js';
 import { uuidV5FromWidSync } from '../_lib/chatIngest.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
@@ -412,7 +412,9 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   // replied (operator choice). Rollout: agent_mode off / test (allowlisted
   // phones) / on; the global kill switch always wins.
   const agentCfg = await loadAgentSettings(supa);
-  const agentAllowed = agentAllowedFor(agentCfg, body.phone);
+  // Clients only: a contact, a project officer, an advertiser or an unknown
+  // number never gets the agent (they keep the basic bot's handling below).
+  const agentAllowed = agentAllowedFor(agentCfg, body.phone) && await chatIsClient(supa, chatWid);
   if (agentAllowed && await activeAgentConversation(supa, chatWid)) {
     await enqueueAgentTurn(supa, chatWid);
     return jsonRes(nodeRes, 200, { agent: 'turn_queued' });

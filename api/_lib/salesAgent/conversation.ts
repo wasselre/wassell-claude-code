@@ -135,6 +135,29 @@ export async function agentMayStart(svc: SupabaseClient, chatWid: string, _s: Ag
   return (data as { ai_paused?: unknown } | null)?.ai_paused !== true;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Is this a CLIENT chat? The agent answers clients only (operator rule,
+ * 2026-09-30) — never a saved contact, a project officer, an advertiser, or a
+ * number we have no client for. Same definition as the chat list's «العملاء»
+ * tab: the chat carries a client link, or its phone matches a client record
+ * (`find_client_id_by_phone`, the matcher the rest of the server uses). Fails
+ * CLOSED: a read error means the agent does not take the chat.
+ */
+export async function chatIsClient(svc: SupabaseClient, chatWid: string): Promise<boolean> {
+  const { data, error } = await svc.from('records').select('data->client_link').eq('id', uuidV5FromWidSync(chatWid)).maybeSingle();
+  if (error) { console.error('[salesAgent] chat read failed (treating as not a client):', error.message); return false; }
+  const link = (data as { client_link?: unknown } | null)?.client_link;
+  const linked = typeof link === 'string' ? link : Array.isArray(link) && typeof link[0] === 'string' ? link[0] : '';
+  if (UUID_RE.test(linked)) return true;
+  const digits = chatWid.split('@')[0] ?? '';
+  if (!/^\d{8,15}$/.test(digits)) return false;
+  const { data: found, error: fErr } = await svc.rpc('find_client_id_by_phone', { p_phone: `+${digits}` });
+  if (fErr) { console.error('[salesAgent] client match failed (treating as not a client):', fErr.message); return false; }
+  return typeof found === 'string' && UUID_RE.test(found);
+}
+
 /** Queue a turn ~8 s out; further messages in the burst push it (≤ 60 s). */
 export async function enqueueAgentTurn(svc: SupabaseClient, chatWid: string): Promise<void> {
   const { error } = await svc.rpc('wa_agent_turn_enqueue', { p_chat_wid: chatWid, p_delay_s: 8 });

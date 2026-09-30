@@ -16,7 +16,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
-import { agentAllowedFor, loadAgentSettings, startAgentConversation } from '../_lib/salesAgent/conversation.js';
+import { agentAllowedFor, chatIsClient, loadAgentSettings, startAgentConversation } from '../_lib/salesAgent/conversation.js';
 
 export const config = { runtime: 'edge' };
 
@@ -58,7 +58,7 @@ export default async function handler(req: Request): Promise<Response> {
     try {
       const settings = await loadAgentSettings(svc);
       const phone = typeof d.phone === 'string' ? d.phone : `+${chatWid.split('@')[0]}`;
-      if (agentAllowedFor(settings, phone)) {
+      if (agentAllowedFor(settings, phone) && await chatIsClient(svc, chatWid)) {
         const { data: last, error: lErr } = await svc.from('chat_messages')
           .select('flow, body, transcript').eq('chat_wid', chatWid).order('date', { ascending: false }).limit(1).maybeSingle();
         if (lErr) throw new Error(lErr.message);
