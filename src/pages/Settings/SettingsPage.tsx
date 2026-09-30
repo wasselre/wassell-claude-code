@@ -6,7 +6,7 @@ import {
   Hammer, Zap, Languages,
   Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle,
-  Globe, LayoutTemplate, FileText, MapPin, Activity, Film, Wallet, Compass,
+  Globe, FileText, MapPin, Activity, Film, Wallet, Compass,
 } from 'lucide-react';
 
 // Settings sections (architecture cleanup D40 System Administration area).
@@ -160,10 +160,10 @@ const CARDS: SettingsCard[] = [
     adminOnly: true,
   },
   {
-    titleAr: 'إعدادات الموقع',
-    titleEn: 'Website Settings',
-    descAr: 'محتوى الموقع العام، معلومات التواصل، وتخصيص بطاقة الخريطة',
-    descEn: 'Public site copy, contact info, and map card customization',
+    titleAr: 'الموقع الإلكتروني',
+    titleEn: 'Website',
+    descAr: 'المشاريع على الموقع وصور صفحاتها ورقم الواتساب، ومحتوى الموقع العام ومعلومات التواصل',
+    descEn: 'The projects on the site with their page photos and WhatsApp number, plus site copy and contact info',
     icon: Globe,
     color: '#B8734F',
     bg: '#B8734F14',
@@ -193,18 +193,6 @@ const CARDS: SettingsCard[] = [
     bg: '#8E4E3A14',
     route: '/settings/document-templates',
     section: 'documents',
-    adminOnly: true,
-  },
-  {
-    titleAr: 'تفاصيل المشاريع',
-    titleEn: 'Project Details Pages',
-    descAr: 'صورة الواجهة ومعرض الصور ورقم الواتساب لصفحة كل مشروع على الموقع',
-    descEn: 'Hero image, photo gallery and WhatsApp number for each project page on the website',
-    icon: LayoutTemplate,
-    color: '#C4754A',
-    bg: '#C4754A14',
-    route: '/settings/project-details',
-    section: 'website',
     adminOnly: true,
   },
   {

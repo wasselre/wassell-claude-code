@@ -279,7 +279,7 @@ export function WebsiteTab({
             </a>
             <button
               type="button"
-              onClick={() => navigate(`/settings/project-details/${record.id}`)}
+              onClick={() => navigate(`/settings/website?tab=projects&project=${record.id}`)}
               className="inline-flex items-center gap-1.5 text-xs font-bold text-copper hover:underline"
             >
               <ImageIcon size={13} /> {isAr ? 'صور الصفحة ورقم الواتساب' : 'Page photos and WhatsApp number'}
@@ -312,7 +312,7 @@ export function WebsiteTab({
       </div>
 
       <Button variant="secondary" onClick={() => navigate('/settings/website')}>
-        <Globe size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'الإدارة في إعدادات الموقع' : 'Manage in Website Management'}
+        <Globe size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'صفحة إدارة الموقع' : 'Website management page'}
       </Button>
     </div>
   );

@@ -34,9 +34,7 @@ const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
 const MenuArrangementPage = lazy(() => import('@/pages/Settings/MenuArrangementPage'));
 const WhatsAppSettingsPage = lazy(() => import('@/pages/Settings/WhatsAppSettingsPage'));
 const DocumentTemplatesPage = lazy(() => import('@/pages/DocumentTemplates/DocumentTemplatesPage'));
-const WebsiteSettingsPage = lazy(() => import('@/pages/Settings/WebsiteSettingsPage'));
-const ProjectDetailsListPage = lazy(() => import('@/pages/Settings/ProjectDetailsListPage'));
-const ProjectDetailsBridgePage = lazy(() => import('@/pages/Settings/ProjectDetailsBridgePage'));
+const WebsitePage = lazy(() => import('@/pages/Settings/WebsitePage'));
 const ChatsSplitPage = lazy(() => import('@/pages/Chats/ChatsSplitPage'));
 const ChatTemplateFormPage = lazy(() => import('@/pages/Chats/ChatTemplateFormPage'));
 import RetiredAssistantNotice from '@/components/RetiredAssistantNotice';
@@ -280,15 +278,22 @@ function RecordListDispatcher() {
   // Belt-and-suspenders alongside the Sidebar `SETTINGS_ONLY_MODEL_NAMES`
   // filter — covers direct URL hits, old bookmarks, and shared links.
   if (modelName === 'site_settings') {
-    return <Navigate to="/settings/website" replace />;
+    return <Navigate to="/settings/website?tab=general" replace />;
   }
   // project_details list view is meaningless on its own — the records are
   // sidecars of all_projects, so picking by project is what makes sense.
   // Punt to the project picker (Settings card entry point).
   if (modelName === 'project_details') {
-    return <Navigate to="/settings/project-details" replace />;
+    return <Navigate to="/settings/website?tab=projects" replace />;
   }
   return <RecordListPage />;
+}
+
+// /settings/project-details/:projectId was its own page until 2026-09-30; the
+// project's photos are now edited in a dialog on the Website page.
+function ProjectPageRedirect() {
+  const { projectId } = useParams();
+  return <Navigate to={`/settings/website?tab=projects&project=${encodeURIComponent(projectId ?? '')}`} replace />;
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -524,9 +529,10 @@ export default function App() {
           <Route path="/settings/whatsapp-numbers" element={<Navigate to="/settings/whatsapp?tab=numbers" replace />} />
           <Route path="/settings/whatsapp-ai" element={<Navigate to="/settings/whatsapp?tab=ai" replace />} />
           <Route path="/settings/document-templates" element={<RequireAdmin><DocumentTemplatesPage /></RequireAdmin>} />
-          <Route path="/settings/website" element={<RequireAdmin><WebsiteSettingsPage /></RequireAdmin>} />
-          <Route path="/settings/project-details" element={<RequireAdmin><ProjectDetailsListPage /></RequireAdmin>} />
-          <Route path="/settings/project-details/:projectId" element={<RequireAdmin><ProjectDetailsBridgePage /></RequireAdmin>} />
+          <Route path="/settings/website" element={<RequireAdmin><WebsitePage /></RequireAdmin>} />
+          {/* Old two-page URLs — both now live on the one Website page. */}
+          <Route path="/settings/project-details" element={<Navigate to="/settings/website?tab=projects" replace />} />
+          <Route path="/settings/project-details/:projectId" element={<ProjectPageRedirect />} />
           <Route path="/logs" element={<RequireAdmin><LogsPage /></RequireAdmin>} />
           {/* Internal review of public job applications (admin-only; RLS gates
               the data too). */}

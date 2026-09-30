@@ -34,6 +34,14 @@ interface RecordFormModalProps {
    * Preferences). Omit for modal-only usage (the create-record buttons).
    */
   openInPageHref?: string;
+  /** Replaces the default "Edit record — <model>" heading. */
+  title?: string;
+  /**
+   * Render the form in the page flow (sections + a Save bar) instead of inside
+   * a dialog. Used where a record IS a settings tab — the Website page's
+   * general settings. Saving keeps the form open; `onClose` is not called.
+   */
+  inline?: boolean;
 }
 
 /**
@@ -54,6 +62,8 @@ export default function RecordFormModal({
   onClose,
   onSaved,
   openInPageHref,
+  title: titleOverride,
+  inline = false,
 }: RecordFormModalProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -146,9 +156,9 @@ export default function RecordFormModal({
 
   if (!model) return null;
 
-  const title = isNew
+  const title = titleOverride ?? (isNew
     ? `${t('records.new_record')} — ${isAr ? model.label_ar : model.label_en}`
-    : `${t('records.edit_record')} — ${isAr ? model.label_ar : model.label_en}`;
+    : `${t('records.edit_record')} — ${isAr ? model.label_ar : model.label_en}`);
 
   const handleFieldChange = (fieldName: string, value: unknown) => {
     setFormData((prev) => {
@@ -222,7 +232,7 @@ export default function RecordFormModal({
       // The store already toasted the underlying error if any; we close
       // the modal because the local cache reflects the change.
       onSaved?.(id);
-      onClose();
+      if (!inline) onClose();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       addToast(isAr ? `فشل الحفظ: ${msg}` : `Save failed: ${msg}`, 'error');
@@ -230,6 +240,63 @@ export default function RecordFormModal({
       setSaving(false);
     }
   };
+
+  const sections = (
+    <>
+      {summaryLoading && !resolvedRecord && (
+        <div className="flex items-center justify-center gap-2 py-10 text-sm text-charcoal/55">
+          <Loader2 size={16} className="animate-spin text-copper" />
+          {isAr ? 'جارٍ تحميل التفاصيل…' : 'Loading details…'}
+        </div>
+      )}
+      {visibleSections.map((section) => (
+        <SectionBlock
+          key={section.id}
+          section={section}
+          formData={formData}
+          onChange={handleFieldChange}
+          currentModel={model}
+          getFieldPermission={resolveFieldPermission}
+          mirrorEdits={{}}
+          onMirrorFieldChange={() => {
+            /* noop — modal doesn't support mirrored-section sync-back in v1 */
+          }}
+        />
+      ))}
+    </>
+  );
+
+  // Duplicate-check warning — stacks above the dialog (z-[60] > Modal's z-50).
+  const duplicateWarning = duplicateMatch && (
+    <DuplicateWarningModal
+      model={model}
+      match={duplicateMatch}
+      onEdit={() => setDuplicateMatch(null)}
+      onOpenExisting={() => {
+        const target = duplicateMatch.record.id;
+        setDuplicateMatch(null);
+        onClose();
+        navigate(`/model/${model.name}/${target}`);
+      }}
+    />
+  );
+
+  if (inline) {
+    return (
+      <div>
+        <div className="space-y-6">{sections}</div>
+        {/* Floating, not sticky: the app shell's overflow-x-hidden wrapper is the
+            scroll container, so `sticky` would pin to the end of a very long form. */}
+        <div className="fixed bottom-5 end-6 z-30 rounded-full shadow-lg">
+          <Button onClick={() => void handleSave()} disabled={saving}>
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+            {t('common.save')}
+          </Button>
+        </div>
+        {duplicateWarning}
+      </div>
+    );
+  }
 
   return (
     <Modal
@@ -260,42 +327,10 @@ export default function RecordFormModal({
       }
     >
       <div className="space-y-6 max-h-[calc(100vh-12rem)] overflow-y-auto pe-2">
-        {summaryLoading && !resolvedRecord && (
-          <div className="flex items-center justify-center gap-2 py-10 text-sm text-charcoal/55">
-            <Loader2 size={16} className="animate-spin text-copper" />
-            {isAr ? 'جارٍ تحميل التفاصيل…' : 'Loading details…'}
-          </div>
-        )}
-        {visibleSections.map((section) => (
-          <SectionBlock
-            key={section.id}
-            section={section}
-            formData={formData}
-            onChange={handleFieldChange}
-            currentModel={model}
-            getFieldPermission={resolveFieldPermission}
-            mirrorEdits={{}}
-            onMirrorFieldChange={() => {
-              /* noop — modal doesn't support mirrored-section sync-back in v1 */
-            }}
-          />
-        ))}
+        {sections}
       </div>
 
-      {/* Duplicate-check warning — stacks above this modal (z-[60] > Modal's z-50). */}
-      {duplicateMatch && (
-        <DuplicateWarningModal
-          model={model}
-          match={duplicateMatch}
-          onEdit={() => setDuplicateMatch(null)}
-          onOpenExisting={() => {
-            const target = duplicateMatch.record.id;
-            setDuplicateMatch(null);
-            onClose();
-            navigate(`/model/${model.name}/${target}`);
-          }}
-        />
-      )}
+      {duplicateWarning}
     </Modal>
   );
 }
