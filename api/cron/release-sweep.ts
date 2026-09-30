@@ -27,19 +27,38 @@
  * publication that already has a live bundle post unless the prior attempt is
  * dead, so a double tick cannot create a second live post.
  *
+ * Runs on Node with a real time budget (2026-09-30). It was an edge function,
+ * which Vercel stops 25 seconds after it starts — and ONE handoff (bundle
+ * fetching the file, then creating the post) takes 8–20 s. Every tick with more
+ * than one release to send returned 504, and a stop landing between "post
+ * created" and "post recorded" leaves a live post this database does not know,
+ * which the next tick would create again. No handoff STARTS after
+ * TIME_BUDGET_MS, so the one in flight always has room to finish.
+ *
+ * A handoff that failed is retried a few times and then left for a person — the
+ * count and the stop live in `mos_release_open_task` / `mos_release_due`
+ * (2026-09-30). Before that a failed release was re-sent every tick for as long
+ * as it stayed due, re-uploading its file each time: one night of that used up
+ * the month's upload quota on bundle.social.
+ *
  * Auth: Bearer $CRON_SECRET or ?secret= for smoke tests. Always 200 so Vercel
  * never marks the cron failed; the structured body carries every outcome and
  * failures are ALSO console.error-ed.
  */
+import type { IncomingMessage, ServerResponse } from 'http';
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { loadBundleConfig } from '../_lib/marketing/bundleSocial.js';
 import { publishPublication } from '../_lib/marketing/publishRelease.js';
 
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'nodejs', maxDuration: 300 };
 
 /** Never hand off more than this in one tick — a backlog drains over ticks
- *  instead of hammering bundle.social (and blowing the edge time budget). */
+ *  instead of hammering bundle.social. */
 const MAX_PER_TICK = 10;
+
+/** No handoff starts after this. One handoff takes up to ~20 s, so the last
+ *  one begun still ends well inside the 300 s limit and before the next tick. */
+const TIME_BUDGET_MS = 200_000;
 
 /**
  * A release this far past its moment is NOT posted automatically.
@@ -68,7 +87,26 @@ function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
-export default async function handler(req: Request): Promise<Response> {
+function nodeToWebRequest(nodeReq: IncomingMessage): Request {
+  const host = (nodeReq.headers.host as string | undefined) ?? 'localhost';
+  const url = new URL(nodeReq.url ?? '/', `https://${host}`);
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(nodeReq.headers)) {
+    if (typeof v === 'string') headers.set(k, v);
+    else if (Array.isArray(v)) headers.set(k, v.join(', '));
+  }
+  // The cron takes no body — GET and POST are read the same way.
+  return new Request(url.toString(), { method: 'GET', headers });
+}
+
+export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
+  const res = await run(nodeToWebRequest(nodeReq));
+  nodeRes.statusCode = res.status;
+  nodeRes.setHeader('content-type', 'application/json');
+  nodeRes.end(await res.text());
+}
+
+async function run(req: Request): Promise<Response> {
   const startedAt = Date.now();
 
   const expected = process.env.CRON_SECRET;
@@ -119,7 +157,9 @@ export default async function handler(req: Request): Promise<Response> {
   const candidates = ((due.data as DueRow[] | null) ?? [])
     .filter((r) => r.automatable === true)
     // Something already went wrong on this one and a person has been asked;
-    // do not race them.
+    // do not race them. (Only ever set while publishing TASKS are on. With
+    // them off — the live setting — the stop is `mos_release_due` no longer
+    // offering a release whose handoff has failed too many times.)
     .filter((r) => r.open_task_id === null);
 
   const stale = candidates.filter(
@@ -145,15 +185,26 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   let published = 0;
+  let refused = 0;
+  let notStarted = 0;
   const failures: Array<{ release_id: string; platform: string; error: string }> = [];
 
-  for (const r of rows) {
+  for (const [i, r] of rows.entries()) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      // Out of time: the rest stay due and the next tick takes them. Said out
+      // loud — a quiet short tick would read as "nothing left to send".
+      notStarted = rows.length - i;
+      console.error('[release-sweep] time budget reached —', notStarted, 'release(s) left for the next tick');
+      break;
+    }
     let ok = false;
+    let wasRefused = false;
     let message = '';
     try {
       const res = await publishPublication(sb, cfg, r.release_id);
       ok = res.status >= 200 && res.status < 300;
       if (!ok) {
+        wasRefused = res.status === 422;
         const parsed = await res.clone().json().catch(() => null) as { error?: unknown } | null;
         message = typeof parsed?.error === 'string' ? parsed.error : `HTTP ${res.status}`;
       }
@@ -166,8 +217,22 @@ export default async function handler(req: Request): Promise<Response> {
       continue;
     }
 
+    if (wasRefused) {
+      // The material rule or the platform rulebook said no, and has ALREADY
+      // recorded why on the release (still in production, not approved, the
+      // approved files changed, …). That is not a failed handoff: nothing was
+      // uploaded, asking again costs nothing, and it clears itself the moment
+      // the content is approved. So it is not relabelled `publish_failed` —
+      // that reason is counted and stops the retries after a few attempts,
+      // which would strand a post that was merely approved late.
+      refused += 1;
+      continue;
+    }
+
     // Loud, and turned into visible work. A release that could not be handed
-    // off must never sit silently in `planned`.
+    // off must never sit silently in `planned`. Each call is counted by the
+    // database; after `planning.release_max_attempts` the release stops being
+    // offered and waits for «انشر الآن» or a new time.
     console.error('[release-sweep] automatic publish failed', r.release_id, r.platform, message);
     failures.push({ release_id: r.release_id, platform: r.platform, error: message });
     const opened = await sb.rpc('mos_release_open_task', {
@@ -185,9 +250,11 @@ export default async function handler(req: Request): Promise<Response> {
     handed_off: published,
     failed: failures.length,
     failures,
+    refused_not_ready: refused,
     too_stale_to_post: stale.length,
     stale_hours: staleHours,
     capped: rows.length === MAX_PER_TICK,
+    left_for_next_tick: notStarted,
   };
   out.ms = Date.now() - startedAt;
   return json(out, 200);

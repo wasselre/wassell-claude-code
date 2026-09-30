@@ -96,6 +96,13 @@ export interface PreflightOptions {
    * the SPA checklist and `releaseActions.requirements` are unchanged.
    */
   captionRequired?: boolean;
+  /**
+   * The release's destination (added 2026-09-30). An Instagram STORY is its own
+   * surface with its own shape — exactly one file, a video of at most 60 s — and
+   * it is sent as `type: 'STORY'` by `buildPlatformData`. Omitted / 'feed' =
+   * the feed rules (POST / REEL), which is every caller before this existed.
+   */
+  placement?: 'feed' | 'story' | null;
 }
 
 /** Caption ceilings per platform (bundle "Text & Character Limits" table).
@@ -143,8 +150,9 @@ export function preflightPublish(
  * with no issues (manual path).
  *
  * Shape rules (mirror buildPlatformData — keep in sync):
- *   instagram  1 video → REEL; anything else → POST (carousel 1–10, mixed
- *              images+videos allowed).
+ *   instagram  placement 'story' → STORY: exactly 1 file, video ≤60 s / ≤100MB.
+ *              Otherwise 1 video → REEL; anything else → POST (carousel 1–10,
+ *              mixed images+videos allowed).
  *   tiktok     exactly 1 video → VIDEO; 1–10 images → Photo Mode (JPG/JPEG/
  *              WebP ONLY — PNG is rejected — ≤20MB each); mixing blocked.
  *   snapchat   exactly 1 file (image or MP4 video).
@@ -203,7 +211,14 @@ export function preflightPublishSet(
   const images = assets.filter((a) => !isVideoKind(a.kind));
   const n = assets.length;
 
-  if (platform === 'instagram' && n > 10) {
+  // An Instagram STORY takes exactly one file. Said here, before upload, because
+  // the payload builder refuses the set outright rather than quietly turning a
+  // story into a feed carousel.
+  const igStory = platform === 'instagram' && opts?.placement === 'story';
+  if (igStory && n > 1) {
+    block(`ستوري انستقرام يقبل ملفًا واحدًا فقط — المحدد ${n}.`,
+      `An Instagram Story takes exactly one file — ${n} selected.`);
+  } else if (platform === 'instagram' && n > 10) {
     block(`كاروسيل انستقرام يقبل ١٠ ملفات كحد أقصى — المحدد ${n}.`,
       `Instagram carousels max out at 10 files — ${n} selected.`);
   }
@@ -223,8 +238,9 @@ export function preflightPublishSet(
       `Snapchat Stories take exactly one file — ${n} selected.`);
   }
 
-  // Is this IG set a Reel (single video) or a feed post/carousel?
-  const igIsReel = platform === 'instagram' && n === 1 && videos.length === 1;
+  // Is this IG set a Reel (single video) or a feed post/carousel? A story is
+  // neither — its single video stays a story.
+  const igIsReel = platform === 'instagram' && !igStory && n === 1 && videos.length === 1;
 
   /* ── per-file rules ──────────────────────────────────────────────── */
   let anySizeUnknown = false;
@@ -253,7 +269,22 @@ export function preflightPublishSet(
     }
 
     if (platform === 'instagram') {
-      if (video) {
+      if (video && igStory) {
+        // Story video: ≤60 s and ≤100MB (bundle "Platform Limits").
+        if (size !== null && size > 100 * MB) {
+          block(`${at}الفيديو ${fmtMB(size)} — حد ستوري انستقرام 100MB.`,
+            `${atEn}video is ${fmtMB(size)} — the Instagram Story cap is 100MB.`);
+        }
+        if (dur !== null) {
+          if (dur > 60) {
+            block(`${at}الفيديو ${fmtDur(dur)} — ستوري انستقرام يقبل ٦٠ ثانية كحد أقصى.`,
+              `${atEn}video is ${fmtDur(dur)} — Instagram Stories max out at 60s.`);
+          }
+        } else {
+          warn(`${at}لم نتحقق من مدة الفيديو (غير مسجلة) — ستوري انستقرام يقبل ٦٠ ثانية كحد أقصى.`,
+            `${atEn}video duration is not recorded — Instagram Stories max out at 60s.`);
+        }
+      } else if (video) {
         // Reel or carousel video item: 3s–15min, ≤45Mbps bitrate.
         if (dur !== null) {
           if (dur < 3) block(`${at}الفيديو أقصر من ٣ ثوانٍ — حد انستقرام الأدنى.`, `${atEn}video is under 3s — Instagram’s minimum.`);

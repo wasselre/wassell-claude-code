@@ -43,7 +43,7 @@
 import type { SupabaseClient, PostgrestError } from '@supabase/supabase-js';
 import {
   type BundleConfig, BundleApiError, isBundlePlatform, platformAcceptsKind,
-  buildPlatformData, uploadFromUrl, createPost, deletePost,
+  buildPlatformData, resolvePostDate, uploadFromUrl, createPost, deletePost,
 } from './bundleSocial.js';
 import {
   preflightPublishSet, isRenderableImage, RENDITION_BOX,
@@ -122,6 +122,10 @@ export async function publishPublication(
   const slotIds = material.mode === 'managed' ? material.assetIds : null;
   const approvedCaption = material.mode === 'managed' ? material.caption : null;
   const captionRequired = material.mode === 'managed' ? material.captionRequired : false;
+  // The destination decides the SURFACE (feed post vs story), so it travels to
+  // the rulebook and to the platform payload. A legacy release has none and
+  // keeps the old shape (POST / REEL by file).
+  const placement = material.mode === 'managed' ? material.variant : null;
 
   // The ORDERED file set. MANAGED: the one design slot the destination names.
   // LEGACY: asset_ids (carousel) or the single asset_id off the row.
@@ -191,7 +195,7 @@ export async function publishPublication(
     platform,
     assets.map((a) => ({ ...a, rendered: isRenderableImage(a) })),
     finalCaption,
-    { captionRequired },
+    { captionRequired, placement },
   );
   const blockers = flight.issues.filter((i) => i.level === 'block');
   if (blockers.length > 0) {
@@ -255,11 +259,11 @@ export async function publishPublication(
 
   // Schedule at the slot when it is safely in the future; otherwise post
   // ~now (bundle needs a valid future-ish postDate — a minute's lead).
-  const now = Date.now();
-  const schedMs = typeof pub.scheduled_at === 'string' ? Date.parse(pub.scheduled_at) : NaN;
-  const postDate = new Date(
-    Number.isFinite(schedMs) && schedMs > now + 60_000 ? schedMs : now + 60_000,
-  ).toISOString();
+  // The slot is `due_at` — COALESCE(scheduled_at, planned_at). Reading only
+  // `scheduled_at` (until 2026-09-30) missed every release the month plan made:
+  // those carry `planned_at` alone, so the sweep — which picks a release up to
+  // 15 minutes ahead — would have posted each one "now", up to 14 minutes early.
+  const postDate = resolvePostDate(pub.due_at ?? pub.scheduled_at, Date.now());
 
   // Retry path: clear the dead attempt on bundle's side first so the
   // dashboard doesn't accumulate ERROR corpses. Best-effort — a failed
@@ -280,7 +284,7 @@ export async function publishPublication(
       id: up.id,
       kind: (assets[i]?.kind ?? 'photo') as 'photo' | 'video' | 'design' | 'audio' | 'document',
     }));
-    const built = buildPlatformData(platform, { text: finalCaption, uploads });
+    const built = buildPlatformData(platform, { text: finalCaption, uploads, placement });
     if (!built) return jsonError(400, `${platform} is not supported for auto-posting.`);
     post = await createPost(cfg, {
       title,

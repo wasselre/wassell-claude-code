@@ -852,6 +852,70 @@ One human entry → automatic generation + persistence of BOTH languages → bot
    reconcile will never sweep). Smoke 14 asserts all four properties.
 11. **Migration gotchas:** (a) PostGIS/frozen-table RPCs need `SET check_function_bodies = off` so the CI ephemeral DB (no PostGIS, minimal fixture) can create them; (b) guard data-fixes on frozen tables (`districts`, etc.) with `to_regclass` — CI doesn't have them; (c) NEVER call `digest` inside the records capture trigger (search_path); the trigger uses a stub `source_rev`, the worker computes the real sha. CI validates every `2026-09-0*` migration against `postgres:17` via **`.github/workflows/db-migrations.yml`** + `supabase/tests/ci/smoke_translation.sql` (smokes 1–14). **That job has its OWN workflow on purpose (moved out of `ci.yml` 2026-09-27) — do not move it back.** Under `ci.yml`'s `cancel-in-progress: true`, every push to main killed the run, and since it is the longest job it was cancelled four times straight and its smokes never once reached a verdict. A job-level concurrency group does NOT fix this: cancelling a RUN cancels its jobs regardless of their own groups. A migration added outside the `2026-09-0*` glob must be applied by NAME in that workflow (see the retry-cap and role-repair steps) or its smoke has nothing to run against.
 
+## Organic publishing (bundle.social) — the destination decides the surface (added 2026-09-30)
+
+Organic posts leave through ONE path: `mos_publications` → `mos_release_due` →
+`/api/cron/release-sweep` (every 5 min) or «انشر الآن» → `publishPublication`
+(`api/_lib/marketing/publishRelease.ts`) → bundle.social. Three bugs in that path
+were live for a day (29–30 Sep) and all three were silent.
+
+**What happened:**
+- **Stories went to the feed.** A release carries a destination
+  (`placement_variant`: `feed` | `story`). The material rule used it to pick the
+  design slot and drop the caption — and then `buildPlatformData` built the
+  payload WITHOUT it, knowing only POST and REEL. Every `story` release became a
+  second, caption-less feed post: seven on the company account before anyone
+  noticed. bundle.social answered `POSTED` for each one, which is the same
+  answer a story gets.
+- **A failed handoff was retried forever.** The sweep skipped a failed release
+  only while a publish TASK was open; publishing tasks are off, so a failure
+  records a HOLD and nothing told the sweep to stop. Six releases refused by the
+  plan's caps were re-sent every 5 minutes for a night — and every handoff
+  uploads the file BEFORE creating the post, so the retries used up the month's
+  upload quota.
+- **The sweep was cut off mid-post.** It was an edge function (stopped 25 s
+  after it starts); one handoff takes 8–20 s. Every tick with more than one
+  release ended 504, and a stop between "post created" and "post recorded" is a
+  live post the database does not know — which the next tick creates again.
+
+**Hard rules — never violate:**
+
+1. **`POSTED` is not proof of WHERE.** Verify a post by its LINK
+   (`instagram.com/p/…` feed, `/stories/…` story, `/reel/…` reel) or by
+   `data.INSTAGRAM.type` on the bundle post — never by status alone. "It says
+   posted" is how seven stories sat in the feed for a day.
+2. **The destination must reach the payload.** Anything that builds a platform
+   payload takes `placement` and honours it (`buildPlatformData`); the rulebook
+   (`preflightPublishSet`) takes it too. A story is `type: 'STORY'`, exactly one
+   file, no caption; more than one file is REFUSED, never downgraded to a feed
+   carousel. Adding a destination (reel, TikTok story, …) means adding it to
+   both, with a test in `api/_lib/marketing/__tests__/instagramStory.test.ts`.
+3. **A failed handoff is capped; a refusal is not a failure.**
+   `mos_publications.publish_attempts` counts failed handoffs and
+   `mos_release_due` stops offering a release at `planning.release_max_attempts`
+   (3). A 422 refusal (not approved, in production, approval changed, a design
+   missing, the rulebook) uploads nothing, is re-checked every tick and clears
+   itself on approval — the sweep must NOT re-report it as `publish_failed`, or
+   a post approved late is stranded. Never remove the cap; never count a refusal.
+4. **The sweep runs on Node with a time budget.** `maxDuration` 300, no handoff
+   starts after 200 s. Do not move it back to the edge runtime, and do not raise
+   `MAX_PER_TICK` without re-doing that arithmetic (10 × ~20 s).
+5. **Never stamp a time on a held release and then hand it off.** Changing
+   `status` / `scheduled_at` / `bundle_post_id` clears the hold (the
+   `mos_publication_hold_clear` trigger), which puts the release back in the
+   sweep's list — two senders, one release. Hand it off as it is; the handoff
+   itself sets all three in one write.
+6. **Instagram cannot un-post through the API.** A post on the wrong surface is
+   deleted by hand in the Instagram app. A post still `SCHEDULED` on bundle can
+   be deleted there (`deletePost`) — confirm it is gone (`getPost` → 404 /
+   DELETED) BEFORE creating its replacement.
+7. **Posting from a script orphans its process on Windows.** Stopping the
+   background task does not stop `node`; a script sleeping between posts keeps
+   going. Kill it by command line (`Get-CimInstance Win32_Process`) and check.
+
+Migrations: `2026-09-30_04_release_handoff_retry_cap.sql`,
+`2026-09-30_05_release_story_interlock_off.sql`. PRD: `docs/prd/marketing-workspace.md`.
+
 ## Marketing OS capabilities are DATA (added 2026-08-06)
 
 The Marketing workspace (`/m`) permission model has TWO axes, both editable in **Marketing → Settings → Roles and permissions** (`SettingsAccess.tsx`, a segmented Surfaces/Capabilities matrix) — the SAME component is also embedded as the «أدوار التسويق» tab of the Sales app's **Settings → Team & Access** (`/settings/team`, 2026-09-29), which puts people, Sales access levels (`profiles`), Sales jobs (`roles` domain='sales') and Marketing roles on one page. The engines stay separate — it is one page, not one engine. Marketing role ASSIGNMENT is editable in both Team & Access → People and Marketing → «الأدوار ومن يشغلها»; a Marketing-role tick goes through the atomic `mos_role_grant` RPC in both. Known, pre-existing gap: the People editor's **Save** (sales jobs, profile, name) still writes the person's whole `role_assignments` array from what the editor loaded, so a Marketing role changed elsewhere while that editor is open is overwritten on Save:

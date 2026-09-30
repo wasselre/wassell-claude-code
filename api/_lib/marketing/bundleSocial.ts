@@ -189,6 +189,18 @@ export interface CreatePostInput {
   data: Record<string, unknown>;
 }
 
+/**
+ * When the platform should post: the release's slot when it is safely in the
+ * future, otherwise a minute from now (bundle validates a future-ish postDate).
+ * Pure, so the rule is testable without a platform.
+ */
+export function resolvePostDate(slot: unknown, nowMs: number): string {
+  const slotMs = typeof slot === 'string' ? Date.parse(slot) : NaN;
+  return new Date(
+    Number.isFinite(slotMs) && slotMs > nowMs + 60_000 ? slotMs : nowMs + 60_000,
+  ).toISOString();
+}
+
 export const createPost = (cfg: BundleConfig, input: CreatePostInput): Promise<BundlePost> =>
   bundleFetch<BundlePost>(cfg, 'POST', '/post', { teamId: cfg.teamId, ...input });
 
@@ -411,10 +423,17 @@ const isVideoUpload = (u: PlatformUpload): boolean => u.kind === 'video' || u.ki
  * publication is exactly one platform, so this returns a one-key object.
  * `uploads` is the ORDERED file set (the carousel order).
  *
- *   instagram  1 video → REEL; anything else → POST (carousel 1–10, mixed
- *              images+videos — bundle allows mixing on feed posts).
+ *   instagram  placement 'story' → STORY (exactly 1 file, no text);
+ *              otherwise 1 video → REEL; anything else → POST (carousel 1–10,
+ *              mixed images+videos — bundle allows mixing on feed posts).
  *   tiktok     1 video → VIDEO; images → IMAGE (Photo Mode, 1–10, autoScale).
  *   snapchat   STORY, exactly 1 file (the set-shape rules guarantee it).
+ *
+ * `placement` is the release's destination (`mos_publications.placement_variant`).
+ * It MUST reach this function: the destination decides the surface, not the
+ * file. Until 2026-09-30 it did not, and every Instagram release whose
+ * destination was 'story' went out as a caption-less FEED post — seven of them
+ * on the company account (29–30 Sep), each a second feed post beside its twin.
  *
  * The set SHAPE is validated upstream by preflightPublishSet in
  * src/lib/marketingOS/platformRules.ts — keep the two in sync. Anything richer
@@ -422,7 +441,7 @@ const isVideoUpload = (u: PlatformUpload): boolean => u.kind === 'video' || u.ki
  */
 export function buildPlatformData(
   platform: string,
-  opts: { text: string; uploads: PlatformUpload[] },
+  opts: { text: string; uploads: PlatformUpload[]; placement?: 'feed' | 'story' | null },
 ): { socialAccountType: string; data: Record<string, unknown> } | null {
   const type = BUNDLE_PLATFORM_TYPE[platform];
   if (!type || opts.uploads.length === 0) return null;
@@ -431,6 +450,13 @@ export function buildPlatformData(
   const hasImage = videos < opts.uploads.length;
 
   if (platform === 'instagram') {
+    if (opts.placement === 'story') {
+      // bundle takes exactly ONE file for a story and no caption; auto-fit and
+      // auto-crop are feed-only. More than one file is refused by the rulebook
+      // before this is reached — never downgraded to a feed post here.
+      if (opts.uploads.length !== 1) return null;
+      return { socialAccountType: type, data: { INSTAGRAM: { type: 'STORY', uploadIds } } };
+    }
     // Single video = Reel (growth surface). Everything else — single image or
     // any multi-file set — is a feed POST; bundle carries 1–10 mixed files.
     const isReel = opts.uploads.length === 1 && videos === 1;

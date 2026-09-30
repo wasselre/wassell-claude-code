@@ -89,9 +89,14 @@ export const SLOT_BY_VARIANT: Readonly<Record<PlacementVariant, string>> = {
  * Reason codes for `mos_release_open_task`. The first two are NEW (D3); the
  * third already exists in the function's own Arabic CASE. Every refusal in the
  * managed path is routed through that one function — it takes a reason plus an
- * Arabic detail and de-duplicates per release, so the sweep's generic
- * `publish_failed` lands on an already-open task and changes nothing.
- * No second exception mechanism.
+ * Arabic detail and records it on the release (a hold; publishing tasks are
+ * off). No second exception mechanism.
+ *
+ * A refusal is NOT a failed handoff (2026-09-30): nothing was uploaded, it is
+ * re-checked every sweep tick for free and clears itself on approval. The sweep
+ * therefore leaves a 422 alone instead of re-reporting it as `publish_failed` —
+ * that reason is counted by the database and stops the retries after a few
+ * attempts, which would strand a post that was merely approved late.
  */
 export const RELEASE_REFUSAL = {
   /** A destination has no design in its slot, or the slot's file is gone. */
