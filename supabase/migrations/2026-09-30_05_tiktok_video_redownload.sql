@@ -41,7 +41,9 @@ AS $$
      AND m.redownload_attempts < GREATEST(1, p_max_attempts)
      AND NOT EXISTS (SELECT 1 FROM public.mkt_content_media s
                       WHERE s.content_post_id = p.id AND s.media_kind = 'video' AND s.download_status = 'stored')
-   ORDER BY p.published_at DESC NULLS LAST, p.id
+   -- Untried videos first: a video that already failed once must not crowd the
+   -- batch ahead of ones never asked for.
+   ORDER BY m.redownload_attempts, p.published_at DESC NULLS LAST, p.id
    LIMIT GREATEST(0, p_limit);
 $$;
 
