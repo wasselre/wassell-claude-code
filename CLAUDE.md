@@ -912,9 +912,23 @@ were live for a day (29–30 Sep) and all three were silent.
 7. **Posting from a script orphans its process on Windows.** Stopping the
    background task does not stop `node`; a script sleeping between posts keeps
    going. Kill it by command line (`Get-CimInstance Win32_Process`) and check.
+8. **The Instagram grid only ever grows by whole rows of three (operator rule,
+   2026-10-01).** The profile is three tiles wide and the month plan designs
+   posts as rows; ONE extra tile shifts every tile below it and breaks every
+   designed row at once. That happened on 29–30 Sep: eight older posts that
+   belonged to no row went out as 1 + 7, one was later removed, and the seven
+   left (two rows plus one) split both يمام rows underneath. The publisher now
+   sends an Instagram feed release only WITH ITS ROW — all three together,
+   in the row's order, or none (`api/_lib/marketing/instagramGrid.ts`,
+   `publishInstagramRow` in `publishRelease.ts`); a post in no row never
+   reaches the grid. **Never add a path that posts to the Instagram feed one
+   release at a time** — not a script, not a "publish just this one" button,
+   not a bulk catch-up. Before posting anything to the feed by hand, count it:
+   the number going up must be a multiple of three. Stories are exempt.
 
 Migrations: `2026-09-30_04_release_handoff_retry_cap.sql`,
-`2026-09-30_05_release_story_interlock_off.sql`. PRD: `docs/prd/marketing-workspace.md`.
+`2026-09-30_05_release_story_interlock_off.sql`,
+`2026-10-01_01_instagram_full_rows.sql`. PRD: `docs/prd/marketing-workspace.md`.
 
 ## Marketing OS capabilities are DATA (added 2026-08-06)
 

@@ -109,6 +109,9 @@ export const RELEASE_REFUSAL = {
   NOT_APPROVED: 'not_approved',
   /** The content's row still has an open step — sent back, or unfinished (2026-09-29). */
   IN_PRODUCTION: 'in_production',
+  /** An Instagram feed post waits for the rest of its row, or belongs to no row
+   *  (2026-10-01 — the grid only grows by whole rows; see `instagramGrid.ts`). */
+  ROW_INCOMPLETE: 'row_incomplete',
 } as const;
 
 export type ReleaseRefusalReason = typeof RELEASE_REFUSAL[keyof typeof RELEASE_REFUSAL];

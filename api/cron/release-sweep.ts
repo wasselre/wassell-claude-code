@@ -41,6 +41,17 @@
  * as it stayed due, re-uploading its file each time: one night of that used up
  * the month's upload quota on bundle.social.
  *
+ * An Instagram feed post goes out with its ROW (2026-10-01, `instagramGrid.ts`):
+ * the publisher hands all three of the row's feed posts off in one call, or
+ * none. The answer names the row's posts, and the sweep skips them for the rest
+ * of the tick — otherwise it would re-check (or, after a failure, re-send) the
+ * same row once per member. A row that fails is counted on every post that was
+ * to go, so the whole row stops after the same few attempts as a single release.
+ *
+ * Time: one row handoff is three uploads + three posts, up to ~60 s. No handoff
+ * starts after TIME_BUDGET_MS (200 s), so the last row begun still ends inside
+ * the 300 s limit.
+ *
  * Auth: Bearer $CRON_SECRET or ?secret= for smoke tests. Always 200 so Vercel
  * never marks the cron failed; the structured body carries every outcome and
  * failures are ALSO console.error-ed.
@@ -187,9 +198,17 @@ async function run(req: Request): Promise<Response> {
   let published = 0;
   let refused = 0;
   let notStarted = 0;
+  let withTheirRow = 0;
   const failures: Array<{ release_id: string; platform: string; error: string }> = [];
+  // Releases already dealt with this tick as part of an Instagram row — sent,
+  // refused or failed together with the member that came up first.
+  const handledWithRow = new Set<string>();
 
   for (const [i, r] of rows.entries()) {
+    if (handledWithRow.has(r.release_id)) {
+      withTheirRow += 1;
+      continue;
+    }
     if (Date.now() - startedAt > TIME_BUDGET_MS) {
       // Out of time: the rest stay due and the next tick takes them. Said out
       // loud — a quiet short tick would read as "nothing left to send".
@@ -200,20 +219,31 @@ async function run(req: Request): Promise<Response> {
     let ok = false;
     let wasRefused = false;
     let message = '';
+    // The row's posts, when this release went (or failed) with its row.
+    let rowAll: string[] = [];
+    let rowToSend: string[] = [];
+    let rowHandedOff: string[] = [];
     try {
       const res = await publishPublication(sb, cfg, r.release_id);
       ok = res.status >= 200 && res.status < 300;
-      if (!ok) {
-        wasRefused = res.status === 422;
-        const parsed = await res.clone().json().catch(() => null) as { error?: unknown } | null;
-        message = typeof parsed?.error === 'string' ? parsed.error : `HTTP ${res.status}`;
-      }
+      wasRefused = res.status === 422;
+      const parsed = await res.clone().json().catch(() => null) as {
+        error?: unknown;
+        row?: { release_ids?: unknown; to_send?: unknown; handed_off?: unknown };
+      } | null;
+      const ids = (v: unknown): string[] =>
+        (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+      rowAll = ids(parsed?.row?.release_ids);
+      rowToSend = ids(parsed?.row?.to_send);
+      rowHandedOff = ids(parsed?.row?.handed_off);
+      if (!ok) message = typeof parsed?.error === 'string' ? parsed.error : `HTTP ${res.status}`;
     } catch (e) {
       message = e instanceof Error ? e.message : String(e);
     }
+    for (const id of rowAll) handledWithRow.add(id);
 
     if (ok) {
-      published += 1;
+      published += Math.max(1, rowHandedOff.length);
       continue;
     }
 
@@ -232,16 +262,20 @@ async function run(req: Request): Promise<Response> {
     // Loud, and turned into visible work. A release that could not be handed
     // off must never sit silently in `planned`. Each call is counted by the
     // database; after `planning.release_max_attempts` the release stops being
-    // offered and waits for «انشر الآن» or a new time.
+    // offered and waits for «انشر الآن» or a new time. A row that failed is
+    // recorded on every post that was to go with it, so the row stops whole.
     console.error('[release-sweep] automatic publish failed', r.release_id, r.platform, message);
     failures.push({ release_id: r.release_id, platform: r.platform, error: message });
-    const opened = await sb.rpc('mos_release_open_task', {
-      p_publication_id: r.release_id,
-      p_reason: 'publish_failed',
-      p_detail: `فشل النشر الآلي على ${r.platform}: ${message.slice(0, 400)}`,
-    });
-    if (opened.error) {
-      console.error('[release-sweep] could not open the failure task', r.release_id, opened.error.message);
+    const failedIds = rowToSend.length > 0 ? rowToSend : [r.release_id];
+    for (const id of failedIds) {
+      const opened = await sb.rpc('mos_release_open_task', {
+        p_publication_id: id,
+        p_reason: 'publish_failed',
+        p_detail: `فشل النشر الآلي على ${r.platform}: ${message.slice(0, 400)}`,
+      });
+      if (opened.error) {
+        console.error('[release-sweep] could not open the failure task', id, opened.error.message);
+      }
     }
   }
 
@@ -251,6 +285,7 @@ async function run(req: Request): Promise<Response> {
     failed: failures.length,
     failures,
     refused_not_ready: refused,
+    went_with_their_row: withTheirRow,
     too_stale_to_post: stale.length,
     stale_hours: staleHours,
     capped: rows.length === MAX_PER_TICK,
