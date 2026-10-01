@@ -36,12 +36,6 @@ interface RecordFormModalProps {
   openInPageHref?: string;
   /** Replaces the default "Edit record — <model>" heading. */
   title?: string;
-  /**
-   * Render the form in the page flow (sections + a Save bar) instead of inside
-   * a dialog. Used where a record IS a settings tab — the Website page's
-   * general settings. Saving keeps the form open; `onClose` is not called.
-   */
-  inline?: boolean;
 }
 
 /**
@@ -63,7 +57,6 @@ export default function RecordFormModal({
   onSaved,
   openInPageHref,
   title: titleOverride,
-  inline = false,
 }: RecordFormModalProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -232,7 +225,7 @@ export default function RecordFormModal({
       // The store already toasted the underlying error if any; we close
       // the modal because the local cache reflects the change.
       onSaved?.(id);
-      if (!inline) onClose();
+      onClose();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       addToast(isAr ? `فشل الحفظ: ${msg}` : `Save failed: ${msg}`, 'error');
@@ -280,23 +273,6 @@ export default function RecordFormModal({
       }}
     />
   );
-
-  if (inline) {
-    return (
-      <div>
-        <div className="space-y-6">{sections}</div>
-        {/* Floating, not sticky: the app shell's overflow-x-hidden wrapper is the
-            scroll container, so `sticky` would pin to the end of a very long form. */}
-        <div className="fixed bottom-5 end-6 z-30 rounded-full shadow-lg">
-          <Button onClick={() => void handleSave()} disabled={saving}>
-            {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-            {t('common.save')}
-          </Button>
-        </div>
-        {duplicateWarning}
-      </div>
-    );
-  }
 
   return (
     <Modal

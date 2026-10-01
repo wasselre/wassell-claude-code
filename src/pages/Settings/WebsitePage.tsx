@@ -1,29 +1,27 @@
 /**
  * «الموقع الإلكتروني» — Website (2026-09-30).
  *
- * ONE page for everything the public site (wassel.re) shows. It replaces two
- * separate settings pages — "Website Settings" (a redirect into the
- * site_settings record) and "Project Details Pages" (a picker that led to a
- * third, per-project form) — so nothing about the website is edited anywhere
- * else:
- *   projects — every project that is on the website, with its page photos and
- *              WhatsApp number edited in a dialog, in place
- *   general  — the site-wide settings record (contact details, home page copy,
- *              card and map options), edited inline
+ * ONE page for the projects on the public site (wassel.re): every project
+ * that is on the website, with its page photos and WhatsApp number edited in a
+ * dialog, in place. It replaced the "Project Details Pages" picker (which led
+ * to a third, per-project form) and the "Website Settings" card. The
+ * site-wide settings record (site_settings: contact details, social links,
+ * home page copy) has no settings entry since 2026-10-01 — the operator asked
+ * for it to go; the record is still edited at /model/site_settings.
  *
  * Which projects are on the website is NOT decided here: a project is public
  * exactly while it is in Our Projects (the records_enforce_our_projects_public
  * trigger). The projects tab says so and links there.
  *
- * Deep link: /settings/website?tab=projects&project=<all_projects id> opens
+ * Deep link: /settings/website?project=<all_projects id> opens
  * that project's dialog (used by the Website tab on a project record, and by
  * the old /settings/project-details/:projectId URL).
  */
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Globe, Building2, SlidersHorizontal, Search, ImageOff, ExternalLink, Images, Loader2, MapPin } from 'lucide-react';
+import { Globe, Building2, Search, ImageOff, ExternalLink, Images, Loader2, MapPin } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import SettingsTabsShell from './components/SettingsTabsShell';
+import BackToSettings from './components/BackToSettings';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import Button from '@/components/ui/Button';
 import { resolveProjectView, modelByName, type ProjectView } from '@/lib/projects/projectView';
@@ -117,7 +115,7 @@ function ProjectCard({
   );
 }
 
-function ProjectsTab() {
+function ProjectsList() {
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language === 'ar');
   const models = useAppStore((s) => s.models);
@@ -245,52 +243,23 @@ function ProjectsTab() {
   );
 }
 
-function GeneralTab() {
-  const isAr = useAppStore((s) => s.language === 'ar');
-  const models = useAppStore((s) => s.models);
-  const records = useAppStore((s) => s.records);
-  const initialized = useAppStore((s) => s.initialized);
-  const addToast = useAppStore((s) => s.addToast);
-
-  const model = modelByName(models, 'site_settings');
-  // Wait for records: mounting the form before the singleton has loaded would
-  // open it as a NEW record and a save would create a second settings row.
-  if (!initialized) return <Loading isAr={isAr} />;
-  if (!model) {
-    return (
-      <div className="card p-8 text-center text-sm text-charcoal/50">
-        {isAr ? 'نموذج إعدادات الموقع غير متاح.' : 'The website settings model is not available.'}
-      </div>
-    );
-  }
-  const existing = (records[model.id] ?? [])[0];
-  return (
-    <RecordFormModal
-      // Remount when the singleton gets its id, so the first save creates it
-      // and every later save updates that same row.
-      key={existing?.id ?? 'new'}
-      inline
-      modelId={model.id}
-      recordId={existing?.id ?? null}
-      onClose={() => { /* inline form stays open */ }}
-      onSaved={() => addToast(isAr ? 'تم حفظ إعدادات الموقع' : 'Website settings saved', 'success')}
-    />
-  );
-}
-
 export default function WebsitePage() {
+  const isAr = useAppStore((s) => s.language === 'ar');
   return (
-    <SettingsTabsShell
-      titleAr="الموقع الإلكتروني"
-      titleEn="Website"
-      descAr="كل ما يظهر على wassel.re: المشاريع وصور صفحاتها، والإعدادات العامة للموقع."
-      descEn="Everything shown on wassel.re: the projects and their page photos, and the site-wide settings."
-      icon={Globe}
-      color="#B8734F"
-      tabs={[
-        { id: 'projects', ar: 'المشاريع على الموقع', en: 'Projects on the site', icon: Building2, render: () => <ProjectsTab /> },
-        { id: 'general', ar: 'الإعدادات العامة', en: 'General settings', icon: SlidersHorizontal, render: () => <GeneralTab /> },
-      ]}
-    />
+    <div className="max-w-6xl">
+      <BackToSettings />
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#B8734F14' }}>
+          <Globe size={24} style={{ color: '#B8734F' }} />
+        </div>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'الموقع الإلكتروني' : 'Website'}</h1>
+          <p className="text-sm text-charcoal/45">
+            {isAr ? 'المشاريع المعروضة على wassel.re، وصور صفحاتها ورقم الواتساب.' : 'The projects shown on wassel.re, with their page photos and WhatsApp number.'}
+          </p>
+        </div>
+      </div>
+      <ProjectsList />
+    </div>
   );
 }

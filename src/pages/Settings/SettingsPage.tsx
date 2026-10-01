@@ -162,8 +162,8 @@ const CARDS: SettingsCard[] = [
   {
     titleAr: 'الموقع الإلكتروني',
     titleEn: 'Website',
-    descAr: 'المشاريع على الموقع وصور صفحاتها ورقم الواتساب، ومحتوى الموقع العام ومعلومات التواصل',
-    descEn: 'The projects on the site with their page photos and WhatsApp number, plus site copy and contact info',
+    descAr: 'المشاريع على الموقع وصور صفحاتها ورقم الواتساب',
+    descEn: 'The projects on the site, with their page photos and WhatsApp number',
     icon: Globe,
     color: '#B8734F',
     bg: '#B8734F14',

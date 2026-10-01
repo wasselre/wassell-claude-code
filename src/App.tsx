@@ -272,19 +272,11 @@ function RecordListDispatcher() {
     // generic list when ?generic=1.
     return <OurProjectsPortfolioPage />;
   }
-  // Singleton-config models — the list view is meaningless (always exactly
-  // one record) and confusing (looks like a normal model, but isn't). Punt
-  // straight to /settings/website which then opens the singleton's edit form.
-  // Belt-and-suspenders alongside the Sidebar `SETTINGS_ONLY_MODEL_NAMES`
-  // filter — covers direct URL hits, old bookmarks, and shared links.
-  if (modelName === 'site_settings') {
-    return <Navigate to="/settings/website?tab=general" replace />;
-  }
   // project_details list view is meaningless on its own — the records are
   // sidecars of all_projects, so picking by project is what makes sense.
   // Punt to the project picker (Settings card entry point).
   if (modelName === 'project_details') {
-    return <Navigate to="/settings/website?tab=projects" replace />;
+    return <Navigate to="/settings/website" replace />;
   }
   return <RecordListPage />;
 }
@@ -293,7 +285,7 @@ function RecordListDispatcher() {
 // project's photos are now edited in a dialog on the Website page.
 function ProjectPageRedirect() {
   const { projectId } = useParams();
-  return <Navigate to={`/settings/website?tab=projects&project=${encodeURIComponent(projectId ?? '')}`} replace />;
+  return <Navigate to={`/settings/website?project=${encodeURIComponent(projectId ?? '')}`} replace />;
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -531,7 +523,7 @@ export default function App() {
           <Route path="/settings/document-templates" element={<RequireAdmin><DocumentTemplatesPage /></RequireAdmin>} />
           <Route path="/settings/website" element={<RequireAdmin><WebsitePage /></RequireAdmin>} />
           {/* Old two-page URLs — both now live on the one Website page. */}
-          <Route path="/settings/project-details" element={<Navigate to="/settings/website?tab=projects" replace />} />
+          <Route path="/settings/project-details" element={<Navigate to="/settings/website" replace />} />
           <Route path="/settings/project-details/:projectId" element={<ProjectPageRedirect />} />
           <Route path="/logs" element={<RequireAdmin><LogsPage /></RequireAdmin>} />
           {/* Internal review of public job applications (admin-only; RLS gates

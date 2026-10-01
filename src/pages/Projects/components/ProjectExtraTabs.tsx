@@ -279,7 +279,7 @@ export function WebsiteTab({
             </a>
             <button
               type="button"
-              onClick={() => navigate(`/settings/website?tab=projects&project=${record.id}`)}
+              onClick={() => navigate(`/settings/website?project=${record.id}`)}
               className="inline-flex items-center gap-1.5 text-xs font-bold text-copper hover:underline"
             >
               <ImageIcon size={13} /> {isAr ? 'صور الصفحة ورقم الواتساب' : 'Page photos and WhatsApp number'}
