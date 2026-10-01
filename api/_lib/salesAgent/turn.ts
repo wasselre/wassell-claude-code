@@ -56,7 +56,11 @@ export interface TurnResult {
   sent?: boolean;
   model?: string;
   /** Brain (v2) turns: what it did. */
-  brain?: Pick<BrainOutcome, 'toolTrace' | 'guardProblems' | 'replyFailed' | 'searches'> & { project?: string | null; handoff?: string | null };
+  brain?: Pick<BrainOutcome, 'toolTrace' | 'guardProblems' | 'replyFailed' | 'searches'> & {
+    project?: string | null; handoff?: string | null;
+    /** Ids of what was sent — for the dry-run accuracy tests. */
+    projectId?: string | null; units?: { projectId: string; name: string; unitIds: string[] } | null;
+  };
 }
 
 async function loadRecentTurns(
@@ -625,6 +629,8 @@ async function runBrainTurn(
     brain: {
       toolTrace: outcome.toolTrace, guardProblems: outcome.guardProblems, replyFailed: outcome.replyFailed,
       searches: outcome.searches, project: outcome.sent?.name ?? null, handoff: outcome.handoff?.reason ?? null,
+      projectId: outcome.sent?.projectId ?? null,
+      units: outcome.sentUnits ? { projectId: outcome.sentUnits.projectId, name: outcome.sentUnits.name, unitIds: outcome.sentUnits.unitIds } : null,
     },
   };
   if (dryRun) return { ...result, sent: false };

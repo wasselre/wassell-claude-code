@@ -53,7 +53,23 @@ export interface CatalogProject {
   available_units: number | null;
   down_payment_percent: number | null;
   payment_plan: string | null;
+  /** The AVAILABLE units that match what the customer asked (type, bedrooms,
+   *  budget, size) — the numbers to quote. null = the project has no unit
+   *  records, so only its overall figures are known. */
+  fit: UnitFit | null;
 }
+
+export interface UnitFit {
+  units: number;
+  price_from: number | null;
+  price_to: number | null;
+  area_from: number | null;
+  area_to: number | null;
+  bedrooms: number[];
+}
+
+/** One available unit, as much as the search needs. */
+interface UnitLite { type: string | null; bedrooms: number | null; price: number | null; area: number | null }
 
 export interface PriceBand { from: number | null; to: number | null; count: number }
 
@@ -97,7 +113,65 @@ function unitTypesOf(d: Record<string, unknown>): string[] {
   return [...out];
 }
 
-function toProject(master: Master, m: FinderMatch, inArea: boolean): CatalogProject {
+/** Does one available unit satisfy the check? Unit-level, so a project with
+ *  3-bedroom units and units under the budget does not pass when no 3-bedroom
+ *  unit is under the budget (accuracy test 2026-10-01). Missing data on the
+ *  unit never counts as a match for a criterion that was asked. */
+export function unitFits(u: UnitLite, f: FitCheck): boolean {
+  if (f.checkType && f.types.length) {
+    const t = u.type ? normalizeUnitType(u.type) : null;
+    if (!t || !f.types.includes(t)) return false;
+  }
+  if (f.bedroomsMin && (u.bedrooms === null || u.bedrooms < f.bedroomsMin)) return false;
+  if (f.budgetMax && (u.price === null || u.price > f.budgetMax)) return false;
+  if (f.areaMin && (u.area === null || u.area < f.areaMin)) return false;
+  return true;
+}
+
+export function fitOf(us: UnitLite[], f: FitCheck): UnitFit {
+  const m = us.filter((u) => unitFits(u, f));
+  const prices = m.map((u) => u.price).filter((x): x is number => x !== null);
+  const areas = m.map((u) => u.area).filter((x): x is number => x !== null);
+  return {
+    units: m.length,
+    price_from: prices.length ? Math.min(...prices) : null,
+    price_to: prices.length ? Math.max(...prices) : null,
+    area_from: areas.length ? Math.round(Math.min(...areas)) : null,
+    area_to: areas.length ? Math.round(Math.max(...areas)) : null,
+    bedrooms: [...new Set(m.map((u) => u.bedrooms).filter((x): x is number => x !== null))].sort((a, b) => a - b),
+  };
+}
+
+const AVAILABLE_UNIT = new Set(['available', 'متاح', 'متاحة', 'متوفر', 'متوفرة']);
+
+/** Available units of the given projects, light columns only, paged. */
+async function loadUnitIndex(svc: SupabaseClient, projectIds: string[]): Promise<Map<string, UnitLite[]>> {
+  const out = new Map<string, UnitLite[]>();
+  if (!projectIds.length) return out;
+  const { data: model, error: mErr } = await svc.from('models').select('id').eq('name', 'units').maybeSingle();
+  if (mErr) throw new Error(`catalog: units model lookup failed: ${mErr.message}`);
+  if (!model?.id) return out;
+  for (let i = 0; i < projectIds.length; i += 100) {
+    const ids = projectIds.slice(i, i + 100);
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await svc.from('records')
+        .select('id, pid:data->>project_id, st:data->>unit_status, t:data->>unit_type, b:data->>bedrooms, p:data->>total_price, a:data->>unit_area, ta:data->>total_area')
+        .eq('model_id', model.id as string).in('data->>project_id', ids).order('id').range(from, from + 999);
+      if (error) throw new Error(`catalog: units read failed: ${error.message}`);
+      const rows = (data ?? []) as unknown as Array<Record<string, string | null>>;
+      for (const r of rows) {
+        if (!AVAILABLE_UNIT.has(String(r.st ?? '').trim().toLowerCase()) || !r.pid) continue;
+        const list = out.get(r.pid) ?? [];
+        list.push({ type: r.t ?? null, bedrooms: num(r.b), price: num(r.p), area: num(r.a) ?? num(r.ta) });
+        out.set(r.pid, list);
+      }
+      if (rows.length < 1000) break;
+    }
+  }
+  return out;
+}
+
+function toProject(master: Master, m: FinderMatch, inArea: boolean, fit: UnitFit | null): CatalogProject {
   const d = master.data;
   const price = range(d.available_price_range);
   const beds = range(d.bedroom_range);
@@ -118,6 +192,7 @@ function toProject(master: Master, m: FinderMatch, inArea: boolean): CatalogProj
     available_units: num(d.available_units),
     down_payment_percent: num(d.down_payment_percent),
     payment_plan: plan,
+    fit,
   };
 }
 
@@ -145,7 +220,7 @@ function facetsOf(ps: CatalogProject[]): CatalogSearch['facets'] {
     for (const t of p.unit_types) unit_types[t] = (unit_types[t] ?? 0) + 1;
     if (p.readiness) readiness[p.readiness] += 1; else readiness.unknown += 1;
   }
-  return { districts, readiness, unit_types, price_bands: priceBands(ps.map((p) => p.price_from)) };
+  return { districts, readiness, unit_types, price_bands: priceBands(ps.map((p) => p.fit?.price_from ?? p.price_from)) };
 }
 
 async function zoneDistricts(svc: SupabaseClient, city: string, zone: Zone): Promise<Array<{ district_id: string; district_name: string }>> {
@@ -186,7 +261,7 @@ export function districtKey(s: string): string {
 }
 
 interface Resolved { master: Master; m: FinderMatch; inArea: boolean }
-interface Universe { items: Resolved[]; zoneNames: Set<string> | null }
+interface Universe { items: Resolved[]; zoneNames: Set<string> | null; units: Map<string, UnitLite[]> }
 
 // The candidate universe depends only on (city, zone): every later filter is
 // applied in memory. A brain turn searches several times in one area, so cache
@@ -243,7 +318,8 @@ async function buildUniverse(svc: SupabaseClient, city: string, zone: Zone | nul
     const inArea = zoneNames === null ? true : d ? zoneNames.has(d) : groupOf.get(m) === 'exact_district_matches';
     items.push({ master, m, inArea });
   }
-  return { items, zoneNames };
+  const units = await loadUnitIndex(svc, items.map((r) => r.master.id));
+  return { items, zoneNames, units };
 }
 
 /** Finder ids → all_projects master rows in two batched reads (was one read per
@@ -306,9 +382,16 @@ export async function searchProjects(
   const sentSet = new Set(opts.sent ?? []);
   const resolved = universe.items.filter((r) => !excluded.has(r.master.id));
 
+  // A project with unit records must have at least one AVAILABLE unit that fits;
+  // one without unit records falls back to its own summary (projectFits).
+  const unitsFit = (id: string, check: FitCheck) => {
+    const us = universe.units.get(id);
+    return !us || us.length === 0 || us.some((u) => unitFits(u, check));
+  };
   const pick = (check: FitCheck, areaOnly: boolean): Array<{ master: Master; m: FinderMatch; inArea: boolean }> =>
     resolved.filter((r) => (!areaOnly || r.inArea)
       && projectFits(r.master.data, check)
+      && unitsFit(r.master.id, check)
       && (!criteria.readiness || readinessOf(r.master.data) === criteria.readiness)
       && (!wantDistricts.size || (typeof r.m.facts?.district === 'string' && wantDistricts.has(districtKey(r.m.facts.district)))));
 
@@ -337,12 +420,16 @@ export async function searchProjects(
 
   let fits: Array<{ master: Master; m: FinderMatch; inArea: boolean }> = [];
   let relaxed: CatalogSearch['relaxed'] = null;
+  let used: FitCheck = ladder[0]!.check;
   for (const rung of ladder) {
     fits = pick(rung.check, rung.areaOnly);
-    if (fits.length) { relaxed = rung.relaxed; break; }
+    if (fits.length) { relaxed = rung.relaxed; used = rung.check; break; }
   }
 
-  const all = fits.map((f) => toProject(f.master, f.m, f.inArea));
+  const all = fits.map((f) => {
+    const us = universe.units.get(f.master.id);
+    return toProject(f.master, f.m, f.inArea, us && us.length ? fitOf(us, used) : null);
+  });
   const fresh = all.filter((p) => !sentSet.has(p.project_id));
   const facets = facetsOf(all);
   if (!criteria.zone && /رياض|riyadh/i.test(city)) facets.zones = await zoneFacet(svc, city, all);
