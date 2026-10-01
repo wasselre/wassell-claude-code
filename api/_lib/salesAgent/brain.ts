@@ -25,6 +25,8 @@ import { normalizeUnitType } from './decide.js';
 import type { ChatTurn } from './understand.js';
 import type { Lang, Zone } from './texts.js';
 import { clip } from './clip.js';
+import { asNearConditions, PLACE_CATEGORIES } from './places.js';
+import { checkUnitPlans } from './plans.js';
 import { searchUnits, unitSearchView, type UnitCriteria } from './units.js';
 import { projectRepAnswers, isIsoDay, type VisitSlot } from './escalation.js';
 
@@ -109,6 +111,9 @@ HOW YOU WORK
 6. «غيره؟» / "doesn't suit" → send the next best not already sent, or ask briefly what didn't suit if you have nothing better.
 6a. UNITS INSIDE A PROJECT. When the customer asks about the units of a project we are discussing («وش المتاح 3 غرف؟», «ابي دور أرضي», «كم أرخص وحدة؟», «فيه شي تحت مليون؟») call search_units with that project's id and what they said (unit_type, bedrooms, budget_max, area_min, floor). Answer from the result with real numbers — at most two units described in text. To SHOW units call send_units: one unit_id sends that unit's own page (details + floor plan); several unit_ids, or all_matching=true, sends one list page with just those units. Then ONE short line. If matched is 0, say plainly what the project does have (the facets) and ask — never pretend a unit exists.
    They NAMED a project and asked to SEE/SEND units («ارسل لي الوحدات», «ارسلها لي», «ارسل لي الخيارات», «ارسل لي اللي عندك») → find_project, search_units with what they said, then send_units right away (all_matching=true, or the unit_ids that fit) — not send_project; the units page already shows the project. A floor «above / below N» (فوق الدور 15): search_units without a floor and pick the unit_ids whose floor fits. If they only ASKED about units without asking to see them, and the project was never sent, send_project and answer their question with the search_units numbers in the same line.
+6c. FEATURES («فيها غرفة خادمة», «ابي روف», «مصعد», «مطبخ راكب», «مدخل خاص»…): pass them as features to search_projects / search_units — only units that have ALL of them count, so never send or describe a unit as having a feature unless the tool matched it. If a result lists unknown_features (something our data does not record, like «مطبخ مفتوح» or «غرفة مكتب»), call check_unit_plans for that project (after search_units with their other wishes) — it reads the floor plans. Then say what the plans show: send the units that have it; if none, say so; if plans are unclear or missing, ask_rep. Never answer yes/no about a feature from nothing.
+6d. FLOORS: «فوق الدور 5» → floor_min 6; «مو أرضي» → exclude_floors ["أرضي"]; «الأدوار العليا» → floor_min. To send everything that fits use send_units with all_matching=true.
+6e. PLACES («قريب من الرياض بارك», «على طريق الملك سلمان», «قريب من محطة مترو», «جنب الجامعة»): pass near to search_projects with the place as they named it (or category for «محطة مترو»/«مول» in general) and their distance; if they gave none use 1 km for a metro station, 1.5 km for a road, 3 km for a mall/landmark/university, and say it («خلال 3 كيلو تقريباً»). Quote the real distance from distances_km («يبعد 1.4 كيلو عن الرياض بارك»). Several places → one condition each (all must hold). If a place comes back in unresolved_places, say you don't have it on the map and ask for the district or a nearby landmark — NEVER guess districts around a place. relaxed="distance" means nothing is within their distance; say so and give the nearest real distance.
 6b. The customer NAMES a project («مهتم بصفا 78», «عندكم أكنان 25؟») → find_project. If it is ours and not already sent, send_project it right away (unless they asked to see specific units — rule 6a) and add one short line; answer any question they asked with its facts. If ambiguous, ask which one (one line, their names). If it is not ours, say so plainly and ask what they're after so you can offer something similar — never pretend.
 7. Questions about a project (price, payment plan, down payment, sizes, handover, how many options) → use get_project_facts / the search results and answer with the real numbers. "colleague_answers" in the facts are answers our reps gave before — use them like any other fact.
 7a. YOU DON'T KNOW. When the facts and tools do not answer the question (a discount policy, a specific finish, a fee, a date we don't have…): call ask_rep with the question as the customer meant it, then tell the customer in one short line that you'll check and get back («بتأكد لك وأرد عليك»). Never guess, and don't hand the whole chat over for a question. Ask each question once — if the state says it is still with a colleague, say you're still checking.
@@ -123,7 +128,7 @@ VOICE (the reps' measured style — never break it)
 - Najdi colloquial Arabic, warm and brief: «أبشر», «زين», «الله يسلمك», «طال عمرك», «تبي/تبين», «ودك», «وش». Never formal Arabic («يسعدنا», «نود», «يُرجى», «حيث»).
 - One short message: 1–2 lines, usually under 150 characters. One question at most. A softener at most once.
 - Gender: feminine customer → تبين، شفتي، ناسبتك، أبشري. Unknown → masculine. Judge it ONLY from the customer's messages in the current conversation.
-- Numbers the way reps say them: «932 ألف», «مليون و219», «1.6 مليون», «3 غرف». Never «ر.س». At most two numbers in a message.
+- Numbers the way reps say them: «932 ألف», «مليون و219», «1.6 مليون», «3 غرف». Never «ر.س». At most two numbers in a message. Never round a price DOWN — 1,005,535 is «مليون و5 آلاف» / "1.01M", not «مليون» / "1M".
 - No bullets, lists, bold, headings, links, or adjectives like فاخر/مميز/راقي. At most one emoji, usually none.
 - If our last message was a day or more ago, open with «مساك الله بالخير» (or «صباح الخير» in the morning).
 - When their [NEW] message greets («السلام عليكم»), return it first: «وعليكم السلام…». Only then — never answer a greeting they didn't send now.
@@ -156,6 +161,21 @@ const TOOLS: Anthropic.Tool[] = [
         budget_max: { type: 'integer', description: 'Maximum budget in SAR, e.g. 1500000.' },
         area_min: { type: 'integer', description: 'Minimum unit size in m² when the customer asks for a size, e.g. 150.' },
         readiness: { type: 'string', enum: ['ready', 'off_plan'] },
+        features: { type: 'array', items: { type: 'string' }, description: 'Unit features the customer wants, in their words: «غرفة خادمة», «غرفة سائق», «روف», «مصعد», «مدخل خاص», «مطبخ راكب», «تكييف مخفي», «حديقة», «مجلس»… Only units that have ALL of them count.' },
+        near: {
+          type: 'array',
+          description: 'Be near a place: a named road / mall / university / hospital / landmark («طريق الملك سلمان», «الرياض بارك», «جامعة الأميرة نورة»), or a KIND of place (category, e.g. any metro station). Every condition must hold. Results come nearest first, each with distances_km.',
+          items: {
+            type: 'object',
+            properties: {
+              place: { type: 'string', description: 'The place as the customer named it.' },
+              category: { type: 'string', enum: PLACE_CATEGORIES, description: 'Any place of this kind (metro = any metro station).' },
+              max_km: { type: 'number', description: 'Their distance; if they gave none: 1 for a metro station, 1.5 for a road, 3 for a landmark/mall/university.' },
+            },
+            required: ['max_km'],
+            additionalProperties: false,
+          },
+        },
       },
       additionalProperties: false,
     },
@@ -205,6 +225,10 @@ const TOOLS: Anthropic.Tool[] = [
         budget_max: { type: 'integer', description: 'Maximum unit price in SAR.' },
         area_min: { type: 'integer', description: 'Minimum unit size in m².' },
         floor: { type: 'string', description: 'Floor as the customer said it, e.g. أرضي, أول, روف, 4.' },
+        floor_min: { type: 'integer', description: 'Lowest floor number allowed (ground 0, roof is the top). «فوق الدور 5» → 6.' },
+        floor_max: { type: 'integer', description: 'Highest floor number allowed.' },
+        exclude_floors: { type: 'array', items: { type: 'string' }, description: 'Floors they do NOT want, e.g. ["أرضي"] for «مو أرضي».' },
+        features: { type: 'array', items: { type: 'string' }, description: 'Features the unit must have, in their words (see search_projects).' },
       },
       required: ['project_id'],
       additionalProperties: false,
@@ -221,6 +245,19 @@ const TOOLS: Anthropic.Tool[] = [
         all_matching: { type: 'boolean', description: 'true = every unit the last search_units for this project matched.' },
       },
       required: ['project_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'check_unit_plans',
+    description: 'Read the floor plans of a project\'s units for ONE feature our data does not record (a search returned it under unknown features — e.g. «مطبخ مفتوح», «غرفة مكتب», «حمام بالروف»). By default it checks the units the last search_units matched for that project. Returns the unit_ids whose plan shows it (send them with send_units), how many do not, how many are unclear, and units with no plan on file.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        feature: { type: 'string', description: 'The feature in Arabic, as the customer meant it.' },
+      },
+      required: ['project_id', 'feature'],
       additionalProperties: false,
     },
   },
@@ -328,6 +365,8 @@ export function toCriteria(input: Record<string, unknown>): SearchCriteria {
     area_min: intOr(input.area_min, 30, 2000),
     budget_max: intOr(input.budget_max, 100_000, 100_000_000),
     readiness,
+    features: asStringArray(input.features),
+    near: asNearConditions(input.near),
   };
 }
 
@@ -339,6 +378,10 @@ function searchView(r: CatalogSearch): Record<string, unknown> {
     projects: r.projects,
     facets: r.facets,
     already_sent_that_fit: r.already_sent,
+    // The radius searched, so the reply may say «خلال 3 كيلو» (the guard grounds numbers on tool output).
+    ...(r.criteria.near?.length ? { near_searched: r.criteria.near } : {}),
+    ...(r.unknown_features ? { unknown_features: r.unknown_features } : {}),
+    ...(r.unresolved_places ? { unresolved_places: r.unresolved_places } : {}),
   };
 }
 
@@ -454,12 +497,35 @@ export async function runBrain(
           if (typeof input.budget_max === 'number' && input.budget_max > 0) c.budget_max = input.budget_max;
           if (typeof input.area_min === 'number' && input.area_min > 0) c.area_min = input.area_min;
           if (typeof input.floor === 'string' && input.floor.trim()) c.floor = input.floor.trim();
+          if (typeof input.floor_min === 'number' && Number.isFinite(input.floor_min)) c.floor_min = Math.round(input.floor_min);
+          if (typeof input.floor_max === 'number' && Number.isFinite(input.floor_max)) c.floor_max = Math.round(input.floor_max);
+          const notFloors = asStringArray(input.exclude_floors);
+          if (notFloors.length) c.exclude_floors = notFloors;
+          const wantFeatures = asStringArray(input.features);
+          if (wantFeatures.length) c.features = wantFeatures;
           const r = await searchUnits(opts.svc, id, c);
           for (const uid of r.matchedIds) knownUnits.set(uid, id);
           lastMatched.set(id, r.matchedIds);
           const view = unitSearchView(r);
           grounding.push(view);
           toolTrace.push(`units ${id.slice(0, 8)} ${JSON.stringify(c)} → ${r.matched}/${r.total_available}`);
+          return { content: JSON.stringify(view) };
+        }
+        case 'check_unit_plans': {
+          const id = String(input.project_id ?? '');
+          const feature = String(input.feature ?? '').trim();
+          if (!known.has(id)) return { content: 'Unknown project_id — use find_project or search_projects first.', isError: true };
+          if (!feature) return { content: 'feature is required', isError: true };
+          const r = await checkUnitPlans(opts.svc, { projectId: id, feature, unitIds: lastMatched.get(id) ?? null, chatWid: ctx.chatWid });
+          for (const uid of r.yes_unit_ids) knownUnits.set(uid, id);
+          lastMatched.set(id, r.yes_unit_ids);
+          const view = {
+            feature: r.feature, units_considered: r.units_considered, units_with_it: r.yes_unit_ids.length,
+            unit_ids_with_it: r.yes_unit_ids.slice(0, 40), units_without_it: r.no_units, unclear: r.unclear_units,
+            not_checked_yet: r.unchecked_units, units_without_plan: r.units_without_plan, evidence: r.evidence,
+          };
+          grounding.push(view);
+          toolTrace.push(`plans ${id.slice(0, 8)} «${feature}» → yes ${r.yes_unit_ids.length} / no ${r.no_units} / unclear ${r.unclear_units} / unchecked ${r.unchecked_units} / no plan ${r.units_without_plan} (read ${r.plans_read})`);
           return { content: JSON.stringify(view) };
         }
         case 'send_units': {

@@ -81,6 +81,8 @@ export interface FitCheck {
   requireKnownPrice?: boolean;
   /** Minimum unit size (m²) the customer wants; checked against AVAILABLE units. */
   areaMin?: number | null;
+  /** Unit components the unit must have (folded, see features.ts). Unit-level only. */
+  features?: string[];
 }
 
 /**

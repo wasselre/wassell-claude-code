@@ -25,29 +25,38 @@ let pass = 0;
 for (const r of rs) {
   const g = r.got, t = r.truth;
   let verdict;
-  const searched = r.turns[0]?.tools.some((x) => x.startsWith('search')) ?? false;
+  const win = r.turns.slice(r.score_from ?? 0);
+  const searched = win.some((tu) => tu.tools.some((x) => x.startsWith('search')));
   // Naming a cheaper/closest project is fine when the agent says plainly that
   // nothing fits; SENDING something as if it fit is the failure.
   const honest = r.turns.some((tu) => tu.replies.some((x) => /ما عندنا|للأسف|مع الأسف|don't have|do not have/i.test(x)));
   if (r.level === 'none') verdict = g.sent_units || g.sent_projects.length || (g.wrong_projects.length && !honest) ? 'FAIL (offered something that does not fit)' : searched ? 'PASS' : 'ASKED BEFORE SEARCHING';
-  else if (r.question) {
+  else if (r.level === 'answer') {
+    verdict = !r.answer ? 'ANSWER — no truth' : r.answer.ok ? 'PASS' : `ANSWER — expected ${JSON.stringify(r.answer.expected)}, quoted prices ${JSON.stringify(g.quoted_prices ?? [])} areas ${JSON.stringify(g.quoted_areas ?? [])}`;
+  } else if (r.level === 'defer') {
+    // Not in the structured data: checking the plans or asking a colleague is
+    // right; answering yes/no from nothing is the failure.
+    const checked = win.some((tu) => tu.tools.some((x) => /^(ask_rep|plans|check_plans)/.test(x)));
+    verdict = checked ? 'PASS' : 'GUESSED — answered without checking plans or asking';
+  } else if (r.question) {
     const q = r.turns.flatMap((tu) => tu.replies.flatMap(prices));
     verdict = g.wrong_units ? `WRONG units: ${g.wrong_units}` : q.some((p) => Math.abs(p - t.price_range[0]) <= t.price_range[0] * 0.005) ? 'PASS' : `ANSWER — did not quote the right price ${t.price_range[0]}`;
   }
   else if (r.level === 'project') {
     const recallOk = t.projects.length > 3 || t.projects.every((p) => g.hit_projects.includes(p));
-    verdict = g.wrong_projects.length ? `WRONG project(s): ${g.wrong_projects.join('، ')}` : !g.hit_projects.length ? 'MISSED — found nothing right' : recallOk ? 'PASS' : `PARTIAL — missed ${t.projects.filter((p) => !g.hit_projects.includes(p)).join('، ')}`;
+    verdict = g.wrong_projects.length ? `WRONG project(s): ${g.wrong_projects.join('، ')}` : g.resent?.length ? `RE-SENT what they passed on: ${g.resent.join('، ')}` : !g.hit_projects.length ? 'MISSED — found nothing right' : r.must_send && !g.sent_fit ? 'NOT SENT — named but did not send' : recallOk ? 'PASS' : `PARTIAL — missed ${t.projects.filter((p) => !g.hit_projects.includes(p)).join('، ')}`;
   } else {
     verdict = g.wrong_units ? `WRONG units: ${g.wrong_units} sent that do not fit` : g.wrong_projects.length ? `WRONG project: ${g.wrong_projects.join('، ')}` : g.sent_units ? (g.missed_units ? `PARTIAL — sent ${g.sent_units}/${t.units === undefined ? '?' : (t.unit_ids ?? []).length}` : 'PASS') : 'NO UNITS SENT — check reply';
   }
-  if (r.level !== 'none' && t.price_range) {
-    const quoted = r.turns.slice(r.messages_scripted ? r.messages_scripted - 1 : 0).flatMap((tu) => tu.replies.flatMap(prices)).filter((p) => p >= 100000);
+  if (r.level !== 'none' && r.level !== 'defer' && r.level !== 'answer' && t.price_range) {
+    const quoted = win.flatMap((tu) => tu.replies.flatMap(prices)).filter((p) => p >= 100000);
     const below = quoted.filter((p) => p < t.price_range[0] * 0.995);
     if (below.length) verdict = (verdict === 'PASS' ? 'PRICE' : verdict + ' + PRICE') + ` — quoted ${below.join(', ')} below the cheapest fitting unit ${t.price_range[0]}`;
   }
   if (verdict === 'PASS') pass++;
   L.push(`## ${r.id} ${r.title} — ${verdict}${r.nudged ? ' (needed a nudge)' : ''}`);
   L.push(`truth: ${t.projects.join('، ') || '(nothing)'} · ${t.units} units${t.price_range ? ` · ${t.price_range[0]}–${t.price_range[1]}` : ''}${t.cheapest ? ` · cheapest ${JSON.stringify(t.cheapest)}` : ''}`);
+  if (r.before?.sent?.length) L.push(`before the graded message, sent: ${r.before.sent.join('، ')}`);
   L.push(`got: named [${g.named.join('، ')}] · sent [${g.sent_projects.join('، ')}] · units sent ${g.sent_units} (wrong ${g.wrong_units}, missed ${g.missed_units})`);
   for (const tu of r.turns) {
     L.push(`> C: ${tu.customer}`);

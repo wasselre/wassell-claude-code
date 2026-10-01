@@ -11,6 +11,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { loadAvailableUnits, summarizeUnit, type UnitSummary } from '../trackedLinks.js';
 import { normalizeUnitType } from './decide.js';
+import { componentsOf, resolveFeatures } from './features.js';
 
 export interface UnitCriteria {
   unit_type?: string;
@@ -20,6 +21,13 @@ export interface UnitCriteria {
   area_min?: number;
   /** Floor as the customer said it («أرضي», «أول», «روف», «4»). */
   floor?: string;
+  /** «فوق الدور 5» → floor_min 6; «الأدوار العليا». Ground = 0, roof = top. */
+  floor_min?: number;
+  floor_max?: number;
+  /** «مو أرضي» → ['ارضي']. */
+  exclude_floors?: string[];
+  /** Features in the customer's words («غرفة خادمة», «روف», «مصعد»). */
+  features?: string[];
 }
 
 export interface UnitSearch {
@@ -31,6 +39,9 @@ export interface UnitSearch {
   matchedIds: string[];
   /** The cheapest few, for the agent to quote. */
   units: UnitSummary[];
+  /** Features asked: stored components matched, and words we don't record
+   *  (only the floor plan can answer those — check_unit_plans). */
+  features?: { matched: string[]; unknown: string[]; units_without_component_data: number };
   /** What the project actually has, across ALL its available units. */
   facets: {
     bedrooms: Record<string, number>;
@@ -40,6 +51,8 @@ export interface UnitSearch {
     price_max: number | null;
     area_min: number | null;
     area_max: number | null;
+    /** The 15 most common recorded components (folded) → unit count. */
+    components?: Record<string, number>;
   };
 }
 
@@ -71,10 +84,27 @@ function tally(values: Array<string | number | null>): Record<string, number> {
   return out;
 }
 
+/** Floor → a number for ranges: ground 0, first 1 …, roof above everything. */
+export function floorNumber(raw: string | null | undefined): number | null {
+  const f = normalizeFloor(raw);
+  if (!f) return null;
+  if (f === 'ارضي') return 0;
+  if (f === 'اول') return 1;
+  if (f === 'ثاني') return 2;
+  if (f === 'ثالث') return 3;
+  if (f === 'روف') return 1000;
+  const n = parseInt(f.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function searchUnits(svc: SupabaseClient, projectId: string, c: UnitCriteria): Promise<UnitSearch> {
-  const all = (await loadAvailableUnits(svc, projectId)).map(summarizeUnit);
+  const rows = await loadAvailableUnits(svc, projectId);
+  const comps = new Map(rows.map((r) => [r.id, componentsOf(r.data?.unit_components)]));
+  const all = rows.map(summarizeUnit);
   const wantType = c.unit_type ? (normalizeUnitType(c.unit_type) ?? c.unit_type.trim()) : null;
   const wantFloor = c.floor ? normalizeFloor(c.floor) : null;
+  const notFloors = new Set((c.exclude_floors ?? []).map(normalizeFloor).filter(Boolean));
+  const feats = resolveFeatures(c.features);
 
   const matched = all
     .filter((u) => {
@@ -84,10 +114,25 @@ export async function searchUnits(svc: SupabaseClient, projectId: string, c: Uni
       if (c.budget_max !== undefined && (u.price === null || u.price > c.budget_max)) return false;
       if (c.area_min !== undefined && (u.area === null || u.area < c.area_min)) return false;
       if (wantFloor && normalizeFloor(u.floor) !== wantFloor) return false;
+      if (notFloors.size && notFloors.has(normalizeFloor(u.floor))) return false;
+      if (c.floor_min !== undefined || c.floor_max !== undefined) {
+        const n = floorNumber(u.floor);
+        if (n === null) return false;
+        if (c.floor_min !== undefined && n < c.floor_min) return false;
+        if (c.floor_max !== undefined && n > c.floor_max) return false;
+      }
+      // A unit with no recorded components cannot be shown as having a feature.
+      if (feats.known.length) {
+        const have = comps.get(u.id) ?? [];
+        if (!feats.known.every((k) => have.includes(k))) return false;
+      }
       return true;
     })
     .sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
 
+  const compTally: Record<string, number> = {};
+  for (const list of comps.values()) for (const k of list) compTally[k] = (compTally[k] ?? 0) + 1;
+  const topComponents = Object.fromEntries(Object.entries(compTally).sort((a, b) => b[1] - a[1]).slice(0, 15));
   const prices = all.map((u) => u.price).filter((p): p is number => p !== null);
   const areas = all.map((u) => u.area).filter((a): a is number => a !== null);
   return {
@@ -96,6 +141,10 @@ export async function searchUnits(svc: SupabaseClient, projectId: string, c: Uni
     matched: matched.length,
     matchedIds: matched.map((u) => u.id),
     units: matched.slice(0, TOP),
+    ...(c.features?.length ? { features: {
+      matched: feats.known, unknown: feats.unknown,
+      units_without_component_data: [...comps.values()].filter((l) => l.length === 0).length,
+    } } : {}),
     facets: {
       bedrooms: tally(all.map((u) => u.bedrooms)),
       types: tally(all.map((u) => u.type)),
@@ -104,6 +153,7 @@ export async function searchUnits(svc: SupabaseClient, projectId: string, c: Uni
       price_max: prices.length ? Math.max(...prices) : null,
       area_min: areas.length ? Math.round(Math.min(...areas)) : null,
       area_max: areas.length ? Math.round(Math.max(...areas)) : null,
+      components: topComponents,
     },
   };
 }
@@ -116,6 +166,7 @@ export function unitSearchView(r: UnitSearch): Record<string, unknown> {
     total_available: r.total_available,
     matched: r.matched,
     showing: r.units.length,
+    ...(r.features ? { features: r.features } : {}),
     units: r.units.map((u) => ({
       unit_id: u.id, code: u.code, type: u.type, bedrooms: u.bedrooms, bathrooms: u.bathrooms,
       area_m2: u.area === null ? null : Math.round(u.area), price: u.price, floor: u.floor,

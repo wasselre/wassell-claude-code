@@ -22,6 +22,8 @@ import { normalizeUnitType } from './decide.js';
 import { num, projectFits, range, type FitCheck, type Master } from './search.js';
 import type { Zone } from './texts.js';
 import { clip } from './clip.js';
+import { componentsOf, resolveFeatures } from './features.js';
+import { cityPrefix, distancesFor, resolveNear, type NearCondition } from './places.js';
 
 export type Readiness = 'ready' | 'off_plan';
 
@@ -36,6 +38,10 @@ export interface SearchCriteria {
   /** Minimum unit size in m². */
   area_min?: number | null;
   readiness?: Readiness | null;
+  /** Unit features in the customer's words («غرفة خادمة», «روف», «مصعد»). */
+  features?: string[];
+  /** «قريب من …»: a named place or a kind of place, within max_km. ALL must hold. */
+  near?: NearCondition[];
 }
 
 export interface CatalogProject {
@@ -57,6 +63,8 @@ export interface CatalogProject {
    *  budget, size) — the numbers to quote. null = the project has no unit
    *  records, so only its overall figures are known. */
   fit: UnitFit | null;
+  /** km to each place the customer asked to be near (when asked). */
+  distances_km?: Record<string, number>;
 }
 
 export interface UnitFit {
@@ -69,7 +77,7 @@ export interface UnitFit {
 }
 
 /** One available unit, as much as the search needs. */
-interface UnitLite { type: string | null; bedrooms: number | null; price: number | null; area: number | null }
+interface UnitLite { type: string | null; bedrooms: number | null; price: number | null; area: number | null; components?: string[] }
 
 export interface PriceBand { from: number | null; to: number | null; count: number }
 
@@ -77,8 +85,14 @@ export interface CatalogSearch {
   criteria: SearchCriteria;
   /** How many of OUR projects fit, after every filter. */
   total: number;
-  /** What had to be widened to find anything: null = exact. */
-  relaxed: null | 'unit_type' | 'specs_and_budget' | 'budget' | 'area';
+  /** What had to be widened to find anything: null = exact. «distance» = nothing
+   *  within the asked radius, these are within double it; «features» = nothing
+   *  has those features, these fit everything else. */
+  relaxed: null | 'unit_type' | 'specs_and_budget' | 'budget' | 'area' | 'distance' | 'features';
+  /** Features our data does not record (only a floor plan can tell). */
+  unknown_features?: string[];
+  /** Places the customer named that we could not find on the map. */
+  unresolved_places?: string[];
   /** The best few (Finder order), with selling facts. */
   projects: CatalogProject[];
   /** How the WHOLE fitting set splits — the brain narrows on these. */
@@ -125,6 +139,8 @@ export function unitFits(u: UnitLite, f: FitCheck): boolean {
   if (f.bedroomsMin && (u.bedrooms === null || u.bedrooms < f.bedroomsMin)) return false;
   if (f.budgetMax && (u.price === null || u.price > f.budgetMax)) return false;
   if (f.areaMin && (u.area === null || u.area < f.areaMin)) return false;
+  // A unit with no recorded components cannot be shown as having a feature.
+  if (f.features?.length && !f.features.every((c) => (u.components ?? []).includes(c))) return false;
   return true;
 }
 
@@ -155,15 +171,16 @@ async function loadUnitIndex(svc: SupabaseClient, projectIds: string[]): Promise
     const ids = projectIds.slice(i, i + 100);
     for (let from = 0; ; from += 1000) {
       const { data, error } = await svc.from('records')
-        .select('id, pid:data->>project_id, st:data->>unit_status, t:data->>unit_type, b:data->>bedrooms, p:data->>total_price, a:data->>unit_area, ta:data->>total_area')
+        .select('id, pid:data->>project_id, st:data->>unit_status, t:data->>unit_type, b:data->>bedrooms, p:data->>total_price, a:data->>unit_area, ta:data->>total_area, c:data->unit_components')
         .eq('model_id', model.id as string).in('data->>project_id', ids).order('id').range(from, from + 999);
       if (error) throw new Error(`catalog: units read failed: ${error.message}`);
-      const rows = (data ?? []) as unknown as Array<Record<string, string | null>>;
+      const rows = (data ?? []) as unknown as Array<{ [k: string]: unknown }>;
       for (const r of rows) {
-        if (!AVAILABLE_UNIT.has(String(r.st ?? '').trim().toLowerCase()) || !r.pid) continue;
-        const list = out.get(r.pid) ?? [];
-        list.push({ type: r.t ?? null, bedrooms: num(r.b), price: num(r.p), area: num(r.a) ?? num(r.ta) });
-        out.set(r.pid, list);
+        const pid = typeof r.pid === 'string' ? r.pid : null;
+        if (!AVAILABLE_UNIT.has(String(r.st ?? '').trim().toLowerCase()) || !pid) continue;
+        const list = out.get(pid) ?? [];
+        list.push({ type: typeof r.t === 'string' ? r.t : null, bedrooms: num(r.b), price: num(r.p), area: num(r.a) ?? num(r.ta), components: componentsOf(r.c) });
+        out.set(pid, list);
       }
       if (rows.length < 1000) break;
     }
@@ -382,14 +399,38 @@ export async function searchProjects(
   const sentSet = new Set(opts.sent ?? []);
   const resolved = universe.items.filter((r) => !excluded.has(r.master.id));
 
+  // Features → stored components; a word we don't record is reported, not guessed.
+  const feats = resolveFeatures(criteria.features);
+  // «قريب من …» → km per project for every condition (the whole universe at once).
+  const near = criteria.near ?? [];
+  const prefix = cityPrefix(city);
+  let unresolvedPlaces: string[] = [];
+  const nearDist: Array<{ label: string; max_km: number; km: Map<string, number> }> = [];
+  if (near.length) {
+    if (!prefix) unresolvedPlaces = near.map((n) => n.place ?? n.category ?? '');
+    else {
+      const r = await resolveNear(svc, near, prefix);
+      unresolvedPlaces = r.unresolved;
+      const ids = resolved.map((x) => x.master.id);
+      for (const c of r.resolved) nearDist.push({ label: c.label, max_km: c.max_km, km: await distancesFor(svc, ids, c, prefix) });
+    }
+  }
+  const nearOk = (id: string, factor: number) => nearDist.every((c) => {
+    const km = c.km.get(id);
+    return km !== undefined && km <= c.max_km * factor;
+  });
+
   // A project with unit records must have at least one AVAILABLE unit that fits;
-  // one without unit records falls back to its own summary (projectFits).
+  // one without unit records falls back to its own summary (projectFits) —
+  // except for features, which only unit records can show.
   const unitsFit = (id: string, check: FitCheck) => {
     const us = universe.units.get(id);
-    return !us || us.length === 0 || us.some((u) => unitFits(u, check));
+    if (!us || us.length === 0) return !check.features?.length;
+    return us.some((u) => unitFits(u, check));
   };
-  const pick = (check: FitCheck, areaOnly: boolean): Array<{ master: Master; m: FinderMatch; inArea: boolean }> =>
+  const pick = (check: FitCheck, areaOnly: boolean, nearFactor = 1): Array<{ master: Master; m: FinderMatch; inArea: boolean }> =>
     resolved.filter((r) => (!areaOnly || r.inArea)
+      && nearOk(r.master.id, nearFactor)
       && projectFits(r.master.data, check)
       && unitsFit(r.master.id, check)
       && (!criteria.readiness || readinessOf(r.master.data) === criteria.readiness)
@@ -398,14 +439,17 @@ export async function searchProjects(
   const beds = criteria.bedrooms_min ?? null;
   const budget = criteria.budget_max ?? null;
   const areaMin = criteria.area_min ?? null;
-  const fit = (o: Partial<FitCheck>): FitCheck => ({ types, strictType: false, checkType: true, bedroomsMin: beds, budgetMax: budget, requireKnownPrice: true, areaMin, ...o });
+  const fit = (o: Partial<FitCheck>): FitCheck => ({ types, strictType: false, checkType: true, bedroomsMin: beds, budgetMax: budget, requireKnownPrice: true, areaMin, features: feats.known, ...o });
 
-  // Ladder: exact (type listed) → type unrecorded → any type → widened specs →
-  // outside the requested area. Each rung only if the previous found nothing.
-  const ladder: Array<{ check: FitCheck; areaOnly: boolean; relaxed: CatalogSearch['relaxed'] }> = [
+  // Ladder: exact (type listed) → type unrecorded → twice the distance →
+  // without the features → any type → widened specs → outside the requested
+  // area. Each rung only if the previous found nothing.
+  const ladder: Array<{ check: FitCheck; areaOnly: boolean; relaxed: CatalogSearch['relaxed']; nearFactor?: number }> = [
     { check: fit({ strictType: true }), areaOnly: true, relaxed: null },
     { check: fit({}), areaOnly: true, relaxed: null },
   ];
+  if (nearDist.length) ladder.push({ check: fit({}), areaOnly: true, relaxed: 'distance', nearFactor: 2 });
+  if (feats.known.length) ladder.push({ check: fit({ features: [] }), areaOnly: true, relaxed: 'features' });
   if (types.length) ladder.push({ check: fit({ checkType: false }), areaOnly: true, relaxed: 'unit_type' });
   if (beds || budget || areaMin) {
     ladder.push({
@@ -422,14 +466,24 @@ export async function searchProjects(
   let relaxed: CatalogSearch['relaxed'] = null;
   let used: FitCheck = ladder[0]!.check;
   for (const rung of ladder) {
-    fits = pick(rung.check, rung.areaOnly);
+    fits = pick(rung.check, rung.areaOnly, rung.nearFactor ?? 1);
     if (fits.length) { relaxed = rung.relaxed; used = rung.check; break; }
   }
 
-  const all = fits.map((f) => {
+  let all = fits.map((f) => {
     const us = universe.units.get(f.master.id);
-    return toProject(f.master, f.m, f.inArea, us && us.length ? fitOf(us, used) : null);
+    const p = toProject(f.master, f.m, f.inArea, us && us.length ? fitOf(us, used) : null);
+    if (nearDist.length) {
+      p.distances_km = {};
+      for (const c of nearDist) { const km = c.km.get(f.master.id); if (km !== undefined) p.distances_km[c.label] = Math.round(km * 10) / 10; }
+    }
+    return p;
   });
+  // Asked to be near something → nearest first.
+  if (nearDist.length) {
+    const d = (p: CatalogProject) => Math.max(...Object.values(p.distances_km ?? {}), 0);
+    all = [...all].sort((a, b) => d(a) - d(b));
+  }
   const fresh = all.filter((p) => !sentSet.has(p.project_id));
   const facets = facetsOf(all);
   if (!criteria.zone && /رياض|riyadh/i.test(city)) facets.zones = await zoneFacet(svc, city, all);
@@ -440,6 +494,8 @@ export async function searchProjects(
     projects: fresh.slice(0, TOP),
     facets,
     already_sent: all.filter((p) => sentSet.has(p.project_id)).map((p) => p.name),
+    ...(feats.unknown.length ? { unknown_features: feats.unknown } : {}),
+    ...(unresolvedPlaces.length ? { unresolved_places: unresolvedPlaces } : {}),
   };
 }
 
