@@ -60,6 +60,8 @@ export interface TurnResult {
     project?: string | null; handoff?: string | null;
     /** Ids of what was sent — for the dry-run accuracy tests. */
     projectId?: string | null; units?: { projectId: string; name: string; unitIds: string[] } | null;
+    /** Dry run only: the tool results the reply was written from (for graders). */
+    facts?: unknown[];
   };
 }
 
@@ -631,6 +633,7 @@ async function runBrainTurn(
       searches: outcome.searches, project: outcome.sent?.name ?? null, handoff: outcome.handoff?.reason ?? null,
       projectId: outcome.sent?.projectId ?? null,
       units: outcome.sentUnits ? { projectId: outcome.sentUnits.projectId, name: outcome.sentUnits.name, unitIds: outcome.sentUnits.unitIds } : null,
+      ...(dryRun ? { facts: (outcome.grounding ?? []).filter((g) => g !== null && typeof g === 'object') } : {}),
     },
   };
   if (dryRun) return { ...result, sent: false };

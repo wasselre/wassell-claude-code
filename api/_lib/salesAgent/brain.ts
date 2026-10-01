@@ -94,6 +94,9 @@ export interface BrainOutcome {
   searches: number;
   model: string;
   toolTrace: string[];
+  /** Everything the reply may quote: the state, the chat, and every tool result
+   *  (the guard grounds numbers on it). Exposed for dry-run evaluation only. */
+  grounding?: unknown[];
 }
 
 const SYSTEM = `You are سعد, a sales consultant at وصل العقارية (Wassel Real Estate), answering a customer on WhatsApp. You help buyers find a home in OUR projects (the catalog your tools search) and move them toward a visit that a colleague arranges.
@@ -413,6 +416,8 @@ export async function runBrain(
     reply: null, replyFailed: false, guardProblems: [], sent: null, sentUnits: null, handoff: null, asked: false, booked: null, ended: false,
     lastCriteria: null, lastTotal: null, searches: 0, model: opts.model, toolTrace,
   };
+
+  out.grounding = grounding;
 
   // Units the model may send: only ones a search_units returned this turn.
   const knownUnits = new Map<string, string>();          // unit_id → project_id
