@@ -2769,6 +2769,8 @@ export interface AppState {
   /** OPEN questions the AI sales agent asked a rep in this chat
    *  (wa_agent_questions). Throws on a read failure. */
   loadAgentQuestions: (chatWid: string) => Promise<AgentQuestion[]>;
+  /** Every OPEN agent question the caller can see — the Work Queue's «أسئلة المساعد» tab. */
+  loadOpenAgentQuestions: () => Promise<AgentQuestion[]>;
   /**
    * Load the latest page of messages for one conversation from Haberchat
    * (via the proxy). Writes to `chatMessages[chatWid]`. When `before` is
@@ -3003,7 +3005,12 @@ export interface InterestTimelineEvent {
 export interface AgentQuestion {
   id: string;
   chat_wid: string;
+  /** The chat record (`/model/chats/<id>`). */
+  conversation_record_id: string | null;
+  client_id: string | null;
   project_id: string | null;
+  /** The client's rep (users.id) the agent asked; null when none was found. */
+  rep_user_id: string | null;
   question: string;
   note: string | null;
   status: 'open' | 'answered' | 'answered_directly' | 'dismissed';

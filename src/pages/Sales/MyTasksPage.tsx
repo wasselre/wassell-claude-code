@@ -1,19 +1,21 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, Phone, MessageCircle, Plus, Sparkles, FolderKanban, Hourglass, CalendarDays, AlertTriangle, Bot, CheckCheck } from 'lucide-react';
+import { ClipboardList, Phone, MessageCircle, Plus, Sparkles, FolderKanban, Hourglass, CalendarDays, AlertTriangle, Bot, CheckCheck, HelpCircle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import { useIsAdmin, usePermission } from '@/hooks/usePermission';
 import { isRetiredModel } from '@/lib/featureFlags';
 import { useClientWhatsApp } from '@/pages/Clients/lib/useClientWhatsApp';
 import { useAiNotifications } from './lib/useAiNotifications';
+import { useAgentQuestions } from './lib/useAgentQuestions';
 import {
   buildFollowupTasks, buildWaitingTasks, tasksForRep, byPriority, priorityTier, isWaitingForCustomer,
   type FollowupChannel, type FollowupTask,
 } from './lib/myWork';
 import FollowupTaskCard from './components/FollowupTaskCard';
+import AgentQuestionsSection from './components/AgentQuestionsSection';
 
-type Section = 'actions' | 'waiting' | 'search' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
+type Section = 'actions' | 'agent_questions' | 'waiting' | 'search' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
 type ApptBucket = 'today' | 'tomorrow' | 'future' | 'last7' | 'older' | 'no_show';
 
 function ownerIdOf(v: unknown): string | null {
@@ -91,6 +93,13 @@ export default function MyTasksPage() {
     notifications: aiNotifs, unreadCount: aiUnread, loading: aiLoading,
     markRead: markNotifRead, markAllRead: markAllNotifsRead,
   } = useAiNotifications();
+  const agentQ = useAgentQuestions();
+  // A rep sees the questions asked of them plus any with no rep; a manager
+  // sees every question (they are where an unanswered customer escalates).
+  const agentQuestions = useMemo(
+    () => (isManager ? agentQ.questions : agentQ.questions.filter((q) => !q.rep_user_id || q.rep_user_id === currentUserId)),
+    [agentQ.questions, isManager, currentUserId],
+  );
 
   const [section, setSection] = useState<Section>('actions');
   const [channel, setChannel] = useState<FollowupChannel | 'all'>('all');
@@ -247,6 +256,8 @@ export default function MyTasksPage() {
     // «ملعبك / ملعب العميل» — the ball is either in YOUR court or the client's.
     // One metaphor across both tabs (user-chosen naming, 2026-07-21).
     { id: 'actions', label: { ar: 'ملعبك', en: 'Your court' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
+    // Questions the WhatsApp AI could not answer — a customer is waiting on each.
+    { id: 'agent_questions', label: { ar: 'أسئلة المساعد', en: 'AI questions' }, count: agentQuestions.length, danger: agentQuestions.length > 0 },
     { id: 'waiting', label: { ar: 'ملعب العميل', en: "Client's court" }, count: waitingTasks.length },
     // Section badge counts only the LIVE schedule (today + tomorrow + future +
     // no-shows) — the stale past buckets shouldn't inflate the headline number.
@@ -545,6 +556,7 @@ export default function MyTasksPage() {
               {s.id === 'waiting' && <Hourglass size={13} className="text-[#D97706]" />}
               {s.id === 'appointments' && <CalendarDays size={13} />}
               {s.id === 'ai_notifications' && <Bot size={13} className="text-copper" />}
+              {s.id === 'agent_questions' && <HelpCircle size={13} className="text-amber-700" />}
               {isAr ? s.label.ar : s.label.en}
               {s.count != null && s.count > 0 && (
                 <span className={`rounded-full px-1.5 py-0.5 text-xs font-bold ${s.danger ? 'bg-terracotta text-white' : 'bg-sand text-charcoal'}`}>{s.count}</span>
@@ -555,6 +567,17 @@ export default function MyTasksPage() {
       </nav>
 
       {section === 'actions' && renderActions()}
+      {section === 'agent_questions' && (
+        <AgentQuestionsSection
+          questions={agentQuestions}
+          loading={agentQ.loading}
+          error={agentQ.error}
+          isAr={isAr}
+          showRep={isManager}
+          onResolved={agentQ.drop}
+          onStale={() => void agentQ.refresh()}
+        />
+      )}
       {section === 'waiting' && renderWaiting()}
       {section === 'search' && (
         <>

@@ -128,6 +128,8 @@ function loadLocal<T>(key: string): T | null {
 
 // Track which keys have already shouted about a quota error this session so we
 // don't toast on every keystroke once the cliff hits.
+const AGENT_QUESTION_COLS = 'id, chat_wid, conversation_record_id, client_id, project_id, rep_user_id, question, note, status, created_at';
+
 const localStorageWarned = new Set<string>();
 
 // Cap on the serialized size of a SINGLE localStorage value. The offline
@@ -1825,11 +1827,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!supabase || !chatWid) return [];
     const { data, error } = await supabase
       .from('wa_agent_questions')
-      .select('id, chat_wid, project_id, question, note, status, created_at')
+      .select(AGENT_QUESTION_COLS)
       .eq('chat_wid', chatWid).eq('status', 'open')
       .order('created_at', { ascending: true }).limit(20);
     if (error) throw new Error(error.message);
     return (data ?? []) as AgentQuestion[];
+  },
+  loadOpenAgentQuestions: async () => {
+    if (!supabase) return [];
+    // Every open question the caller can see (RLS mirrors chat visibility),
+    // oldest first — paged so a backlog is never cut at 1,000 rows.
+    const out: AgentQuestion[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from('wa_agent_questions')
+        .select(AGENT_QUESTION_COLS)
+        .eq('status', 'open')
+        .order('created_at', { ascending: true }).order('id', { ascending: true })
+        .range(from, from + 999);
+      if (error) throw new Error(error.message);
+      out.push(...((data ?? []) as AgentQuestion[]));
+      if (!data || data.length < 1000) break;
+    }
+    return out;
   },
   loadInterestTimeline: async (chatWid, projectId) => {
     if (!supabase) return [];
