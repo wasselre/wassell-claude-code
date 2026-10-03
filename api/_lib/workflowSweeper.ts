@@ -35,6 +35,11 @@
  *   - `update_record` filter is lookup-aware (single-lookup field whose
  *     `lookup_model_id` matches `target_model_id` → match by record id).
  *
+ * **Record reads never trust a single PostgREST response to be complete.**
+ * A target known by id is fetched by id; a whole-model read is paginated to
+ * the end and throws on error. Both live in `./workflowRecordLoad.ts` — read
+ * its header before adding another `.from('unified_records')` here.
+ *
  * @see docs/prd/workflow-automation.md
  */
 
@@ -68,6 +73,7 @@ import {
 } from '../../src/lib/workflowEngineCore.js';
 import { normalizePhone } from '../../src/lib/phone.js';
 import { sendMessage as haberchatSendMessage, resolveDefaultDeviceId } from './whatsappGateway.js';
+import { loadAllRecordsForModel, resolveUpdateTarget } from './workflowRecordLoad.js';
 
 interface ActionResult {
   action_id: string;
@@ -482,33 +488,40 @@ async function executeUpdateRecord(
   triggerRecord: AppRecord,
   ctx: SweeperContext,
 ): Promise<ActionResult> {
-  const targetRecords = await loadRecordsForModel(action.target_model_id, ctx);
   const filterValueSource = action.filter_value_source ?? 'static';
   const filterValue = (filterValueSource === 'trigger_field' && action.filter_trigger_field_id)
     ? triggerRecord.data[action.filter_trigger_field_id]
     : action.filter_value;
 
-  // Lookup-aware match — same posture as the client engine.
-  let target: AppRecord | undefined;
+  // Lookup-aware match — same posture as the client engine: a single-lookup
+  // trigger field pointing at the target model stores the target's record id.
+  let matchById = false;
   if (filterValueSource === 'trigger_field' && action.filter_trigger_field_id && typeof filterValue === 'string') {
     const triggerModel = ctx.models.find((m) => m.id === triggerRecord.model_id);
     const triggerField = triggerModel?.schema.sections
       .flatMap((s) => s.fields)
       .find((f) => f.name === action.filter_trigger_field_id);
-    if (
+    matchById =
       triggerField?.type === 'lookup' &&
       !triggerField.is_multi &&
-      triggerField.lookup_model_id === action.target_model_id
-    ) {
-      target = targetRecords.find((r) => r.id === filterValue);
-    }
+      triggerField.lookup_model_id === action.target_model_id;
   }
-  if (!target && action.filter_field_id === 'id' && typeof filterValue === 'string') {
-    target = targetRecords.find((r) => r.id === filterValue);
-  }
-  if (!target) {
-    target = targetRecords.find((r) => r.data[action.filter_field_id] === filterValue);
-  }
+
+  // A target identified by id is read BY ID — one fresh row — never searched
+  // for in a whole-model list. That list used to be silently cut at
+  // PostgREST's 1,000-row cap, so on any model past 1,000 rows the target was
+  // usually missing and this action skipped with `no_matching_record` (the
+  // WhatsApp no-response escalation, 2026-10-03). Reading fresh also means a
+  // self-update merges onto the row as the sweep's claim left it (`fired_at`
+  // stamped), not onto a list cached before the claim.
+  const target = await resolveUpdateTarget({
+    supabase: ctx.supabase,
+    targetModelId: action.target_model_id,
+    filterFieldId: action.filter_field_id,
+    filterValue,
+    matchById,
+    loadAll: () => loadRecordsForModel(action.target_model_id, ctx),
+  });
   if (!target) {
     return { action_id: action.id, type: 'update_record', status: 'skipped', reason: 'no_matching_record' };
   }
@@ -749,29 +762,24 @@ function resolveFieldMapping(mapping: FieldMapping, triggerRecord: AppRecord): u
   }
 }
 
+/**
+ * The WHOLE model, cached for the rest of this sweep. Only for the cases that
+ * genuinely need every row: a field-equality `update_record` filter, the
+ * `skip_if_exists` dedup, and lookup resolution for WhatsApp destinations /
+ * `{lookup.field}` tokens. A target known by id never comes through here —
+ * see `resolveUpdateTarget`.
+ *
+ * Paginated to exhaustion; a failed read THROWS (it used to log and return an
+ * empty list, which every caller then read as "no such record"). The throw is
+ * caught by `executeAction`, so the action is recorded as `failed` with the
+ * message and shows up in the run log.
+ */
 async function loadRecordsForModel(modelId: string, ctx: SweeperContext): Promise<AppRecord[]> {
   const cached = ctx.recordsByModel.get(modelId);
   if (cached) return cached;
   // Read through unified_records so we cover both records-table-backed
-  // models and frozen models without branching here. Same posture the
-  // client store uses on initial load.
-  const { data, error } = await ctx.supabase
-    .from('unified_records')
-    .select('id, model_id, data, created_by_user_id, created_at, updated_at')
-    .eq('model_id', modelId);
-  if (error) {
-    // eslint-disable-next-line no-console
-    console.error(`[workflowSweeper] failed to load records for model ${modelId}: ${error.message}`);
-    return [];
-  }
-  const rows: AppRecord[] = (data ?? []).map((r) => ({
-    id: r.id as string,
-    model_id: r.model_id as string,
-    data: (r.data as Record<string, unknown>) ?? {},
-    created_at: r.created_at as string,
-    updated_at: r.updated_at as string,
-    created_by_user_id: (r.created_by_user_id as string | null) ?? undefined,
-  }));
+  // models and frozen models without branching here.
+  const rows = await loadAllRecordsForModel(ctx.supabase, modelId);
   ctx.recordsByModel.set(modelId, rows);
   return rows;
 }

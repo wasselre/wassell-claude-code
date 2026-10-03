@@ -53,6 +53,7 @@ import { sendMessage as haberchatSendMessage, resolveDefaultDeviceId } from './w
 import { resolveActorPublicUserId } from './actorMapping.js';
 import { fetchTranslationOverlay, overlayFieldText, type Lang, type TranslationOverlay } from './recordLang.js';
 import type { SubstituteTokensContext } from '../../src/lib/workflowEngineCore.js';
+import { loadAllRecordsForModel, loadRecordById, resolveUpdateTarget } from './workflowRecordLoad.js';
 
 export const SUPPORTED_ACTION_TYPES = new Set<WorkflowAction['type']>([
   'create_record', 'update_record', 'send_whatsapp_message', 'send_notification',
@@ -299,20 +300,15 @@ async function resolveMapping(mapping: FieldMapping, ctx: ResolveCtx): Promise<u
 
 /* ── record loads ─────────────────────────────────────────────────────── */
 
+/**
+ * The WHOLE model — only for what genuinely needs every row (a field-equality
+ * `update_record` filter, the `skip_if_exists` dedup). Paginated to the end and
+ * throws on error; a bare `.select()` here was silently cut at PostgREST's
+ * 1,000-row cap. Anything known BY ID goes through `loadRecordById` /
+ * `resolveUpdateTarget` instead (see `./workflowRecordLoad.ts`).
+ */
 async function loadRecordsForModel(supabase: SupabaseClient, modelId: string): Promise<AppRecord[]> {
-  const { data, error } = await supabase
-    .from('unified_records')
-    .select('id, model_id, data, created_by_user_id, created_at, updated_at')
-    .eq('model_id', modelId);
-  if (error) throw new Error(`load records (${modelId}) failed: ${error.message}`);
-  return (data ?? []).map((r) => ({
-    id: r.id as string,
-    model_id: r.model_id as string,
-    data: (r.data as Record<string, unknown>) ?? {},
-    created_at: r.created_at as string,
-    updated_at: r.updated_at as string,
-    created_by_user_id: (r.created_by_user_id as string | null) ?? undefined,
-  }));
+  return loadAllRecordsForModel(supabase, modelId);
 }
 
 /* ── action execution ─────────────────────────────────────────────────── */
@@ -384,16 +380,24 @@ async function execUpdate(
     ? ctx.triggerData[action.filter_trigger_field_id]
     : action.filter_value;
 
-  const targets = await loadRecordsForModel(ctx.supabase, action.target_model_id);
-  let target: AppRecord | undefined;
   // Lookup-aware: a single lookup trigger field pointing at the target model
   // stores the target's id.
-  if (src === 'trigger_field' && action.filter_trigger_field_id && typeof filterValue === 'string') {
-    const tf = fieldType(ctx.models, job.model_id, action.filter_trigger_field_id);
-    if (tf === 'lookup') target = targets.find((r) => r.id === filterValue);
-  }
-  if (!target && action.filter_field_id === 'id' && typeof filterValue === 'string') target = targets.find((r) => r.id === filterValue);
-  if (!target) target = targets.find((r) => r.data[action.filter_field_id] === filterValue);
+  const matchById = src === 'trigger_field' && !!action.filter_trigger_field_id && typeof filterValue === 'string'
+    && fieldType(ctx.models, job.model_id, action.filter_trigger_field_id) === 'lookup';
+
+  // By id ⇒ ONE row read by id, never a search through a whole-model list.
+  // Nearly every runner update is "the client this record points at"; with the
+  // old list search those would ALL have started skipping as
+  // `no_matching_record` the day `clients` passed 1,000 rows (983 on
+  // 2026-10-03) — the failure the on_due sweeper already had on `followups`.
+  const target = await resolveUpdateTarget({
+    supabase: ctx.supabase,
+    targetModelId: action.target_model_id,
+    filterFieldId: action.filter_field_id,
+    filterValue,
+    matchById,
+    loadAll: () => loadRecordsForModel(ctx.supabase, action.target_model_id),
+  });
   if (!target) return { action_id: action.id, type: 'update_record', status: 'skipped', reason: 'no_matching_record' };
 
   const merged = { ...target.data };
@@ -428,8 +432,9 @@ async function resolveDestinationPhone(dest: OutboundIvrDestination, ctx: Resolv
       const triggerModel = ctx.models.find((m) => m.id === ctx.triggerModelId);
       const lookupField = triggerModel?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === dest.lookup_field_name);
       if (!lookupField?.lookup_model_id) return null;
-      const targetRecords = await loadRecordsForModel(ctx.supabase, lookupField.lookup_model_id);
-      const raw = targetRecords.find((r) => r.id === targetId)?.data[dest.target_phone_field_name];
+      // By id — the destination is one known record, not a search of the model.
+      const targetRecord = await loadRecordById(ctx.supabase, lookupField.lookup_model_id, targetId);
+      const raw = targetRecord?.data[dest.target_phone_field_name];
       return typeof raw === 'string' ? normalizePhone(raw) : null;
     }
     default:
