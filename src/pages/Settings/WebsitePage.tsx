@@ -77,6 +77,10 @@ function ProjectCard({
       <button type="button" onClick={onEdit} className="relative h-36 bg-cream/40 overflow-hidden group text-start">
         {url ? (
           <img src={url} alt={name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+        ) : hero ? (
+          // The project HAS a photo; its signed link is still on its way. Saying
+          // "no photo" here was wrong for every card during the first seconds.
+          <div className="w-full h-full animate-pulse bg-sand/30" aria-label={isAr ? 'جارٍ تحميل الصورة' : 'Loading photo'} />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center gap-1 text-charcoal/30">
             <ImageOff size={26} />
