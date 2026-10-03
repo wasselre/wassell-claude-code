@@ -16,7 +16,11 @@ export type Platform = 'instagram' | 'tiktok' | 'snapchat' | 'youtube' | 'x' | '
 // 'budget_exhausted': the account's monthly spending limit is used up. Distinct
 // from 'unavailable' on purpose — an outage is worth retrying, a spent budget is
 // not until the billing cycle renews (see apifyLifecycle.classifyApifyError).
-export type ProviderHealth = 'not_configured' | 'connected' | 'auth_failed' | 'rate_limited' | 'unavailable' | 'config_invalid' | 'budget_exhausted';
+// 'not_found': the provider ANSWERED and the account is not there (a deleted
+// channel, or a YouTube channel id stored in the wrong letter case). Distinct
+// from 'unavailable' for the same reason: no retry can make it appear, so the
+// job ends terminally and the account is switched off (runCollectionJob).
+export type ProviderHealth = 'not_configured' | 'connected' | 'auth_failed' | 'rate_limited' | 'unavailable' | 'config_invalid' | 'budget_exhausted' | 'not_found';
 
 export interface NormalizedMetrics { views?: number; likes?: number; comments?: number; shares?: number; saves?: number; playCount?: number; followers?: number }
 export interface NormalizedContentPost {
@@ -86,9 +90,26 @@ export const YouTube = {
     const q = query.trim();
     const params: Record<string, string> = { part: 'snippet,statistics,contentDetails' };
     if (/^UC[\w-]{20,}$/.test(q)) params.id = q; else params.forHandle = q.replace(/^@/, '');
+    // A transport or HTTP failure throws from yt() with its own health and
+    // stays retryable. Past this line the API ANSWERED.
     const resp = await yt<{ items?: Array<{ id: string; snippet?: { title?: string }; statistics?: { subscriberCount?: string }; contentDetails?: { relatedPlaylists?: { uploads?: string } } }> }>('channels', params);
     const item = resp.items?.[0]; const uploads = item?.contentDetails?.relatedPlaylists?.uploads;
-    if (!item || !uploads) throw new ProviderError(`YouTube channel not found: ${query}`, 'unavailable');
+    if (!item) {
+      // No such channel. This used to be 'unavailable', so six accounts were
+      // retried to max_attempts, failed, and re-enqueued every day: 1,691
+      // failed jobs. Four of them held a lowercased id ('ucd117cauhsn4hsyof7c7_ea'
+      // for 'UCD117CaUHsn4hSYOf7C7_EA'). Channel ids are case-sensitive, so the
+      // id test above fails, the forHandle lookup can never match, and the
+      // case cannot be recovered from the stored value — say so, so the
+      // operator re-enters the id instead of hunting for a deleted channel.
+      if (/^uc[\w-]{22}$/i.test(q) && !q.startsWith('UC')) {
+        throw new ProviderError(`YouTube channel id stored in the wrong letter case: ${query} — channel ids are case-sensitive and cannot be resolved from this value; re-enter it exactly as YouTube shows it (starting "UC")`, 'not_found');
+      }
+      throw new ProviderError(`YouTube channel not found: ${query}`, 'not_found');
+    }
+    // The channel exists but came back without its uploads playlist: an odd
+    // answer, not proof of absence, so it stays a retryable outage.
+    if (!uploads) throw new ProviderError(`YouTube channel ${item.id} has no uploads playlist: ${query}`, 'unavailable');
     return { channelId: item.id, uploads, title: item.snippet?.title, subs: item.statistics?.subscriberCount ? Number(item.statistics.subscriberCount) : undefined };
   },
   async collect(input: CollectAccountContentInput): Promise<CollectedContentBatch> {

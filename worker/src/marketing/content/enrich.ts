@@ -43,9 +43,11 @@ export interface NarrowOptions {
    * project, and its relationship rows are a static seed — «أكنان 23» was in
    * the catalog but not in ريفا's 20-project scope, so it could never be a
    * candidate. Projects outside the publisher's scope join the candidate list
-   * ONLY on a full-name match (or a series-word + number phrase): the whole
-   * name is a concrete reference wherever it appears, whereas a lone word or
-   * a bare number across 1,000 projects would be noise.
+   * ONLY on a full-name match (or a series-word + number phrase): a lone word
+   * or a bare number across 1,000 projects would be noise. Not every whole
+   * name qualifies — see the catalog pass below. Pass brandPhrases with this:
+   * it is how the matcher keeps «عزوم النرجس» (an organization's name + a
+   * district) while refusing «مشروع النرجس» (generic + district).
    */
   catalog?: ProjectAlias[];
 }
@@ -62,6 +64,12 @@ export function narrowProjects(combinedText: string, index: ProjectAlias[], opts
   if (opts.catalog && opts.catalog.length > 0) {
     const inScope = new Set(index.map((p) => p.projectId));
     const outside = opts.catalog.filter((p) => !inScope.has(p.projectId));
+    // Empty scope on purpose: the matcher then refuses the names that are only
+    // safe from their own publisher — a one-word name without a marker
+    // («مشروع مدار», «Madar Tower») comes back as a weak 'word' (dropped by the
+    // filter below), and a name of generic + place words («مشروع النرجس») or
+    // generic words + a short number («ادوار 9») does not match at all. A name
+    // carrying an organization's name («عزوم النرجس») still does.
     const extra = attributeCaption(combinedText, outside, {
       publisherProjectIds: [],
       commonTokens: opts.commonTokens,

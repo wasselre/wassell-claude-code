@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { attributeCaption, computeCommonTokens, projectNameVariants, type ProjectAlias } from '../pipeline';
+import { attributeCaption, computeCommonTokens, matchSnippet, projectNameVariants, type ProjectAlias } from '../pipeline';
 import { narrowProjects } from '../content/enrich';
 
 // The measured failure modes of 2026-09-13, each pinned as a test so the
@@ -208,5 +208,177 @@ describe("a marketer can post about ANY catalog project (أكنان 23 outside �
   it('a lone word outside the scope does NOT', () => {
     const r = narrowProjects('أكنان تفتح أبوابها', scope, o);
     expect(r).toEqual([]);
+  });
+});
+
+// Three more production failures, each from a real post. Out-of-scope projects
+// reach the candidate list through narrowProjects' catalog pass, which calls the
+// matcher with an EMPTY publisher scope — so that is the path tested here.
+
+describe('a generic word + a short number is not a series reference (Ocean «ادوار 9» → Yamam «أدوار - يمام 9»)', () => {
+  const catalog: ProjectAlias[] = [
+    { projectId: 'yamam-adwar-9', nameAr: 'أدوار - يمام 9', nameEn: null, tokens: [] },
+    { projectId: 'yamam-12', nameAr: 'يمام 12', nameEn: null, tokens: [] }, // makes يمام a series word
+  ];
+  const common = computeCommonTokens(catalog);
+  const excluded = new Set(['اوشن']); // the publisher's brand word
+  // Ocean's own scope holds none of Yamam's projects.
+  const o = { publisherProjectIds: [], commonTokens: common, excludedTokens: excluded, catalog };
+  it('a villa post by another company with «ادوار 9» yields no Yamam candidate', () => {
+    const text = 'فيلا فاخرة للبيع من أوشن: 3 ادوار 9 غرف نوم ومسبح خاص';
+    expect(narrowProjects(text, [], o)).toEqual([]);
+    expect(attributeCaption(text, catalog, { publisherProjectIds: [], commonTokens: common, excludedTokens: excluded })).toEqual([]);
+  });
+  it('«يمام 9» still names the project as a number match', () => {
+    const r = narrowProjects('احجز وحدتك في يمام 9 قبل نفاد الكمية', [], o);
+    expect(r.map((c) => c.projectId)).toEqual(['yamam-adwar-9']);
+    expect(r[0]!.strength).toBe('number');
+    expect(r[0]!.matchedAliases).toEqual(['يمام 9']);
+  });
+});
+
+describe('… nor is it a whole name for another company (a project named just «أدوار 9»)', () => {
+  const catalog: ProjectAlias[] = [{ projectId: 'adwar-9', nameAr: 'أدوار 9', nameEn: null, tokens: [] }];
+  const common = computeCommonTokens(catalog);
+  const excluded = new Set(['اوشن']);
+  const TEXT = 'فيلا فاخرة للبيع من أوشن: 3 ادوار 9 غرف نوم ومسبح خاص';
+  it("Ocean's villa post yields no candidate (rule 1 now agrees with rule 3)", () => {
+    expect(narrowProjects(TEXT, [], { publisherProjectIds: [], commonTokens: common, excludedTokens: excluded, catalog })).toEqual([]);
+  });
+  it("the project's own publisher still names it", () => {
+    const r = attributeCaption(TEXT, catalog, { publisherProjectIds: ['adwar-9'], commonTokens: common, excludedTokens: excluded });
+    expect(r.map((c) => [c.projectId, c.strength])).toEqual([['adwar-9', 'full_name']]);
+  });
+});
+
+describe('a one-word everyday name needs a project marker (Almajdiah «على بعد خطوات» → «بعد»)', () => {
+  const catalog: ProjectAlias[] = [
+    { projectId: 'baad', nameAr: 'بعد', nameEn: null, tokens: [] },
+    { projectId: 'binaa', nameAr: 'بناء', nameEn: null, tokens: [] },
+    { projectId: 'dam', nameAr: 'دام', nameEn: null, tokens: [] },
+    { projectId: 'madar', nameAr: 'مدار', nameEn: null, tokens: [] },
+    { projectId: 'majdiah-174', nameAr: 'الماجدية 174', nameEn: null, tokens: [] },
+  ];
+  const common = computeCommonTokens(catalog);
+  const excluded = new Set(['الماجديه']);
+  const one = (id: string) => catalog.filter((p) => p.projectId === id);
+  const inScopeOf = (id: string) => ({ publisherProjectIds: [id], commonTokens: common, excludedTokens: excluded });
+  const outOfScope = { publisherProjectIds: [], commonTokens: common, excludedTokens: excluded };
+  // Almajdiah's scope = its own project; everything else arrives via the catalog pass.
+  const almajdiah = { publisherProjectIds: ['majdiah-174'], commonTokens: common, excludedTokens: excluded, catalog };
+  const POST = 'سكن فاخر على بعد خطوات من الكورنيش';
+
+  it('the Almajdiah post yields no candidate for «بعد» out of scope', () => {
+    expect(narrowProjects(POST, one('majdiah-174'), almajdiah)).toEqual([]);
+  });
+  it('… nor in scope — not even a weak lone word', () => {
+    expect(attributeCaption(POST, one('baad'), inScopeOf('baad'))).toEqual([]);
+  });
+  it('«مشروع بعد» names the project, in scope and out of scope', () => {
+    const text = 'تملك الآن في مشروع بعد بأسعار مميزة';
+    const own = attributeCaption(text, one('baad'), inScopeOf('baad'));
+    expect(own.map((c) => c.projectId)).toEqual(['baad']);
+    expect(own[0]!).toMatchObject({ strength: 'full_name', method: 'name_ar', matchedAliases: ['مشروع بعد'] });
+    expect(own[0]!.evidence.snippet).toContain('مشروع بعد');
+    const other = narrowProjects(text, one('majdiah-174'), almajdiah);
+    expect(other.map((c) => c.projectId)).toEqual(['baad']);
+    expect(other[0]!.strength).toBe('full_name');
+  });
+  it('the marker may carry an attached prefix letter; the name may not («مشروع لبناء» is not بناء)', () => {
+    expect(attributeCaption('استثمر بمشروع بناء شمال الرياض', one('binaa'), outOfScope).map((c) => c.projectId)).toEqual(['binaa']);
+    expect(attributeCaption('أطلقنا مشروع لبناء 300 وحدة سكنية', one('binaa'), outOfScope)).toEqual([]);
+  });
+  it('an in-scope one-word name that is not an everyday word still matches as full_name without a marker', () => {
+    const r = attributeCaption('تملّك فيلتك في مدار بأفضل الأسعار', one('madar'), inScopeOf('madar'));
+    expect(r.map((c) => c.projectId)).toEqual(['madar']);
+    expect(r[0]!.strength).toBe('full_name');
+  });
+  it('out of scope that name without a marker is only a weak word, which narrowProjects drops', () => {
+    const text = 'تملّك فيلتك في مدار بأفضل الأسعار';
+    expect(attributeCaption(text, one('madar'), outOfScope).map((c) => c.strength)).toEqual(['word']);
+    expect(narrowProjects(text, one('majdiah-174'), almajdiah)).toEqual([]);
+  });
+  it('«للمشروع بعد …» is "for THE project, after …": «لل» is the article, not a prefix letter', () => {
+    const text = 'سجل اهتمامك للمشروع بعد الإطلاق مباشرة';
+    expect(attributeCaption(text, one('baad'), inScopeOf('baad'))).toEqual([]);
+    expect(narrowProjects(text, one('majdiah-174'), almajdiah)).toEqual([]);
+  });
+  it('a quoted name after its marker is still marked, and the alias quotes it verbatim', () => {
+    const r = narrowProjects('اكتشف مشروع «مدار» الآن', one('majdiah-174'), almajdiah);
+    expect(r.map((c) => c.projectId)).toEqual(['madar']);
+    expect(r[0]!).toMatchObject({ strength: 'full_name', matchedAliases: ['مشروع «مدار»'] });
+    const own = attributeCaption('سجل في مشروع "بعد" اليوم', one('baad'), inScopeOf('baad'));
+    expect(own.map((c) => [c.projectId, c.strength])).toEqual([['baad', 'full_name']]);
+  });
+  it('English puts the marker after the name («Madar Tower»)', () => {
+    const madar: ProjectAlias = { projectId: 'madar-en', nameAr: 'مدار', nameEn: 'Madar', tokens: [] };
+    const r = attributeCaption('Discover Madar Tower, now selling', [madar], outOfScope);
+    expect(r[0]!).toMatchObject({ projectId: 'madar-en', strength: 'full_name', method: 'name_en', matchedAliases: ['madar tower'] });
+    expect(attributeCaption('Discover Madar, now selling', [madar], outOfScope).map((c) => c.strength)).toEqual(['word']);
+  });
+  it('the stored snippet centres on the matched phrase, not on the first «مشروع» of the caption', () => {
+    const filler = 'تصاميم عصرية ومساحات واسعة ومواقع مميزة قريبة من الخدمات. '.repeat(3);
+    const text = `مشروع جديد من الماجدية. ${filler}وتملك الآن في مشروع بعد بأسعار مميزة`;
+    expect(matchSnippet(text, ['مشروع بعد'])).toContain('مشروع بعد');
+    expect(attributeCaption(text, one('baad'), inScopeOf('baad'))[0]!.evidence.snippet).toContain('مشروع بعد');
+  });
+});
+
+describe('a name of generic + place words only is evidence only from its own publisher («مشروع النرجس كوميونيتيز» → «مشروع النرجس»)', () => {
+  const catalog: ProjectAlias[] = [{ projectId: 'nahda-narjis', nameAr: 'مشروع النرجس', nameEn: null, tokens: [] }];
+  const common = computeCommonTokens(catalog);
+  const excluded = new Set(['النرجس', 'دار', 'واعمار', 'النهضه']); // district + organization brand words
+  const brandPhrases = ['دار وإعمار', 'النهضة']; // passed with excludedTokens in production
+  const POST = 'دار وإعمار تطلق مشروع النرجس كوميونيتيز شمال الرياض';
+
+  it("a Dar Wa Emaar post yields no candidate for Nahda's «مشروع النرجس»", () => {
+    expect(narrowProjects(POST, [], { publisherProjectIds: [], commonTokens: common, excludedTokens: excluded, brandPhrases, catalog })).toEqual([]);
+  });
+  it('the any-order rule (1c) holds the same line', () => {
+    expect(attributeCaption('النرجس مشروع جديد شمال الرياض', catalog, { publisherProjectIds: [], commonTokens: common, excludedTokens: excluded, brandPhrases })).toEqual([]);
+  });
+  it("Nahda's own post still names it as a full name", () => {
+    const r = attributeCaption(POST, catalog, { publisherProjectIds: ['nahda-narjis'], commonTokens: common, excludedTokens: excluded, brandPhrases });
+    expect(r.map((c) => c.projectId)).toEqual(['nahda-narjis']);
+    expect(r[0]!.strength).toBe('full_name');
+  });
+});
+
+describe("an organization's name inside a whole name is the project's own (ريفا names another developer's project in full)", () => {
+  const catalog: ProjectAlias[] = [
+    { projectId: 'azoum-narjis', nameAr: 'عزوم النرجس', nameEn: null, tokens: [] },
+    { projectId: 'burj-ramz', nameAr: 'برج الرمز', nameEn: null, tokens: [] },
+    { projectId: 'majdiah-village', nameAr: 'الماجدية فيلج', nameEn: null, tokens: [] },
+    { projectId: 'maskan-narjis', nameAr: 'مسكن النرجس', nameEn: null, tokens: [] },
+    { projectId: 'abaq', nameAr: 'عبق العارض', nameEn: null, tokens: [] },
+  ];
+  const scope = catalog.filter((p) => p.projectId === 'abaq'); // ريفا's seeded scope
+  // what loadAttributionContext builds: every organization's name words + district names
+  const excluded = new Set(['عزوم', 'الرمز', 'الماجديه', 'مسكن', 'ريفا', 'النرجس', 'العارض']);
+  const o = { publisherProjectIds: ['abaq'], commonTokens: computeCommonTokens(catalog), excludedTokens: excluded, brandPhrases: ['عزوم', 'الرمز', 'الماجدية', 'مسكن', 'ريفا'], catalog };
+  it.each([
+    ['ريفا تقدم لكم عزوم النرجس — فلل بتصاميم عصرية', 'azoum-narjis'],
+    ['ريفا: وحدات متاحة في برج الرمز بأسعار مميزة', 'burj-ramz'],
+    ['ريفا تسوق الماجدية فيلج — فلل جاهزة للسكن', 'majdiah-village'],
+  ])('%s → %s, a full name', (text, id) => {
+    const r = narrowProjects(text, scope, o);
+    expect(r.map((c) => [c.projectId, c.strength])).toEqual([[id, 'full_name']]);
+  });
+  it('out of its own order it is not («عزوم النرجس مسكن يليق بك» holds «النرجس مسكن», which is no «مسكن النرجس»)', () => {
+    const r = narrowProjects('مشروع عزوم النرجس مسكن يليق بك', scope, o);
+    expect(r.map((c) => c.projectId)).toEqual(['azoum-narjis']);
+  });
+});
+
+describe('Arabic-Indic digits match catalog numbers («مينا ٣٩» → مينا 39)', () => {
+  const mena: ProjectAlias[] = [{ projectId: 'mena-39', nameAr: 'مينا 39', nameEn: null, tokens: [] }];
+  it('a caption written with Arabic-Indic digits finds the project', () => {
+    const hits = attributeCaption('تملك وحدتك السكنية بحي النرجس - مينا ٣٩ بمساحات مختلفة', mena, { publisherProjectIds: ['mena-39'] });
+    expect(hits.map((h) => h.projectId)).toEqual(['mena-39']);
+    expect(hits[0]!.strength).not.toBe('word');
+  });
+  it('Persian digits fold too, and a different number still does not match', () => {
+    expect(attributeCaption('مينا ۳۹', mena, { publisherProjectIds: ['mena-39'] }).map((h) => h.projectId)).toEqual(['mena-39']);
+    expect(attributeCaption('مينا ٣٨', mena, { publisherProjectIds: ['mena-39'] }).filter((h) => h.strength !== 'word')).toEqual([]);
   });
 });

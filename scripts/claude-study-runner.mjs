@@ -382,25 +382,42 @@ async function handleMktContentEnrichment(job) {
     }
     if (!validated) throw new Error(`content-enrichment failed after retry: ${lastErr}`);
 
-    // persist each validated post via the scoped upsert RPCs
+    // persist each validated post via the scoped upsert RPCs.
+    // Every write checks its error. Until 2026-10-03 none did: a failed
+    // enrichment upsert still marked the post 'processed', so the decision was
+    // lost and nothing would ever retry it.
     let processed = 0;
     for (const v of validated.valid) {
       const ev = evidence.find((e) => e.post_id === v.postId);
-      await supa.rpc('mkt_enrichment_upsert', {
+      const { error: upErr } = await supa.rpc('mkt_enrichment_upsert', {
         p_post: v.postId, p_model: 'claude-runner:content-enrichment', p_rule_version: ENRICH_RULE_VERSION,
         p_org: ev?.organization_id ?? null, p_developer: null, p_marketer: null,
         p_primary_project: v.primaryProjectId, p_candidates: v.candidates, p_result: v.result,
         p_cost: 0, p_status: 'done', p_failure: null,
       });
+      // Fail the job (it is retried) rather than mark a post processed whose
+      // decision was never stored.
+      if (upErr) throw new Error(`mkt_enrichment_upsert failed for post ${v.postId}: ${upErr.message}`);
       // A human-locked post keeps its project: the upsert RPC preserved the
       // pointer, and we must not add a competing auto-accepted attribution.
       if (!v.locked && v.primaryProjectId) {
-        await supa.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: v.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: { matched: 'claude-runner', quote: v.evidenceQuote, snippet: (ev?.snippet ?? '').slice(0, 160) }, p_matched_aliases: [], p_auto_accept: true });
+        const { error } = await supa.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: v.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: { matched: 'claude-runner', quote: v.evidenceQuote, snippet: (ev?.snippet ?? '').slice(0, 160) }, p_matched_aliases: [], p_auto_accept: true });
+        if (error) console.error(`[mkt-enrich] attribution upsert failed post=${v.postId}: ${error.message}`);
+      }
+      // The collection-time matcher may have auto-accepted a DIFFERENT project
+      // (or one the proof check just rejected). Demote it back to a candidate so
+      // the project record's Marketing tab agrees with this decision — 15 posts
+      // disagreed before 2026-10-03. Locked posts are skipped inside the RPC.
+      if (!v.locked) {
+        const { error } = await supa.rpc('mkt_attribution_demote_stale', { p_post: v.postId, p_keep_project: v.primaryProjectId });
+        if (error) console.error(`[mkt-enrich] stale attribution demote failed post=${v.postId}: ${error.message}`);
       }
       if (!v.locked) for (const s of v.secondary) {
-        await supa.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: s.projectId, p_method: 'caption', p_confidence: s.confidence, p_evidence: { matched: s.matched.join(','), snippet: (ev?.snippet ?? '').slice(0, 160) }, p_matched_aliases: s.matched, p_auto_accept: false });
+        const { error } = await supa.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: s.projectId, p_method: 'caption', p_confidence: s.confidence, p_evidence: { matched: s.matched.join(','), snippet: (ev?.snippet ?? '').slice(0, 160) }, p_matched_aliases: s.matched, p_auto_accept: false });
+        if (error) console.error(`[mkt-enrich] secondary attribution upsert failed post=${v.postId}: ${error.message}`);
       }
-      await supa.rpc('mkt_content_set_status', { p_post: v.postId, p_status: v.deterministicPartial ? 'partial' : 'processed', p_media_count: null });
+      const { error: stErr } = await supa.rpc('mkt_content_set_status', { p_post: v.postId, p_status: v.deterministicPartial ? 'partial' : 'processed', p_media_count: null });
+      if (stErr) throw new Error(`mkt_content_set_status failed for post ${v.postId}: ${stErr.message}`);
       processed++;
     }
     return { batch: postIds.length, evidence: evidence.length, processed, posts_without_candidates: noCandidates, validation_errors: validated.errors.slice(0, 10) };

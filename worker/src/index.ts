@@ -52,7 +52,7 @@ import { runPortalRegistrationJob, type PortalRegistrationJob } from './runPorta
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
 import { runUnitPdfJob, type UnitPdfJob } from './runUnitPdfJob.js';
 import { runInboundMediaJob, type InboundMediaJob } from './runInboundMediaJob.js';
-import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
+import { runCollectionJob, failCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
 import { ProviderError } from './marketing/providers.js';
 import { runCreativeCleanup } from './marketing/creativeCleanup.js';
 import { sweepContentBacklog } from './marketing/content/sweepBacklog.js';
@@ -2873,8 +2873,10 @@ async function claimAndRunOneMarketing(): Promise<boolean> {
       console.error(`[worker] marketing job=${job.id} cancelled (${outcome ?? 'error'}) — provider budget spent: ${msg}`);
       return true;
     }
-    const { data: outcome } = await supabase.rpc('mkt_job_fail', { p_job_id: job.id, p_error: msg });
-    console.error(`[worker] marketing job=${job.id} failed (${outcome}): ${msg}`);
+    // Everything else — including a 'not_found' account, which ends terminally
+    // instead of being requeued — is decided in failCollectionJob (testable there;
+    // this file starts the server on import).
+    await failCollectionJob(supabase, job.id, err);
   }
   return true;
 }

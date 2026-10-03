@@ -466,11 +466,27 @@ async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: P
   });
   if (upErr) throw new Error(`narrow: enrichment upsert: ${upErr.message}`);
 
+  // No candidate is still a decision the runner must make once under the
+  // current rules: it is the runner that reports the projects a post names but
+  // the catalog lacks (`mentioned_projects`). A result without that key was
+  // never read that way — measured 2026-10-03: 1,915 of 1,923 no-candidate
+  // posts still carried their July reading, so «زنك 5», «ديارا D3», «فال 21»…
+  // were never surfaced as catalog gaps. Hand those back once; a post the
+  // runner has already read under v2 stays settled.
+  if (candidates.length === 0 && !('mentioned_projects' in prev)) {
+    const { error: stErr } = await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'awaiting_intelligence' });
+    if (stErr) throw new Error(`narrow: hand back for a v2 reading: ${stErr.message}`);
+    stats.status = 'renarrowed';
+    return stats;
+  }
   if (candidates.length === 0) {
     stats.status = 'no_candidates';
     return stats;
   }
-  await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'awaiting_intelligence' });
+  // Checked: an unchecked failure here left the post 'processed' with its
+  // project pointer already cleared above, and nothing would ever re-decide it.
+  const { error: handErr } = await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'awaiting_intelligence' });
+  if (handErr) throw new Error(`narrow: hand back to the runner: ${handErr.message}`);
   stats.enriched = true;
   stats.status = 'renarrowed';
   return stats;

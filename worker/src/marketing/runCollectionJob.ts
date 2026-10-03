@@ -87,6 +87,93 @@ async function pauseForBudget(sb: SupabaseClient, provider: string, detail: stri
   return { paused: true, reason: decision.reason };
 }
 
+/** The provider ANSWERED that the account does not exist: a deleted channel, or
+ *  a YouTube channel id stored lowercased (ids are case-sensitive). No retry can
+ *  fix that, and nothing used to stop it: six accounts were retried to
+ *  max_attempts, failed, and re-enqueued by the scheduler every morning — 1,691
+ *  failed jobs, and nobody was told. So switch collection off, record why on
+ *  the row, and raise ONE operator alert. Every write is checked and logged; none
+ *  may mask the original error, which the caller re-throws (index.ts then ends
+ *  the job without a retry). */
+async function disableMissingAccount(sb: SupabaseClient, job: CollectionJob, accountId: string, acct: Record<string, unknown> | null, detail: string): Promise<void> {
+  const at = new Date().toISOString();
+  const handle = typeof acct?.handle === 'string' && acct.handle ? acct.handle : accountId;
+
+  // provider_metadata is MERGED, not replaced — discovery stores its provenance
+  // there. There is no SQL merge helper for it, so read the current object fresh
+  // and add three keys. If that read fails the account is still switched off,
+  // just without the note: writing only our keys would wipe the rest.
+  const patch: Record<string, unknown> = { collection_enabled: false, scrape_status: 'error' };
+  const { data: cur, error: readErr } = await sb.from('mkt_social_accounts').select('provider_metadata').eq('id', accountId).maybeSingle();
+  if (readErr) {
+    console.error(`[collect] 🚨 account ${accountId} (${handle}) not found — provider_metadata unreadable, disabling it without the reason note: ${readErr.message}`);
+  } else {
+    const prevMeta: unknown = cur?.provider_metadata;
+    const prev = prevMeta && typeof prevMeta === 'object' && !Array.isArray(prevMeta) ? (prevMeta as Record<string, unknown>) : {};
+    patch.provider_metadata = { ...prev, disabled_reason: 'not_found', disabled_at: at, disabled_detail: detail };
+  }
+  // scrape_status is 'error', never 'not_found': the column's CHECK allows only
+  // idle|ok|auth_failed|rate_limited|unavailable|error, and a rejected update
+  // would leave the account enabled and failing daily again.
+  const { error: updErr } = await sb.from('mkt_social_accounts').update(patch).eq('id', accountId);
+  if (updErr) console.error(`[collect] 🚨 could not disable missing account ${accountId} (${handle}) — the scheduler will keep enqueuing it: ${updErr.message}`);
+  else console.error(`[collect] account ${accountId} (${handle}) disabled — the provider says it does not exist: ${detail}`);
+
+  const { error: alertErr } = await sb.rpc('mkt_alert_emit', {
+    p_kind: 'account_not_found',
+    p_dedup_key: `account_not_found:${accountId}`,
+    p_title: `أُوقف جمع حساب ${handle} — الحساب غير موجود على المنصة`,
+    p_severity: 'warning',
+    p_subject_type: 'social_account',
+    p_subject_id: accountId,
+    p_body:
+      'ردّت المنصة بأن هذا الحساب غير موجود، فأوقفنا جمعه تلقائياً بدل أن يفشل كل يوم. صحّح المعرّف أو احذف الحساب، ثم أعد تفعيل الجمع.' +
+      '\n\nThe platform answered that this account does not exist, so its collection was switched off instead of failing every day. Correct the id or remove the account, then re-enable collection.' +
+      `\n\n${detail}`,
+    p_evidence: {
+      account_id: accountId, handle: acct?.handle ?? null, platform: acct?.platform ?? null,
+      provider: job.provider, job_id: job.id, detail, disabled_at: at, account_disabled: !updErr,
+    },
+  });
+  if (alertErr) console.error(`[collect] mkt_alert_emit failed (missing-account alert for ${accountId} not recorded): ${alertErr.message}`);
+}
+
+export type CollectionJobFailOutcome =
+  | { path: 'terminal'; outcome: 'failed' | 'noop' }
+  | { path: 'mkt_job_fail'; outcome: string };
+
+/** Hand a failed collection job back to the queue. Lives here, not in index.ts,
+ *  so the terminal path is testable (index.ts starts the server on import).
+ *
+ *  A 'not_found' failure is TERMINAL: the provider answered that the account is
+ *  not there, runCollectionJob has already switched it off and raised the alert,
+ *  and mkt_job_fail would requeue it with backoff up to max_attempts — the loop
+ *  behind 1,691 failed jobs. mkt_job_fail has no terminal mode, so end the row
+ *  with the same write its own terminal branch makes, guarded the same way:
+ *  status='running' leaves a job the watchdog already requeued, or a cancelled
+ *  one, untouched (outcome 'noop'). If that write fails, fall through to
+ *  mkt_job_fail: a retried job is wasteful, a job stuck 'running' is worse.
+ *  Everything else goes to mkt_job_fail (backoff) as before. */
+export async function failCollectionJob(sb: SupabaseClient, jobId: string, err: unknown): Promise<CollectionJobFailOutcome> {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (err instanceof ProviderError && err.health === 'not_found') {
+    const { data: ended, error: endErr } = await sb.from('mkt_collection_jobs')
+      .update({ status: 'failed', error_message: msg, finished_at: new Date().toISOString(), lease_expires_at: null })
+      .eq('id', jobId).eq('status', 'running')
+      .select('id');
+    if (!endErr) {
+      const outcome = Array.isArray(ended) && ended.length > 0 ? 'failed' : 'noop';
+      console.error(`[worker] marketing job=${jobId} failed terminally (${outcome}) — account not found, not retried: ${msg}`);
+      return { path: 'terminal', outcome };
+    }
+    console.error(`[worker] marketing job=${jobId} terminal not_found write FAILED — falling back to mkt_job_fail (it will retry): ${endErr.message}`);
+  }
+  const { data: outcome, error: failErr } = await sb.rpc('mkt_job_fail', { p_job_id: jobId, p_error: msg });
+  if (failErr) console.error(`[worker] marketing job=${jobId} mkt_job_fail FAILED — the row stays 'running' until the watchdog reclaims its lease: ${failErr.message}`);
+  console.error(`[worker] marketing job=${jobId} failed (${failErr ? 'error' : String(outcome)}): ${msg}`);
+  return { path: 'mkt_job_fail', outcome: failErr ? 'error' : String(outcome) };
+}
+
 // ── project index, SCOPED to a set of project ids ───────────────────────────
 // A publisher's post is only attributed to projects that publisher is linked to
 // (a developer posts about ITS projects). Matching against all 980 all_projects
@@ -164,6 +251,38 @@ async function ingestPost(
   return row.id;
 }
 
+/** discover looks a YouTube channel up by HANDLE — the handle is what an
+ *  operator edits, so when it resolves it wins, even over a stored id (a handle
+ *  re-pointed at a new channel must not be overruled by the old id). But a
+ *  'not_found' now switches the whole account off, and every incremental
+ *  resolves by external_account_id, not the handle (YouTube.collect). So a
+ *  renamed channel — stale '@old_handle', valid 'UC…' id — must not be declared
+ *  missing on the handle alone: try the stored id before giving up. If the id
+ *  resolves, discover succeeds from it and the stale handle is reported (run
+ *  'partial'); if the id is missing too, the account really is gone; if the id
+ *  lookup hits an outage, that outage is what propagates, so the job retries
+ *  rather than disabling an account nobody has proven missing. */
+async function resolveDiscoverChannel(acct: Record<string, unknown>, stats: RunStats): ReturnType<typeof YouTube.resolveChannel> {
+  const handle = acct.handle as string;
+  const storedId = typeof acct.external_account_id === 'string' ? acct.external_account_id.trim() : '';
+  try {
+    return await YouTube.resolveChannel(handle);
+  } catch (e) {
+    if (!(e instanceof ProviderError && e.health === 'not_found') || !storedId || storedId === handle.trim()) throw e;
+    let ch: Awaited<ReturnType<typeof YouTube.resolveChannel>>;
+    try {
+      ch = await YouTube.resolveChannel(storedId);
+    } catch (e2) {
+      if (e2 instanceof ProviderError && e2.health === 'not_found') {
+        throw new ProviderError(`${e.message}; the stored channel id was tried too: ${e2.message}`, 'not_found');
+      }
+      throw e2;
+    }
+    stats.errors.push(`${e.message} — resolved by the stored channel id ${ch.channelId} instead; the handle is stale, correct it`);
+    return ch;
+  }
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stats: RunStats }> {
   const { supabase: sb, job } = ctx;
@@ -189,7 +308,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
 
     if (job.kind === 'discover') {
       if (job.provider === 'youtube') {
-        const ch = await YouTube.resolveChannel((acct!.handle as string));
+        const ch = await resolveDiscoverChannel(acct!, stats);
         await sb.from('mkt_social_accounts').update({ external_account_id: ch.channelId, display_name: ch.title, followers: ch.subs, scrape_status: 'ok', last_synced_at: new Date().toISOString() }).eq('id', acct!.id);
         stats.received = 1;
       } else {
@@ -575,6 +694,14 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
           throw new ProviderError(`${err.message} — ${outcome.reason}`, 'unavailable');
         }
       }
+      throw err;
+    }
+    if (err.health === 'not_found') {
+      // The account is not there, so neither a retry nor a Browserbase scrape can
+      // find it — and browserbaseFallbackEligible does not know this health, so
+      // it must never reach that check. Switch the account off and let index.ts
+      // end the job terminally.
+      if (job.social_account_id) await disableMissingAccount(sb, job, job.social_account_id, (acct as Record<string, unknown> | null) ?? null, err.message);
       throw err;
     }
     await sb.from('mkt_social_accounts').update({ scrape_status: err.health === 'auth_failed' ? 'auth_failed' : err.health === 'rate_limited' ? 'rate_limited' : 'error' }).eq('id', job.social_account_id ?? '00000000-0000-0000-0000-000000000000');
