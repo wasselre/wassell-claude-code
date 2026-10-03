@@ -25,6 +25,7 @@ import { getEntityFieldText } from '@/lib/recordTranslation/store';
 import {
   applyDateExpression as applyDateExpressionCore,
   evaluateCondition as evaluateConditionCore,
+  findUpdateTarget,
   formatDateForField as formatDateForFieldCore,
   getWorkflowBranches as getWorkflowBranchesCore,
   substituteFieldTokens as substituteFieldTokensCore,
@@ -735,34 +736,24 @@ async function executeAction(
         // the stored value is the target record's internal id — match by id directly.
         // Otherwise the UUID would be compared against the user's chosen business-key
         // field (which rarely holds UUIDs), and no match would be found.
-        let matchedByRecordId = false;
-        let target: AppRecord | undefined;
+        let matchById = false;
         if (filterValueSource === 'trigger_field' && action.filter_trigger_field_id && typeof filterValue === 'string') {
           const triggerModel = allModels.find((m) => m.id === triggerRecord.model_id);
           const triggerField = triggerModel?.schema.sections
             .flatMap((s) => s.fields)
             .find((f) => f.name === action.filter_trigger_field_id);
-          if (
+          matchById =
             triggerField?.type === 'lookup' &&
             !triggerField.is_multi &&
-            triggerField.lookup_model_id === action.target_model_id
-          ) {
-            const byId = targetRecords.find((r) => r.id === filterValue);
-            if (byId) { target = byId; matchedByRecordId = true; }
-          }
+            triggerField.lookup_model_id === action.target_model_id;
         }
-        // Literal 'id' filter — match the target by its top-level record id.
-        // Covers the webhook pattern where a payload carries a record_id /
-        // operation_id field and the workflow wants to target that exact
-        // record. Without this branch, the next line would look for a
-        // data.id key on each record, which doesn't exist.
-        if (!target && action.filter_field_id === 'id' && typeof filterValue === 'string') {
-          const byId = targetRecords.find((r) => r.id === filterValue);
-          if (byId) { target = byId; matchedByRecordId = true; }
-        }
-        if (!target) {
-          target = targetRecords.find((r) => r.data[action.filter_field_id] === filterValue);
-        }
+        // The shared matcher also handles the literal `id` filter (the webhook
+        // pattern: a payload carries a record_id and the workflow targets that
+        // exact record) and refuses an EMPTY filter value — which the plain
+        // `find` here used to match against the first record lacking the field.
+        const { target, matchedByRecordId } = findUpdateTarget(
+          targetRecords, action.filter_field_id, filterValue, matchById,
+        );
         if (!target) {
           return {
             ...traceBase,

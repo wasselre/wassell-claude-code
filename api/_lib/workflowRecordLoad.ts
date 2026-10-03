@@ -25,6 +25,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppRecord } from '../../src/types/index.js';
+// ONE definition of "empty filter value" for all three engines — the browser
+// engine's in-memory matcher (`findUpdateTarget`) lives next to it.
+import { isEmptyFilterValue } from '../../src/lib/workflowEngineCore.js';
 
 const RECORD_COLUMNS = 'id, model_id, data, created_by_user_id, created_at, updated_at';
 
@@ -133,11 +136,6 @@ export async function loadRecordById(
   return row ? toAppRecord(row) : null;
 }
 
-/** `undefined`, `null` and `''` — a filter value that names no record. */
-export function isEmptyFilterValue(value: unknown): boolean {
-  return value === undefined || value === null || value === '';
-}
-
 export interface ResolveUpdateTargetArgs {
   supabase: SupabaseClient;
   targetModelId: string;
@@ -168,6 +166,9 @@ export interface ResolveUpdateTargetArgs {
  *     `record.data[field] === undefined`, which is TRUE for the first record
  *     that merely lacks the field — an empty trigger field would have updated
  *     an arbitrary record. (Checked 2026-10-03: no logged run ever did.)
+ *
+ * The browser engine applies the same rules to records already in memory —
+ * `findUpdateTarget` in `src/lib/workflowEngineCore.ts`. Change both together.
  */
 export async function resolveUpdateTarget(
   args: ResolveUpdateTargetArgs,

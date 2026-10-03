@@ -304,6 +304,61 @@ export function getWorkflowBranches(workflow: Workflow): WorkflowBranch[] {
 }
 
 /**
+ * `undefined`, `null` and `''` — an `update_record` filter value that names no
+ * record. All three engines (browser, on_due sweeper, server runner) treat it
+ * as "no target".
+ */
+export function isEmptyFilterValue(value: unknown): boolean {
+  return value === undefined || value === null || value === '';
+}
+
+export interface UpdateTargetMatch {
+  target: AppRecord | undefined;
+  /** True when the target was found by its record id rather than a data field. */
+  matchedByRecordId: boolean;
+}
+
+/**
+ * Find the single record an `update_record` action targets, searching records
+ * already in memory. This is the browser engine's matcher; the server engines
+ * apply the SAME rules against the database in
+ * `api/_lib/workflowRecordLoad.ts` (`resolveUpdateTarget`) — change both
+ * together.
+ *
+ * Order: by record id (when `matchById` says the filter value IS a target id —
+ * the lookup-aware case — or the filter is the literal `id`), then equality on
+ * the filter field.
+ *
+ * Two rules exist because of what the plain `find` did without them:
+ *   - An EMPTY filter value matches nothing. `record.data[field] === undefined`
+ *     is true for the first record that merely lacks the field, so an
+ *     appointment saved without a client would have updated whichever client
+ *     happened to be first in the list.
+ *   - A literal `id` filter never falls through to the field scan. Records do
+ *     not carry their id inside `data`, so the scan had nothing to find.
+ */
+export function findUpdateTarget(
+  targetRecords: AppRecord[],
+  filterFieldId: string,
+  filterValue: unknown,
+  matchById: boolean,
+): UpdateTargetMatch {
+  if (isEmptyFilterValue(filterValue)) return { target: undefined, matchedByRecordId: false };
+
+  const isIdFilter = filterFieldId === 'id';
+  if ((matchById || isIdFilter) && typeof filterValue === 'string') {
+    const byId = targetRecords.find((r) => r.id === filterValue);
+    if (byId) return { target: byId, matchedByRecordId: true };
+  }
+  if (isIdFilter) return { target: undefined, matchedByRecordId: false };
+
+  return {
+    target: targetRecords.find((r) => r.data[filterFieldId] === filterValue),
+    matchedByRecordId: false,
+  };
+}
+
+/**
  * Candidate users for a `role_variable` assignee mapping: active users assigned
  * the mapping's role whose role field_values satisfy every role_condition. This
  * is the SHARED filter — the same logic the client engine uses inline — so the
