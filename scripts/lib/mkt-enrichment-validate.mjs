@@ -188,9 +188,14 @@ function proofRejection(quote, candidate, ev, minLength) {
 function matcherQuote(candidate, ev) {
   if (candidate?.strength !== 'full_name' && candidate?.strength !== 'number') return null;
   const hay = evidenceText(ev);
+  // A numbered project is identified by its number. A matcher alias that drops
+  // it («ادوار يمام» for «أدوار - يمام 9», from a post about يمام 16) proves the
+  // series, not the project — 260 such candidates existed on 2026-10-03.
+  const nameNums = (normalizeText(`${candidate?.nameAr ?? ''} ${candidate?.nameEn ?? ''}`).match(/\d+/g)) ?? [];
   for (const alias of Array.isArray(candidate?.matchedAliases) ? candidate.matchedAliases : []) {
     if (typeof alias !== 'string' || !alias.trim()) continue;
     const quote = alias.trim();
+    if (nameNums.length > 0 && !nameNums.some((n) => new RegExp(`(^|\\D)${n}(\\D|$)`).test(normalizeText(quote)))) continue;
     if (!boundedRe(normalizeText(quote)).test(hay)) continue;
     if (proofRejection(quote, candidate, ev, 1) === null) return quote;
   }

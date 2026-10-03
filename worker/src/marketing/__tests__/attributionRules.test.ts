@@ -382,3 +382,20 @@ describe('Arabic-Indic digits match catalog numbers («مينا ٣٩» → مي�
     expect(attributeCaption('مينا ٣٨', mena, { publisherProjectIds: ['mena-39'] }).filter((h) => h.strength !== 'word')).toEqual([]);
   });
 });
+
+describe('any-order names keep their number («أدوار - يمام 9» is not «يمام 16»)', () => {
+  const yamam: ProjectAlias[] = [
+    { projectId: 'yamam-9', nameAr: 'أدوار - يمام 9', nameEn: null, tokens: [] },
+    { projectId: 'yamam-16', nameAr: 'يمام 16', nameEn: null, tokens: [] },
+  ];
+  it('a post about يمام 16 that also says «أدوار يمام» is not a full-name match for يمام 9', () => {
+    const hits = attributeCaption('يمام 16 | حي التعاون - أدوار يمام مستقلة بتصاميم عصرية', yamam, { publisherProjectIds: ['yamam-9', 'yamam-16'] });
+    expect(hits.find((h) => h.projectId === 'yamam-9' && h.strength === 'full_name')).toBeUndefined();
+    expect(hits.find((h) => h.projectId === 'yamam-16')).toBeDefined();
+  });
+  it('the words in another order WITH the number still match («يمام 9 أدوار»)', () => {
+    const hits = attributeCaption('تملك في يمام 9 أدوار مستقلة', yamam, { publisherProjectIds: ['yamam-9'] });
+    expect(hits.find((h) => h.projectId === 'yamam-9')?.strength).not.toBe('word');
+  });
+});
+

@@ -390,3 +390,27 @@ describe('isSubscriptionLimit', () => {
     expect(isSubscriptionLimit('normal completion, wrote result.json')).toBe(false);
   });
 });
+
+describe('D — a matcher alias that drops the project number is not proof', () => {
+  const YAMAM_POST = 'aaaaaaaa-0000-0000-0000-0000000000a9';
+  const yamam9 = {
+    post_id: YAMAM_POST,
+    caption: 'يمام 16 | حي التعاون - أدوار يمام مستقلة بتصاميم عصرية',
+    transcript: '', ocr_text: '',
+    brand_tokens: ['riva', 'ريفا', 'العقارية'],
+    candidates: [{ projectId: P1, nameAr: 'أدوار - يمام 9', confidence: 0.9, matchedAliases: ['ادوار يمام'], strength: 'full_name' }],
+    deterministic_partial: false,
+  };
+  it('an empty model quote is NOT upgraded through «ادوار يمام» for «أدوار - يمام 9»', () => {
+    const { valid } = validateEnrichmentResults([{ post_id: YAMAM_POST, primary_project_index: 0, evidence_quote: '', language: 'ar' }], [yamam9]);
+    expect(valid[0].primaryProjectId).toBeNull();
+    expect(valid[0].result.evidence_quote_source).toBeUndefined();
+  });
+  it('the same alias WITH the number is still accepted', () => {
+    const withNum = { ...yamam9, caption: 'آخر وحدة من أدوار يمام 9', candidates: [{ ...yamam9.candidates[0], matchedAliases: ['ادوار يمام 9'] }] };
+    const { valid } = validateEnrichmentResults([{ post_id: YAMAM_POST, primary_project_index: 0, evidence_quote: '', language: 'ar' }], [withNum]);
+    expect(valid[0].primaryProjectId).toBe(P1);
+    expect(valid[0].result.evidence_quote_source).toBe('matcher');
+  });
+});
+

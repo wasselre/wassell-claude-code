@@ -456,12 +456,17 @@ export function attributeCaption(
     //     organization's name still counts (rule 1).
     if (!strength) {
       for (const v of derived.variants) {
-        const vw = v.split(' ').filter((w) => !/^\d+$/.test(w));
+        const all = v.split(' ');
+        const vw = all.filter((w) => !/^\d+$/.test(w));
         if (vw.length < 2 || vw.length > 4) continue;
         if (brandPhrases.has(v)) continue;
         if (!vw.some((w) => !GENERIC_TOKENS.has(w))) continue;
         if (!inScope && vw.every((w) => sharedWord(w, false))) continue;
-        const hit = wordsWithinWindow(nt, vw, vw.length);
+        // The window holds the name's NUMBER too. A numbered project is
+        // identified by its number: dropping it made «أدوار - يمام 9» a
+        // full-name candidate for «يمام 16 | أدوار مستقلة» — 260 such
+        // candidates on 2026-10-03, each one a sibling with the wrong number.
+        const hit = wordsWithinWindow(nt, all, all.length);
         if (hit) { matched.push(hit); strength = 'full_name'; break; }
       }
     }
