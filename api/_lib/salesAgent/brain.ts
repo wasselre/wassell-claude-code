@@ -29,6 +29,7 @@ import { asNearConditions, PLACE_CATEGORIES } from './places.js';
 import { checkUnitPlans } from './plans.js';
 import { searchUnits, unitSearchView, type UnitCriteria } from './units.js';
 import { projectRepAnswers, isIsoDay, type VisitSlot } from './escalation.js';
+import type { GeoReading } from './geoGate.js';
 
 const CALL_SITE = 'api/_lib/salesAgent/brain';
 const MAX_ROUNDS = 7;
@@ -72,6 +73,9 @@ export interface BrainHooks {
   bookVisit(projectId: string, day: string, slot: VisitSlot | null, time: string | null): Promise<{ ok: boolean; error?: string }>;
   /** Record a visit the customer says already happened. */
   recordVisit(projectId: string, day: string | null): Promise<{ ok: boolean; error?: string }>;
+  /** The area the customer described in this chat, read by the geography
+   *  agent: the projects inside it (null = not understood) and what was understood. */
+  readArea(): Promise<GeoReading>;
 }
 
 export interface BrainOutcome {
@@ -117,6 +121,7 @@ HOW YOU WORK
 6c. FEATURES («فيها غرفة خادمة», «ابي روف», «مصعد», «مطبخ راكب», «مدخل خاص»…): pass them as features to search_projects / search_units — only units that have ALL of them count, so never send or describe a unit as having a feature unless the tool matched it. If a result lists unknown_features (something our data does not record, like «مطبخ مفتوح» or «غرفة مكتب»), call check_unit_plans for that project (after search_units with their other wishes) — it reads the floor plans. Then say what the plans show: send the units that have it; if none, say so; if plans are unclear or missing, ask_rep. Never answer yes/no about a feature from nothing.
 6d. FLOORS: «فوق الدور 5» → floor_min 6; «مو أرضي» → exclude_floors ["أرضي"]; «الأدوار العليا» → floor_min. To send everything that fits use send_units with all_matching=true.
 6e. PLACES («قريب من الرياض بارك», «على طريق الملك سلمان», «قريب من محطة مترو», «جنب الجامعة»): pass near to search_projects with the place as they named it (or category for «محطة مترو»/«مول» in general) and their distance; if they gave none use 1 km for a metro station, 1.5 km for a road, 3 km for a mall/landmark/university, and say it («خلال 3 كيلو تقريباً»). Quote the real distance from distances_km («يبعد 1.4 كيلو عن الرياض بارك»). Several places → one condition each (all must hold). If a place comes back in unresolved_places, say you don't have it on the map and ask for the district or a nearby landmark — NEVER guess districts around a place. relaxed="distance" means nothing is within their distance; say so and give the nearest real distance.
+6f. AREA IN THEIR OWN WORDS — a side of a road («غرب طريق الملك فهد», «شمال طريق الملك سلمان»), a district on one side of a road («النرجس شمال طريق الملك سلمان»), a distance from a road or place they gave themselves, or several areas at once: call search_projects with area_from_chat true (zone, districts and near empty) — the geography reader turns the WHOLE chat into a map area. Say back what it understood in a few words from area_understood («تمام، غرب طريق الملك فهد»). area_status "not_understood" → ask ONE short question that pins the place down (which district, which side, how far) — never guess districts. For one plain district name or a plain region (شمال الرياض), keep using districts / zone.
 6b. The customer NAMES a project («مهتم بصفا 78», «عندكم أكنان 25؟») → find_project. If it is ours and not already sent, send_project it right away (unless they asked to see specific units — rule 6a) and add one short line; answer any question they asked with its facts. If ambiguous, ask which one (one line, their names). If it is not ours, say so plainly and ask what they're after so you can offer something similar — never pretend.
 7. Questions about a project (price, payment plan, down payment, sizes, handover, how many options) → use get_project_facts / the search results and answer with the real numbers. "colleague_answers" in the facts are answers our reps gave before — use them like any other fact.
 7a. YOU DON'T KNOW. When the facts and tools do not answer the question (a discount policy, a specific finish, a fee, a date we don't have…): call ask_rep with the question as the customer meant it, then tell the customer in one short line that you'll check and get back («بتأكد لك وأرد عليك»). Never guess, and don't hand the whole chat over for a question. Ask each question once — if the state says it is still with a colleague, say you're still checking.
@@ -159,6 +164,7 @@ const TOOLS: Anthropic.Tool[] = [
         city: { type: 'string', description: 'City, default الرياض.' },
         zone: { type: 'string', enum: ZONES, description: 'Riyadh region: north/south/east/west/center.' },
         districts: { type: 'array', items: { type: 'string' }, description: 'District names exactly as a previous search\'s facets listed them.' },
+        area_from_chat: { type: 'boolean', description: 'Use the AREA the customer described in their own words — a side of a road («غرب طريق الملك فهد»), a district on one side of a road («النرجس شمال طريق الملك سلمان»), a distance they gave from a road or place («قريب من طريق الملك فهد بـ 2 كيلو»), several districts or areas together. Our geography reader turns their words into a map area. When true, leave zone, districts and near empty.' },
         unit_types: { type: 'array', items: { type: 'string', enum: ['شقة', 'دور', 'فيلا', 'تاون هاوس', 'دبلكس'] } },
         bedrooms_min: { type: 'integer', minimum: 1, maximum: 10 },
         budget_max: { type: 'integer', description: 'Maximum budget in SAR, e.g. 1500000.' },
@@ -428,14 +434,31 @@ export async function runBrain(
       switch (name) {
         case 'search_projects': {
           const criteria = toCriteria(input);
+          // The customer's described area → the projects inside it. Not
+          // understood ⇒ say so and ask; never guess districts around it.
+          let areaUnderstood: GeoReading['understood'] | null = null;
+          if (input.area_from_chat === true) {
+            const area = await hooks.readArea();
+            areaUnderstood = area.understood;
+            if (!area.ids) {
+              toolTrace.push(`area → not understood (${area.understood.length} places, ${area.needs_review} unclear)`);
+              const view = { area_status: 'not_understood', area_understood: area.understood, unclear_places: area.needs_review,
+                next: 'The area they described could not be placed on the map. Ask ONE short question that pins it down (the district, which side of the road, or how far) — do not guess districts.' };
+              grounding.push(view);
+              return { content: JSON.stringify(view) };
+            }
+            criteria.area_ids = [...area.ids];
+            criteria.zone = null; criteria.districts = []; criteria.near = [];
+          }
           const r = await searchProjects(opts.svc, criteria, { exclude: [...excluded], sent: [...sentBefore, ...(out.sent ? [out.sent.projectId] : [])] });
           out.searches += 1;
           out.lastCriteria = r.criteria;
           out.lastTotal = r.total;
           for (const p of r.projects) known.add(p.project_id);
-          const view = searchView(r);
+          const view = areaUnderstood ? { ...searchView(r), area_understood: areaUnderstood } : searchView(r);
           grounding.push(view);
-          toolTrace.push(`search ${JSON.stringify(criteria)} → ${r.total}${r.relaxed ? ` (${r.relaxed})` : ''}`);
+          const shown = criteria.area_ids ? { ...criteria, area_ids: `${criteria.area_ids.length} projects in the described area` } : criteria;
+          toolTrace.push(`search ${JSON.stringify(shown)} → ${r.total}${r.relaxed ? ` (${r.relaxed})` : ''}`);
           return { content: JSON.stringify(view) };
         }
         case 'find_project': {

@@ -42,6 +42,10 @@ export interface SearchCriteria {
   features?: string[];
   /** «قريب من …»: a named place or a kind of place, within max_km. ALL must hold. */
   near?: NearCondition[];
+  /** Projects inside the area the customer described in their own words (the
+   *  geography reader, geoGate.ts). SERVER-SET only — never from the model. An
+   *  empty list means the area holds none of our projects. */
+  area_ids?: string[] | null;
 }
 
 export interface CatalogProject {
@@ -428,8 +432,12 @@ export async function searchProjects(
     if (!us || us.length === 0) return !check.features?.length;
     return us.some((u) => unitFits(u, check));
   };
+  // The customer's described area (road sides, a district on one side of a
+  // road, a distance from a place…) replaces the zone test when present.
+  const areaIds = criteria.area_ids ? new Set(criteria.area_ids) : null;
+  const inArea = (r: { master: Master; inArea: boolean }) => (areaIds ? areaIds.has(r.master.id) : r.inArea);
   const pick = (check: FitCheck, areaOnly: boolean, nearFactor = 1): Array<{ master: Master; m: FinderMatch; inArea: boolean }> =>
-    resolved.filter((r) => (!areaOnly || r.inArea)
+    resolved.filter((r) => (!areaOnly || inArea(r))
       && nearOk(r.master.id, nearFactor)
       && projectFits(r.master.data, check)
       && unitsFit(r.master.id, check)
@@ -460,7 +468,7 @@ export async function searchProjects(
   // Nothing within the budget → what we DO have, above it (said honestly —
   // live test: a 500k villa ask got a villa of unknown price).
   if (budget) ladder.push({ check: fit({ budgetMax: null }), areaOnly: true, relaxed: 'budget' });
-  if (zoneKnown) ladder.push({ check: fit({}), areaOnly: false, relaxed: 'area' });
+  if (zoneKnown || areaIds) ladder.push({ check: fit({}), areaOnly: false, relaxed: 'area' });
 
   let fits: Array<{ master: Master; m: FinderMatch; inArea: boolean }> = [];
   let relaxed: CatalogSearch['relaxed'] = null;
@@ -472,7 +480,7 @@ export async function searchProjects(
 
   let all = fits.map((f) => {
     const us = universe.units.get(f.master.id);
-    const p = toProject(f.master, f.m, f.inArea, us && us.length ? fitOf(us, used) : null);
+    const p = toProject(f.master, f.m, inArea(f), us && us.length ? fitOf(us, used) : null);
     if (nearDist.length) {
       p.distances_km = {};
       for (const c of nearDist) { const km = c.km.get(f.master.id); if (km !== undefined) p.distances_km[c.label] = Math.round(km * 10) / 10; }
@@ -488,7 +496,8 @@ export async function searchProjects(
   const facets = facetsOf(all);
   if (!criteria.zone && /رياض|riyadh/i.test(city)) facets.zones = await zoneFacet(svc, city, all);
   return {
-    criteria: { ...criteria, city, unit_types: types },
+    // The area's id list is internal (large, and not something to save as a wish).
+    criteria: { ...criteria, city, unit_types: types, area_ids: undefined },
     total: all.length,
     relaxed,
     projects: fresh.slice(0, TOP),

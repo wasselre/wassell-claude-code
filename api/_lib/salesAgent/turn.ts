@@ -27,6 +27,7 @@ import type { Zone } from './texts.js';
 import { clip } from './clip.js';
 import { createTrackedLink, loadAvailableUnits, summarizeUnit } from '../trackedLinks.js';
 import { alertRep, askRep, bookVisit, loadChatContext, recordVisit } from './escalation.js';
+import { readLocation } from './geoGate.js';
 
 /** Photos in a project package go out 4 s apart; the follow-up question must
  *  land after the last one (mirrors aiSendProject's SPACING_MS). */
@@ -563,6 +564,8 @@ async function runBrainTurn(
           return { ok: false, error: msg };
         }
       },
+      // Read-only: the geography agent over this chat's turns (cached per text).
+      readArea: () => readLocation(svc, a.turns.map((t) => ({ who: t.who, text: t.text })), null),
       recordVisit: async (projectId, day) => {
         if (dryRun) return { ok: true };
         try {
