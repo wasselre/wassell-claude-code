@@ -278,7 +278,14 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
   const fmtWhen = (iso: string): string => {
     const d = new Date(iso);
     if (!iso || Number.isNaN(d.getTime())) return iso || '—';
-    return d.toLocaleString(isAr ? 'ar-SA-u-nu-latn' : 'en-GB', { timeZone: 'Asia/Riyadh', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    // A naive "YYYY-MM-DDTHH:MM" is already Riyadh wall time (how appointments
+    // are stored) — show it as written; only a real instant (Z / offset) is
+    // converted to Riyadh.
+    const isInstant = /(Z|[+-]\d{2}:?\d{2})$/.test(iso);
+    return d.toLocaleString(isAr ? 'ar-SA-u-nu-latn' : 'en-GB', {
+      ...(isInstant ? { timeZone: 'Asia/Riyadh' } : {}),
+      day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
   };
 
   const [statusFilter, setStatusFilter] = useState<ClientOptionStatus | 'all'>('all');
