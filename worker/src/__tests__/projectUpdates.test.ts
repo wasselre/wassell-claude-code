@@ -255,3 +255,22 @@ describe('reconcile — the source unit id', () => {
     expect(r.creates[0]!.data.developer_unit_code).toBeUndefined();
   });
 });
+
+describe('WhatsApp evidence check — an update must be quoted from the cited message', () => {
+  const post = 'شركاء النجاح ✨\n\nنبارك للوسيط العقاري/\n*سعود بن دغش*\n\n📍 تفاصيل الحجز:\nريا النخيل - مبنى 6 | شقة 2\n\nمبروك';
+  it('accepts a quote despite markdown, bars and alef variants', async () => {
+    const { evidenceHolds } = await import('../projectUpdates/whatsapp');
+    expect(evidenceHolds('ريا النخيل - مبنى 6 | شقة 2', [post])).toBe(true);
+    expect(evidenceHolds('تفاصيل الحجز: ريا النخيل مبنى 6 شقة 2', [post])).toBe(true);
+  });
+  it('rejects a quote that is not there (a made-up unit)', async () => {
+    const { evidenceHolds } = await import('../projectUpdates/whatsapp');
+    expect(evidenceHolds('ريا النخيل - مبنى 7 | شقة 3', [post])).toBe(false);
+    expect(evidenceHolds('', [post])).toBe(false);
+    expect(evidenceHolds(null, [post])).toBe(false);
+  });
+  it('reads Arabic-Indic digits in the quote', async () => {
+    const { evidenceHolds } = await import('../projectUpdates/whatsapp');
+    expect(evidenceHolds('عمولة ٣٪', ['عمولة 3٪ لفترة محدودة'])).toBe(true);
+  });
+});

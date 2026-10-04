@@ -2720,6 +2720,11 @@ async function claimAndRunOneProjectUpdate(): Promise<boolean> {
   console.log(`[worker] claimed project-update run=${run.id} source=${run.source_type} dry=${run.dry_run} attempts=${run.attempts}`);
   try {
     const result = await runProjectUpdateJob({ supabase, run: { ...run, params: run.params ?? {} } });
+    if (result.deferred) {
+      // Back in the queue (a file in the batch is still being saved) — not finished.
+      console.log(`[worker] project-update run=${run.id} deferred: ${String(result.summary.deferred ?? '')}`);
+      return true;
+    }
     const { error: finErr } = await supabase.rpc('project_update_finish', {
       p_id: run.id, p_status: 'done', p_outcome: result.outcome, p_summary: result.summary, p_error: null,
     });
@@ -2739,6 +2744,11 @@ async function claimAndRunOneProjectUpdate(): Promise<boolean> {
 /** Scheduler + watchdog tick. Every machine runs it; the open-run unique index
  *  makes the enqueue idempotent. */
 async function projectUpdateTick(): Promise<void> {
+  // WhatsApp groups with unread messages and no open run (a message that
+  // landed while the previous run was already reading).
+  const { data: g, error: gErr } = await supabase.rpc('project_update_enqueue_groups');
+  if (gErr) console.error(`[worker] project_update_enqueue_groups failed: ${gErr.message}`);
+  else if (typeof g === 'number' && g > 0) console.log(`[worker] project-update: ${g} WhatsApp group run(s) enqueued by the sweep`);
   const { data, error } = await supabase.rpc('project_update_enqueue_due');
   if (error) console.error(`[worker] project_update_enqueue_due failed: ${error.message}`);
   else if (typeof data === 'number' && data > 0) console.log(`[worker] project-update scheduler enqueued ${data} run(s)`);

@@ -33,6 +33,7 @@ import {
 import { brakeReason, normUnitKey, reconcile } from './projectUpdates/reconcile.js';
 import { createProjectFromSource } from './projectUpdates/newProject.js';
 import { RivaPortal, rivaProjectIdFromUrl } from './projectUpdates/riva.js';
+import { runWhatsAppGroup } from './projectUpdates/whatsapp.js';
 import type { CrmUnit, ReconcilePolicy, ReconcileResult } from './projectUpdates/types.js';
 
 const LEAD_PORTALS_MODEL_ID = '1ead0000-0000-4000-8000-000000000001';
@@ -60,6 +61,9 @@ interface RegistryRow {
 export interface RunResult {
   outcome: 'applied' | 'no_change' | 'held' | 'partial' | 'dry_run';
   summary: Record<string, unknown>;
+  /** The run put itself back in the queue (a file is still being saved) —
+   *  the caller must NOT finish it. */
+  deferred?: boolean;
 }
 
 function riyadhToday(): string {
@@ -349,6 +353,19 @@ export async function runProjectUpdateJob(args: {
   switch (run.source_type) {
     case 'riva_broker':
       return runRiva(supabase, run, settings, scoped, heartbeat);
+    case 'whatsapp_group': {
+      const r = await runWhatsAppGroup({
+        supabase, runId: run.id, dryRun: run.dry_run, params: run.params,
+        brake: { share: settings.brake_share, minUnits: settings.brake_min_units },
+        heartbeat,
+        defer: async (seconds, note) => {
+          const { error } = await supabase.rpc('project_update_defer', { p_id: run.id, p_seconds: seconds, p_note: note });
+          if (error) throw new Error(`defer failed: ${error.message}`);
+        },
+      });
+      if (r.deferred) return { outcome: 'no_change', summary: { deferred: r.note }, deferred: true };
+      return { outcome: r.outcome, summary: r.summary };
+    }
     default:
       throw new Error(`no adapter for source_type '${run.source_type}' yet`);
   }

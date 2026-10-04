@@ -88,7 +88,13 @@ export async function createProjectFromSource(
     src: SourceProject;
     sourceType: string;          // unit_updates.source_type
     sourceLabel: string;         // «بوابة وسطاء ريفا»
-    sourceUrl: string;
+    sourceUrl: string | null;
+    /** A developer already known (e.g. the WhatsApp group's own developer);
+     *  otherwise looked up by the name the source states. */
+    developerId?: string | null;
+    /** unit_updates.migration_instructions for the new registry row. */
+    instructions?: string;
+    dataSources?: string[];
     /** A registered project of the same source — marketer / city / classification are copied. */
     sibling: Record<string, unknown> | null;
     today: string;
@@ -99,18 +105,18 @@ export async function createProjectFromSource(
   const meta = src.meta ?? {};
   const notes: string[] = [];
 
-  const developerId = await findDeveloper(supabase, meta.developer);
+  const developerId = args.developerId ?? (await findDeveloper(supabase, meta.developer));
   if (meta.developer && !developerId) notes.push(`المطور «${String(meta.developer)}» غير موجود في الشركات — تُرك فارغاً`);
 
   const data: Record<string, unknown> = {
     project_name: src.name,
     project_status: statusFromType(meta.project_type_text),
-    data_sources: ['broker_portal'],
-    update_source: 'broker_portal',
-    update_source_url: args.sourceUrl,
+    data_sources: args.dataSources ?? ['broker_portal'],
+    update_source: args.sourceType === 'whatsapp_group' ? 'files_manual' : 'broker_portal',
     last_source_update: today,
     last_verified_at: today,
   };
+  if (args.sourceUrl) data.update_source_url = args.sourceUrl;
   if (developerId) data.developer = developerId;
   if (sibling) {
     for (const k of ['marketer', 'project_classification', 'project_type', 'city_name', 'preferred_city'] as const) {
@@ -128,13 +134,13 @@ export async function createProjectFromSource(
   if (meta.district) data.preferred_neighborhoods = meta.district;
   if (typeof meta.public_url === 'string') data.project_page_url = meta.public_url;
   data.source_notes = [
-    `أُنشئ تلقائياً من ${args.sourceLabel} بتاريخ ${today} — ${args.sourceUrl}`,
+    `أُنشئ تلقائياً من ${args.sourceLabel} بتاريخ ${today}${args.sourceUrl ? ` — ${args.sourceUrl}` : ''}`,
     meta.ad_license ? `رخصة الإعلان: ${String(meta.ad_license)}` : '',
     meta.project_type_text ? `نوع المشروع حسب المصدر: ${String(meta.project_type_text)}` : '',
     meta.description ? `الوصف: ${String(meta.description)}` : '',
     ...notes.map((n) => `⚠ ${n}`),
   ].filter(Boolean).join('\n');
-  data.update_source_notes = `تحديث تلقائي أسبوعي من ${args.sourceLabel} (${args.sourceUrl}).`;
+  data.update_source_notes = `تحديث تلقائي من ${args.sourceLabel}${args.sourceUrl ? ` (${args.sourceUrl})` : ''}.`;
 
   const { data: codes, error: codeErr } = await supabase.rpc('project_update_next_codes', { p_kind: 'project', p_n: 1 });
   if (codeErr || !Array.isArray(codes) || !codes[0]) throw new Error(`project code: ${codeErr?.message ?? 'none'}`);
@@ -163,15 +169,15 @@ export async function createProjectFromSource(
     project: projectId,
     update_frequency: args.updateFrequency,
     source_type: args.sourceType,
-    source_url: args.sourceUrl,
+    ...(args.sourceUrl ? { source_url: args.sourceUrl } : {}),
     last_migrated_at: today,
-    next_due: today,
+    ...(args.updateFrequency === 'on_file' ? {} : { next_due: today }),
     is_active: true,
     auto_scope: 'full',
-    migration_instructions:
-      `أُضيف تلقائياً (${today}) من ${args.sourceLabel}. يُحدَّث آلياً كل أسبوع عبر project_update_runs: ` +
-      `مفتاح الربط = عنوان بطاقة الوحدة (unit_model)، الحالة من حقل case، السعر من unit_price؛ ` +
-      `الوحدات الغائبة عن البوابة لا تُلمس؛ الوحدات الجديدة تُضاف مع مخططها.`,
+    migration_instructions: args.instructions ??
+      (`أُضيف تلقائياً (${today}) من ${args.sourceLabel}. يُحدَّث آلياً كل أسبوع عبر project_update_runs: ` +
+      `مفتاح الربط = معرّف الوحدة في البوابة (developer_unit_code) ثم عنوان البطاقة؛ الحالة من حقل case، السعر من unit_price؛ ` +
+      `الوحدات الغائبة عن البوابة لا تُلمس؛ الوحدات الجديدة تُضاف مع مخططها.`),
     migration_log: `${today} — أُنشئ المشروع تلقائياً من ${args.sourceLabel}: ${units.created} وحدة${units.plans ? `، ${units.plans} مخطط` : ''}${notes.length ? `؛ ⚠ ${notes.join('؛ ')}` : ''}`,
   };
   const registryId = randomUUID();
