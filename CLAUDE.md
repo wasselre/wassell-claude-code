@@ -1103,6 +1103,19 @@ rule for telling them apart is what question each answers:
 5. **Each system has its own kill switch and they are not linked.** Turning off
    collection does not stop CV, and turning off CV does not stop collection. If
    you want both off, flip both.
+6. **CV admits at most `cv.max_videos_per_day` NEW videos per day** (500 since
+   the Gemini switch 2026-10-04, ≈ $15/day at ~$0.03 per video; was 10 on
+   Modal, set 2026-09-15; `mkt_settings`, Riyadh day). The gate lives in
+   `mkt_cv_job_claim_next`, NOT in `checkBudget()` — deliberately. `checkBudget`
+   raises `budget_exceeded:`, which `mkt_cv_job_fail` treats as TERMINAL, so
+   putting a rate limit there would permanently fail the 11th video of the day
+   instead of making it wait. Gating the claim leaves the row `queued` for
+   tomorrow. The cap counts DISTINCT `video_id` on `cv_process` only: retries
+   do not burn a second slot, follow-up kinds (`cv_analyze`,
+   `cv_describe_frame`) stay claimable so admitted videos can finish, and
+   `cv_embed_wassel` is exempt (our own stills on the cheap embed path — ten
+   thumbnails must not consume a day of video quota). `mkt_cv_health()` reports
+   `videos_today` / `videos_cap` / `video_cap_ok`.
 7. **Shot jobs run on the dedicated `cv` Fly process group (2026-10-05)**, not
    on the five general `app` machines (performance-2x, dedicated cores,
    `CV_PROCESS_LOOPS` jobs each, default 2; `fly scale count cv=N`). On the
@@ -1122,19 +1135,6 @@ rule for telling them apart is what question each answers:
    calls in 8 hours, no alert, and 97 terminally failed jobs. The prepay balance
    lives on billing account `011C2F-58EC49-36BF53` (project "Default Gemini
    Project") — keep auto-reload ON there.
-6. **CV admits at most `cv.max_videos_per_day` NEW videos per day** (500 since
-   the Gemini switch 2026-10-04, ≈ $15/day at ~$0.03 per video; was 10 on
-   Modal, set 2026-09-15; `mkt_settings`, Riyadh day). The gate lives in
-   `mkt_cv_job_claim_next`, NOT in `checkBudget()` — deliberately. `checkBudget`
-   raises `budget_exceeded:`, which `mkt_cv_job_fail` treats as TERMINAL, so
-   putting a rate limit there would permanently fail the 11th video of the day
-   instead of making it wait. Gating the claim leaves the row `queued` for
-   tomorrow. The cap counts DISTINCT `video_id` on `cv_process` only: retries
-   do not burn a second slot, follow-up kinds (`cv_analyze`,
-   `cv_describe_frame`) stay claimable so admitted videos can finish, and
-   `cv_embed_wassel` is exempt (our own stills on the cheap embed path — ten
-   thumbnails must not consume a day of video quota). `mkt_cv_health()` reports
-   `videos_today` / `videos_cap` / `video_cap_ok`.
 
 ## Every AI call is metered (added 2026-09-14)
 
