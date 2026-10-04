@@ -131,10 +131,11 @@ const MAX_ENRICH_JOBS_PER_TICK = 10;
 /** Gemini reader (content.reader = 'gemini'): posts waiting for a decision that
  *  get a full read per tick, and posts read by an OLDER reader (the runner) that
  *  are re-read per tick. Each read is one content_process job on the internal
- *  provider (3 at a time), ~15-60 s, so ~60 per 5-minute tick keeps the lane
- *  busy without building a queue nobody can see the end of. */
-const MAX_GEMINI_READS_PER_TICK = 60;
-const MAX_GEMINI_REREADS_PER_TICK = 40;
+ *  provider, ~6-15 s each. Raised 60/40 -> 300/200 per 5-minute tick for the
+ *  2026-10-05 catch-up: at 60/40 the sweep, not the machines, capped reading at
+ *  ~1,200 posts an hour. The daily budget below still bounds the spend. */
+const MAX_GEMINI_READS_PER_TICK = 300;
+const MAX_GEMINI_REREADS_PER_TICK = 200;
 /** Daily ceiling on Gemini reader spend unless mkt_settings
  *  `content.reader_daily_budget_usd` says otherwise. At ~$0.004 an image post
  *  and ~$0.014 a video (60-post test, 2026-10-04) $25 is ~2,000 posts a day. */
