@@ -331,7 +331,7 @@ describe('Safa adapter', () => {
     <div class="category_type"> <span class="type"> شقة </span> </div>
     <div class="unit_details p-3 pt-4"> <div class="unit_info"> <div class="title"> <span class="unit-title" style="font-size: 15px">SF085-A01-F01-001-APT</span>
     <div class="info"><div class="location"><span> Jeddah </span></div><div class="space"><span class="">166.53 م²</span></div></div></div>
-    <div class="price" dir="ltr"> <img src="x"> 717,773 <div class="icons d-flex align-items-center mt-3"> <span> 3 </span> <span class="mx-3"> 3 </span> <span> الأول </span> </div> </div></div></div>`;
+    <div class="price" dir="ltr"> <img src="x"> 717,773 <div class="icons d-flex align-items-center mt-3"> <span> <svg width="17"><mask id="m"><path d="M3 2"/></mask><g><path d="M1"/></g></svg> 3 </span> <span class="mx-3"> <svg><path d="M2"/></svg> 3 </span> <span> <svg><path/></svg> الأول </span> </div> </div></div></div>`;
   it('reads a public card — and keeps its price only as a note (different basis)', async () => {
     const { parsePublicCard } = await import('../projectUpdates/safa');
     const u = parsePublicCard(card, false)!;

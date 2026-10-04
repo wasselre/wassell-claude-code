@@ -54,7 +54,9 @@ export function parsePublicCard(html: string, comingSoon: boolean): SourceUnit |
   const priceBlock = html.match(/class="price"[^>]*>([\s\S]*?)<div class="icons/)?.[1] ?? '';
   const price = num(strip(priceBlock).match(/[\d,]{4,}/)?.[0]);
   const icons = html.match(/class="icons[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? '';
-  const spans = [...icons.matchAll(/<span[^>]*>\s*([^<]*?)\s*<\/span>/g)].map((m) => m[1]!.trim());
+  // Each span holds an SVG icon BEFORE its value (found testing real cards in
+  // a browser, 2026-10-05) — take the span's text, not its first text node.
+  const spans = [...icons.matchAll(/<span[^>]*>([\s\S]*?)<\/span>/g)].map((m) => strip(m[1]!));
   const label = strip(html.match(/class="label"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? '');
   const soon = comingSoon || /قريب/.test(label);
   return {
