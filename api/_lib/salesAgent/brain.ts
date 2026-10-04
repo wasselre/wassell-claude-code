@@ -22,6 +22,7 @@ import { searchProjects, projectFacts, type CatalogSearch, type ProjectFacts, ty
 import { checkReply, groundedNumbers } from './guard.js';
 import { resolveProjectSheet } from '../projectSheet.js';
 import { normalizeUnitType } from './decide.js';
+import { applyCustomerReading, type CustomerReading } from './prefReading.js';
 import type { ChatTurn } from './understand.js';
 import type { Lang, Zone } from './texts.js';
 import { clip } from './clip.js';
@@ -57,6 +58,8 @@ export interface BrainContext {
   /** Set when this turn has NO new customer message: what to do instead (pass
    *  on a colleague's answer to a question the agent asked). */
   instruction?: string | null;
+  /** The customer's wants read by the SHARED preference extractor (prefReading.ts); applied to every search_projects. */
+  customerReading?: CustomerReading | null;
 }
 
 export interface BrainHooks {
@@ -437,7 +440,11 @@ export async function runBrain(
     try {
       switch (name) {
         case 'search_projects': {
-          const criteria = toCriteria(input);
+          // The shared preference reader is authoritative for type / budget /
+          // bedrooms / size (the same reading that fills the CRM profile).
+          const applied = applyCustomerReading(toCriteria(input), ctx.customerReading ?? null);
+          const criteria = applied.criteria;
+          if (applied.overrides.length) toolTrace.push(`reader → ${applied.overrides.join(', ')}`);
           // The customer's described area → the projects inside it. Not
           // understood ⇒ say so and ask; never guess districts around it.
           let areaUnderstood: GeoReading['understood'] | null = null;

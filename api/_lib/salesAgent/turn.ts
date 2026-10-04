@@ -29,6 +29,10 @@ import { createTrackedLink, loadAvailableUnits, summarizeUnit } from '../tracked
 import { alertRep, askRep, bookVisit, loadChatContext, recordVisit } from './escalation.js';
 import { readLocation, matchSavedPlaces } from './geoGate.js';
 import { loadSavedProfile, type SavedProfile } from './savedProfile.js';
+import { readCustomerWants, type CustomerReading } from './prefReading.js';
+
+/** The shared preference reading may take this long before the turn goes on without it. */
+const READING_WAIT_MS = 9_000;
 import { draftOfficerQuestion } from '../officerNoticeDraft.js';
 
 /** Photos in a project package go out 4 s apart; the follow-up question must
@@ -481,6 +485,23 @@ async function runBrainTurn(
     const age = slots.last_reply_at ? Math.round((Date.now() - new Date(slots.last_reply_at).getTime()) / 60_000) : null;
     stateLines.push(`Known wishes from EARLIER messages${age !== null ? ` (last used ${age >= 120 ? `${Math.round(age / 60)} hours` : `${age} minutes`} ago)` : ''} — may be stale, follow what they say now: ${wants.join('، ')}.`);
   }
+  // The customer's wants, read by the SAME extractor that fills the CRM
+  // profile (prefReading.ts). Started now, awaited below with a ceiling: a
+  // slow or failed reading never blocks the reply — the agent then uses its
+  // own reading, and the failure is logged.
+  const readingStartedAt = new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString();
+  const readingTurns = a.turns.filter((t) => !t.at || t.at >= readingStartedAt).map((t) => ({ who: t.who, text: t.text }));
+  const readingP: Promise<CustomerReading | null> = Promise.race([
+    readCustomerWants(readingTurns, chatWid),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), READING_WAIT_MS)),
+  ]).then((r) => {
+    if (r === null) console.error(`[salesAgent] preference reading took over ${READING_WAIT_MS} ms chat=${chatWid} — replying with the agent's own reading`);
+    return r;
+  }).catch((err: unknown) => {
+    console.error(`[salesAgent] preference reading failed chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
+    return null;
+  });
+
   // The client's SAVED profile (CRM): what reps and the chat/call readers
   // already know. A failed read only costs this turn that context — logged.
   let saved: SavedProfile | null = null;
@@ -490,6 +511,8 @@ async function runBrainTurn(
   } catch (err) {
     console.error(`[salesAgent] saved profile not loaded chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
   }
+  const customerReading = await readingP;
+  if (customerReading?.line) stateLines.push(customerReading.line);
   if (slots.gender === 'f') stateLines.push('The customer is a woman — use feminine forms.');
   if (slots.handed_off_at) stateLines.push(`Already handed to a colleague at ${slots.handed_off_at} — don't promise that again.`);
   for (const p of a.pending) stateLines.push(`A colleague ANSWERED the question you asked («${p.question}»): «${p.answer}» — pass it on now.`);
@@ -522,7 +545,7 @@ async function runBrainTurn(
       chatWid, lang, turns: a.turns, stateLines, sentProjectIds: conv.sent_project_ids,
       // The conversation started ~5 min before created_at (the message that started it).
       conversationStartedAt: new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString(),
-      excludeProjectIds: exclude, knownProjectIds: knownIds, narrowTurns: slots.narrow_turns ?? 0,
+      excludeProjectIds: exclude, knownProjectIds: knownIds, narrowTurns: slots.narrow_turns ?? 0, customerReading,
       instruction: a.hasNew ? null : 'There is NO new customer message. A colleague answered the question you asked (see the state): pass the answer on to the customer now, in your own short voice, numbers exactly as given.',
     },
     {
