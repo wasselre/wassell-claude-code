@@ -34,11 +34,13 @@ interface Props {
   /** Changes whenever the card re-reads, so the list refreshes after a new reading. */
   refreshKey: string;
   isAr: boolean;
+  /** Inside another card: no frame, no title, the whole list. */
+  bare?: boolean;
 }
 
 const SHOWN = 8;
 
-export default function AiChangesSection({ clientId, refreshKey, isAr }: Props) {
+export default function AiChangesSection({ clientId, refreshKey, isAr, bare = false }: Props) {
   const { t } = useTranslation();
   const addToast = useAppStore((s) => s.addToast);
   const { fieldLabel, formatValue } = usePrefFieldFormat();
@@ -98,12 +100,14 @@ export default function AiChangesSection({ clientId, refreshKey, isAr }: Props) 
   };
 
   return (
-    <div className="mb-2 rounded-lg border border-sand/70 bg-cream/40 px-2.5 py-1.5" dir={isAr ? 'rtl' : 'ltr'}>
-      <p className="mb-1 flex items-center gap-1 text-[10.5px] font-semibold text-chocolate">
-        <Sparkles size={11} className="text-copper" aria-hidden /> {t('chats.ai_changes.title')}
-      </p>
+    <div className={bare ? '' : 'mb-2 rounded-lg border border-sand/70 bg-cream/40 px-2.5 py-1.5'} dir={isAr ? 'rtl' : 'ltr'}>
+      {!bare && (
+        <p className="mb-1 flex items-center gap-1 text-[10.5px] font-semibold text-chocolate">
+          <Sparkles size={11} className="text-copper" aria-hidden /> {t('chats.ai_changes.title')}
+        </p>
+      )}
       <ul className="flex flex-col gap-0.5">
-        {changes.slice(0, SHOWN).map((c) => {
+        {(bare ? changes : changes.slice(0, SHOWN)).map((c) => {
           const canUndo = c.applied && !c.undone_at && c.kind !== 'outcome';
           return (
             <li key={c.id} className="flex items-center justify-between gap-2 text-[11px]">

@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, Bot, Contact, MoreVertical, LayoutGrid, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { ArrowLeft, ArrowRight, MessageCircle, Sparkles, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, Bot, Contact, MoreVertical, LayoutGrid, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { setOpenChatLine } from '@/lib/chat/openLine';
 import { supabase } from '@/lib/supabase';
@@ -35,6 +36,7 @@ import RegisterLeadPortalModal from './RegisterLeadPortalModal';
 import { Globe as PortalIcon } from 'lucide-react';
 import AiAgentSwitch from './AiAgentSwitch';
 import AgentQuestionsCard from './AgentQuestionsCard';
+import AiActivityPanel from './AiActivityPanel';
 import QuickAppointmentModal from '@/pages/Followups/components/QuickAppointmentModal';
 import QuickVisitModal from '@/pages/Followups/components/QuickVisitModal';
 import GeoPrefCard from './GeoPrefCard';
@@ -85,6 +87,7 @@ export default function ChatDetail({ recordId, line = null }: {
   // room, so it falls back to the full-screen modal.
   const isWide = useIsWideScreen();
   const isAr = useAppStore((s) => s.language === 'ar');
+  const { t } = useTranslation();
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
   const markChatAsRead = useAppStore((s) => s.markChatAsRead);
@@ -167,6 +170,8 @@ export default function ChatDetail({ recordId, line = null }: {
     ? { paused: data?.ai_paused === true, reason: (data?.ai_paused_reason as string | null | undefined) ?? null }
     : null;
   const threadCount = useAppStore((s) => (chatWid ? (s.chatMessages[chatWid]?.length ?? 0) : 0));
+  // The reply box is opened per chat («اكتب رداً»); switching chats closes it.
+  const [replyOpenFor, setReplyOpenFor] = useState<string | null>(null);
 
   // Look up the linked client. Prefer an explicit stored `client_link` (an
   // admin may have linked to someone other than the phone owner), but FALL
@@ -189,6 +194,10 @@ export default function ChatDetail({ recordId, line = null }: {
     return matchRecordByPhone(phone, clientRecords, phoneFieldSlugs(clientsModel));
   }, [clientsModel, records, storedClientLinkId, phone]);
   const clientLinkId = linkedClient?.id ?? null;
+  // AI activity cards replace the composer while the AI is answering this
+  // client chat (not paused here, not a group / operations line).
+  const aiPanelAvailable = !!clientLinkId && !!chatWid && !!aiSwitch && !aiSwitch.paused;
+  const showAiPanel = aiPanelAvailable && replyOpenFor !== chatWid;
   const linkedClientData = linkedClient ? (linkedClient.data as Record<string, unknown>) : null;
   const linkedClientName =
     (linkedClientData?.client_name as string | null | undefined) ??
@@ -808,8 +817,32 @@ export default function ChatDetail({ recordId, line = null }: {
           Edge-to-edge and pinned at the bottom on mobile; inset on desktop. */}
       <div className="px-0 pb-0 md:px-3 md:pb-3 shrink-0 safe-bottom md:pb-3">
         {aiSwitch && linkedClient && chatWid && <AgentQuestionsCard chatWid={chatWid} isAr={isAr} messageCount={threadCount} />}
-        {identity.status === 'ready' ? (
-          <Composer identity={identity} />
+        {/* The AI answers client chats, so this space shows what it did
+            (AiActivityPanel); the composer opens on «اكتب رداً». A chat where
+            a rep stopped the AI, or a non-client chat, keeps the composer. */}
+        {showAiPanel && clientLinkId && chatWid ? (
+          <AiActivityPanel
+            clientId={clientLinkId}
+            chatWid={chatWid}
+            isAr={isAr}
+            refreshKey={threadCount}
+            onReply={() => setReplyOpenFor(chatWid)}
+          />
+        ) : identity.status === 'ready' ? (
+          <>
+            {aiPanelAvailable && (
+              <div className="flex justify-end px-3 pt-1 md:px-0">
+                <button
+                  type="button"
+                  onClick={() => setReplyOpenFor(null)}
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-copper hover:bg-copper/10"
+                >
+                  <Sparkles size={11} aria-hidden /> {t('chats.ai_act.back_to_cards')}
+                </button>
+              </div>
+            )}
+            <Composer identity={identity} />
+          </>
         ) : (
           <div className="flex items-center justify-center gap-2 p-4 text-xs text-charcoal/60 border-t border-sand/20 md:border md:rounded-2xl md:mt-3">
             {identity.status === 'loading' && (

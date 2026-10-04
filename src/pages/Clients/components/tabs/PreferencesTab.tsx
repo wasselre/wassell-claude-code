@@ -1,5 +1,8 @@
 import { useRef, useState } from 'react';
-import { Save, Loader2, Lock } from 'lucide-react';
+import { Save, Loader2, Lock, Sparkles } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { dateTimeShort } from '@/pages/Marketing/lib/format';
+import { useAiFieldMarks, type AiFieldMark } from '../../lib/useAiFieldMarks';
 import { useAppStore } from '@/stores/appStore';
 import { useRecordDraft } from '@/hooks/useRecordDraft';
 import DynamicField from '@/pages/Records/components/DynamicField';
@@ -14,6 +17,24 @@ interface PreferencesTabProps {
   clientsModel: AppModel;
   isAr: boolean;
   canEdit: boolean;
+}
+
+/** «عبّأه الذكاء الاصطناعي» next to a field label; the tooltip carries the source, time and the customer's words. */
+function AiFieldBadge({ mark, isAr }: { mark: AiFieldMark | undefined; isAr: boolean }) {
+  const { t } = useTranslation();
+  if (!mark) return null;
+  const label = mark.places != null
+    ? t('clients.ai_mark.places', { n: mark.places })
+    : mark.current ? t('clients.ai_mark.filled') : t('clients.ai_mark.changed_since');
+  const tip = [t(mark.source === 'call' ? 'chats.ai_changes.from_call' : 'chats.ai_changes.from_chat'), dateTimeShort(mark.at, isAr), mark.quote ? `«${mark.quote}»` : null].filter(Boolean).join(' · ');
+  return (
+    <span
+      title={tip}
+      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[10px] font-medium ${mark.current ? 'bg-copper/10 text-copper' : 'bg-cream text-charcoal/50'}`}
+    >
+      <Sparkles size={9} aria-hidden /> {label} · {dateTimeShort(mark.at, isAr)}
+    </span>
+  );
 }
 
 const FULL_WIDTH_TYPES = new Set(['textarea', 'notes', 'location', 'lookup', 'unit_picker', 'multiselect']);
@@ -31,6 +52,7 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
   const saveRecord = useAppStore((s) => s.saveRecord);
   const addToast = useAppStore((s) => s.addToast);
   const records = useAppStore((s) => s.records);
+  const aiMarks = useAiFieldMarks(client.id, client.data, client.version);
 
   const { draft, patchDraft, setDraft } = useRecordDraft(client);
   const [saving, setSaving] = useState(false);
@@ -105,8 +127,9 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {fields.map((field) => (
           <div key={field.id} className={FULL_WIDTH_TYPES.has(field.type) ? 'sm:col-span-2' : ''}>
-            <label className="mb-1 block text-xs font-semibold text-charcoal/60">
+            <label className="mb-1 flex flex-wrap items-center gap-1.5 text-xs font-semibold text-charcoal/60">
               {isAr ? field.label_ar : field.label_en}
+              <AiFieldBadge mark={aiMarks[field.name]} isAr={isAr} />
             </label>
             {canEdit ? (
               <DynamicField

@@ -83,6 +83,16 @@ export interface BrainHooks {
   savedArea(): Promise<GeoReading | null>;
 }
 
+/** One search_projects call, as the chat's AI cards show it. */
+export interface AgentSearchLog {
+  criteria: Record<string, unknown>;
+  total: number;
+  relaxed: string | null;
+  area_understood: Array<{ place: string; wanted: boolean }> | null;
+  overrides: string[];
+  top: Array<{ id: string; name: string; district: string | null; price_from: number | null }>;
+}
+
 export interface BrainOutcome {
   reply: string | null;
   /** The model wrote nothing sendable after a rewrite; caller uses a safe fixed line. */
@@ -101,6 +111,8 @@ export interface BrainOutcome {
   /** Total of the LAST search this turn (null = no search). */
   lastTotal: number | null;
   searches: number;
+  /** Every search_projects this turn, structured (saved to wa_agent_runs for the chat's AI cards). */
+  searchLog: AgentSearchLog[];
   model: string;
   toolTrace: string[];
   /** Everything the reply may quote: the state, the chat, and every tool result
@@ -427,7 +439,7 @@ export async function runBrain(
 
   const out: BrainOutcome = {
     reply: null, replyFailed: false, guardProblems: [], sent: null, sentUnits: null, handoff: null, asked: false, booked: null, ended: false,
-    lastCriteria: null, lastTotal: null, searches: 0, model: opts.model, toolTrace,
+    lastCriteria: null, lastTotal: null, searches: 0, searchLog: [], model: opts.model, toolTrace,
   };
 
   out.grounding = grounding;
@@ -481,6 +493,13 @@ export async function runBrain(
           const view = areaUnderstood ? { ...searchView(r), area_understood: areaUnderstood } : searchView(r);
           grounding.push(view);
           const shown = criteria.area_ids ? { ...criteria, area_ids: `${criteria.area_ids.length} projects in the described area` } : criteria;
+          out.searchLog.push({
+            criteria: Object.fromEntries(Object.entries(shown).filter(([, v]) => v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0))),
+            total: r.total, relaxed: r.relaxed,
+            area_understood: areaUnderstood ? areaUnderstood.map((u) => ({ place: u.place, wanted: u.wanted })) : null,
+            overrides: applied.overrides,
+            top: r.projects.slice(0, 5).map((p) => ({ id: p.project_id, name: p.name, district: p.district, price_from: p.fit?.price_from ?? p.price_from })),
+          });
           toolTrace.push(`search ${JSON.stringify(shown)} → ${r.total}${r.relaxed ? ` (${r.relaxed})` : ''}`);
           return { content: JSON.stringify(view) };
         }

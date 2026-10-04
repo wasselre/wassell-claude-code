@@ -30,6 +30,7 @@ import { alertRep, askRep, bookVisit, loadChatContext, recordVisit } from './esc
 import { readLocation, matchSavedPlaces } from './geoGate.js';
 import { loadSavedProfile, type SavedProfile } from './savedProfile.js';
 import { readCustomerWants, type CustomerReading } from './prefReading.js';
+import { recordAgentRun } from './runLog.js';
 
 /** The shared preference reading may take this long before the turn goes on without it. */
 const READING_WAIT_MS = 9_000;
@@ -226,6 +227,10 @@ export async function runAgentTurn(
         console.error(`[salesAgent] turn-cap pause failed chat=${chatWid}:`, capErr.message);
         await svc.from('wa_agent_conversations').update({ status: 'handed_off', updated_at: new Date().toISOString() }).eq('chat_wid', chatWid);
       }
+      await recordAgentRun(svc, {
+        chat_wid: chatWid, client_id: await chatClientId(svc, chatWid), kind: 'holding', reply: replies[0], reply_sent: true,
+        actions: { handoff: { reason: 'turn_cap', note: notify } },
+      });
     }
     return { skipped: 'turn_cap', replies, notify, status: 'handed_off' };
   }
@@ -411,8 +416,27 @@ export async function runAgentTurn(
     }
   }
   if (notify) await notifyRep(svc, chatWid, notify);
+  await recordAgentRun(svc, {
+    chat_wid: chatWid, client_id: await chatClientId(svc, chatWid), kind: 'rules', model,
+    customer_text: turns.filter((t) => t.who === 'customer' && t.isNew).map((t) => t.text).join(' ') || null,
+    reading: u, reply: replies.join(' / ') || null, reply_sent: replies.length ? allSent : null,
+    actions: {
+      ...(project ? { sent_project: { id: project.projectId, name: project.projectName } } : {}),
+      ...(step.kind === 'handoff' ? { handoff: { reason: step.reason, note: notify } } : {}),
+    },
+  });
 
   return { ...result, notify, sent: allSent };
+}
+
+/** The chat's client (for the run record). Never throws — a missing link just leaves it null. */
+async function chatClientId(svc: SupabaseClient, chatWid: string): Promise<string | null> {
+  try {
+    return (await loadChatContext(svc, chatWid)).clientId;
+  } catch (err) {
+    console.error(`[salesAgent] client lookup for the run record failed chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
+    return null;
+  }
 }
 
 // ── Brain (v2) turn ───────────────────────────────────────────────────────────
@@ -449,6 +473,7 @@ async function runBrainTurn(
   },
 ): Promise<TurnResult> {
   const { chatWid, conv, dryRun } = a;
+  const turnStartedAt = Date.now();
   const slots: Slots = { ...conv.slots };
   // The language of the customer's LATEST message (a burst may mix; live test:
   // an English opener was answered in Arabic because an older Arabic line counted).
@@ -505,8 +530,10 @@ async function runBrainTurn(
   // The client's SAVED profile (CRM): what reps and the chat/call readers
   // already know. A failed read only costs this turn that context — logged.
   let saved: SavedProfile | null = null;
+  let runClientId: string | null = null;
   try {
-    saved = await loadSavedProfile(svc, (await loadChatContext(svc, chatWid)).clientId);
+    runClientId = (await loadChatContext(svc, chatWid)).clientId;
+    saved = await loadSavedProfile(svc, runClientId);
     if (saved?.line) stateLines.push(saved.line);
   } catch (err) {
     console.error(`[salesAgent] saved profile not loaded chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
@@ -756,6 +783,21 @@ async function runBrainTurn(
     if (rErr) console.error(`[salesAgent] relay stamp failed chat=${chatWid}:`, rErr.message);
   }
   if (notify) await notifyRep(svc, chatWid, notify);
+  await recordAgentRun(svc, {
+    chat_wid: chatWid, client_id: runClientId, kind: 'brain', model: outcome.model, ms: Date.now() - turnStartedAt,
+    customer_text: a.newCustomerText || null,
+    reading: customerReading ? { unit_types: customerReading.unit_types, budget_max: customerReading.budget_max, bedrooms_min: customerReading.bedrooms_min, area_min: customerReading.area_min, purpose: customerReading.purpose, amenities: customerReading.amenities, model: customerReading.model } : null,
+    searches: outcome.searchLog,
+    actions: {
+      ...(outcome.sent ? { sent_project: { id: outcome.sent.projectId, name: outcome.sent.name } } : {}),
+      ...(outcome.sentUnits ? { sent_units: { project_id: outcome.sentUnits.projectId, name: outcome.sentUnits.name, count: outcome.sentUnits.count } } : {}),
+      ...(outcome.booked ? { booked: outcome.booked } : {}),
+      ...(outcome.handoff ? { handoff: outcome.handoff } : {}),
+      ...(outcome.asked ? { asked: true } : {}),
+      ...(outcome.ended ? { ended: true } : {}),
+    },
+    reply, reply_sent: reply ? sent : null, reply_failed: outcome.replyFailed, guard_problems: outcome.guardProblems, tool_trace: outcome.toolTrace,
+  });
   console.log(`[salesAgent] brain chat=${chatWid} model=${outcome.model} tools=[${outcome.toolTrace.join(' ; ')}] reply=${reply ? 'yes' : 'none'}${outcome.replyFailed ? ' (fallback line)' : ''}`);
   return { ...result, notify, sent };
 }
