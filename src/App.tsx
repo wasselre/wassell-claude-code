@@ -433,7 +433,8 @@ export default function App() {
           <Route path="/market-intelligence" element={MARKET_LISTINGS_ARCHIVED ? <RetiredAssistantNotice /> : <RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
           <Route path="/market-automation" element={MARKET_LISTINGS_ARCHIVED ? <RetiredAssistantNotice /> : <RequirePageAccess pageId="market_automation"><MarketAutomationPage /></RequirePageAccess>} />
           <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
-          <Route path="/competitor-watch" element={<RequirePageAccess pageId="competitor_watch"><CompetitorWatchPage /></RequirePageAccess>} />
+          {/* Competitor Watch moved into the Marketing workspace («المنافسون»). */}
+          <Route path="/competitor-watch" element={<Navigate to="/m/competitors" replace />} />
           {/* Projects & Inventory workspace — one entry, section tabs gated by
               the pi_* access-only page ids (managed in Settings → Profiles). */}
           <Route path="/projects-inventory" element={<RequirePageAccess pageId="projects_inventory"><ProjectsInventoryWorkspace /></RequirePageAccess>} />
@@ -529,74 +530,76 @@ export default function App() {
           {/* Internal review of public job applications (admin-only; RLS gates
               the data too). */}
           <Route path="/careers/applications" element={<RequireAdmin><JobApplicationsPage /></RequireAdmin>} />
-        </Route>
-
-        {/* ── The Marketing workspace ────────────────────────────────────
-            Mounted OUTSIDE AppLayout on purpose: it brings its own shell,
-            rail, header and design system, and the Sales workspace is left
-            exactly as it was. Same auth gate, same page-access id, so
-            nobody's permissions have to be re-granted. */}
-        <Route
-          element={
-            <RequireAuth>
-              {/* Same page-access id as the shared guard, but it renders the
-                  workspace shell while the store boots instead of a blank
-                  page — there is no surrounding layout here to fill it. */}
+          {/* ── The Marketing workspace (2026-10-04) ───────────────────────
+              Lives INSIDE AppLayout now: the main sidebar carries «التسويق»
+              like «المبيعات», and the workspace shell renders tabs across the
+              top instead of its own rail. Same page-access id
+              (marketing_management), so nobody's permissions changed, and every
+              /m/... address still resolves. */}
+          <Route
+            element={
               <RequireMarketingWorkspace>
                 <MarketingWorkspace />
               </RequireMarketingWorkspace>
-            </RequireAuth>
-          }
-        >
-          <Route path="/m" element={<MarketingOverviewPage />} />
-          {/* The month — one page in two tenses (?view=plan|report&month=YYYY-MM). */}
-          <Route path="/m/month" element={<MarketingMonthPage />} />
-          <Route path="/m/my-work" element={<MarketingWorkPage />} />
-          {/* Old pages the month model replaced (deleted 2026-09-16). Their
-              addresses redirect so bookmarks and sent links still land. */}
-          <Route path="/m/team" element={<Navigate to="/m/month" replace />} />
-          <Route path="/m/search" element={<MarketingSearchPage />} />
-          <Route path="/m/content" element={<MarketingContentListPage />} />
-          {/* Kept as an ADDRESS, not a page: forwards to the row or item screen
-              in «مهامي». The old per-item content page was deleted 2026-09-16. */}
-          <Route path="/m/content/:contentId" element={<MarketingContentRedirect />} />
-          {/* The publication task — the destination `taskHref` sends a
-              `publication` task to. One release per screen. */}
-          <Route path="/m/releases/:releaseId" element={<MarketingReleasePage />} />
-          <Route path="/m/calendar" element={<Navigate to="/m/month" replace />} />
-          <Route path="/m/me" element={<MarketingMyPerfPage />} />
-          <Route path="/m/performance" element={<MarketingPerformanceDeskPage />} />
-          <Route path="/m/library" element={<MarketingAssetLibrary />} />
-          <Route path="/m/library/upload" element={<MarketingUploadPage />} />
-          <Route path="/m/library/unused" element={<MarketingLibraryUnusedPage />} />
-          <Route path="/m/library/:assetId" element={<MarketingAssetDetailPage />} />
-          <Route path="/m/shoots" element={<MarketingShootsPage />} />
-          <Route path="/m/shoots/:requestId" element={<MarketingShootRequestPage />} />
-          <Route path="/m/account" element={<MarketingAccountPage />} />
-          <Route path="/m/goals" element={<Navigate to="/m/month" replace />} />
-          <Route path="/m/campaigns" element={<Navigate to="/m/month" replace />} />
-          <Route path="/m/campaigns/:campaignId" element={<Navigate to="/m/month" replace />} />
-          <Route path="/m/campaigns/:campaignId/*" element={<Navigate to="/m/month" replace />} />
-          <Route path="/m/numbers" element={<Navigate to="/m/month" replace />} />
-          <Route path="/m/analytics" element={<MarketingAnalyticsPage />} />
-          <Route path="/m/organic" element={<MarketingOrganicPulsePage />} />
-          <Route path="/m/publishing" element={<MarketingPublishingBoardPage />} />
-          <Route path="/m/content-inventory" element={<MarketingContentInventoryPage />} />
-          <Route path="/m/content-readiness" element={<MarketingContentReadinessPage />} />
-          <Route path="/m/settings" element={<MarketingSettingsPage />} />
-          {/* Creative Director settings — static segments outrank :section.
-              Editing inside each screen is gated by manage_settings (and
-              approve_creative for the brand-kit review). */}
-          <Route path="/m/settings/brand-kit" element={<BrandKitSettingsRoute />} />
-          <Route path="/m/settings/writer-rules" element={<WriterRulesSettingsRoute />} />
-          <Route path="/m/settings/ai-roles" element={<AiRolesSettingsRoute />} />
-          <Route path="/m/settings/creative-flags" element={<CreativeFlagsSettingsRoute />} />
-          <Route path="/m/settings/capacity" element={<MarketingCapacitySettingsPage />} />
-          <Route path="/m/settings/:section" element={<SettingsSectionPage />} />
-          {/* A wrong /m/* path lands on the workspace's own front door rather
-              than on a blank screen inside a shell that already rendered. */}
-          <Route path="/m/*" element={<Navigate to="/m" replace />} />
+            }
+          >
+            {/* /m is the workspace's front door → its home tab. Overview moved to
+                /m/overview (a sub-tab of «الشهر»). */}
+            <Route path="/m" element={<Navigate to="/m/month" replace />} />
+            <Route path="/m/overview" element={<MarketingOverviewPage />} />
+            {/* The month — one page in two tenses (?view=plan|report&month=YYYY-MM). */}
+            <Route path="/m/month" element={<MarketingMonthPage />} />
+            <Route path="/m/my-work" element={<MarketingWorkPage />} />
+            {/* Old pages the month model replaced (deleted 2026-09-16). Their
+                addresses redirect so bookmarks and sent links still land. */}
+            <Route path="/m/team" element={<Navigate to="/m/month" replace />} />
+            <Route path="/m/search" element={<MarketingSearchPage />} />
+            <Route path="/m/content" element={<MarketingContentListPage />} />
+            {/* Kept as an ADDRESS, not a page: forwards to the row or item screen
+                in «مهامي». The old per-item content page was deleted 2026-09-16. */}
+            <Route path="/m/content/:contentId" element={<MarketingContentRedirect />} />
+            {/* The publication task — the destination `taskHref` sends a
+                `publication` task to. One release per screen. */}
+            <Route path="/m/releases/:releaseId" element={<MarketingReleasePage />} />
+            <Route path="/m/calendar" element={<Navigate to="/m/month" replace />} />
+            <Route path="/m/me" element={<MarketingMyPerfPage />} />
+            <Route path="/m/performance" element={<MarketingPerformanceDeskPage />} />
+            <Route path="/m/library" element={<MarketingAssetLibrary />} />
+            <Route path="/m/library/upload" element={<MarketingUploadPage />} />
+            <Route path="/m/library/unused" element={<MarketingLibraryUnusedPage />} />
+            <Route path="/m/library/:assetId" element={<MarketingAssetDetailPage />} />
+            <Route path="/m/shoots" element={<MarketingShootsPage />} />
+            <Route path="/m/shoots/:requestId" element={<MarketingShootRequestPage />} />
+            <Route path="/m/account" element={<MarketingAccountPage />} />
+            <Route path="/m/goals" element={<Navigate to="/m/month" replace />} />
+            <Route path="/m/campaigns" element={<Navigate to="/m/month" replace />} />
+            <Route path="/m/campaigns/:campaignId" element={<Navigate to="/m/month" replace />} />
+            <Route path="/m/campaigns/:campaignId/*" element={<Navigate to="/m/month" replace />} />
+            <Route path="/m/numbers" element={<Navigate to="/m/month" replace />} />
+            <Route path="/m/analytics" element={<MarketingAnalyticsPage />} />
+            <Route path="/m/organic" element={<MarketingOrganicPulsePage />} />
+            <Route path="/m/publishing" element={<MarketingPublishingBoardPage />} />
+            <Route path="/m/content-inventory" element={<MarketingContentInventoryPage />} />
+            <Route path="/m/content-readiness" element={<MarketingContentReadinessPage />} />
+            <Route path="/m/settings" element={<MarketingSettingsPage />} />
+            {/* Creative Director settings — static segments outrank :section.
+                Editing inside each screen is gated by manage_settings (and
+                approve_creative for the brand-kit review). */}
+            <Route path="/m/settings/brand-kit" element={<BrandKitSettingsRoute />} />
+            <Route path="/m/settings/writer-rules" element={<WriterRulesSettingsRoute />} />
+            <Route path="/m/settings/ai-roles" element={<AiRolesSettingsRoute />} />
+            <Route path="/m/settings/creative-flags" element={<CreativeFlagsSettingsRoute />} />
+            <Route path="/m/settings/capacity" element={<MarketingCapacitySettingsPage />} />
+            <Route path="/m/settings/:section" element={<SettingsSectionPage />} />
+            {/* A wrong /m/* path lands on the workspace's own front door rather
+                than on a blank screen inside a shell that already rendered. */}
+            {/* «المنافسون» — Competitor Watch, moved into the workspace 2026-10-04. */}
+            <Route path="/m/competitors" element={<RequirePageAccess pageId="competitor_watch"><CompetitorWatchPage /></RequirePageAccess>} />
+            <Route path="/m/*" element={<Navigate to="/m/month" replace />} />
+
+          </Route>
         </Route>
+
       </Routes>
       </Suspense>
       <ToastContainer />

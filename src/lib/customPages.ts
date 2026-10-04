@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { BarChart3, LineChart, UserCheck, ListChecks, Compass, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench, Briefcase } from 'lucide-react';
+import { BarChart3, LineChart, UserCheck, ListChecks, Compass, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench, Briefcase, Megaphone } from 'lucide-react';
 import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 
 /**
@@ -208,19 +208,16 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     // (listing/price data). This one only OBSERVES competitors, hence Radar.
     // Arabic keeps the pair apart: ذكاء التسويق here vs ذكاء السوق there.
     id: 'marketing_management',
-    // Points at the Marketing WORKSPACE, which lives outside the Sales shell.
-    // Following this link leaves the Sales workspace entirely — that is the
-    // intent, and the switcher in either header brings you back.
+    // The Marketing WORKSPACE (2026-10-04): a sidebar row like «المبيعات»,
+    // a tabbed workspace inside the main layout. It used to live outside the
+    // app shell behind a Sales/Marketing switcher.
     route: '/m',
     // إدارة التسويق = OUR execution pipeline. Distinct from ذكاء التسويق below,
     // which watches competitors. Different verb, different data, different job.
-    label_ar: 'مساحة التسويق',
-    label_en: 'Marketing Workspace',
-    icon: ClipboardListIcon,
+    label_ar: 'التسويق',
+    label_en: 'Marketing',
+    icon: Megaphone,
     default_access: 'admin',
-    // Reached via the workspace switcher at the top of the sidebar, not a nav
-    // row — keeping the route + access rules but out of the sidebar list.
-    hidden_from_sidebar: true,
   },
   {
     id: 'marketing_intelligence',
@@ -229,6 +226,9 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Marketing Intelligence',
     icon: Radar,
     default_access: 'admin',
+    // Hidden 2026-10-04, to be retired (operator). Competitor Watch replaced it;
+    // the route still works for anyone holding the link.
+    hidden_from_sidebar: true,
   },
   {
     // Competitor Watch — a NEW, from-scratch workspace (deliberately not built on
@@ -240,6 +240,9 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Competitor Watch',
     icon: Radar,
     default_access: 'admin',
+    // Now the «المنافسون» tab of the Marketing workspace (/m/competitors);
+    // this id still gates that tab.
+    hidden_from_sidebar: true,
   },
   {
     // Bayut-style flat-rate calculator (2026-08-20 rebuild) — holds no customer

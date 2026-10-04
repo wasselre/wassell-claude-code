@@ -81,6 +81,7 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
     if (path.startsWith('/settings/profiles')) return isAr ? 'مستوى الوصول' : 'Access level';
     if (path.startsWith('/settings/roles')) return isAr ? 'وظيفة المبيعات' : 'Sales job';
     if (path.startsWith('/settings/whatsapp')) return isAr ? 'واتساب' : 'WhatsApp';
+    if (path === '/m' || path.startsWith('/m/')) return isAr ? 'التسويق' : 'Marketing';
 
     if (path.startsWith('/model/')) {
       const modelName = params.modelName ?? path.split('/')[2];

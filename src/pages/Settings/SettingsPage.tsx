@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { useIsAdmin } from '@/hooks/usePermission';
 import {
-  Hammer, Zap, Languages,
+  Hammer, Zap, Languages, Megaphone,
   Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle,
   Globe, FileText, MapPin, Activity, Film, Wallet, Compass,
@@ -217,6 +217,20 @@ const CARDS: SettingsCard[] = [
     bg: '#B8734F14',
     route: '/settings/geo-zones',
     section: 'system_admin',
+    adminOnly: true,
+  },
+  {
+    // The Marketing workspace's own settings (team, content types, workflows,
+    // campaigns, publishing) — they used to be reachable only from inside it.
+    titleAr: 'إعدادات التسويق',
+    titleEn: 'Marketing Settings',
+    descAr: 'فريق التسويق والأدوار، وأنواع المحتوى ومسارات العمل، والحملات، والمنصات وإيقاع النشر',
+    descEn: 'Marketing team and roles, content types and workflows, campaigns, platforms and publishing cadence',
+    icon: Megaphone,
+    color: '#B8734F',
+    bg: '#B8734F14',
+    route: '/m/settings',
+    section: 'marketing',
     adminOnly: true,
   },
   {

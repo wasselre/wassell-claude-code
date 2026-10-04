@@ -49,7 +49,6 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { hasPermission, canAccessPage, isModelSidebarHidden, resolveEffectiveProfile } from '@/lib/permissions';
 import { CUSTOM_PAGES } from '@/lib/customPages';
-import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { isRetiredModel, isWorkspaceHiddenModel } from '@/lib/featureFlags';
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
@@ -263,15 +262,8 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           </div>
         </div>
 
-        {/* Workspace switcher — Sales ⇄ Marketing, a switch not a side link. */}
-        <div className={railCollapsed ? 'px-2' : 'px-4'}>
-          <WorkspaceSwitcher
-            variant="sales"
-            canAccessMarketing={canPage('marketing_management')}
-            isAr={isAr}
-            collapsed={railCollapsed}
-          />
-        </div>
+        {/* Marketing is a sidebar row («التسويق», from CUSTOM_PAGES) since 2026-10-04;
+            the Sales ⇄ Marketing switcher that sat here is gone. */}
 
         {/* Navigation */}
         <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">

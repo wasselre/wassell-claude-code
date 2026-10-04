@@ -285,7 +285,7 @@ export default function NotificationBell() {
       {open && pos && createPortal(
         <div
           ref={popRef}
-          className="mos-root se-bell-fly"
+          className="mos-root mos-embed-light se-bell-fly"
           style={pos}
           role="dialog"
           aria-label={isAr ? 'مركز الإشعارات' : 'Notification centre'}

@@ -1,10 +1,13 @@
 /**
  * The Marketing Workspace shell.
  *
- * This is a SECOND workspace, not a page inside the Sales one. It renders
- * outside `AppLayout` — its own rail, its own header, its own visual system —
- * and the switcher at the top of the rail is how you move between the two.
- * The Sales workspace is untouched by anything in this folder.
+ * Since 2026-10-04 this is a tabbed workspace INSIDE the main app layout, like
+ * «المبيعات»: the main sidebar carries an «التسويق» row, and this shell renders
+ * a header plus six tabs (الشهر · المهام · المحتوى · النشر · التحليلات ·
+ * المنافسون), each with sub-tabs for the pages folded into it. It used to sit
+ * outside AppLayout with its own brown rail and a Sales/Marketing switcher.
+ * The pages keep their own design system (mos.css, scoped under .mos-root),
+ * pinned to its LIGHT token set in the app's palette (styles/mosInApp.css).
  *
  * It also carries the workspace-wide context (role, content types, project
  * names) so a screen change is a fetch of ITS data only. The old module
@@ -15,7 +18,7 @@ import {
   createContext, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react';
-import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { useCanAccessPage } from '@/hooks/usePermission';
@@ -36,17 +39,13 @@ import {
   persistActiveRole,
   setPreviewRole,
 } from '@/lib/marketingOS/client';
-import { initial, num } from './lib/format';
+import { num } from './lib/format';
 import {
-  IconCalendar, IconCheck, IconContent, IconGoals, IconInventory,
-  IconLibrary, IconMenu, IconMetrics, IconMyWork, IconOverview, IconPulse, IconSearch, IconSend,
-  IconSettings, IconShoot,
+  IconCalendar, IconContent, IconLibrary, IconMetrics, IconMyWork, IconSearch, IconSend, IconSettings,
 } from './components/icons';
+import { Radar } from 'lucide-react';
 import NotificationBell from './components/NotificationBell';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
-import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
-import MobileTabBar from './components/MobileTabBar';
-import { marketingLibraryHref } from '@/lib/files/libraryUrl';
 import './mos.css';
 import './styles/rail-badges.css';
 // The m4-* responsive classes (mobile cards, .m4-mob/.m4-desk visibility) are
@@ -56,6 +55,7 @@ import './styles/rail-badges.css';
 // mobile-only cards leaked onto desktop as unstyled, run-together text. Import
 // it in the always-loaded workspace shell so every /m page has it.
 import './styles/mobile-m4.css';
+import './styles/mosInApp.css';
 
 /* ------------------------------------------------------------------ */
 /* context                                                            */
@@ -141,77 +141,85 @@ export function useWorkspace(): WorkspaceCtx {
 /* navigation                                                         */
 /* ------------------------------------------------------------------ */
 
-interface NavItem {
+interface SubTab {
   to: string;
   ar: string;
   en: string;
-  Icon: (p: Record<string, unknown>) => JSX.Element;
-  badge?: BadgeKey;
-  end?: boolean;
   /**
-   * The surface_access row that governs this item. 'hidden' removes the item
-   * from the rail entirely — no disabled button leading to a refusal.
-   * 'always' is not a matrix surface: it shows whenever ANY surface is
-   * visible. Search has always worked that way; الشهر joins it because there
-   * is no `month` surface row and the server-side `month_*` actions carry
-   * their own capability gate (the same posture `analytics` and
-   * `content_inventory` already take — absent from the SURFACES list, so they
-   * default to visible).
+   * The surface_access row that governs this sub-tab. 'hidden' removes it —
+   * no disabled button leading to a refusal. 'always' is not a matrix surface:
+   * it shows whenever ANY surface is visible (الشهر and البحث always worked
+   * that way; the server-side `month_*` actions carry their own gate).
    */
   surface: SurfaceKey | 'always';
 }
 
-interface NavGroup {
-  ar: string | null;
-  en: string | null;
-  items: NavItem[];
-  /**
-   * «متقدم» — collapsed by default. Reachable, not gone: everything the month
-   * model stopped needing in a normal month lives here, one click away, and
-   * the group opens itself when the current route is inside it.
-   */
-  advanced?: boolean;
+interface WorkspaceTab {
+  key: string;
+  ar: string;
+  en: string;
+  Icon: (p: Record<string, unknown>) => JSX.Element;
+  badge?: BadgeKey;
+  subs: SubTab[];
+  /** Extra address prefixes that belong to this tab (detail pages with no sub-tab). */
+  owns?: string[];
+  /** A page-access id the tab also needs (the main app's per-profile pages). */
+  pageId?: string;
 }
 
 /**
- * The rail is SIX items: الشهر · مهامي · المحتوى · النشر · المكتبة · الإعدادات.
- *
- * It was nineteen. The month model's whole argument is that a normal month
- * needs one planning screen, one queue, and the places work and material
- * actually live; everything else is a tool you reach for when something has
- * gone off the rule — a campaign to investigate, a calendar to look at, a
- * settings screen to change once a quarter. Those did not stop existing, and
- * none of them is deleted here: they are the «متقدم» group below, collapsed.
- *
- * `/m/month` is F1's screen and F1 owns its route; the rail points at it.
+ * Six tabs. Every page the old rail had (six main + nine «متقدم») sits under
+ * one of them; Settings is a card on the main Settings page (and the gear
+ * here), the Library is the Files library's marketing view, and Search is a
+ * header button.
  */
-const NAV: NavGroup[] = [
+const TABS: WorkspaceTab[] = [
   {
-    ar: null, en: null,
-    items: [
-      { to: '/m/month', ar: 'الشهر', en: 'The month', Icon: IconCalendar, surface: 'always' },
-      { to: '/m/my-work', ar: 'مهامي', en: 'My work', Icon: IconMyWork, badge: 'mywork', surface: 'mywork' },
-      { to: '/m/content', ar: 'المحتوى', en: 'Content', Icon: IconContent, badge: 'content', surface: 'content' },
-      { to: '/m/publishing', ar: 'النشر', en: 'Publishing', Icon: IconSend, surface: 'publishing' },
-      { to: marketingLibraryHref(), ar: 'المكتبة', en: 'Library', Icon: IconLibrary, surface: 'library' },
-      { to: '/m/settings', ar: 'الإعدادات', en: 'Settings', Icon: IconSettings, surface: 'settings' },
+    key: 'month', ar: 'الشهر', en: 'The month', Icon: IconCalendar,
+    subs: [
+      { to: '/m/month', ar: 'الشهر', en: 'The month', surface: 'always' },
+      { to: '/m/overview', ar: 'نظرة عامة', en: 'Overview', surface: 'overview' },
     ],
   },
   {
-    ar: 'متقدّم', en: 'Advanced', advanced: true,
-    items: [
-      { to: '/m', ar: 'نظرة عامة', en: 'Overview', Icon: IconOverview, end: true, surface: 'overview' },
-      { to: '/m/analytics', ar: 'التحليلات', en: 'Analytics', Icon: IconMetrics, surface: 'analytics' },
-      { to: '/m/organic', ar: 'نبض المنصات', en: 'Platform pulse', Icon: IconPulse, surface: 'organic' },
-      { to: '/m/search', ar: 'البحث', en: 'Search', Icon: IconSearch, surface: 'always' },
-      { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', Icon: IconShoot, surface: 'shoots' },
-      { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Content inventory', Icon: IconInventory, surface: 'content_inventory' },
-      { to: '/m/content-readiness', ar: 'جاهزية المحتوى', en: 'Content readiness', Icon: IconCheck, surface: 'content_readiness' },
-      { to: '/m/me', ar: 'ملفي', en: 'My profile', Icon: IconGoals, surface: 'myperf' },
-      { to: '/m/performance', ar: 'مكتب الأداء', en: 'Performance', Icon: IconMetrics, surface: 'performance' },
+    key: 'work', ar: 'المهام', en: 'Tasks', Icon: IconMyWork, badge: 'mywork',
+    subs: [
+      { to: '/m/my-work', ar: 'مهامي', en: 'My work', surface: 'mywork' },
+      { to: '/m/performance', ar: 'مكتب الأداء', en: 'Performance', surface: 'performance' },
+      { to: '/m/me', ar: 'ملفي', en: 'My profile', surface: 'myperf' },
     ],
+  },
+  {
+    key: 'content', ar: 'المحتوى', en: 'Content', Icon: IconContent, badge: 'content',
+    subs: [
+      { to: '/m/content', ar: 'المحتوى', en: 'Content', surface: 'content' },
+      { to: '/m/content-inventory', ar: 'جرد المحتوى', en: 'Inventory', surface: 'content_inventory' },
+      { to: '/m/content-readiness', ar: 'جاهزية المحتوى', en: 'Readiness', surface: 'content_readiness' },
+      { to: '/m/shoots', ar: 'طلبات التصوير', en: 'Shoot requests', surface: 'shoots' },
+    ],
+    owns: ['/m/library'],
+  },
+  {
+    key: 'publishing', ar: 'النشر', en: 'Publishing', Icon: IconSend,
+    subs: [
+      { to: '/m/publishing', ar: 'لوحة النشر', en: 'Publishing board', surface: 'publishing' },
+      { to: '/m/organic', ar: 'نبض المنصات', en: 'Platform pulse', surface: 'organic' },
+    ],
+    owns: ['/m/releases'],
+  },
+  {
+    key: 'analytics', ar: 'التحليلات', en: 'Analytics', Icon: IconMetrics,
+    subs: [{ to: '/m/analytics', ar: 'التحليلات', en: 'Analytics', surface: 'analytics' }],
+  },
+  {
+    key: 'competitors', ar: 'المنافسون', en: 'Competitors',
+    Icon: () => <Radar size={16} />,
+    subs: [{ to: '/m/competitors', ar: 'المنافسون', en: 'Competitors', surface: 'always' }],
+    pageId: 'competitor_watch',
   },
 ];
+
+const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
 
 /* ------------------------------------------------------------------ */
 /* gate                                                               */
@@ -245,32 +253,16 @@ export function RequireMarketingWorkspace({ children }: { children: ReactNode })
   return <>{children}</>;
 }
 
-/** The rail and a page-shaped skeleton, so booting looks like loading. */
+/** A page-shaped skeleton inside the app layout, so booting looks like loading. */
 function BootShell({ isAr }: { isAr: boolean }) {
   return (
-    <div className="mos-root">
-      <aside className="mos-rail">
-        <div className="brand">
-          <img src="/assets/wassel-icon-white.png" className="brand-mark" style={{ objectFit: 'contain' }} alt="Wassel" />
-          <div className="brand-txt">
-            <b>{isAr ? 'وصل' : 'Wassel'}</b>
-            <span>{isAr ? 'التسويق' : 'Marketing'}</span>
-          </div>
+    <div className="mos-root mos-embed-light mos-in-app">
+      <div className="body" aria-label={isAr ? 'جارٍ تجهيز التسويق' : 'Loading Marketing'}>
+        <div className="sk" style={{ height: 24, width: 180, marginBottom: 16 }} />
+        <div className="grid g4" style={{ marginBottom: 18 }}>
+          {[0, 1, 2, 3].map((i) => <div key={i} className="sk" style={{ height: 96 }} />)}
         </div>
-      </aside>
-      <div className="mos-main">
-        <div className="phead">
-          <div style={{ width: '100%' }}>
-            <div className="sk" style={{ height: 24, width: 180 }} />
-            <div className="sk" style={{ height: 12, width: 260, marginTop: 8 }} />
-          </div>
-        </div>
-        <div className="body">
-          <div className="grid g4" style={{ marginBottom: 18 }}>
-            {[0, 1, 2, 3].map((i) => <div key={i} className="sk" style={{ height: 96 }} />)}
-          </div>
-          <div className="sk" style={{ height: 220 }} />
-        </div>
+        <div className="sk" style={{ height: 220 }} />
       </div>
     </div>
   );
@@ -282,8 +274,8 @@ function BootShell({ isAr }: { isAr: boolean }) {
 
 export default function MarketingWorkspace() {
   const isAr = useAppStore((s) => s.language) === 'ar';
-  const setLanguage = useAppStore((s) => s.setLanguage);
-  const authEmail = useAppStore((s) => s.authEmail);
+  // «المنافسون» is the Competitor Watch page, gated by ITS page-access id.
+  const canCompetitors = useCanAccessPage('competitor_watch');
   const translationVersion = useRecordTranslationVersion();
 
   const location = useLocation();
@@ -309,22 +301,6 @@ export default function MarketingWorkspace() {
   const [badges, setBadges] = useState<Record<BadgeKey, number | null>>({
     mywork: null, content: null, campaigns: null,
   });
-  const [railOpen, setRailOpen] = useState(false);
-
-  /**
-   * «متقدم» is collapsed — unless you are standing inside it, in which case a
-   * rail that hid the item you are looking at would be lying about where you
-   * are. Opening it is sticky for the session: the rail does not unmount on
-   * navigation, so someone spending an afternoon in الحملات opens the group
-   * once.
-   */
-  const onAdvancedRoute = useMemo(() => NAV.some(
-    (g) => g.advanced && g.items.some((i) => (i.end
-      ? location.pathname === i.to
-      : location.pathname === i.to || location.pathname.startsWith(`${i.to}/`))),
-  ), [location.pathname]);
-  const [advancedOpen, setAdvancedOpen] = useState(onAdvancedRoute);
-  useEffect(() => { if (onAdvancedRoute) setAdvancedOpen(true); }, [onAdvancedRoute]);
 
   const applyBadge = useCallback((key: BadgeKey, value: number | null) => {
     setBadges((b) => (b[key] === value ? b : { ...b, [key]: value }));
@@ -399,9 +375,6 @@ export default function MarketingWorkspace() {
     void boot();
   }, [boot]);
 
-  // Closing the drawer on navigation is what makes the mobile rail usable —
-  // every screen is reachable on a phone (decision 6: «الجميع»).
-  useEffect(() => { setRailOpen(false); }, [location.pathname]);
 
   const projectMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -470,210 +443,183 @@ export default function MarketingWorkspace() {
 
   const roleLabel = ROLE_LABELS[role] ? (isAr ? ROLE_LABELS[role].ar : ROLE_LABELS[role].en) : role;
 
-  // A hidden surface removes its rail item entirely — no disabled button
-  // leading to a refusal (the matrix's whole point). Search is not a matrix
-  // surface: it shows whenever the caller can see anything at all.
+  // A hidden surface removes its sub-tab entirely — no disabled button leading
+  // to a refusal (the matrix's whole point). 'always' shows whenever the caller
+  // can see anything at all.
   const anySurfaceVisible = Object.values(surfaces).some((l) => l !== 'hidden');
-  const navVisible = (item: NavItem): boolean => {
-    if (!ready) return true; // don't flash-remove items before bootstrap lands
-    if (item.surface === 'always') return anySurfaceVisible;
-    return surfaces[item.surface] !== 'hidden';
+  const subVisible = (sub: SubTab): boolean => {
+    if (!ready) return true; // don't flash-remove tabs before bootstrap lands
+    if (sub.surface === 'always') return anySurfaceVisible;
+    return surfaces[sub.surface] !== 'hidden';
   };
+  const visibleTabs = TABS
+    .filter((tab) => !tab.pageId || (tab.pageId === 'competitor_watch' ? canCompetitors : true))
+    // A tab gated by a page id (المنافسون) is decided by that page access
+    // alone — Marketing surfaces say nothing about Competitor Watch.
+    .map((tab) => ({ ...tab, subs: tab.pageId ? tab.subs : tab.subs.filter(subVisible) }))
+    .filter((tab) => tab.subs.length > 0);
+  const path = location.pathname;
+  const activeTab = visibleTabs.find((tab) =>
+    tab.subs.some((sub) => under(path, sub.to)) || (tab.owns ?? []).some((p) => under(path, p)));
+  const onCompetitors = activeTab?.key === 'competitors';
+  const showSettings = !ready || surfaces.settings !== 'hidden';
+  const showLibrary = !ready || surfaces.library !== 'hidden';
+
+  const headerButton = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-charcoal/70 bg-white border border-sand/50 hover:text-copper hover:border-copper/40 transition-colors';
+
+  const skeleton = (
+    <div className="body">
+      <div className="sk" style={{ height: 26, width: 200, marginBottom: 16 }} />
+      <div className="grid g4" style={{ marginBottom: 18 }}>
+        {[0, 1, 2, 3].map((i) => <div key={i} className="sk" style={{ height: 96 }} />)}
+      </div>
+      <div className="sk" style={{ height: 200 }} />
+    </div>
+  );
 
   return (
     <Ctx.Provider value={ctx}>
-      <div className="mos-root" data-workspace="marketing">
-        {/* A real <button>, not a <div>: iOS Safari does not fire click/tap on
-            a plain non-interactive element without `cursor: pointer`, so a
-            <div> scrim leaves the drawer stuck open on iPhone (the same reason
-            the المزيد sheet scrim is a button). */}
-        <button
-          type="button"
-          className={`mos-rail-scrim${railOpen ? ' on' : ''}`}
-          onClick={() => setRailOpen(false)}
-          aria-label={isAr ? 'إغلاق القائمة' : 'Close menu'}
-          tabIndex={railOpen ? 0 : -1}
-        />
-        <aside className={`mos-rail${railOpen ? ' open' : ''}`}>
-          <div className="brand">
-            <img src="/assets/wassel-icon-white.png" className="brand-mark" style={{ objectFit: 'contain' }} alt="Wassel" />
-            <div className="brand-txt">
-              <b>{isAr ? 'وصل' : 'Wassel'}</b>
-              <span>{isAr ? 'التسويق' : 'Marketing'}</span>
-            </div>
-            <NotificationBell />
+      <div className="max-w-[1500px]" data-workspace="marketing">
+        {/* Header — the workspace name, its tools, and the admin's role preview. */}
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'التسويق' : 'Marketing'}</h1>
+            <p className="text-xs text-charcoal/50 mt-0.5">
+              {isAr ? 'دورك: ' : 'Your role: '}{roleLabel}
+            </p>
           </div>
-
-          {/* The switcher — the one control that makes two workspaces one app. */}
-          <WorkspaceSwitcher variant="marketing" canAccessMarketing isAr={isAr} />
-
-          {NAV.map((group, gi) => {
-            const items = group.items.filter(navVisible);
-            if (items.length === 0) return null;
-            const open = !group.advanced || advancedOpen;
-            return (
-              <div key={gi}>
-                {group.ar && (
-                  group.advanced ? (
-                    <button
-                      type="button"
-                      className={`nav-sec nav-sec-toggle${advancedOpen ? ' on' : ''}`}
-                      onClick={() => setAdvancedOpen((v) => !v)}
-                      aria-expanded={advancedOpen}
-                    >
-                      {/* One glyph, rotated by CSS — a literal ▸ would point
-                          the wrong way in RTL. */}
-                      <span className="chev" aria-hidden="true">▾</span>
-                      {isAr ? group.ar : group.en}
-                      <span className="ct">{num(items.length, isAr)}</span>
-                    </button>
-                  ) : (
-                    <div className="nav-sec">{isAr ? group.ar : group.en}</div>
-                  )
-                )}
-                {open && items.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.end}
-                    className={({ isActive }) => `navi${isActive ? ' on' : ''}`}
-                  >
-                    <item.Icon />
-                    {isAr ? item.ar : item.en}
-                    {item.badge && badges[item.badge] !== null && (
-                      <span className="ct">{num(badges[item.badge], isAr)}</span>
-                    )}
-                  </NavLink>
-                ))}
-              </div>
-            );
-          })}
-
-          {isAdmin && (
-            <div style={{ padding: '10px 14px 0' }}>
-              <label
-                htmlFor="mos-view-as"
-                style={{ fontSize: 10.5, color: 'rgba(255,255,255,.6)', display: 'block', marginBottom: 4 }}
-              >
-                {isAr ? '👁 معاينة كـ (اختبار)' : '👁 View as (test)'}
-              </label>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link to="/m/search" className={headerButton}>
+              <IconSearch style={{ width: 14, height: 14 }} /> {isAr ? 'البحث' : 'Search'}
+            </Link>
+            {showLibrary && (
+              <Link to="/files?view=marketing" className={headerButton}>
+                <IconLibrary style={{ width: 14, height: 14 }} /> {isAr ? 'المكتبة' : 'Library'}
+              </Link>
+            )}
+            {showSettings && (
+              <Link to="/m/settings" className={headerButton}>
+                <IconSettings style={{ width: 14, height: 14 }} /> {isAr ? 'الإعدادات' : 'Settings'}
+              </Link>
+            )}
+            {isAdmin && (
               <select
-                id="mos-view-as"
+                aria-label={isAr ? 'معاينة كدور آخر' : 'View as another role'}
                 value={previewRole ?? ''}
                 onChange={(e) => viewAs((e.target.value || null) as MosRole | null)}
-                style={{
-                  width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 8,
-                  background: previewRole ? 'var(--copper)' : 'rgba(255,255,255,.06)',
-                  color: previewRole ? '#fff' : 'var(--rail-ink)',
-                  border: '1px solid rgba(255,255,255,.2)', cursor: 'pointer',
-                }}
+                className={`px-2 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${previewRole ? 'bg-copper text-white border-copper' : 'bg-white text-charcoal/70 border-sand/50'}`}
               >
-                <option value="">{isAr ? 'حسابي (مدير النظام)' : 'My account (Admin)'}</option>
+                <option value="">{isAr ? '👁 حسابي (مدير النظام)' : '👁 My account (Admin)'}</option>
                 {(['marketing_manager', 'ops_supervisor', 'writer', 'montage', 'ceo', 'viewer'] as MosRole[]).map((r) => (
-                  <option key={r} value={r}>{isAr ? ROLE_LABELS[r].ar : ROLE_LABELS[r].en}</option>
+                  <option key={r} value={r}>{isAr ? `👁 معاينة كـ ${ROLE_LABELS[r].ar}` : `👁 View as ${ROLE_LABELS[r].en}`}</option>
                 ))}
               </select>
-            </div>
-          )}
-
-          <div className="rail-foot">
-            <div className="av">{initial(roleLabel)}</div>
-            <div style={{ minWidth: 0 }}>
-              <b style={{ fontSize: 12 }}>{roleLabel}</b>
-              <small style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                {authEmail ?? ''}
-              </small>
-            </div>
-            <button
-              type="button"
-              onClick={() => setLanguage(isAr ? 'en' : 'ar')}
-              className="btn btn-sm"
-              style={{ marginInlineStart: 'auto', background: 'transparent', color: 'var(--rail-ink)', borderColor: 'rgba(255,255,255,.2)' }}
-            >
-              {isAr ? 'EN' : 'ع'}
-            </button>
+            )}
+            {/* The bell keeps the Marketing design system for its pop-over. */}
+            <span className="mos-root mos-embed-light mos-in-app mos-bell-host">
+              <NotificationBell />
+            </span>
           </div>
-        </aside>
-
-        <div className="mos-main">
-          {/* The burger only exists below 760px; on desktop the rail is always on. */}
-          <button
-            type="button"
-            className="mos-burger"
-            onClick={() => setRailOpen(true)}
-            aria-label={isAr ? 'فتح القائمة' : 'Open menu'}
-          >
-            <IconMenu style={{ width: 18, height: 18 }} />
-          </button>
-
-          {bootError && (
-            <div style={{ padding: '14px 26px 0' }}>
-              <div className="notice bad" role="alert">
-                <b>{isAr ? 'تعذّر تجهيز مساحة التسويق' : 'The Marketing workspace could not start'}</b>
-                <div style={{ overflowWrap: 'anywhere', marginTop: 4 }}>{bootError}</div>
-                <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={() => void boot()}>
-                  {isAr ? 'إعادة المحاولة' : 'Try again'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {isAdmin && previewRole && ready && !bootError && (
-            <div style={{ padding: '14px 26px 0' }}>
-              <div className="notice" style={{ borderInlineStart: '4px solid var(--copper)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <span>
-                  {isAr
-                    ? `👁 تعاين الآن كـ «${ROLE_LABELS[previewRole]?.ar ?? previewRole}» — هذه هي واجهته. أنت لا تزال مدير النظام.`
-                    : `👁 Previewing as “${ROLE_LABELS[previewRole]?.en ?? previewRole}” — this is their view. You are still the Admin.`}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  style={{ marginInlineStart: 'auto' }}
-                  onClick={() => viewAs(null)}
-                >
-                  {isAr ? 'العودة لحسابك' : 'Back to your account'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {role === 'viewer' && !previewRole && ready && !bootError && (
-            <div style={{ padding: '14px 26px 0' }}>
-              <div className="notice">
-                {isAr
-                  ? 'دورك الحالي «مطّلع» — يمكنك رؤية كل شيء دون تعديله. تُمنح الأدوار من الإعدادات ← الأدوار.'
-                  : 'Your role is Viewer — you can see everything and change nothing. Roles are granted in Settings → Roles.'}
-              </div>
-            </div>
-          )}
-
-          {/* Hold the page until the workspace bootstrap lands. Rendering it
-              early flashed the defaults — the raw content-type key in the Type
-              column and "viewer" in the rail — which reads as a bug even
-              though it corrects itself a moment later. */}
-          {(() => {
-            // A themed skeleton reused for BOTH the store-boot gate AND the
-            // lazy-chunk Suspense below. Without the inner Suspense a page-chunk
-            // load bubbled to the app's top-level fallback — a full-screen CREAM
-            // page — which flashed white over the dark shell on every click. Now
-            // the shell + sidebar stay put and only the content area skeletons.
-            const skeleton = (
-              <div className="body">
-                <div className="sk" style={{ height: 26, width: 200, marginBottom: 16 }} />
-                <div className="grid g4" style={{ marginBottom: 18 }}>
-                  {[0, 1, 2, 3].map((i) => <div key={i} className="sk" style={{ height: 96 }} />)}
-                </div>
-                <div className="sk" style={{ height: 200 }} />
-              </div>
-            );
-            return ready ? <Suspense fallback={skeleton}><Outlet /></Suspense> : skeleton;
-          })()}
         </div>
 
-        {/* Bottom tab bar — visible only <760px (mobile-shell.css); items are
-            filtered by surface access inside the component. */}
-        <MobileTabBar />
+        {/* Tabs — same pattern as the Sales workspace. */}
+        <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-sand/50">
+          {visibleTabs.map((tab) => {
+            const on = tab.key === activeTab?.key;
+            return (
+              <NavLink
+                key={tab.key}
+                to={tab.subs[0]!.to}
+                role="tab"
+                aria-selected={on}
+                className={`inline-flex items-center gap-1.5 whitespace-nowrap px-3.5 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+                  on ? 'border-copper text-copper' : 'border-transparent text-charcoal/55 hover:text-charcoal'
+                }`}
+              >
+                <tab.Icon style={{ width: 16, height: 16 }} />
+                {isAr ? tab.ar : tab.en}
+                {tab.badge && badges[tab.badge] !== null && (
+                  <span className="text-[10px] font-bold px-1.5 rounded-full bg-copper/10 text-copper">
+                    {num(badges[tab.badge], isAr)}
+                  </span>
+                )}
+              </NavLink>
+            );
+          })}
+        </div>
+
+        {/* Sub-tabs — only when the tab holds more than one page. */}
+        {activeTab && activeTab.subs.length > 1 && (
+          <div className="flex gap-1.5 overflow-x-auto pt-3">
+            {activeTab.subs.map((sub) => (
+              <NavLink
+                key={sub.to}
+                to={sub.to}
+                className={({ isActive }) => `whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold transition-colors ${
+                  isActive ? 'bg-copper text-white' : 'bg-white text-charcoal/60 border border-sand/50 hover:text-copper'
+                }`}
+              >
+                {isAr ? sub.ar : sub.en}
+              </NavLink>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-4">
+          {onCompetitors ? (
+            // Competitor Watch brings its own design system (.cw-root); it is
+            // NOT wrapped in the Marketing one.
+            <Suspense fallback={<div className="py-16 text-center text-charcoal/40 text-sm">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>}>
+              <Outlet />
+            </Suspense>
+          ) : (
+            <div className="mos-root mos-embed-light mos-in-app rounded-2xl overflow-hidden">
+              <div className="mos-main">
+                {bootError && (
+                  <div style={{ padding: '14px 26px 0' }}>
+                    <div className="notice bad" role="alert">
+                      <b>{isAr ? 'تعذّر تجهيز مساحة التسويق' : 'The Marketing workspace could not start'}</b>
+                      <div style={{ overflowWrap: 'anywhere', marginTop: 4 }}>{bootError}</div>
+                      <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={() => void boot()}>
+                        {isAr ? 'إعادة المحاولة' : 'Try again'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {isAdmin && previewRole && ready && !bootError && (
+                  <div style={{ padding: '14px 26px 0' }}>
+                    <div className="notice" style={{ borderInlineStart: '4px solid var(--copper)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <span>
+                        {isAr
+                          ? `👁 تعاين الآن كـ «${ROLE_LABELS[previewRole]?.ar ?? previewRole}» — هذه هي واجهته. أنت لا تزال مدير النظام.`
+                          : `👁 Previewing as “${ROLE_LABELS[previewRole]?.en ?? previewRole}” — this is their view. You are still the Admin.`}
+                      </span>
+                      <button type="button" className="btn btn-sm" style={{ marginInlineStart: 'auto' }} onClick={() => viewAs(null)}>
+                        {isAr ? 'العودة لحسابك' : 'Back to your account'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {role === 'viewer' && !previewRole && ready && !bootError && (
+                  <div style={{ padding: '14px 26px 0' }}>
+                    <div className="notice">
+                      {isAr
+                        ? 'دورك الحالي «مطّلع» — يمكنك رؤية كل شيء دون تعديله. تُمنح الأدوار من الإعدادات ← الأدوار.'
+                        : 'Your role is Viewer — you can see everything and change nothing. Roles are granted in Settings → Roles.'}
+                    </div>
+                  </div>
+                )}
+
+                {/* Hold the page until the workspace bootstrap lands — rendering
+                    early flashed raw content-type keys and "viewer". The inner
+                    Suspense keeps a page-chunk load inside this card. */}
+                {ready ? <Suspense fallback={skeleton}><Outlet /></Suspense> : skeleton}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </Ctx.Provider>
   );

@@ -1,0 +1,68 @@
+/*
+ * The Marketing pages inside the main app layout (2026-10-04).
+ *
+ * The workspace used to be a full-screen app of its own (`.mos-root` was a
+ * 100vh flex row: brown rail + main column) that followed the OS dark mode.
+ * It now renders inside AppLayout under tabs, like the Sales workspace:
+ *
+ *   - `.mos-in-app` turns the root into an ordinary block in the page flow.
+ *   - `.mos-embed-light` (Settings/components/mosEmbedLight.css) pins the
+ *     LIGHT token set over the dark-mode block.
+ *   - The tokens below swap the Marketing palette for the app's own (Tailwind
+ *     `cream`, `chocolate`, `terracotta`, `gold`, `charcoal`), so the pages read
+ *     as part of the same app. Copper was already shared.
+ */
+@import '../../Settings/components/mosEmbedLight.css';
+
+.mos-root.mos-embed-light.mos-in-app {
+  --cream: #faf7f2;
+  --paper: #ffffff;
+  --sand: #ead9c0;
+  --sand-2: #f5ede0;
+  --line: #e8dcc8;
+  --line-soft: #f1e8da;
+  --terracotta: #8e4e3a;
+  --choc: #4a2c2a;
+  --gold: #c09b5f;
+  --ink: #3a3d42;
+  --ink-2: #4a4e54;
+  --mute: #8a8580;
+  display: block;
+  min-height: 0;
+  background: var(--cream);
+}
+
+.mos-root.mos-in-app .mos-main {
+  display: block;
+  min-height: 0;
+  background: var(--cream);
+}
+
+/* The old phone tab bar is gone (the app's own mobile menu is used), so its
+   reserved bottom space is too. */
+@media (max-width: 760px) {
+  .mos-root.mos-in-app .mos-main {
+    padding-bottom: 0;
+  }
+}
+
+/* The notification bell's host: just a scope for the bell's styles, not a card. */
+.mos-root.mos-in-app.mos-bell-host {
+  display: inline-block;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* The bell's "rail" look was for the old dark sidebar (light ink on brown);
+   on the light header it would be invisible. */
+.mos-root.mos-bell-host button.se-bell-btn.rail {
+  background: #ffffff;
+  border-color: var(--line);
+  color: var(--ink-2);
+}
+.mos-root.mos-bell-host button.se-bell-btn.rail:hover {
+  border-color: var(--copper);
+  color: var(--copper);
+}
