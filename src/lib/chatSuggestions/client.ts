@@ -28,11 +28,17 @@ export interface ChatOutcomeSuggestion {
   suggested_fields: Record<string, string>;
   quoted_phrase: string | null;
   created_at: string;
+  /** The chat the reading came from (`/model/chats/<id>`). */
+  chat_record_id: string | null;
+  /** The client's main project the AI chose (a positive outcome only). */
+  suggested_main_project_id: string | null;
+  suggested_main_project_name: string | null;
 }
 
 const COLUMNS =
   'id, client_id, chat_wid, followup_id, followup_type, status, suggested_outcome, ' +
-  'confidence, reasoning, summary, suggested_fields, quoted_phrase, created_at';
+  'confidence, reasoning, summary, suggested_fields, quoted_phrase, created_at, ' +
+  'chat_record_id, suggested_main_project_id, suggested_main_project_name';
 
 function normalize(row: Record<string, unknown>): ChatOutcomeSuggestion {
   const f = row.suggested_fields;
@@ -59,6 +65,31 @@ export async function fetchReadyChatSuggestion(clientId: string): Promise<ChatOu
     throw new Error(error.message);
   }
   return data ? normalize(data as unknown as Record<string, unknown>) : null;
+}
+
+/**
+ * Every live proposal the caller can see, oldest first — the Work Queue's AI
+ * tab lists them for approval. Pages past PostgREST's 1,000-row cap.
+ */
+export async function fetchAllReadyChatSuggestions(): Promise<ChatOutcomeSuggestion[]> {
+  if (!supabase) return [];
+  const out: ChatOutcomeSuggestion[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('chat_outcome_suggestions')
+      .select(COLUMNS)
+      .eq('status', 'ready')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + 999);
+    if (error) {
+      console.error('[chatSuggestions] failed to load suggestions:', error.message);
+      throw new Error(error.message);
+    }
+    const rows = (data ?? []) as unknown as Record<string, unknown>[];
+    out.push(...rows.map(normalize));
+    if (rows.length < 1000) return out;
+  }
 }
 
 /** Live updates for one client's proposals. */

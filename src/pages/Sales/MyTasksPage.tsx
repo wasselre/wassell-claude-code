@@ -14,6 +14,8 @@ import {
 } from './lib/myWork';
 import FollowupTaskCard from './components/FollowupTaskCard';
 import AgentQuestionsSection from './components/AgentQuestionsSection';
+import AiApprovalsSection from './components/AiApprovalsSection';
+import { useAiApprovals } from './lib/useAiApprovals';
 
 type Section = 'actions' | 'agent_questions' | 'waiting' | 'search' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
 type ApptBucket = 'today' | 'tomorrow' | 'future' | 'last7' | 'older' | 'no_show';
@@ -100,6 +102,10 @@ export default function MyTasksPage() {
     () => (isManager ? agentQ.questions : agentQ.questions.filter((q) => !q.rep_user_id || q.rep_user_id === currentUserId)),
     [agentQ.questions, isManager, currentUserId],
   );
+
+  // What the AI prepared and waits for approval (messages, officer notices,
+  // follow-up results). Admin-only — RLS on ai_actions agrees.
+  const aiApprovals = useAiApprovals(isManager);
 
   const [section, setSection] = useState<Section>('actions');
   const [channel, setChannel] = useState<FollowupChannel | 'all'>('all');
@@ -252,12 +258,21 @@ export default function MyTasksPage() {
     return opt ? (isAr ? opt.label_ar : opt.label_en) || value : value;
   };
 
+  // Badge: actions waiting + results whose follow-up is still open (a stale
+  // result has nothing left to approve).
+  const pendingApprovals = (() => {
+    const fm = followupsModel ? records[followupsModel.id] ?? [] : [];
+    const open = new Set(fm.filter((r) => { const st = String(r.data.followup_status ?? '') || 'open'; return st === 'open' || st === 'in_progress'; }).map((r) => r.id));
+    return aiApprovals.actions.filter((a) => a.status === 'pending').length
+      + aiApprovals.results.filter((r) => r.suggested_outcome && r.followup_id && open.has(r.followup_id)).length;
+  })();
+
   const ALL_SECTIONS: { id: Section; label: { ar: string; en: string }; count?: number; danger?: boolean }[] = [
     // «ملعبك / ملعب العميل» — the ball is either in YOUR court or the client's.
     // One metaphor across both tabs (user-chosen naming, 2026-07-21).
     { id: 'actions', label: { ar: 'ملعبك', en: 'Your court' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
     // Questions the WhatsApp AI could not answer — a customer is waiting on each.
-    { id: 'agent_questions', label: { ar: 'أسئلة المساعد', en: 'AI questions' }, count: agentQuestions.length, danger: agentQuestions.length > 0 },
+    { id: 'agent_questions', label: { ar: 'المساعد الذكي', en: 'AI' }, count: agentQuestions.length + pendingApprovals, danger: agentQuestions.length + pendingApprovals > 0 },
     { id: 'waiting', label: { ar: 'ملعب العميل', en: "Client's court" }, count: waitingTasks.length },
     // Section badge counts only the LIVE schedule (today + tomorrow + future +
     // no-shows) — the stale past buckets shouldn't inflate the headline number.
@@ -567,6 +582,17 @@ export default function MyTasksPage() {
       </nav>
 
       {section === 'actions' && renderActions()}
+      {section === 'agent_questions' && isManager && (
+        <AiApprovalsSection
+          actions={aiApprovals.actions}
+          results={aiApprovals.results}
+          loading={aiApprovals.loading}
+          error={aiApprovals.error}
+          isAr={isAr}
+          onActionDone={(id) => { aiApprovals.dropAction(id); void aiApprovals.refresh(); }}
+          onResultDone={(id) => { aiApprovals.dropResult(id); void aiApprovals.refresh(); }}
+        />
+      )}
       {section === 'agent_questions' && (
         <AgentQuestionsSection
           questions={agentQuestions}

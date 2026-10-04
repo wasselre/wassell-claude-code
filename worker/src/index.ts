@@ -1298,6 +1298,10 @@ async function claimAndRunOneChatOutcome(): Promise<boolean> {
       p_quoted: r.quoted,
       p_model: r.model,
       p_last_message_at: r.lastMessageAt,
+      // A positive outcome + a main project = high interest (the RPC records it
+      // in client_project_interest; the AI sales automation cron acts on it).
+      p_main_project_id: r.mainProjectId,
+      p_main_project_name: r.mainProjectName,
     });
     if (doneErr) console.error(`[worker] chat_outcome_suggestion_ready RPC failed: ${doneErr.message}`);
     else console.log(`[worker] chat-outcome job=${job.id} → ${r.outcome ?? 'none'}`);

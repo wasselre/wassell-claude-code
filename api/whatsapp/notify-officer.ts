@@ -27,89 +27,11 @@
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { sendMessage, resolveOperationsDeviceId, HaberchatError } from '../_lib/whatsappGateway.js';
+import { resolveProjectOfficers } from '../_lib/projectOfficers.js';
 
 export const config = {
   runtime: 'edge',
 };
-
-type Rec = { id: string; data: Record<string, unknown> };
-
-/** Lookup values are stored as a target id string, an array of them, or {id}. */
-function idList(v: unknown): string[] {
-  if (!v) return [];
-  if (Array.isArray(v)) {
-    return v.map((x) => (typeof x === 'string' ? x : (x && typeof x === 'object' && 'id' in x ? String((x as { id: unknown }).id) : ''))).filter(Boolean);
-  }
-  if (typeof v === 'string') return [v];
-  if (typeof v === 'object' && v !== null && 'id' in v) return [String((v as { id: unknown }).id)];
-  return [];
-}
-
-async function modelIdsByName(svc: ReturnType<typeof makeServiceClient>, names: string[]): Promise<Record<string, string>> {
-  const { data } = await svc!.from('models').select('id, name').in('name', names);
-  const out: Record<string, string> = {};
-  for (const row of (data ?? []) as { id: string; name: string }[]) out[row.name] = row.id;
-  return out;
-}
-
-type Covering = { id: string; name: string; phone: string; coverage: 'explicit' | 'developer' | 'marketer'; party: 'developer' | 'marketer' | null };
-
-async function resolveOfficers(
-  svc: ReturnType<typeof makeServiceClient>,
-  projectId: string,
-): Promise<{ id: string; name: string; phone: string; coverage: 'explicit' | 'developer' | 'marketer' }[]> {
-  const ids = await modelIdsByName(svc, ['project_officers', 'all_projects']);
-  const officersModelId = ids['project_officers'];
-  if (!officersModelId) return [];
-
-  // A project can carry BOTH a developer and a marketer (a marketing company
-  // reselling a developer's project). We resolve officers on either side.
-  const { data: projRow } = await svc!.from('unified_records').select('data').eq('id', projectId).maybeSingle();
-  const pdata = (projRow as Rec | null)?.data ?? {};
-  const developerId = idList(pdata.developer)[0] ?? null;
-  // Several marketers per project since 2026-09-29 — an officer of ANY covers it.
-  const marketerIds = idList(pdata.marketer);
-
-  const { data: offRows } = await svc!
-    .from('unified_records')
-    .select('id, data')
-    .eq('model_id', officersModelId);
-
-  const covering: Covering[] = [];
-  for (const o of (offRows ?? []) as Rec[]) {
-    const d = o.data ?? {};
-    if (d.is_active === false) continue;
-    const phone = typeof d.phone === 'string' ? d.phone : '';
-    if (!phone) continue;
-    const offDev = idList(d.developer)[0] ?? null;
-    const offMkt = idList(d.marketer)[0] ?? null;
-    // An officer is tied to a developer OR a marketer; that is their "party".
-    const party: 'developer' | 'marketer' | null = offDev ? 'developer' : offMkt ? 'marketer' : null;
-    const projs = idList(d.projects);
-
-    let coverage: Covering['coverage'] | null = null;
-    if (projs.includes(projectId)) {
-      coverage = 'explicit';
-    } else if (projs.length === 0) {
-      if (offDev && developerId && offDev === developerId) coverage = 'developer';
-      else if (offMkt && marketerIds.includes(offMkt)) coverage = 'marketer';
-    }
-    if (!coverage) continue;
-    covering.push({ id: o.id, name: String(d.name ?? ''), phone, coverage, party });
-  }
-
-  // Developer-officer-wins (the operator's rule): if ANY covering officer is on
-  // the DEVELOPER side, we treat the project as ours and contact only the
-  // developer's officer(s) — the marketer is a fallback used only when we have no
-  // developer contact. This is evaluated live per send, so it self-corrects when
-  // an officer is added or removed (no stale reclassification of the project).
-  const devSide = covering.filter((o) => o.party === 'developer');
-  const chosen = devSide.length > 0 ? devSide : covering.filter((o) => o.party !== 'developer');
-
-  // Explicit subset assignment is a stronger signal than a whole-entity match.
-  chosen.sort((a, b) => (a.coverage === b.coverage ? 0 : a.coverage === 'explicit' ? -1 : 1));
-  return chosen.map(({ id, name, phone, coverage }) => ({ id, name, phone, coverage }));
-}
 
 export default async function handler(req: Request): Promise<Response> {
   return withAuth(req, async () => {
@@ -121,7 +43,7 @@ export default async function handler(req: Request): Promise<Response> {
         const url = new URL(req.url);
         const projectId = url.searchParams.get('project_id') ?? '';
         if (!projectId) return jsonError(400, 'project_id is required');
-        const officers = await resolveOfficers(svc, projectId);
+        const officers = (await resolveProjectOfficers(svc, projectId)).map(({ id, name, phone, coverage }) => ({ id, name, phone, coverage }));
         return jsonOk({ officers });
       }
 

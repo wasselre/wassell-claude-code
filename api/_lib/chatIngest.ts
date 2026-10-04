@@ -417,6 +417,33 @@ export async function bumpConversationRecord(args: {
           .limit(1)
           .maybeSingle();
         sendSource = (srcRow as { send_source?: string | null } | null)?.send_source ?? null;
+        // The echo can land BEFORE the worker writes its own row for a queued
+        // AI send (15 of 713 bot messages in 30 days, up to 23 s early). With no
+        // source on the row this message would read as a rep's — arming the
+        // task and cancelling the client's call tasks from a BOT message. A
+        // queued AI job for this chat that is running, or finished in the last
+        // minute, says whose message it is.
+        if (!sendSource) {
+          const { data: aiJobs, error: aiJobErr } = await supa
+            .from('scheduled_whatsapp_jobs')
+            .select('reference, status, finished_at')
+            .eq('chat_wid', args.chatWid)
+            .in('status', ['running', 'sent'])
+            .gte('created_at', new Date(Date.now() - 30 * 60_000).toISOString())
+            .limit(20);
+          if (aiJobErr) {
+            console.error('[chatIngest] AI-job lookup for the echo source failed:', aiJobErr.message);
+          } else {
+            const cutoff = Date.now() - 60_000;
+            const isAi = (aiJobs ?? []).some((j) => {
+              const row = j as { reference: string | null; status: string; finished_at: string | null };
+              const ref = row.reference ?? '';
+              if (!ref.startsWith('ai:') && !ref.startsWith('ai-project:')) return false;
+              return row.status === 'running' || (row.finished_at != null && Date.parse(row.finished_at) >= cutoff);
+            });
+            if (isAi) sendSource = 'ai';
+          }
+        }
       }
       const { error: rpcErr } = await supa.rpc(rpcName, {
         p_client_id: clientLink,

@@ -55,7 +55,23 @@ export interface ChatOutcomeResult {
   quoted: string | null;
   model: string;
   lastMessageAt: string | null;
+  /** The client's MAIN project, chosen from their options / the projects sent
+   *  to this chat, on a positive outcome. With an interested-type outcome it is
+   *  the high-interest signal (portal registration + officer notice draft). */
+  mainProjectId: string | null;
+  mainProjectName: string | null;
 }
+
+/** A project the model may name as the client's main one. */
+interface ProjectCandidate {
+  id: string;
+  name: string;
+  /** Where it comes from: the client's options (with status) or a send to this chat. */
+  source: string;
+}
+
+/** Outcomes where the client is interested — the model also names the main project. */
+const POSITIVE_OUTCOMES = new Set(['interested', 'appointment_booked', 'request_offer']);
 
 interface RunArgs {
   supabase: SupabaseClient;
@@ -116,7 +132,57 @@ export function buildChatDialogue(rows: MessageRow[]): { text: string; clientTur
   return { text: lines.join('\n'), clientTurns };
 }
 
-function buildSystemPrompt(allowed: string[], nowIso: string, context: string): string {
+/**
+ * The projects the model may choose the main one from: the client's own project
+ * options (any status but eliminated / not interested) plus the projects sent
+ * to this chat. Capped at 25, options first.
+ */
+async function loadProjectCandidates(supabase: SupabaseClient, clientId: string, chatWid: string): Promise<ProjectCandidate[]> {
+  const { data: models, error: mErr } = await supabase
+    .from('models').select('id, name').in('name', ['client_property_options', 'all_projects']);
+  if (mErr) throw new Error(`models read failed: ${mErr.message}`);
+  const optionsModel = (models ?? []).find((m) => (m as { name: string }).name === 'client_property_options') as { id: string } | undefined;
+  const projectsModel = (models ?? []).find((m) => (m as { name: string }).name === 'all_projects') as { id: string } | undefined;
+
+  const out = new Map<string, ProjectCandidate>();
+  if (optionsModel) {
+    const { data: opts, error: oErr } = await supabase
+      .from('records').select('data')
+      .eq('model_id', optionsModel.id)
+      .eq('data->>client_id', clientId)
+      .eq('data->>source_type', 'project')
+      .limit(50);
+    if (oErr) throw new Error(`client options read failed: ${oErr.message}`);
+    for (const r of (opts ?? []) as Array<{ data: Record<string, unknown> }>) {
+      const id = typeof r.data.source_id === 'string' ? r.data.source_id : '';
+      const status = typeof r.data.status === 'string' ? r.data.status : 'suitable';
+      if (!id || status === 'eliminated' || status === 'not_interested') continue;
+      const name = typeof r.data.source_name === 'string' ? r.data.source_name : '';
+      out.set(id, { id, name, source: r.data.is_main === true ? `client option (${status}, current main)` : `client option (${status})` });
+    }
+  }
+  const { data: sent, error: sErr } = await supabase
+    .from('chat_message_projects').select('project_id, created_at')
+    .eq('chat_wid', chatWid).order('created_at', { ascending: false }).limit(30);
+  if (sErr) throw new Error(`chat_message_projects read failed: ${sErr.message}`);
+  for (const r of (sent ?? []) as Array<{ project_id: string | null }>) {
+    if (r.project_id && !out.has(r.project_id)) out.set(r.project_id, { id: r.project_id, name: '', source: 'sent in this chat' });
+  }
+  const list = [...out.values()].slice(0, 25);
+  const nameless = list.filter((c) => !c.name).map((c) => c.id);
+  if (nameless.length && projectsModel) {
+    const { data: rows, error: pErr } = await supabase.from('records').select('id, data').in('id', nameless);
+    if (pErr) throw new Error(`project names read failed: ${pErr.message}`);
+    const names = new Map(((rows ?? []) as Array<{ id: string; data: Record<string, unknown> }>).map((r) => [r.id, String(r.data.project_name ?? r.data.name ?? '')]));
+    for (const c of list) if (!c.name) c.name = names.get(c.id) ?? '';
+  }
+  return list.filter((c) => c.name.trim() !== '');
+}
+
+function buildSystemPrompt(allowed: string[], nowIso: string, context: string, projects: ProjectCandidate[]): string {
+  const projectList = projects.length
+    ? projects.map((p, i) => `P${i + 1} — ${p.name} [${p.source}]`).join('\n')
+    : '(none)';
   const list = allowed
     .map((v) => {
       const h = OUTCOME_HELP[v];
@@ -150,8 +216,16 @@ Now is ${nowIso} (Asia/Riyadh). If the outcome needs a follow-up date, resolve t
 customer's words into an ABSOLUTE ISO 8601 datetime with offset and quote the exact
 Arabic phrase. «بكرة» → tomorrow 10:00. «الأسبوع الجاي» → +7 days 10:00. «بعد العيد» → null.
 
+MAIN PROJECT. When the outcome is interested, appointment_booked or request_offer, choose the
+ONE project from this list the customer is most interested in, judged by what THEY wrote
+(asked about it, asked its price or units, agreed to visit it). If the customer showed no
+interest in any listed project in particular, answer null. Never guess a project that is not
+in the list. For any other outcome answer null.
+${projectList}
+
 Reply with ONLY this JSON object — no prose, no markdown fence:
 {
+  "main_project": "<P-number from the list, or null>",
   "outcome": "<one value from the list, or none>",
   "confidence": <0-100>,
   "summary": "<1-2 sentence Arabic summary of where the conversation stands>",
@@ -180,7 +254,7 @@ export async function runChatOutcomeJob({ supabase, env, job }: RunArgs): Promis
   const { text: dialogue, clientTurns } = buildChatDialogue(rows);
   const empty: ChatOutcomeResult = {
     outcome: null, confidence: 100, reasoning: '', summary: '', fields: {}, quoted: null,
-    model: 'deterministic', lastMessageAt,
+    model: 'deterministic', lastMessageAt, mainProjectId: null, mainProjectName: null,
   };
   if (clientTurns === 0) {
     console.log(`[run-chat] job=${job.id} no customer text in the last ${MESSAGE_WINDOW} messages → none`);
@@ -199,6 +273,7 @@ export async function runChatOutcomeJob({ supabase, env, job }: RunArgs): Promis
     `حالة العميل الحالية: ${String(cd.client_status ?? 'غير معروفة')}`,
     `نوع المهمة المفتوحة: ${job.followupType ?? 'whatsapp_follow_up'}`,
   ].join('\n');
+  const projects = await loadProjectCandidates(supabase, job.clientId, job.chatWid);
 
   const apiKey = env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error('DEEPSEEK_API_KEY is not set');
@@ -216,9 +291,12 @@ export async function runChatOutcomeJob({ supabase, env, job }: RunArgs): Promis
     headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       model,
-      max_tokens: 2000,
+      // 2000 was not enough: deepseek-v4-pro spends its reasoning inside the
+      // same budget and 14 of the first 44 readings came back with EMPTY
+      // content at exactly 2000 output tokens (2026-09-27 → 10-03).
+      max_tokens: 8000,
       messages: [
-        { role: 'system', content: buildSystemPrompt(allowed, nowIso, context) },
+        { role: 'system', content: buildSystemPrompt(allowed, nowIso, context, projects) },
         { role: 'user', content: `المحادثة (الأقدم أولًا):\n${dialogue}` },
       ],
     }),
@@ -229,12 +307,16 @@ export async function runChatOutcomeJob({ supabase, env, job }: RunArgs): Promis
     throw err;
   }
   const body = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
     usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number };
   };
   await recordAiUsage({ ...usageRef, status: 'ok', latencyMs: Date.now() - started, ...openAiCompatTokens(body) });
 
-  const parsed = parseJsonObject(body.choices?.[0]?.message?.content ?? '');
+  const content = body.choices?.[0]?.message?.content ?? '';
+  if (!content.trim() && body.choices?.[0]?.finish_reason === 'length') {
+    throw new Error('model ran out of output tokens before answering (finish_reason=length)');
+  }
+  const parsed = parseJsonObject(content);
   const picked = str(parsed.outcome);
   const confRaw = Number(parsed.confidence);
   const confidence = Number.isFinite(confRaw) ? Math.max(0, Math.min(100, Math.round(confRaw))) : 50;
@@ -263,7 +345,16 @@ export async function runChatOutcomeJob({ supabase, env, job }: RunArgs): Promis
     if (lr && LOST_REASONS.includes(lr)) fields.lost_reason = lr;
   }
 
-  console.log(`[run-chat] job=${job.id} → ${picked} (${confidence}%)`);
+  // The main project: only a P-number from the list we gave, only on a
+  // positive outcome. Anything else (a name, an invented number) is dropped.
+  let main: ProjectCandidate | null = null;
+  if (POSITIVE_OUTCOMES.has(picked)) {
+    const ref = /^P(\d{1,2})$/i.exec((str((parsed as { main_project?: unknown }).main_project) ?? '').trim());
+    const idx = ref ? Number(ref[1]) - 1 : -1;
+    main = idx >= 0 && idx < projects.length ? projects[idx]! : null;
+  }
+
+  console.log(`[run-chat] job=${job.id} → ${picked} (${confidence}%)${main ? ` main=${main.name}` : ''}`);
   return {
     outcome: picked,
     confidence,
@@ -273,5 +364,7 @@ export async function runChatOutcomeJob({ supabase, env, job }: RunArgs): Promis
     quoted: str(parsed.quoted_phrase),
     model,
     lastMessageAt,
+    mainProjectId: main?.id ?? null,
+    mainProjectName: main?.name ?? null,
   };
 }

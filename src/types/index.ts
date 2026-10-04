@@ -3002,6 +3002,31 @@ export interface InterestTimelineEvent {
 }
 
 /** A question the AI sales agent could not answer and asked the client's rep. */
+/**
+ * Something the AI prepared that waits for the operator (ai_actions): a
+ * follow-up message to a client, or a notice to a project's officer. Nothing is
+ * sent until it is approved in the Work Queue's AI tab.
+ */
+export interface AiAction {
+  id: string;
+  kind: 'followup_message' | 'officer_notice';
+  status: 'pending' | 'sending' | 'sent' | 'rejected' | 'failed' | 'expired';
+  client_id: string;
+  /** followup_message: the client's chat. officer_notice: the officer's chat. */
+  chat_wid: string | null;
+  followup_id: string | null;
+  project_id: string | null;
+  officer_id: string | null;
+  phone: string | null;
+  body: string;
+  original_body: string;
+  /** Names, the brief, guard warnings, the client chat record id… */
+  context: Record<string, unknown>;
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
+}
+
 export interface AgentQuestion {
   id: string;
   chat_wid: string;
