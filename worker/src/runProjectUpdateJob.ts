@@ -32,9 +32,10 @@ import {
 } from './projectUpdates/apply.js';
 import { brakeReason, normUnitKey, reconcile } from './projectUpdates/reconcile.js';
 import { createProjectFromSource } from './projectUpdates/newProject.js';
+import { fetchMajdProject, majdProjectId } from './projectUpdates/almajdiah.js';
 import { RivaPortal, rivaProjectIdFromUrl } from './projectUpdates/riva.js';
 import { runWhatsAppGroup } from './projectUpdates/whatsapp.js';
-import type { CrmUnit, ReconcilePolicy, ReconcileResult } from './projectUpdates/types.js';
+import type { CrmUnit, ReconcilePolicy, ReconcileResult, SourceProject } from './projectUpdates/types.js';
 
 const LEAD_PORTALS_MODEL_ID = '1ead0000-0000-4000-8000-000000000001';
 const HEARTBEAT_MS = 20_000;
@@ -307,6 +308,106 @@ async function runRiva(
   return { outcome, summary };
 }
 
+/**
+ * A per-project source (a developer API, a public site): for each registered
+ * project fetch its units, reconcile, brake, apply, stamp. Same rules as the
+ * Riva loop, minus the portal-wide listing.
+ */
+export interface ProjectSourceAdapter {
+  sourceType: string;
+  label: string;                                   // «API الماجدية» — for logs + notes
+  idFromUrl: (url: unknown) => string | null;
+  fetch: (id: string) => Promise<SourceProject>;
+  policy: (scope: string) => ReconcilePolicy;
+}
+
+async function runPerProject(
+  supabase: SupabaseClient,
+  run: ProjectUpdateRun,
+  settings: Settings,
+  registry: RegistryRow[],
+  heartbeat: () => Promise<void>,
+  adapter: ProjectSourceAdapter,
+): Promise<RunResult> {
+  const today = riyadhToday();
+  const projects: Array<Record<string, unknown>> = [];
+  let applied = 0, held = 0, failed = 0, totalChanges = 0;
+  for (const row of registry) {
+    const sourceId = adapter.idFromUrl(row.data.source_url);
+    const projectId = typeof row.data.project === 'string' ? row.data.project : null;
+    const entry: Record<string, unknown> = { registry_id: row.id, source_id: sourceId, project_id: projectId };
+    projects.push(entry);
+    try {
+      if (!sourceId || !projectId) throw new Error('registry row has no source id or project');
+      const project = await loadRecord(supabase, projectId);
+      if (!project) throw new Error(`project ${projectId} not found`);
+      const projectName = String(project.data.project_name ?? '');
+      entry.project = projectName;
+      const scope = typeof row.data.auto_scope === 'string' ? row.data.auto_scope : 'full';
+      entry.scope = scope;
+      if (scope === 'off') { entry.status = 'skipped_off'; continue; }
+      const src = await adapter.fetch(sourceId);
+      const crm = (await loadAll(supabase, UNITS_MODEL_ID, { key: 'project_id', value: projectId })) as CrmUnit[];
+      const developerId = typeof project.data.developer === 'string' ? project.data.developer : null;
+      const result = reconcile(crm, src.units, adapter.policy(scope), {
+        projectId, developerId, projectName, sourceLabel: adapter.label, today,
+      });
+      const brake = brakeReason(result, { share: settings.brake_share, minUnits: settings.brake_min_units });
+      Object.assign(entry, {
+        source_units: src.units.length, declared_total: src.declaredTotal, crm_units: crm.length,
+        stats: result.stats,
+        updates: result.updates.map((u) => ({ unit: u.label, why: u.reasons })),
+        creates: result.creates.map((c) => ({ unit: c.label, status: c.data.unit_status, price: c.data.total_price ?? null, plan: !!c.source.planUrl })),
+        missing_from_source: result.missingFromSource.length,
+        missing_sample: result.missingFromSource.slice(0, 15),
+        ambiguous: result.ambiguous,
+      });
+      if (brake) {
+        entry.status = 'held';
+        entry.held_reason = brake;
+        held++;
+        if (!run.dry_run) {
+          await stamp(supabase, row, project.id, today, addDays(today, 1),
+            `${today} — ⛔ تحديث تلقائي موقوف: ${brake}. لم يُكتب شيء؛ سيُعاد غداً.`, false);
+        }
+        continue;
+      }
+      if (run.dry_run) { entry.status = 'dry_run'; totalChanges += result.updates.length + result.creates.length; continue; }
+      const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result });
+      Object.assign(entry, { status: out.failures.length ? 'partial' : 'applied', written: out });
+      totalChanges += out.updated + out.created;
+      if (out.updated + out.created > 0) applied++;
+      const gap = `؛ المصدر ${src.units.length} وحدة${result.missingFromSource.length ? `، ${result.missingFromSource.length} وحدة في النظام غير موجودة في المصدر (لم تُلمس)` : ''}`;
+      const fails = out.failures.length ? `؛ ⚠ تعذّر ${out.failures.length}` : '';
+      const days = frequencyDays(row.data.update_frequency) ?? 7;
+      await stamp(supabase, row, project.id, today, addDays(today, days), logLine(today, adapter.label, result, gap + fails), true);
+    } catch (err) {
+      failed++;
+      entry.status = 'error';
+      entry.error = (err as Error).message;
+    }
+    await heartbeat();
+  }
+  const summary = { source: adapter.sourceType, registered: registry.length, applied, held, failed, total_changes: totalChanges, projects };
+  let outcome: RunResult['outcome'];
+  if (run.dry_run) outcome = 'dry_run';
+  else if (held > 0 || failed > 0) outcome = applied > 0 ? 'partial' : held > 0 ? 'held' : 'partial';
+  else outcome = totalChanges > 0 ? 'applied' : 'no_change';
+  return { outcome, summary };
+}
+
+/** A complete source (lists every unit with its real status): its status wins
+ *  in both directions; units it does not list are left alone and reported. */
+const COMPLETE_SOURCE_POLICY: ReconcilePolicy = { absentAvailable: 'leave', createMissing: true, updatePrices: true };
+
+const ALMAJDIAH: ProjectSourceAdapter = {
+  sourceType: 'developer_api',
+  label: 'API الماجدية',
+  idFromUrl: majdProjectId,
+  fetch: (id) => fetchMajdProject(id),
+  policy: (scope) => (scope === 'status_only' ? STATUS_ONLY_POLICY : COMPLETE_SOURCE_POLICY),
+};
+
 /** Stamp the update-list row (and the project's last_source_update). */
 async function stamp(
   supabase: SupabaseClient,
@@ -353,6 +454,8 @@ export async function runProjectUpdateJob(args: {
   switch (run.source_type) {
     case 'riva_broker':
       return runRiva(supabase, run, settings, scoped, heartbeat);
+    case 'developer_api':
+      return runPerProject(supabase, run, settings, scoped, heartbeat, ALMAJDIAH);
     case 'whatsapp_group': {
       const r = await runWhatsAppGroup({
         supabase, runId: run.id, dryRun: run.dry_run, params: run.params,

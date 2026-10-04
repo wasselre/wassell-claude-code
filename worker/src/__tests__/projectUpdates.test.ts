@@ -293,3 +293,33 @@ describe('listCoverage — "not on the list → sold" only inside the buildings 
     expect(listCoverage([{ sourceId: null, unitModel: 'A1' }]).size).toBe(0);
   });
 });
+
+describe('Almajdiah API mapping', () => {
+  it('maps statuses (booked / booked_paid = reserved) and keeps the pre-tax price', async () => {
+    const { majdUnit, majdStatus } = await import('../projectUpdates/almajdiah');
+    expect(majdStatus('booked_paid')).toBe('reserved');
+    expect(majdStatus('booked')).toBe('reserved');
+    expect(majdStatus('sold')).toBe('sold');
+    const u = majdUnit({ id: 20802, building_name: 'A', unit_number: '1', status: 'available', price_before_tax: 1219000, area: '94.6', room_count: '2', floor: 'ground' });
+    expect(u).toMatchObject({ unitCode: 'MAJD-20802', unitModel: 'A 1', buildingNumber: 'A', unitNumber: 1, status: 'available', price: 1219000, area: 94.6, floor: 'ارضي' });
+  });
+  it('a full unit code (TY01-H-0-1) is the identity itself', async () => {
+    const { majdUnit } = await import('../projectUpdates/almajdiah');
+    expect(majdUnit({ id: 13411, building_name: 'H', unit_number: 'TY01-H-0-1', status: 'sold' })).toMatchObject({ unitCode: 'TY01-H-0-1', unitModel: 'TY01-H-0-1' });
+  });
+  it('matches «A 1» in the CRM, and «Block 1» stored as a block', async () => {
+    const { majdUnit } = await import('../projectUpdates/almajdiah');
+    const r1 = reconcile([crm('u1', { unit_model: 'A 1', building_number: 'A', unit_number: 1 })], [majdUnit({ id: 1, building_name: 'A', unit_number: '1', status: 'sold' })], RIVA, CTX);
+    expect(r1.updates[0]!.patch.unit_status).toBe('sold');
+    const r2 = reconcile([crm('u2', { block: 'Block 1', unit_number: 101 })], [majdUnit({ id: 2, building_name: 'Block 1', unit_number: '101', status: 'sold' })], RIVA, CTX);
+    expect(r2.updates[0]!.unitId).toBe('u2');
+  });
+});
+
+describe('brakeReason — a source that shares no unit with the CRM', () => {
+  it('holds instead of stacking a second inventory', () => {
+    const crmUnits = Array.from({ length: 22 }, (_, i) => crm(`c${i}`, { unit_model: `Block 3 - ${300 + i}` }));
+    const src = Array.from({ length: 12 }, (_, i) => ({ sourceId: `s${i}`, unitModel: `Block 1 ${100 + i}`, status: 'available' as const, price: 1 }));
+    expect(brakeReason(reconcile(crmUnits, src, RIVA, CTX), { share: 0.5, minUnits: 6 })).toMatch(/shares no unit/);
+  });
+});

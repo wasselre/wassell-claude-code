@@ -350,6 +350,13 @@ export function brakeReason(
   if (n >= opts.minUnits && r.stats.crmUnits > 0 && n / r.stats.crmUnits > opts.share) {
     return `would mark ${n} of ${r.stats.crmUnits} units sold/reserved in one run (limit ${Math.round(opts.share * 100)}%)`;
   }
+  // The source and the CRM share NO unit although both have several: the
+  // project link most likely points at a different project / phase (دروازة,
+  // 2026-10-04: the API lists Block 1, our 22 units are Blocks 3-4). Creating
+  // the source's units would stack a second inventory next to ours.
+  if (r.stats.matched === 0 && r.stats.crmUnits >= 5 && r.stats.sourceUnits >= 5) {
+    return `the source shares no unit with the ${r.stats.crmUnits} units in the CRM — wrong project link or a different numbering`;
+  }
   if (r.stats.sourceUnits === 0 && r.stats.crmUnits > 0) {
     return 'the source returned no units for a project that has units — a failed page, not an empty project';
   }
