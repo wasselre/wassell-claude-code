@@ -106,7 +106,9 @@ async function acquireSweepLease(sb: SupabaseClient, workerId: string): Promise<
  * invisible. These sit just under one window's worth of work.
  */
 const MAX_MEDIA_ENQUEUE = 400;
-const MAX_PROCESS_ENQUEUE = 150;
+// 150 -> 600 (2026-10-05 catch-up): 8 general machines x 3 slots read ~550
+// posts per 5-minute window; at 150 the sweep left 11,000 collected posts waiting.
+const MAX_PROCESS_ENQUEUE = 600;
 const MAX_OCR_BATCHES = 20;
 /** Posts per OCR job. Sized to FILL the runner's OCR_BATCH_MAX (24 images), not
  *  guessed: stored images average 1.61 per post, so 15 posts = ~24 images. At the
@@ -115,7 +117,7 @@ const MAX_OCR_BATCHES = 20;
  *  moves again, move this with it - they are one setting expressed in two units. */
 const OCR_POSTS_PER_BATCH = 15;
 /** Stop enqueueing entirely above this backlog so the sweep can't outrun the workers. */
-const QUEUE_HIGH_WATER = 900;
+const QUEUE_HIGH_WATER = 2000; // 900 -> 2000 with the larger per-tick ceilings above
 const OCR_QUEUE_HIGH_WATER = 150;
 /** Video-frame stages. FRAME_JOBS_PER_TICK worker jobs (download + ffmpeg, no
  *  model) per 5-minute tick; frames are then read FRAMES_PER_BATCH at a time —
