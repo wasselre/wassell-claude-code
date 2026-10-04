@@ -32,6 +32,12 @@ tracked project holding `project` (lookup), `update_frequency`, `source_type`, `
   register the project in `unit_updates` is incomplete.
 - 21 projects seeded 2026-08-24 (20 riva-broker-portal ones + مينا 52); recipes distilled from the adapters below.
 
+> **AUTOMATED since 2026-10-04:** `riva_broker` projects are refreshed weekly by the worker
+> (`project_update_runs`, PRD `docs/prd/project-updates.md`) and developer WhatsApp groups are read
+> automatically. Don't run a manual Riva reconcile — enqueue a run instead:
+> `select project_update_enqueue('riva_broker','manual:riva_broker','manual',false,'{}')` (true = dry run).
+> Other sources (Safa, Menaco, Almajdiah, Binghatti, Al-Ramz Drive) still follow their manual recipe.
+
 ## What this does (end state)
 From one project link (or files), produce in **wassell-prod**:
 - 1 `all_projects` record (deduped by `project_name`), with developer link, location, brochure/page

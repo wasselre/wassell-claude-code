@@ -589,6 +589,35 @@ the dormant machinery accurately; none of it runs while archived.
 5. **Secrets are referenced, never pasted into steps** (`{{portal.login_password}}`). Recipes and required_fields are stored in record data and rendered to reps in error messages.
 6. **Screenshots live in the PRIVATE `portal-registrations` bucket** and reach the SPA only as signed URLs from the API — they show customer PII on third-party portals.
 
+## Automated project updates (portals + developer WhatsApp groups) (added 2026-10-04)
+
+The weekly refresh of every project in `unit_updates` is automatic: a Fly worker
+lane (`project_update_runs`) signs in to the broker portal (Riva live) and reads
+the developers' WhatsApp groups (`project_update_groups`: Al-Ramz, Safa, Riva),
+then applies status / price / new units / new projects with NO approval step.
+PRD: `docs/prd/project-updates.md`.
+
+**Hard rules — never violate:**
+1. **Every write is logged in `project_update_changes` (before/after of exactly
+   the changed keys).** That is what `project_update_revert(run)` undoes. A write
+   path that skips the log makes a run un-revertable — fix the path, don't add one.
+2. **One reconciler** (`worker/src/projectUpdates/reconcile.ts`). Adapters only
+   fetch + parse. A unit key is used only when it hits exactly ONE unit on each
+   side; `unit_model` is NOT an id on Al-Ramz projects (D, C1 = layouts).
+3. **"Not on the list → sold" only inside the buildings/blocks the list's own
+   rows name** — never from the model's claim. Without this the 2026-09-21
+   ستون الندى file would have sold ~66 units of buildings it never covered.
+4. **Chat bookings move status forward only; a headline «تبدأ من» is never a unit
+   price; portal-led projects ignore chat price lists** (`auto_scope=status_only`
+   flips that — the portal is secondary there).
+5. **The safety brake is not approval.** Don't loosen `brake_share` to push a
+   held run through — read why it held (usually a parse or login problem).
+6. **New projects are never added to `our_projects` automatically** (that
+   publishes them on wassel.re). A name matching/containing an existing project
+   is reported, never duplicated.
+7. **Opus 5.5 rejects a forced `tool_choice`** — the reader uses `auto` and fails
+   the run when no tool call comes back (never treats it as "no updates").
+
 ## Office outreach (unanswered requests → WhatsApp to offices) (added 2026-09-28)
 
 The Sales Workspace «الطلبات غير المجابة» tab sends a client's unmet request to
