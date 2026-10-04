@@ -17,7 +17,7 @@
  * that project's dialog (used by the Website tab on a project record, and by
  * the old /settings/project-details/:projectId URL).
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Globe, Building2, Search, ImageOff, ExternalLink, Images, Loader2, MapPin } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -61,6 +61,28 @@ function Loading({ isAr }: { isAr: boolean }) {
   );
 }
 
+/**
+ * True once the element has come within ~one screen of the viewport, and stays
+ * true. Cards sign their photo only then, so a page of 96 projects asks for the
+ * dozen on screen first — and a project's photo dialog opened on top of the
+ * page no longer waits behind 90 card images.
+ */
+function useNearViewport<T extends Element>(): [React.RefObject<T>, boolean] {
+  const ref = useRef<T>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || near) return;
+    if (typeof IntersectionObserver === 'undefined') { setNear(true); return; }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setNear(true); io.disconnect(); }
+    }, { rootMargin: '400px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near]);
+  return [ref, near];
+}
+
 function ProjectCard({
   view, hero, count, isAr, onEdit,
 }: {
@@ -70,13 +92,13 @@ function ProjectCard({
   isAr: boolean;
   onEdit: () => void;
 }) {
-  // Small batched thumbnail: 96 cards used to sign one by one and download
-  // every full-size original.
-  const signed = useSignedThumb(hero);
+  // Small batched thumbnail, requested only once the card is near the screen.
+  const [cardRef, near] = useNearViewport<HTMLDivElement>();
+  const signed = useSignedThumb(near ? hero : null);
   const name = view.name ?? (isAr ? 'بدون اسم' : 'Untitled');
   const place = [view.district, view.city].filter(Boolean).join(isAr ? '، ' : ', ');
   return (
-    <div className="card overflow-hidden flex flex-col">
+    <div ref={cardRef} className="card overflow-hidden flex flex-col">
       <button type="button" onClick={onEdit} className="relative h-36 bg-cream/40 overflow-hidden group text-start">
         {signed ? (
           <ThumbImg src={signed.thumb} fallbackSrc={signed.full} alt={name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
