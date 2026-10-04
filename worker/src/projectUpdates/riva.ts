@@ -170,8 +170,12 @@ export function rivaProjectMeta(html: string): Record<string, unknown> {
   const text = visibleText(html);
   const lic = toAsciiDigits(text).match(/رخصة إعلان:\s*(\d{6,})/)?.[1];
   if (lic) meta.ad_license = lic;
-  const desc = text.match(/من قيمة كل وحدة مباعة\s+(.{40,1800}?)(?:\s+(?:الوحدات|عرض \d|Showing)\b|$)/)?.[1];
-  if (desc) meta.description = desc.trim();
+  // No `\b` here: it is an ASCII word boundary and never fires next to Arabic.
+  const after = text.match(/من قيمة كل وحدة مباعة\s+(.{40,})/)?.[1];
+  if (after) {
+    const cut = after.search(/\s(?:الوحدات المتاحة|عرض \d+ إلى|Showing \d)/);
+    meta.description = (cut > 40 ? after.slice(0, cut) : after).slice(0, 1500).trim();
+  }
   return meta;
 }
 
