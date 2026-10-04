@@ -73,3 +73,21 @@ describe('reader helpers', () => {
     expect(isGeminiRead(null)).toBe(false);
   });
 });
+
+describe('checker spelling tolerance (2026-10-04)', () => {
+  const ev = (caption: string, name: string, strength = 'full_name'): EnrichEvidence => ({ post_id: 'x', caption, transcript: '', ocr_text: '', brand_tokens: ['ريفا'], candidates: [cand('p', name, strength)] });
+  it('a space inside a long name still names it («ساند ستون» → «ساندستون»)', () => {
+    expect(rejectTs('مشروع ساند ستون ريزيدنسيز', cand('p', 'ساندستون ريزيدنسيز', 'full_name'), ev('مشروع ساند ستون ريزيدنسيز', 'ساندستون ريزيدنسيز'))).toBeNull();
+  });
+  it('one long vowel more or less in a long name still names it («مانديفيلا» → «ماندفيلا»)', () => {
+    expect(rejectTs('افتتاح مانديفيلا', cand('p', 'ماندفيلا', 'full_name'), ev('افتتاح مانديفيلا', 'ماندفيلا'))).toBeNull();
+  });
+  it('never helps a short word or a different word', () => {
+    expect(rejectTs('مشروع سما الجديد', cand('p', 'سمو الشمال', 'full_name'), ev('مشروع سما الجديد', 'سمو الشمال'))).not.toBeNull();
+    expect(rejectTs('مشروع ماندارين الجديد', cand('p', 'ماندفيلا', 'full_name'), ev('مشروع ماندارين الجديد', 'ماندفيلا'))).not.toBeNull();
+  });
+  it('keeps the rejected quote for the audit', () => {
+    const { valid } = validateTs([{ post_id: 'x', primary_project_index: 0, evidence_quote: 'مشروع ماندارين الجديد' }], [ev('مشروع ماندارين الجديد', 'ماندفيلا')]);
+    expect(valid[0]?.result.rejected_quote).toBe('مشروع ماندارين الجديد');
+  });
+});

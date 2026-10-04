@@ -141,6 +141,32 @@ function boundedRe(s: string): RegExp {
   return new RegExp(`${left}${escapeRe(s)}${right}`, 'u');
 }
 
+/**
+ * Spelling tolerance for LONG name words only (2026-10-04). Captions write a
+ * project name with a space inside it («ساند ستون» for «ساندستون») or with one
+ * long vowel more or less («مانديفيلا» for «ماندفيلا»); the exact-token check
+ * threw those correct picks away (8 Sandstone posts, Mandevilla). Both
+ * tolerances need a name word of ≥6 letters, so a short word can never match
+ * by accident, and the quote must still be found verbatim in the evidence.
+ */
+const LONG_NAME = 6;
+const despace = (s: string): string => s.replace(/\s+/g, '');
+/** The word with its internal long vowels (ا و ي) removed; first letter kept. */
+const skeleton = (w: string): string => w.slice(0, 1) + w.slice(1).replace(/[اوي]/g, '');
+function fuzzyHit(anchor: string, nq: string): boolean {
+  if (anchor.length < LONG_NAME || /^\d+$/.test(anchor)) return false;
+  if (despace(flatten(nq)).includes(anchor)) return true;
+  const sk = skeleton(anchor);
+  if (sk.length < 4) return false;
+  return flatten(nq).split(' ').some((w) => {
+    const bare = w.replace(/^(?:[وبلفك]|لل)(?=.{5,})/, '');
+    for (const cand of [w, bare]) {
+      if (cand.length >= LONG_NAME - 1 && Math.abs(cand.length - anchor.length) <= 1 && skeleton(cand) === sk) return true;
+    }
+    return false;
+  });
+}
+
 const evidenceText = (ev: EnrichEvidence): string => normalizeText(`${ev?.caption ?? ''}\n${ev?.transcript ?? ''}\n${ev?.ocr_text ?? ''}`);
 
 /** Why a project pick is not acceptable, or null when it is. */
@@ -160,7 +186,7 @@ function proofRejection(quote: unknown, candidate: EnrichCandidate | undefined, 
     const full = normalizeText(candidate?.nameAr ?? candidate?.nameEn ?? '');
     return full && nq.includes(full) ? null : 'quote carries only the brand word';
   }
-  const hits = [...anchors].filter((a) => boundedRe(a).test(nq));
+  const hits = [...anchors].filter((a) => boundedRe(a).test(nq) || fuzzyHit(a, nq));
   const need = candidate?.strength === 'word' && anchors.size >= 2 ? 2 : 1;
   if (hits.length < need) return `quote does not name the project (${hits.length}/${need} name tokens)`;
   return null;
@@ -209,6 +235,7 @@ export function validateEnrichmentResults(rawResults: unknown, evidence: EnrichE
 
     let rejected: string | null = null;
     let modelQuoteRejected: string | null = null;
+    let rejectedQuote = '';
     let evidenceQuote = typeof item.evidence_quote === 'string' ? item.evidence_quote.slice(0, 300) : '';
     if (idx >= 0) {
       rejected = noEvidence ? 'post has no evidence (caption, transcript and OCR are empty)' : attributionRejection(evidenceQuote, cands[idx], ev);
@@ -219,6 +246,7 @@ export function validateEnrichmentResults(rawResults: unknown, evidence: EnrichE
       if (alias) { modelQuoteRejected = rejected; rejected = null; evidenceQuote = alias; }
       else if (rejected) {
         if (quoteNames >= 0) rejected = `${rejected}; the quote names candidate[${quoteNames}] instead`;
+        rejectedQuote = evidenceQuote;
         idx = -1; primaryProjectId = null; evidenceQuote = '';
       }
     } else {
@@ -233,7 +261,7 @@ export function validateEnrichmentResults(rawResults: unknown, evidence: EnrichE
       evidence_quote: evidenceQuote,
       mentioned_projects: arr(item.mentioned_projects).map((s) => s.trim()).filter(Boolean).slice(0, 10),
     };
-    if (rejected) result.attribution_rejected = rejected;
+    if (rejected) { result.attribution_rejected = rejected; if (rejectedQuote) result.rejected_quote = rejectedQuote; }
     if (modelQuoteRejected) { result.evidence_quote_source = 'matcher'; result.model_quote_rejected = modelQuoteRejected; }
     for (const f of STR_FIELDS) result[f] = str(item[f]);
     for (const f of ARR_FIELDS) result[f] = arr(item[f]);
