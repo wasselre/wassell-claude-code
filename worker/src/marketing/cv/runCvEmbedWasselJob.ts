@@ -5,20 +5,20 @@
 // vectors so scene_references_suggest can find "we already have this shot").
 //
 //   video  → mkt_cv_videos(owner='wassel', wassel_asset_id, content_media_id
-//            NULL — the column is nullable UNIQUE) → Modal /process → chunked
-//            ingest → per-shot embedding_visual = mean of keyframe vectors,
-//            analysis_status='done', summary = asset title.
-//   photo/ → Modal /embed_images([url]) → one video row (duration 0), one shot
+//            NULL — the column is nullable UNIQUE) → the Gemini pipeline with
+//            analyze=false (ffmpeg cuts + keyframes + Gemini image vectors, NO
+//            model call) → per-shot embedding_visual = mean of keyframe
+//            vectors, analysis_status='done', summary = asset title.
+//   photo/ → embed('embed_image', [url]) (Gemini) → one video row (duration 0), one shot
 //   design   (shot_no 0, is_micro FALSE so the default search filter keeps it),
 //            one frame at ts 0 carrying the vector.
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { CvJob, CvVideoRow, ModalCvClient } from './types.js';
-import { processVideoThroughModal } from './runCvProcessJob.js';
-import { loadShots, loadShotFrames } from './runCvAnalyzeJob.js';
-import { meanEmbedding, parseVector } from './embeddings.js';
+import type { CvAi, CvJob, CvVideoRow } from './types.js';
+import { processVideoWithGemini } from './gemini/process.js';
+import { VISUAL_DIM } from '../../ai/providers/geminiEmbed.js';
 
-export interface CvEmbedWasselDeps { sb: SupabaseClient; modal: ModalCvClient }
+export interface CvEmbedWasselDeps { sb: SupabaseClient; ai: CvAi }
 export interface CvEmbedWasselResult { asset_id: string; video_id: string; kind: 'video' | 'image'; shots: number; frames: number; embedded_shots: number }
 
 interface AssetRow { id: string; kind: string; title: string; url: string | null; thumb_url: string | null; project_id: string | null; mime_type: string | null; file_id: string | null; archived_at: string | null }
@@ -33,7 +33,7 @@ async function loadAsset(sb: SupabaseClient, assetId: string): Promise<AssetRow>
 const DIRECT_MEDIA = /\.(mp4|mov|webm|m4v|jpg|jpeg|png|webp|gif)(\?|$)/i;
 
 /**
- * A URL Modal can actually download. OUR videos live PRIVATE in wassel-files
+ * A URL the worker can actually download. OUR videos live PRIVATE in wassel-files
  * (no public url), so we mint a short-lived SIGNED url at process time — allowed
  * for our own assets (the "public only / no signed urls" rule was for COMPETITOR
  * videos). Photos usually already carry a public image url; use it directly.
@@ -78,37 +78,17 @@ async function ensureWasselVideo(sb: SupabaseClient, asset: AssetRow, sourceUrl:
 }
 
 async function embedWasselVideo(deps: CvEmbedWasselDeps, asset: AssetRow, url: string): Promise<CvEmbedWasselResult> {
-  const { sb } = deps;
-  const video = await ensureWasselVideo(sb, asset, url);
-  const processed = await processVideoThroughModal(deps, video);
-  const shots = await loadShots(sb, video.id);
-  let embedded = 0;
-  for (const shot of shots) {
-    const frames = await loadShotFrames(sb, shot);
-    const vecs = frames.map((f) => parseVector(f.embedding)).filter((v): v is number[] => v !== null && v.length === 768);
-    const vec = meanEmbedding(vecs);
-    const { error } = await sb.from('mkt_cv_shots').update({
-      embedding_visual: vec,
-      summary: asset.title,
-      analysis_status: 'done',
-      analysis_error: vec ? null : 'no keyframe embeddings',
-      analysis_role: { wassel_asset: true },
-      updated_at: new Date().toISOString(),
-    }).eq('id', shot.id);
-    if (error) throw new Error(`write wassel shot ${shot.id} failed: ${error.message}`);
-    if (vec) embedded++;
-  }
-  const { error: stErr } = await sb.from('mkt_cv_videos').update({ status: processed.partial ? 'partial' : 'analyzed', analyzed_at: new Date().toISOString(), analysis_version: 'wassel-embed-1', updated_at: new Date().toISOString() }).eq('id', video.id);
-  if (stErr) throw new Error(`finalize wassel video failed: ${stErr.message}`);
-  return { asset_id: asset.id, video_id: video.id, kind: 'video', shots: processed.shots, frames: processed.frames, embedded_shots: embedded };
+  const video = await ensureWasselVideo(deps.sb, asset, url);
+  const r = await processVideoWithGemini(deps, video, { analyze: false, title: asset.title });
+  return { asset_id: asset.id, video_id: video.id, kind: 'video', shots: r.shots, frames: r.frames, embedded_shots: r.shots };
 }
 
 async function embedWasselImage(deps: CvEmbedWasselDeps, asset: AssetRow, url: string): Promise<CvEmbedWasselResult> {
-  const { sb, modal } = deps;
+  const { sb, ai } = deps;
   const video = await ensureWasselVideo(sb, asset, url);
-  const emb = await modal.embedImages([url]);
+  const emb = await ai.embed('embed_image', { image_urls: [url] });
   const vec = emb.vectors[0];
-  if (!vec || vec.length !== 768) throw new Error(`provider: modal /embed_images returned dim ${vec?.length ?? 0}, expected 768`);
+  if (!vec || vec.length !== VISUAL_DIM) throw new Error(`provider:gemini embed_image returned dim ${vec?.length ?? 0}, expected ${VISUAL_DIM}`);
 
   const { data: shotRow, error: shotErr } = await sb.from('mkt_cv_shots')
     .upsert({ video_id: video.id, shot_no: 0, start_ms: 0, end_ms: 0, transition_in: 'start', transition_out: 'end', is_static: true, is_micro: false, internal_change: false, summary: asset.title, embedding_visual: vec, analysis_status: 'done', analysis_error: null, analysis_role: { wassel_asset: true, image: true }, updated_at: new Date().toISOString() }, { onConflict: 'video_id,shot_no' })
@@ -127,7 +107,7 @@ async function embedWasselImage(deps: CvEmbedWasselDeps, asset: AssetRow, url: s
 
   const { error: vErr } = await sb.from('mkt_cv_videos').update({
     status: 'analyzed', duration_ms: 0, shot_count: 1, frame_count: 1, keyframe_count: 1, embedding_version: emb.version || emb.model,
-    processed_at: new Date().toISOString(), analyzed_at: new Date().toISOString(), analysis_version: 'wassel-embed-1', error: null, updated_at: new Date().toISOString(),
+    processed_at: new Date().toISOString(), analyzed_at: new Date().toISOString(), analysis_version: 'wassel-embed-gemini-1', error: null, updated_at: new Date().toISOString(),
   }).eq('id', video.id);
   if (vErr) throw new Error(`finalize wassel image video failed: ${vErr.message}`);
   return { asset_id: asset.id, video_id: video.id, kind: 'image', shots: 1, frames: 1, embedded_shots: 1 };

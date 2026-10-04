@@ -32,9 +32,12 @@ export const ROLE_KEYS: readonly RoleKey[] = [
   'embed_image',
 ];
 
-export type ProviderKind = 'anthropic' | 'openai_compat' | 'modal';
+export type ProviderKind = 'anthropic' | 'openai_compat' | 'modal' | 'gemini';
 
-export const PROVIDER_KINDS: readonly ProviderKind[] = ['anthropic', 'openai_compat', 'modal'];
+export const PROVIDER_KINDS: readonly ProviderKind[] = ['anthropic', 'openai_compat', 'modal', 'gemini'];
+
+/** Providers that serve the embedding roles (embed_text / embed_image). */
+export const EMBEDDING_PROVIDER_KINDS: readonly ProviderKind[] = ['modal', 'gemini'];
 
 /** Per-role generation knobs. All optional; providers apply their own defaults. */
 export interface RoleParams {
@@ -51,6 +54,12 @@ export interface RoleConfig {
   model: string;
   /** Free-form version tag (e.g. embedding model version '1'). Recorded on every result. */
   version?: string;
+  /**
+   * Embedding roles only: the vector length to ask for. Gemini embeddings are
+   * truncatable (Matryoshka), so ONE model serves both the 768-d visual columns
+   * and the 1024-d text columns. Ignored by providers with a fixed dimension.
+   */
+  dim?: number;
   params?: RoleParams;
 }
 
@@ -108,13 +117,14 @@ export interface EmbedResult {
   model: string;
   version: string;
   dim: number;
-  /** Modal is compute-billed per container-second, not per call → null (unknown), never 0. */
+  /** Modal is compute-billed per container-second → null (unknown), never 0.
+   *  Gemini reports tokens per modality, so its cost is known. */
   cost_usd: number | null;
   provider: ProviderKind;
   latency_ms: number;
 }
 
-/** `/embed_query` — one text → both towers (SigLIP-2 text 768-d + bge-m3 1024-d). */
+/** One query text → both search vectors: visual-space 768-d + text-space 1024-d. */
 export interface EmbedQueryResult {
   image_vec: number[];
   text_vec: number[];
@@ -131,7 +141,7 @@ export interface LlmProvider {
 export interface EmbeddingProvider {
   readonly kind: ProviderKind;
   embed(role: RoleConfig, input: EmbedInput): Promise<EmbedResult>;
-  /** Optional — only the Modal provider implements the dual-tower query endpoint. */
+  /** Optional — one query text → both search vectors (visual 768-d + text 1024-d). */
   embedQuery?(text: string): Promise<EmbedQueryResult>;
 }
 

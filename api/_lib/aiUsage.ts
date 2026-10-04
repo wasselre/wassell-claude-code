@@ -47,6 +47,7 @@ export type AiProvider =
   | 'moonshot'
   | 'fal'
   | 'modal'
+  | 'gemini'
   | 'runner';
 
 /**

@@ -152,7 +152,7 @@ function settingsResolver(settingsByKey: Record<string, unknown>, base: Resolver
 }
 
 beforeEach(() => {
-  delete process.env.MODAL_CV_URL; // intent vector off in tests
+  delete process.env.GEMINI_API_KEY; // intent vector off in tests
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -402,7 +402,7 @@ describe('loadJobContext', () => {
     expect(ctx.recipe).toBe('offer');
     expect(ctx.targets).toHaveLength(1);
     expect(ctx.specs).toHaveLength(1);
-    expect(ctx.qvec).toBeNull(); // MODAL_CV_URL unset
+    expect(ctx.qvec).toBeNull(); // GEMINI_API_KEY unset
     expect(stages).toEqual(['brief', 'facts', 'brand', 'references', 'assets', 'targets']);
 
     const input = ctx.toDirectorInput();

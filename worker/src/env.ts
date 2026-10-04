@@ -123,19 +123,20 @@ export interface WorkerEnv {
    *  is the cheaper/faster sibling and is NOT validated for this task. */
   DEEPSEEK_MODEL: string;
   DEEPSEEK_BASE_URL: string;
-  /** Competitor Visual Intelligence (mkt_cv_jobs lanes, W-CV 2026-09-02). The
-   *  Modal service `wassel-video-cv` does shot detection, frame extraction,
-   *  OCR, SigLIP-2 embeddings and zero-shot labels; the worker orchestrates and
-   *  ingests. When MODAL_CV_URL is UNSET both cv lanes self-disable (logged once
-   *  at boot) so the worker boots fine before the Modal app is deployed. The
-   *  DB gate `mkt_settings.cv.enabled` (inside mkt_cv_job_claim_next) still
-   *  decides whether any job is ever claimed. */
+  /** LEGACY (unused since 2026-10-04): the Modal service `wassel-video-cv`
+   *  that the cv lanes used before Gemini replaced it. Kept so a rollback is a
+   *  config change; nothing reads it on the live path. */
   MODAL_CV_URL: string | null;
   /** Shared token sent as `x-wassel-token` to the Modal service. */
   MODAL_CV_TOKEN: string | null;
   /** Process-level kill switch for the cv lanes. Default ON; set '0' to keep
    *  this worker out of the cv queues without touching the DB flag. */
   CV_LANES_ENABLED: boolean;
+  /** Google Gemini API key. Since 2026-10-04 it powers the cv lanes (one
+   *  gemini-3.8-flash call per video + gemini-embedding-2 vectors) and every
+   *  embed_text / embed_image role. Unset → the cv lanes self-disable (logged
+   *  once at boot) and embedding calls fail with `provider:gemini`. */
+  GEMINI_API_KEY: string | null;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -182,5 +183,6 @@ export function loadEnv(): WorkerEnv {
     MODAL_CV_URL: process.env.MODAL_CV_URL?.replace(/\/+$/, '') || null,
     MODAL_CV_TOKEN: process.env.MODAL_CV_TOKEN ?? null,
     CV_LANES_ENABLED: process.env.CV_LANES_ENABLED !== '0',
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY?.trim() || null,
   };
 }

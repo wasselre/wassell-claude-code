@@ -4,8 +4,8 @@
  * One image → one SlideRead via the `design_read_slide` creative role
  * (callCreativeRole with the public stored_url as an image — competitor media
  * is permanently public, never a signed URL) → validated → upserted with
- * model_used from the result. Optional SigLIP-2 embedding via
- * embed('embed_image') when MODAL_CV_URL is set — never fatal.
+ * model_used from the result. Optional Gemini image embedding (768-d) via
+ * embed('embed_image') when GEMINI_API_KEY is set — never fatal.
  *
  * Provider 'runner' is handled UPSTREAM (the lane enqueues a claude_jobs row
  * instead of calling readSlide); here the role resolves to a direct LLM call.
@@ -36,7 +36,7 @@ export interface DesignReadDeps {
   ctx?: Omit<CreativeAiContext, 'sb'>;
   /** Test injection — defaults to the real callCreativeRole. */
   callRole?: typeof callCreativeRole;
-  /** Test injection — defaults to embed('embed_image') when MODAL_CV_URL is set. */
+  /** Test injection — defaults to embed('embed_image') when GEMINI_API_KEY is set. */
   embedImage?: (imageUrl: string) => Promise<number[] | null>;
   log?: (msg: string, extra?: unknown) => void;
 }
@@ -48,10 +48,10 @@ export interface ReadOutcome {
   latency_ms: number;
 }
 
-/** SigLIP-2 image embedding — null when the visual system is not configured. */
+/** Gemini image embedding (768-d) — null when the visual system is not configured. */
 async function embedSlideImage(imageUrl: string, deps: DesignReadDeps): Promise<number[] | null> {
   if (deps.embedImage) return deps.embedImage(imageUrl);
-  if (!process.env.MODAL_CV_URL) return null;
+  if (!process.env.GEMINI_API_KEY) return null;
   const res = await embed('embed_image', { image_urls: [imageUrl] }, { sb: deps.sb });
   return res.vectors?.[0] ?? null;
 }
@@ -71,7 +71,7 @@ export async function readSlide(item: SlideReadItem, deps: DesignReadDeps): Prom
 
   assertValidRead('slide', res.output, 1);
 
-  // Embedding is best-effort: a Modal outage must never lose the read itself.
+  // Embedding is best-effort: an embedding outage must never lose the read itself.
   // The catch is scoped to THIS call and logged — the read persists without a vector.
   let embedding: number[] | null = null;
   try {

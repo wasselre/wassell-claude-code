@@ -74,7 +74,7 @@ export interface CreativeJobContext {
   specs: PlacementSpec[];
   referenceRows: CreativeReferenceRow[];
   assetRows: CandidateAssetRow[];
-  /** SigLIP-2 intent vector for the references RPC (null when unavailable). */
+  /** Visual-space (Gemini, 768-d) intent vector for the references RPC (null when unavailable). */
   qvec: number[] | null;
   /** The recipe key this run uses (job params win over the brief). */
   recipe: string | null;
@@ -227,8 +227,8 @@ export async function resolveFileUrl(sb: SupabaseClient, bucket: string, path: s
 }
 
 /**
- * SigLIP-2 intent vector off the TOP candidate asset (contracts §6) — only when
- * MODAL_CV_URL is set, and NEVER fatal: any failure logs and returns null
+ * Visual-space (Gemini embedding, 768-d) intent vector off the TOP candidate asset (contracts §6) — only when
+ * GEMINI_API_KEY is set, and NEVER fatal: any failure logs and returns null
  * (the references RPC then ranks without cosine, p_qvec=null).
  */
 export async function intentVector(
@@ -236,7 +236,7 @@ export async function intentVector(
   assetRows: CandidateAssetRow[],
   log?: (msg: string, extra?: unknown) => void,
 ): Promise<number[] | null> {
-  if (!process.env.MODAL_CV_URL) return null;
+  if (!process.env.GEMINI_API_KEY) return null;
   const top = assetRows.find((r) => !!r.storage_bucket && !!r.storage_path);
   if (!top) return null;
   try {
@@ -247,7 +247,7 @@ export async function intentVector(
     if (vec) log?.(`intent vector embedded from top candidate asset ${top.file_id} (dim=${vec.length})`);
     return vec;
   } catch (e) {
-    // Scoped to THIS call: a Modal outage must not lose the references ranking.
+    // Scoped to THIS call: an embedding outage must not lose the references ranking.
     console.error(`[creative/io] embed('embed_image') for the intent vector failed — continuing with p_qvec=null:`, e instanceof Error ? e.message : e);
     return null;
   }

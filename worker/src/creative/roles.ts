@@ -329,7 +329,7 @@ async function resolveOneCreative(
  *  - provider 'runner' → runnerProvider.callViaRunner (enqueue + poll a
  *    `claude_jobs` row; only design_read_* roles have a runner kind mapping).
  *  - provider 'fal' → throws: image roles go through imageProvider.ts.
- *  - provider 'modal' → throws: embedding roles go through the sibling embed().
+ *  - provider 'modal' / 'gemini' → throws: embedding roles go through the sibling embed().
  */
 export async function callCreativeRole<T>(
   key: CreativeRoleKey,
@@ -341,7 +341,8 @@ export async function callCreativeRole<T>(
     case 'fal':
       throw creativeProviderError('fal', `role '${key}' is an image role — use imageProvider`);
     case 'modal':
-      throw creativeProviderError('modal', `role '${key}' is an embedding role — use embed()`);
+    case 'gemini':
+      throw creativeProviderError(cfg.provider, `role '${key}' is an embedding role — use embed()`);
     case 'runner': {
       const kind = RUNNER_KIND_BY_ROLE[key];
       if (!kind) {

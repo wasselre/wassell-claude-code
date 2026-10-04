@@ -7,8 +7,11 @@
  *
  *   node scripts/backfill-post-embeddings.mjs [--limit N] [--force]
  *
- * Env (from .env.local): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, MODAL_CV_URL,
- * MODAL_CV_TOKEN. No deploy needed — talks to prod + the Modal embed endpoint.
+ * Env (from .env.local): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY.
+ * No deploy needed — talks to prod + Gemini `gemini-embedding-2` at 1024 dims,
+ * the same model and length the worker's embed_text role queries with
+ * (Modal's bge-m3 until 2026-10-04 — those vectors are not comparable, so the
+ * model is part of text_hash and a model change re-embeds every row).
  */
 import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
@@ -30,50 +33,58 @@ function loadEnv() {
 
 const env = loadEnv();
 const SB_URL = env.SUPABASE_URL, SB_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
-const MODAL_URL = (env.MODAL_CV_URL || '').replace(/\/+$/, ''), MODAL_TOKEN = env.MODAL_CV_TOKEN;
+const GEMINI_KEY = (env.GEMINI_API_KEY || '').trim();
 if (!SB_URL || !SB_KEY) { console.error('missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY'); process.exit(1); }
-if (!MODAL_URL || !MODAL_TOKEN) { console.error('missing MODAL_CV_URL / MODAL_CV_TOKEN'); process.exit(1); }
+if (!GEMINI_KEY) { console.error('missing GEMINI_API_KEY'); process.exit(1); }
 
 const args = process.argv.slice(2);
 const LIMIT = (() => { const i = args.indexOf('--limit'); return i >= 0 ? parseInt(args[i + 1], 10) : Infinity; })();
 const FORCE = args.includes('--force');
 import { recordAiUsage } from './lib/aiUsage.mjs';
 
-const MODEL = 'bge-m3', VERSION = 1, BATCH = 48;
+const MODEL = 'gemini-embedding-2', VERSION = 2, DIM = 1024, BATCH = 48;
+// $0.20 per 1M text tokens — https://ai.google.dev/gemini-api/docs/pricing (read 2026-10-04).
+const TEXT_USD_PER_M = 0.2;
 const sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
 
 async function embedText(texts) {
-  // One row per BATCH — that is what a Modal request actually is. `units` is
-  // the text count, matching the unit_kind the CV lane already uses for
-  // embeddings, so a backfill and the product's own embeds add up on one scale.
+  // One ai_usage row per batch request; tokens come from Gemini's own count.
   const started = Date.now();
-  const bill = (status, error) =>
+  const bill = (status, error, tokens = 0) =>
     recordAiUsage({
       area: 'competitors',
       callSite: 'scripts/backfill-post-embeddings',
       operation: 'embed_text',
-      provider: 'modal',
-      model: 'modal-cv-embed-text',
+      provider: 'gemini',
+      model: MODEL,
       status,
       error: error ?? null,
+      inputTokens: tokens,
       units: texts.length,
       unitKind: 'query',
       latencyMs: Date.now() - started,
+      ...(status === 'ok' ? { costUsd: Math.round((tokens / 1e6) * TEXT_USD_PER_M * 1e8) / 1e8 } : {}),
     });
-  const r = await fetch(`${MODAL_URL}/embed_text`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-wassel-token': MODAL_TOKEN },
-    body: JSON.stringify({ texts }),
-  });
+  let r;
+  for (let attempt = 1; ; attempt++) {
+    r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:batchEmbedContents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
+      body: JSON.stringify({ requests: texts.map((t) => ({ model: `models/${MODEL}`, content: { parts: [{ text: t }] }, outputDimensionality: DIM })) }),
+    });
+    if (r.ok || ![429, 500, 503].includes(r.status) || attempt >= 5) break;
+    await new Promise((res) => setTimeout(res, 2000 * 2 ** attempt));
+  }
   if (!r.ok) {
     const msg = `embed_text ${r.status}: ${(await r.text()).slice(0, 200)}`;
     await bill('error', msg);
     throw new Error(msg);
   }
-  await bill('ok', null);
   const j = await r.json();
-  if (!Array.isArray(j.vectors) || j.vectors.length !== texts.length) throw new Error('embed_text shape mismatch');
-  return j.vectors;
+  await bill('ok', null, Number(j.usageMetadata?.promptTokenCount ?? 0) || 0);
+  const vectors = (j.embeddings ?? []).map((e) => e.values);
+  if (vectors.length !== texts.length || vectors.some((v) => !Array.isArray(v) || v.length !== DIM)) throw new Error('embed_text shape mismatch');
+  return vectors;
 }
 
 // pull VIDEO posts + their best transcript + OCR + enrichment, build source_text

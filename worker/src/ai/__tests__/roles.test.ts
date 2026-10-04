@@ -46,10 +46,10 @@ function fakeLlm(kind: 'anthropic' | 'openai_compat', impl?: (role: RoleConfig) 
   };
 }
 
-function fakeEmbedder(): EmbeddingProvider & { calls: RoleConfig[] } {
+function fakeEmbedder(kind: 'modal' | 'gemini' = 'gemini'): EmbeddingProvider & { calls: RoleConfig[] } {
   const calls: RoleConfig[] = [];
   return {
-    kind: 'modal',
+    kind,
     calls,
     async embed(role: RoleConfig, input): Promise<EmbedResult> {
       calls.push(role);
@@ -94,7 +94,7 @@ describe('mergeRoles — settings over CODE_DEFAULTS', () => {
   it('rejects an invalid provider / model / params entry loudly and keeps the default', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const r = mergeRoles(CODE_DEFAULTS, {
-      script_writer: { provider: 'gemini', model: 'g' },
+      script_writer: { provider: 'mistral', model: 'g' },
       script_reviewer: { model: '' },
       claim_classifier: { params: { thinking: 'deep' } },
       frame_describer: 'claude-opus-5',
@@ -194,7 +194,7 @@ describe('callRole — provider selection', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
   it('refuses to call an embedding role', async () => {
-    await expect(callRole('embed_text', { system: 's', user: 'u', schema: {} }, { roles: CODE_DEFAULTS })).rejects.toThrow(/^provider:modal .*use embed\(\)/);
+    await expect(callRole('embed_text', { system: 's', user: 'u', schema: {} }, { roles: CODE_DEFAULTS })).rejects.toThrow(/^provider:gemini .*use embed\(\)/);
   });
   it('unregistered provider → provider: error', async () => {
     await expect(callRole({ provider: 'openai_compat', model: 'x' }, { system: 's', user: 'u', schema: {} }, { providers: { llm: {} } }))
@@ -225,21 +225,31 @@ describe('error prefixing', () => {
 });
 
 describe('embed / embedQuery', () => {
-  it('routes embed_text to the modal provider', async () => {
-    const modal = fakeEmbedder();
-    const res = await embed('embed_text', { texts: ['a', 'b'] }, { roles: CODE_DEFAULTS, providers: { embedding: { modal } } });
+  it('routes embed_text to the gemini provider at the text dimension', async () => {
+    const gemini = fakeEmbedder('gemini');
+    const res = await embed('embed_text', { texts: ['a', 'b'] }, { roles: CODE_DEFAULTS, providers: { embedding: { gemini } } });
     expect(res.vectors).toHaveLength(2);
+    expect(res.model).toBe('gemini-embedding-2');
+    expect(gemini.calls[0]).toMatchObject({ provider: 'gemini', model: 'gemini-embedding-2', dim: 1024 });
+  });
+  it('routes embed_image to the gemini provider at the visual dimension', async () => {
+    const gemini = fakeEmbedder('gemini');
+    await embed('embed_image', { image_urls: ['https://x/a.jpg'] }, { roles: CODE_DEFAULTS, providers: { embedding: { gemini } } });
+    expect(gemini.calls[0]).toMatchObject({ provider: 'gemini', dim: 768 });
+  });
+  it('a settings override back to modal still routes to modal (rollback path)', async () => {
+    const modal = fakeEmbedder('modal');
+    const roles = mergeRoles(CODE_DEFAULTS, { embed_text: { provider: 'modal', model: 'bge-m3', version: '1' } });
+    const res = await embed('embed_text', { texts: ['a'] }, { roles, providers: { embedding: { modal } } });
     expect(res.model).toBe('bge-m3');
-    expect(res.version).toBe('1');
-    expect(res.cost_usd).toBeNull();
-    expect(modal.calls[0].model).toBe('bge-m3');
+    expect(modal.calls).toHaveLength(1);
   });
   it('refuses a non-embedding role', async () => {
     await expect(embed('script_writer', { texts: ['a'] }, { roles: CODE_DEFAULTS })).rejects.toThrow(/^provider:anthropic .*not an embedding role/);
   });
   it('embedQuery returns both towers', async () => {
-    const modal = fakeEmbedder();
-    const q = await embedQuery('حي الياسمين', { providers: { embedding: { modal } } });
+    const gemini = fakeEmbedder('gemini');
+    const q = await embedQuery('حي الياسمين', { roles: CODE_DEFAULTS, providers: { embedding: { gemini } } });
     expect(q.image_vec).toEqual([11]);
     expect(q.text_vec).toEqual([1, 2]);
   });

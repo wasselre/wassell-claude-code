@@ -3020,35 +3020,34 @@ async function marketingOpsPollLoop(): Promise<void> {
 // ── cv lanes (W-CV) ──  Competitor Visual Intelligence — mkt_cv_jobs queue.
 //
 // Two independent loops (contracts §9):
-//   cvProcessPollLoop  → kinds cv_process, cv_embed_wassel   (Modal /process +
-//                        chunked ingest; minutes per job; no LLM)
-//   cvAnalyzePollLoop  → kinds cv_analyze, cv_describe_frame (LLM per shot /
-//                        frame; budget-checked before every paid call)
-// Split so a 10-minute Modal run never head-of-line-blocks the LLM pass (and
-// vice-versa). Claims via mkt_cv_job_claim_next(worker, kinds, lease 900 s),
-// which itself refuses when mkt_settings.cv.enabled is false — the DB flag is
-// the switch; this process only adds two gates: CV_LANES_ENABLED and the
-// presence of MODAL_CV_URL (without the Modal endpoint nothing here can run,
-// so the lanes are skipped and that is logged ONCE at boot). The process loop
-// ticks mkt_cv_jobs_watchdog() every WATCHDOG_INTERVAL_MS.
+//   cvProcessPollLoop  → kinds cv_process, cv_embed_wassel   (the Gemini
+//                        pipeline: ffmpeg cuts + ONE Gemini call per video +
+//                        Gemini embeddings; a minute or two per job)
+//   cvAnalyzePollLoop  → kinds cv_analyze, cv_describe_frame (legacy per-shot
+//                        Claude pass, and on-demand frame descriptions)
+// Claims via mkt_cv_job_claim_next(worker, kinds, lease 1800 s), which itself
+// refuses when mkt_settings.cv.enabled is false — the DB flag is the switch;
+// this process only adds two gates: CV_LANES_ENABLED and the presence of
+// GEMINI_API_KEY (without it nothing here can run, so the lanes are skipped
+// and that is logged ONCE at boot). Modal is no longer used (2026-10-04).
+// The process loop ticks mkt_cv_jobs_watchdog() every WATCHDOG_INTERVAL_MS.
 // ─────────────────────────────────────────────────────────────────────────
-import { makeModalClient } from './marketing/cv/modalClient.js';
 import { makeCvAi } from './marketing/cv/aiAdapter.js';
 import { runCvProcessJob } from './marketing/cv/runCvProcessJob.js';
 import { runCvAnalyzeJob } from './marketing/cv/runCvAnalyzeJob.js';
 import { describeFrameOnDemand } from './marketing/cv/describeFrameOnDemand.js';
 import { runCvEmbedWasselJob } from './marketing/cv/runCvEmbedWasselJob.js';
 import type { CvJob, CvJobKind } from './marketing/cv/types.js';
+import { dailyQuotaRetryAfter } from './ai/providers/geminiHttp.js';
 
 let cvProcessBusy = false;
 let cvProcessWakeRequested = false;
 let cvAnalyzeBusy = false;
 let cvAnalyzeWakeRequested = false;
-const CV_LEASE_SECONDS = 900;
+const CV_LEASE_SECONDS = 1800;
 const CV_PROCESS_KINDS: CvJobKind[] = ['cv_process', 'cv_embed_wassel'];
 const CV_ANALYZE_KINDS: CvJobKind[] = ['cv_analyze', 'cv_describe_frame'];
-const cvLanesActive = env.CV_LANES_ENABLED && env.MODAL_CV_URL !== null;
-const cvModal = cvLanesActive ? makeModalClient({ baseUrl: env.MODAL_CV_URL as string, token: env.MODAL_CV_TOKEN }) : null;
+const cvLanesActive = env.CV_LANES_ENABLED && env.GEMINI_API_KEY !== null;
 const cvAi = cvLanesActive ? makeCvAi(supabase) : null;
 
 async function claimOneCvJob(kinds: CvJobKind[]): Promise<CvJob | null> {
@@ -3064,8 +3063,30 @@ async function claimOneCvJob(kinds: CvJobKind[]): Promise<CvJob | null> {
 
 /** Claim ONE cv job of the given kinds and run it to completion. complete/fail
  *  only touch 'running' rows, so a late finish after the watchdog is a no-op. */
+// Set when Gemini reports a per-DAY quota exhausted: this machine stops
+// claiming cv jobs until Google's own retry time instead of claiming (and
+// downloading) video after video only to be refused at the model call.
+let cvQuotaPausedUntil = 0;
+
+/** Put a job back without spending an attempt, pause this machine, alert once a day. */
+async function deferCvForDailyQuota(job: CvJob, msg: string, retryAfterSec: number): Promise<void> {
+  cvQuotaPausedUntil = Date.now() + retryAfterSec * 1000;
+  const { error } = await supabase.rpc('mkt_cv_job_defer', { p_job_id: job.id, p_seconds: retryAfterSec, p_error: msg });
+  if (error) console.error(`[worker] mkt_cv_job_defer failed for job=${job.id}: ${error.message}`);
+  const day = new Date().toISOString().slice(0, 10);
+  const { error: alertErr } = await supabase.rpc('mkt_alert_emit', {
+    p_kind: 'cv_gemini_daily_quota', p_dedup_key: `cv_gemini_daily_quota:${day}`,
+    p_title: 'Visual intelligence paused: Gemini daily quota reached', p_severity: 'warning',
+    p_subject_type: 'cv', p_subject_id: day,
+    p_body: `Gemini refused with a per-day quota (${msg.slice(0, 300)}). Video jobs wait ${Math.round(retryAfterSec / 3600 * 10) / 10} h and resume by themselves. A *FreeTier* quota means the API key's Google project is not on the paid tier.`,
+    p_evidence: { message: msg.slice(0, 1000), retry_after_sec: retryAfterSec },
+  });
+  if (alertErr) console.error(`[worker] mkt_alert_emit failed (quota alert not recorded): ${alertErr.message}`);
+}
+
 async function claimAndRunOneCv(kinds: CvJobKind[]): Promise<boolean> {
-  if (!cvModal || !cvAi) return false;
+  if (!cvAi) return false;
+  if (Date.now() < cvQuotaPausedUntil) return false;
   const job = await claimOneCvJob(kinds);
   if (!job) return false;
   console.log(`[worker] claimed cv job=${job.id} kind=${job.kind} video=${job.videoId ?? '-'} frame=${job.frameId ?? '-'} attempts=${job.attempts}/${job.maxAttempts}`);
@@ -3073,8 +3094,8 @@ async function claimAndRunOneCv(kinds: CvJobKind[]): Promise<boolean> {
   try {
     let result: unknown;
     switch (job.kind) {
-      case 'cv_process': result = await runCvProcessJob({ sb: supabase, modal: cvModal }, job); break;
-      case 'cv_embed_wassel': result = await runCvEmbedWasselJob({ sb: supabase, modal: cvModal }, job); break;
+      case 'cv_process': result = await runCvProcessJob({ sb: supabase, ai: cvAi }, job); break;
+      case 'cv_embed_wassel': result = await runCvEmbedWasselJob({ sb: supabase, ai: cvAi }, job); break;
       case 'cv_analyze': result = await runCvAnalyzeJob({ sb: supabase, ai: cvAi }, job); break;
       case 'cv_describe_frame': result = await describeFrameOnDemand({ sb: supabase, ai: cvAi }, job); break;
       default: throw new Error(`permanent: unknown cv job kind ${String(job.kind)}`);
@@ -3084,6 +3105,12 @@ async function claimAndRunOneCv(kinds: CvJobKind[]): Promise<boolean> {
     else console.log(`[worker] completed cv job=${job.id} kind=${job.kind} in ${Math.round((Date.now() - startedAt) / 1000)}s`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    const quotaWait = dailyQuotaRetryAfter(msg);
+    if (quotaWait !== null) {
+      console.warn(`[worker] cv job=${job.id} deferred ${quotaWait}s — Gemini daily quota: ${msg}`);
+      await deferCvForDailyQuota(job, msg, quotaWait);
+      return true;
+    }
     console.error(`[worker] cv job=${job.id} kind=${job.kind} FAILED after ${Math.round((Date.now() - startedAt) / 1000)}s: ${msg}`);
     if (err instanceof Error && err.stack && !msg.startsWith('budget_exceeded:')) console.error(err.stack);
     // Error-kind prefixes (provider: / permanent: / budget_exceeded:) travel
@@ -3999,13 +4026,13 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     console.log('[worker] marketing collection loop disabled (MARKETING_COLLECTION_ENABLED != 1)');
   }
   // ── cv lanes (W-CV) ── Competitor Visual Intelligence. Skipped (logged once)
-  // when MODAL_CV_URL is unset or CV_LANES_ENABLED=0; even when registered the
+  // when GEMINI_API_KEY is unset or CV_LANES_ENABLED=0; even when registered the
   // DB flag mkt_settings.cv.enabled decides whether a job is ever claimed.
   if (cvLanesActive) {
-    console.log(`[worker] cv lanes enabled (modal=${env.MODAL_CV_URL}; DB cv.enabled still gates claims)`);
+    console.log('[worker] cv lanes enabled (gemini; DB cv.enabled still gates claims)');
     loops.push(cvProcessPollLoop(), cvAnalyzePollLoop());
   } else {
-    console.log(`[worker] cv lanes disabled (${env.CV_LANES_ENABLED ? 'MODAL_CV_URL unset' : 'CV_LANES_ENABLED=0'})`);
+    console.log(`[worker] cv lanes disabled (${env.CV_LANES_ENABLED ? 'GEMINI_API_KEY unset' : 'CV_LANES_ENABLED=0'})`);
   }
   // ── creative director lanes ──────────────────────────────────────────────
   // Post Creative Director (contracts §3): four independent loops sharing one

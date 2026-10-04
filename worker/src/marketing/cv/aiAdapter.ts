@@ -23,7 +23,7 @@ export function makeCvAi(sb: SupabaseClient): CvAi {
     },
     async embed(role: RoleKey, input: EmbedInput): Promise<EmbedResult> {
       const r = await embed(role, input, ctx);
-      return { vectors: r.vectors, model: r.model, version: r.version, dim: r.dim };
+      return { vectors: r.vectors, model: r.model, version: r.version, dim: r.dim, cost_usd: r.cost_usd, provider: r.provider };
     },
   };
 }

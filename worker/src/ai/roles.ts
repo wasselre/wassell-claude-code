@@ -3,8 +3,8 @@
  *
  *   resolveRoles(sb)            → Record<RoleKey, RoleConfig>   (mos_settings.ai_roles over CODE_DEFAULTS, cached 60 s)
  *   callRole<T>(role, req, ctx) → CallResult<T>                 (LLM roles → provider by RoleConfig.provider)
- *   embed(role, input, ctx)     → EmbedResult                   (embedding roles → Modal)
- *   embedQuery(text, ctx)       → EmbedQueryResult              (dual-tower search query)
+ *   embed(role, input, ctx)     → EmbedResult                   (embedding roles → Gemini; Modal kept as a legacy provider)
+ *   embedQuery(text, ctx)       → EmbedQueryResult              (one query → visual 768-d + text 1024-d vectors)
  *   recordRoleUse(ledger, role, result) / createRoleLedger()    (sum costs onto a job / draft / video row)
  *
  * Role configs are DATA: `mos_settings` row key='ai_roles', value = object
@@ -20,8 +20,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { sumCosts, round6 } from './pricing.js';
 import { createAnthropicProvider } from './providers/anthropic.js';
 import { createModalEmbedProvider } from './providers/modalEmbed.js';
+import { createGeminiEmbedProvider, TEXT_DIM, VISUAL_DIM } from './providers/geminiEmbed.js';
 import { recordAiUsage, type AiArea } from '../lib/aiUsage.js';
 import {
+  EMBEDDING_PROVIDER_KINDS,
   PROVIDER_KINDS,
   ROLE_KEYS,
   hasKindPrefix,
@@ -52,8 +54,10 @@ export const CODE_DEFAULTS: Readonly<Record<RoleKey, RoleConfig>> = Object.freez
   frame_describer: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', params: { max_tokens: 1500 } },
   shot_analyzer: { provider: 'anthropic', model: 'claude-sonnet-5', params: { max_tokens: 2500, thinking: 'adaptive', effort: 'medium' } },
   reference_explainer: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', params: { max_tokens: 800 } },
-  embed_text: { provider: 'modal', model: 'bge-m3', version: '1' },
-  embed_image: { provider: 'modal', model: 'siglip2-base-patch16-256', version: '1' },
+  // Both embedding roles use ONE multimodal model so a text query can find a
+  // picture; `dim` matches the pgvector columns (text 1024, visual 768).
+  embed_text: { provider: 'gemini', model: 'gemini-embedding-2', version: 'g2', dim: TEXT_DIM },
+  embed_image: { provider: 'gemini', model: 'gemini-embedding-2', version: 'g2', dim: VISUAL_DIM },
 });
 
 export const ROLES_CACHE_TTL_MS = 60_000;
@@ -131,6 +135,8 @@ export function mergeRoles(defaults: Readonly<Record<RoleKey, RoleConfig>>, sett
     };
     const version = o.version ?? base.version;
     if (version !== undefined) merged.version = String(version);
+    const dim = o.dim ?? base.dim;
+    if (dim !== undefined) merged.dim = Number(dim);
     const params = mergeParams(base.params, o.params);
     if (params) merged.params = params;
     out[key] = merged;
@@ -143,6 +149,7 @@ function validateOverride(raw: unknown): string | null {
   const o = raw as Record<string, unknown>;
   if (o.provider !== undefined && !(PROVIDER_KINDS as readonly string[]).includes(String(o.provider))) return `provider '${String(o.provider)}' not in ${PROVIDER_KINDS.join('|')}`;
   if (o.model !== undefined && (typeof o.model !== 'string' || !o.model.trim())) return 'model must be a non-empty string';
+  if (o.dim !== undefined && !(typeof o.dim === 'number' && Number.isInteger(o.dim) && o.dim > 0)) return 'dim must be a positive integer';
   if (o.params !== undefined && (o.params === null || typeof o.params !== 'object' || Array.isArray(o.params))) return 'params must be an object';
   if (o.params && typeof o.params === 'object') {
     // `null` is allowed for any knob — it means "unset the code default" (see mergeParams).
@@ -169,6 +176,7 @@ function mergeParams(base: RoleParams | undefined, over: RoleParams | undefined)
 function cloneConfig(c: RoleConfig): RoleConfig {
   const out: RoleConfig = { provider: c.provider, model: c.model };
   if (c.version !== undefined) out.version = c.version;
+  if (c.dim !== undefined) out.dim = c.dim;
   if (c.params) out.params = { ...c.params };
   return out;
 }
@@ -197,10 +205,9 @@ let providers: ProviderRegistry | null = null;
 
 function defaultProviders(): ProviderRegistry {
   if (providers) return providers;
-  const modal = createModalEmbedProvider();
   providers = {
     llm: { anthropic: createAnthropicProvider() },
-    embedding: { modal },
+    embedding: { modal: createModalEmbedProvider(), gemini: createGeminiEmbedProvider() },
   };
   return providers;
 }
@@ -293,7 +300,7 @@ function trackSite(key: RoleKey | null, cfg: RoleConfig, ctx: AiContext): string
  */
 export async function callRole<T>(role: RoleKey | RoleConfig, req: CallRequest, ctx: AiContext = {}): Promise<CallResult<T>> {
   const { key, cfg } = await resolveOne(role, ctx);
-  if (cfg.provider === 'modal') throw providerError('modal', `role '${key ?? cfg.model}' is an embedding role — use embed()`);
+  if (isEmbeddingProvider(cfg.provider)) throw providerError(cfg.provider, `role '${key ?? cfg.model}' is an embedding role — use embed()`);
   const provider = llmFor(cfg.provider, ctx);
   const started = Date.now();
   try {
@@ -328,29 +335,43 @@ export async function callRole<T>(role: RoleKey | RoleConfig, req: CallRequest, 
   }
 }
 
-/** Embed texts OR image_urls through the role's embedding provider (Modal). */
+function isEmbeddingProvider(kind: ProviderKind): boolean {
+  return (EMBEDDING_PROVIDER_KINDS as readonly string[]).includes(kind);
+}
+
+function embedUsageProvider(kind: ProviderKind): 'modal' | 'gemini' {
+  return kind === 'gemini' ? 'gemini' : 'modal';
+}
+
+/** Embed texts OR image_urls through the role's embedding provider. */
 export async function embed(role: RoleKey | RoleConfig, input: EmbedInput, ctx: AiContext = {}): Promise<EmbedResult> {
   const { key, cfg } = await resolveOne(role, ctx);
-  if (cfg.provider !== 'modal') throw providerError(cfg.provider, `role '${key ?? cfg.model}' is not an embedding role (provider=${cfg.provider})`);
+  if (!isEmbeddingProvider(cfg.provider)) throw providerError(cfg.provider, `role '${key ?? cfg.model}' is not an embedding role (provider=${cfg.provider})`);
   const provider = embedderFor(cfg.provider, ctx);
   const started = Date.now();
+  const inputs = (input.texts?.length ?? 0) + (input.image_urls?.length ?? 0);
   try {
     const res = await provider.embed(cfg, input);
     await recordAiUsage({
       area: trackArea(key, ctx),
       callSite: trackSite(key, cfg, ctx),
-      provider: 'modal',
+      provider: embedUsageProvider(cfg.provider),
       model: cfg.model,
       status: 'ok',
       latencyMs: res.latency_ms ?? Date.now() - started,
+      units: inputs,
+      unitKind: input.image_urls?.length ? 'image' : null,
       meta: { vectors: res.vectors?.length ?? 0, dim: res.dim ?? null },
+      // Gemini reports tokens per modality and prices them exactly; Modal
+      // bills container time we cannot see here (null = unknown, never 0).
+      ...(typeof res.cost_usd === 'number' ? { costUsd: res.cost_usd } : {}),
     });
     return res;
   } catch (err) {
     await recordAiUsage({
       area: trackArea(key, ctx),
       callSite: trackSite(key, cfg, ctx),
-      provider: 'modal',
+      provider: embedUsageProvider(cfg.provider),
       model: cfg.model,
       status: 'error',
       error: err instanceof Error ? err.message : String(err),
@@ -360,14 +381,37 @@ export async function embed(role: RoleKey | RoleConfig, input: EmbedInput, ctx: 
   }
 }
 
-/** Dual-tower query embedding for `mkt_cv_search` (SigLIP-2 text 768-d + bge-m3 1024-d). */
+/** One query text → the visual-space (768) and text-space (1024) vectors `mkt_cv_search` takes. */
 export async function embedQuery(text: string, ctx: AiContext = {}): Promise<EmbedQueryResult> {
-  const provider = embedderFor('modal', ctx);
-  if (!provider.embedQuery) throw providerError('modal', 'embedding provider has no embedQuery()');
+  const { cfg } = await resolveOne('embed_text', ctx);
+  const provider = embedderFor(cfg.provider, ctx);
+  if (!provider.embedQuery) throw providerError(cfg.provider, 'embedding provider has no embedQuery()');
+  const started = Date.now();
   try {
-    return await provider.embedQuery(text);
+    const res = await provider.embedQuery(text);
+    await recordAiUsage({
+      area: 'competitors',
+      callSite: 'role:embed_query',
+      provider: embedUsageProvider(cfg.provider),
+      model: cfg.model,
+      status: 'ok',
+      latencyMs: res.latency_ms ?? Date.now() - started,
+      units: 1,
+      unitKind: 'query',
+      ...(typeof res.cost_usd === 'number' ? { costUsd: res.cost_usd } : {}),
+    });
+    return res;
   } catch (err) {
-    throw ensurePrefixed('modal', err, 'embedQuery');
+    await recordAiUsage({
+      area: 'competitors',
+      callSite: 'role:embed_query',
+      provider: embedUsageProvider(cfg.provider),
+      model: cfg.model,
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+      latencyMs: Date.now() - started,
+    });
+    throw ensurePrefixed(cfg.provider, err, 'embedQuery');
   }
 }
 

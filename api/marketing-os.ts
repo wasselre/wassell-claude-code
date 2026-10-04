@@ -3629,7 +3629,7 @@ export default async function handler(req: Request): Promise<Response> {
       /* -------------------------------------------------------- */
       case 'scene_references_suggest': {
         // Phase 4. Query = the scene's structured visual intent + shot text,
-        // embedded by the Modal service, searched with mkt_cv_search (RRF in
+        // embedded by Gemini, searched with mkt_cv_search (RRF in
         // SQL, diversity here). The visual system is OPTIONAL: when it is off,
         // unconfigured or unreachable this returns {unavailable:true} — never
         // a 500 — so the writer keeps working without it.

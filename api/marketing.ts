@@ -1077,14 +1077,14 @@ export default async function handler(req: Request): Promise<Response> {
         }
 
         if (action === 'cv_search') {
-          // Hybrid search: the Modal service embeds the query (image-space +
+          // Hybrid search: Gemini embeds the query (image-space +
           // text vectors), SQL fuses three channels (RRF), and diversity is
           // applied HERE: ≤1 shot per video (unless filters.per_video), ≤3 per
           // organization, duplicate re-uploads collapsed by media checksum,
           // MMR λ 0.7. The visual system is optional — an unreachable embedder
           // answers {unavailable:true}, never a 500.
           //
-          // BROWSE MODE (empty q): no Modal call at all — the v2 RPCs return the
+          // BROWSE MODE (empty q): no embedding call at all — the v2 RPCs return the
           // newest shots/frames for NULL vectors + '' text, and diversity still
           // applies so the grid is not one org's latest video.
           const q = str(body.q) ?? '';

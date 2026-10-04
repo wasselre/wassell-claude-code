@@ -969,9 +969,25 @@ rule for telling them apart is what question each answers:
   creative as a whole), `mkt_transcripts`. Runs on EVERYTHING collected.
 - **Visual Intelligence (CV)** — *"what does this footage look like, shot by shot?"*
   Queue `mkt_cv_jobs`, lanes `cvProcessPollLoop` + `cvAnalyzePollLoop`, gated by
-  THREE independent switches: `CV_LANES_ENABLED` (env), `MODAL_CV_URL` present
+  THREE independent switches: `CV_LANES_ENABLED` (env), `GEMINI_API_KEY` present
   (env), and `cv.enabled` in `mkt_settings` (DB). Tables: `mkt_cv_videos`,
   `mkt_cv_shots`, `mkt_cv_frames`. Opt-in PER VIDEO.
+  **Since 2026-10-04 it runs on Gemini, not Modal** (`worker/src/marketing/cv/gemini/`):
+  ffmpeg `scdet` finds exact hard cuts, ONE `gemini-3.8-flash` call per video
+  returns every shot (on-screen text, bilingual description, the drawer's
+  creative fields), and `gemini-embedding-2` — one multimodal model — makes the
+  768-d visual and 1024-d text vectors for shots, frames, search queries, post
+  embeddings and the creative intent vector. A blind 20-video bake-off ranked
+  the Modal OCR worst on all 20 (174 invented lines vs Gemini's 4). Hard rules:
+  (a) **never mix embedding models in one column** — vectors from different
+  models are not comparable; a model change clears the column and re-embeds
+  (the switch migration `2026-10-04_02_cv_gemini.sql` did exactly that);
+  (b) Gemini's shot times are snapped/clamped by `normalizeShots` (it overran
+  the video end on 2 of 20 test videos) — never store raw model times;
+  (c) a 429 with a `*PerDay*` quota is DEFERRED (`mkt_cv_job_defer`, attempt
+  given back, machine pauses until Google's `retryDelay`), never retried in a
+  loop; a `*FreeTier*` quota id means the key's Google project is not on the
+  paid tier — a billing fix, not a code fix.
 
 **Hard rules — never violate:**
 
@@ -995,8 +1011,9 @@ rule for telling them apart is what question each answers:
 5. **Each system has its own kill switch and they are not linked.** Turning off
    collection does not stop CV, and turning off CV does not stop collection. If
    you want both off, flip both.
-6. **CV admits at most `cv.max_videos_per_day` NEW videos per day** (10, set
-   2026-09-15; `mkt_settings`, Riyadh day). The gate lives in
+6. **CV admits at most `cv.max_videos_per_day` NEW videos per day** (500 since
+   the Gemini switch 2026-10-04, ≈ $15/day at ~$0.03 per video; was 10 on
+   Modal, set 2026-09-15; `mkt_settings`, Riyadh day). The gate lives in
    `mkt_cv_job_claim_next`, NOT in `checkBudget()` — deliberately. `checkBudget`
    raises `budget_exceeded:`, which `mkt_cv_job_fail` treats as TERMINAL, so
    putting a rate limit there would permanently fail the 11th video of the day

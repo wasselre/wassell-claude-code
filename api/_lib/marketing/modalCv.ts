@@ -1,13 +1,17 @@
 /**
  * Competitor Visual Intelligence — the two pieces the Edge endpoints share:
  *
- *   1. `embedQuery` — the Modal `wassel-video-cv` service's `/embed_query`
- *      (SigLIP-2 text tower → 768-d image-space vector + bge-m3 → 1024-d text
- *      vector). Env: MODAL_CV_URL + MODAL_CV_TOKEN (header `x-wassel-token`).
- *      Returns null — with a console.error — when the env is absent, the call
- *      times out or the service answers anything but a well-formed 200. Callers
+ *   1. `embedQuery` — one Gemini `gemini-embedding-2` request that embeds the
+ *      query twice: 768-d (the visual space the shot/frame image vectors live
+ *      in — the model is multimodal, so text finds pictures) and 1024-d (the
+ *      text space of the shots' words). Replaced Modal's SigLIP-2 + bge-m3
+ *      towers on 2026-10-04; the stored vectors were rebuilt with the same
+ *      model, so query and library match. Env: GEMINI_API_KEY.
+ *      Returns null — with a console.error — when the key is absent, the call
+ *      times out or the API answers anything but a well-formed 200. Callers
  *      MUST translate null into a clean `{unavailable:true}` reply, never a 500:
  *      the visual system is optional by design (the writer works without it).
+ *      (The file keeps its old name so the two importers do not churn.)
  *
  *   2. `diversify` — the per-video / per-organization caps + MMR-lite re-ranking
  *      the contract puts in the API layer (the SQL RPC only fuses channels).
@@ -23,72 +27,73 @@ export interface QueryEmbedding {
 }
 
 const EMBED_TIMEOUT_MS = 8_000;
+const EMBED_MODEL = 'gemini-embedding-2';
+// $0.20 per 1M text tokens — https://ai.google.dev/gemini-api/docs/pricing (read 2026-10-04).
+const TEXT_USD_PER_M = 0.2;
 
 function isNumberArray(v: unknown, dim: number): v is number[] {
   return Array.isArray(v) && v.length === dim && v.every((x) => typeof x === 'number' && Number.isFinite(x));
 }
 
-/** True when both Modal env vars are present (the cheap pre-check before any call). */
-export function modalConfigured(): boolean {
-  return Boolean(process.env.MODAL_CV_URL && process.env.MODAL_CV_TOKEN);
+/** True when the Gemini key is present (the cheap pre-check before any call). */
+export function visualSearchConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY);
 }
 
 export async function embedQuery(text: string): Promise<QueryEmbedding | null> {
-  const base = process.env.MODAL_CV_URL;
-  const token = process.env.MODAL_CV_TOKEN;
-  if (!base || !token) {
-    console.error('[modal-cv] MODAL_CV_URL / MODAL_CV_TOKEN not set — visual search unavailable');
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    console.error('[cv-search] GEMINI_API_KEY not set — visual search unavailable');
     return null;
   }
-  // Modal bills GPU seconds, which this endpoint does not report, so the row
-  // carries one `query` unit and no cost. Recorded anyway: this is a live
-  // Vercel -> Modal path that runs on every visual search, independently of the
-  // `cv.enabled` switch that gates the worker's lanes, and a spend nobody can
-  // see is exactly what the ledger exists to prevent.
   const started = Date.now();
-  const bill = (status: 'ok' | 'error', error?: string) =>
+  const bill = (status: 'ok' | 'error', inputTokens: number, error?: string) =>
     recordAiUsage({
       area: 'competitors',
       callSite: 'api/_lib/marketing/modalCv',
       operation: 'embed_query',
-      provider: 'modal',
-      model: 'modal-cv-embed-query',
+      provider: 'gemini',
+      model: EMBED_MODEL,
       status,
       error: error ?? null,
+      inputTokens,
       units: 1,
       unitKind: 'query',
       latencyMs: Date.now() - started,
+      ...(status === 'ok' ? { costUsd: Math.round((inputTokens / 1e6) * TEXT_USD_PER_M * 1e8) / 1e8 } : {}),
     });
   try {
-    const res = await fetch(`${base.replace(/\/$/, '')}/embed_query`, {
+    const req = (dim: number) => ({ model: `models/${EMBED_MODEL}`, content: { parts: [{ text }] }, outputDimensionality: dim });
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:batchEmbedContents`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-wassel-token': token },
-      body: JSON.stringify({ text }),
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({ requests: [req(768), req(1024)] }),
       signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
     });
     if (!res.ok) {
       const body = (await res.text()).slice(0, 300);
-      console.error('[modal-cv] embed_query failed', res.status, body);
-      await bill('error', `HTTP ${res.status}: ${body}`);
+      console.error('[cv-search] embed_query failed', res.status, body);
+      await bill('error', 0, `HTTP ${res.status}: ${body}`);
       return null;
     }
-    const json = (await res.json()) as { image_vec?: unknown; text_vec?: unknown };
-    if (!isNumberArray(json.image_vec, 768) || !isNumberArray(json.text_vec, 1024)) {
-      console.error('[modal-cv] embed_query returned malformed vectors',
-        Array.isArray(json.image_vec) ? json.image_vec.length : typeof json.image_vec,
-        Array.isArray(json.text_vec) ? json.text_vec.length : typeof json.text_vec);
-      // The GPU time was still spent, so this is billed as an error, not skipped.
-      await bill('error', 'malformed vectors');
+    const json = (await res.json()) as { embeddings?: Array<{ values?: unknown }>; usageMetadata?: { promptTokenCount?: number } };
+    const image = json.embeddings?.[0]?.values;
+    const textVec = json.embeddings?.[1]?.values;
+    const tokens = Number(json.usageMetadata?.promptTokenCount ?? 0) || 0;
+    if (!isNumberArray(image, 768) || !isNumberArray(textVec, 1024)) {
+      console.error('[cv-search] embed_query returned malformed vectors',
+        Array.isArray(image) ? image.length : typeof image, Array.isArray(textVec) ? textVec.length : typeof textVec);
+      await bill('error', tokens, 'malformed vectors');
       return null;
     }
-    await bill('ok');
-    return { image_vec: json.image_vec, text_vec: json.text_vec };
+    await bill('ok', tokens);
+    return { image_vec: image, text_vec: textVec };
   } catch (e) {
-    // Network / timeout / JSON parse — all mean "the visual system is not
-    // reachable right now". Logged, then degraded to unavailable by the caller.
+    // Network / timeout / JSON parse — all mean "visual search is not reachable
+    // right now". Logged, then degraded to unavailable by the caller.
     const msg = e instanceof Error ? e.message : String(e);
-    console.error('[modal-cv] embed_query threw', msg);
-    await bill('error', msg);
+    console.error('[cv-search] embed_query threw', msg);
+    await bill('error', 0, msg);
     return null;
   }
 }

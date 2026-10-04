@@ -189,7 +189,7 @@ export interface CallRoleResult<T> {
 }
 
 export interface EmbedInput { texts?: string[]; image_urls?: string[] }
-export interface EmbedResult { vectors: number[][]; model: string; version: string | null; dim: number }
+export interface EmbedResult { vectors: number[][]; model: string; version: string | null; dim: number; /** USD when the provider prices it (Gemini); null/absent = unknown. */ cost_usd?: number | null; provider?: string }
 
 export interface CvAi {
   callRole<T>(role: RoleKey, input: CallRoleInput): Promise<CallRoleResult<T>>;
@@ -274,6 +274,10 @@ export interface ShotAnalysis extends Omit<ShotAnalyzerOutput, 'tags'> {
   rejected_tags?: string[];
   /** Set on micro shots that were summarised from neighbours without an LLM call. */
   micro?: boolean;
+  /** Gemini pipeline (2026-10-04): real camera footage, CGI render, mixed, or pure graphic. */
+  footage?: 'real' | 'cgi' | 'mixed' | 'graphic';
+  /** Gemini pipeline: the camera never cut — the take moved into a new place. */
+  continuous_take?: boolean;
 }
 
 export interface VideoStructure {
