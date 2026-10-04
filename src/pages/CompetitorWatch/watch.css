@@ -397,3 +397,29 @@
 .cw-root .cw-softchip{display:inline-flex; align-items:center; gap:6px; font-size:12px; border:1px solid var(--cw-line); background:var(--cw-card2); border-radius:20px; padding:3px 10px; color:var(--cw-ink2)}
 .cw-root .cw-statline{display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:12.5px; padding:5px 0; border-bottom:1px solid var(--cw-line2)}
 .cw-root .cw-statline:last-of-type{border-bottom:0}
+
+/* performance (2026-10-04) */
+.cw-root .cw-sort{border:1px solid var(--cw-line); background:var(--cw-card); color:var(--cw-ink); border-radius:8px; padding:6px 10px; font-size:12.5px; font-family:inherit; margin-inline-start:auto}
+.cw-root .cw-vs{font-size:11px; font-weight:600; border-radius:20px; padding:1px 8px; color:var(--cw-ink2); background:color-mix(in srgb, var(--cw-ink3) 14%, transparent); font-variant-numeric:tabular-nums; white-space:nowrap}
+.cw-root .cw-vs.hi{color:var(--cw-ok); background:color-mix(in srgb, var(--cw-ok) 15%, transparent)}
+.cw-root .cw-vs.lo{color:var(--cw-bad); background:color-mix(in srgb, var(--cw-bad) 12%, transparent)}
+
+/* company page (2026-10-04) */
+.cw-root .cw-copagebtn{margin-top:4px; background:none; border:none; padding:0; color:var(--cw-copper2); font-size:11.5px; cursor:pointer; font-family:inherit}
+.cw-root .cw-copagebtn:hover{text-decoration:underline}
+.cw-root .cw-cohead{display:flex; align-items:flex-start; gap:14px; margin-bottom:14px; flex-wrap:wrap}
+.cw-root .cw-coh2{font-family:'Fraunces','Amiri',Georgia,serif; font-size:26px; margin:0 0 2px; color:var(--cw-ink)}
+.cw-root .cw-tiles4{grid-template-columns:repeat(4,1fr)}
+.cw-root .cw-cogrid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+.cw-root .cw-cogrid > .cw-panel{margin-bottom:14px}
+.cw-root .cw-topgrid{display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:12px}
+.cw-root .cw-toppost{display:flex; gap:10px; border:1px solid var(--cw-line2); border-radius:12px; padding:8px; color:inherit; text-decoration:none; background:var(--cw-card2)}
+.cw-root .cw-toppost:hover{border-color:var(--cw-line)}
+.cw-root .cw-topthumb{position:relative; flex:0 0 76px; height:96px; border-radius:8px; overflow:hidden; background:var(--cw-line2)}
+.cw-root .cw-topthumb img{width:100%; height:100%; object-fit:cover}
+.cw-root .cw-topbody{min-width:0; display:flex; flex-direction:column; gap:4px}
+.cw-root .cw-topsum{font-size:12.5px; color:var(--cw-ink); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+@media (max-width:900px){
+  .cw-root .cw-tiles4{grid-template-columns:1fr 1fr}
+  .cw-root .cw-cogrid{grid-template-columns:1fr}
+}

@@ -12,6 +12,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { fetchCompanyRoster, type CompanyRoster, type CompanyRow, type CompanyAccount, type PurposeKey } from '@/lib/competitorWatch/client';
 import { useSurface, num, fmtDateTime, daysAgo } from './surfaceData';
+import CompanyDetail from './CompanyDetail';
 
 type TypeFilter = 'all' | 'developer' | 'marketer';
 type SortKey = 'active' | 'posts' | 'recent' | 'name';
@@ -93,6 +94,8 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
   const [type, setType] = useState<TypeFilter>('all');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortKey>('active');
+  /** The company whose full page is open (null = the list). */
+  const [pageId, setPageId] = useState<string | null>(null);
 
   const rows = useMemo(() => {
     const all = data?.companies ?? [];
@@ -118,6 +121,8 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
   if (loading) return <div className="cw-count">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>;
   if (error) return <div className="cw-error">{isAr ? 'تعذّر التحميل: ' : 'Failed to load: '}{error}</div>;
   if (!data) return null;
+
+  if (pageId) return <CompanyDetail key={pageId} orgId={pageId} isAr={isAr} onBack={() => setPageId(null)} />;
 
   const counts = {
     all: data.companies.length,
@@ -178,6 +183,9 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
                       <td dir="rtl">
                         <div className="cw-coname">{co.name ?? co.name_en ?? '—'}</div>
                         {co.name_en && co.name && <div className="cw-mutedmono" dir="ltr">{co.name_en}</div>}
+                        <button type="button" className="cw-copagebtn" onClick={(e) => { e.stopPropagation(); setPageId(co.id); }}>
+                          {isAr ? 'صفحة الشركة ←' : 'Company page →'}
+                        </button>
                       </td>
                       <td><span className={`cw-typebadge ${co.org_type === 'developer' ? 'dev' : 'mkt'}`}>{typeLabel(co.org_type, isAr)}</span></td>
                       <td>

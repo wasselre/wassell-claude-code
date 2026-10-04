@@ -45,7 +45,23 @@ export interface LibraryRow {
   unknown_projects: string[] | null;                // projects the post names that are not in our catalog / candidates
   is_general_branding: boolean;
   files_registered: number;                         // how many of the post's media are registered in Files
+  // performance (2026-10-04)
+  views: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null;
+  /** The reading nearest 7 / 30 days after publishing (null until it exists). */
+  at_7d: AgeReading | null;
+  at_30d: AgeReading | null;
+  /** This account's typical post over the last 12 months (null when too few posts carry the number). */
+  usual_views: number | null;
+  usual_likes: number | null;
+  /** This post's views (else likes) as a multiple of the account's usual. */
+  vs_usual: number | null;
+  /** A guess: views far above usual with almost no likes — the shape of a paid ad. */
+  likely_paid: boolean | null;
+  account_handle: string | null;
 }
+
+export interface AgeReading { views?: number; likes?: number; comments?: number; shares?: number; saves?: number; captured_at?: string }
+export type LibrarySort = 'recent' | 'views' | 'likes' | 'vs_usual';
 
 export interface LibraryResult {
   total: number;
@@ -62,6 +78,7 @@ export interface LibraryFilters {
   q?: string | null;
   limit?: number;
   offset?: number;
+  sort?: LibrarySort;
 }
 
 export async function fetchContentLibrary(f: LibraryFilters = {}): Promise<LibraryResult> {
@@ -155,6 +172,34 @@ export interface CompanyRow {
   account_list: CompanyAccount[];
 }
 export interface CompanyRoster { companies: CompanyRow[]; }
+
+export interface ProfileAccount {
+  id: string; platform: string; handle: string | null; display_name: string | null; profile_url: string | null;
+  followers: number | null; followers_30d_ago: number | null; collection_enabled: boolean; cadence: string | null;
+  history_done_at: string | null; last_synced_at: string | null;
+  posts_total: number; posts_90d: number; last_post_at: string | null;
+  usual_views: number | null; usual_likes: number | null;
+}
+export interface ProfileTopPost {
+  id: string; platform: string; format: string | null; content_type: string | null; published_at: string | null; post_url: string | null;
+  views: number | null; likes: number | null; comments: number | null; summary: string | null; project_name: string | null;
+  vs_usual: number | null; likely_paid: boolean | null; thumb_url: string | null;
+}
+export interface CompanyProfile {
+  organization: { id: string; name_ar: string | null; name_en: string | null; org_type: string | null; developer_record_id: string | null; website: string | null; hq_city: string | null; status: string | null };
+  totals: { posts: number; posts_12m: number; posts_30d: number; first_post_at: string | null; last_post_at: string | null; avg_views_12m: number | null; avg_likes_12m: number | null };
+  accounts: ProfileAccount[];
+  weeks: Array<{ week: string; posts: number }>;
+  months: Array<{ month: string; posts: number; avg_views: number | null; avg_likes: number | null }>;
+  top_posts: ProfileTopPost[];
+  mix: { content_type: Record<string, number> | null; format: Record<string, number> | null; platform: Record<string, number> | null };
+  projects: Array<{ project_id: string; name: string | null; posts: number; last_post_at: string | null; avg_views: number | null; avg_likes: number | null }>;
+  offers: Array<{ id: string; published_at: string | null; offer: string; price: string | null; payment_plan: string | null; project_name: string | null }>;
+  messages: Array<{ id: string; published_at: string | null; message: string; content_type: string | null }>;
+  unknown_projects: Array<{ name: string; posts: number }>;
+  visual_style: Array<{ tag: string; shots: number }>;
+}
+export const fetchCompanyProfile = (organization_id: string) => callAction<CompanyProfile>('company_profile', 'profile', { organization_id });
 
 export const fetchAgentActivity = () => callAction<AgentActivity>('agent_activity', 'activity');
 export const fetchPipelineHealth = () => callAction<PipelineHealth>('pipeline_health', 'pipeline');

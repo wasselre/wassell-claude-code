@@ -4,7 +4,7 @@
  * post, organised by purpose shelf, filterable and searchable.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fetchContentLibrary, type LibraryResult, type LibraryRow, fetchDesignRead, setAttribution } from '@/lib/competitorWatch/client';
+import { fetchContentLibrary, type AgeReading, type LibraryResult, type LibraryRow, type LibrarySort, fetchDesignRead, setAttribution } from '@/lib/competitorWatch/client';
 import { setDesignExample } from '@/lib/marketingOS/creativeClient';
 import type { PostRead, SlideRead, VisualDesignReadRow } from '@/lib/creative/contracts';
 import { useAppStore } from '@/stores/appStore';
@@ -48,7 +48,15 @@ function shelfLabel(key: string, isAr: boolean): string {
   return s ? (isAr ? s.ar : s.en) : key;
 }
 
-export default function ContentLibrary({ isAr }: { isAr: boolean }) {
+const SORTS: Array<{ key: LibrarySort; ar: string; en: string }> = [
+  { key: 'recent', ar: 'الأحدث', en: 'Newest' },
+  { key: 'views', ar: 'الأكثر مشاهدة', en: 'Most viewed' },
+  { key: 'likes', ar: 'الأكثر إعجابًا', en: 'Most liked' },
+  { key: 'vs_usual', ar: 'الأعلى مقارنةً بالمعتاد', en: 'Best vs usual' },
+];
+
+/** `presetOrg` opens the library already filtered to one company (company page). */
+export default function ContentLibrary({ isAr, presetOrg }: { isAr: boolean; presetOrg?: { id: string; name: string } }) {
   const { currentUserId, users, profiles, previewProfileId, models, records } = useAppStore();
   // Project choices for the «تصحيح المشروع» picker — the live All Projects
   // catalog from the store (id + name), no extra fetch.
@@ -72,7 +80,8 @@ export default function ContentLibrary({ isAr }: { isAr: boolean }) {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [shelf, setShelf] = useState<string | null>(null);
-  const [org, setOrg] = useState<{ id: string; name: string } | null>(null);
+  const [org, setOrg] = useState<{ id: string; name: string } | null>(presetOrg ?? null);
+  const [sort, setSort] = useState<LibrarySort>('recent');
   const [format, setFormat] = useState<string | null>(null);
   const [platform, setPlatform] = useState<string | null>(null);
   const [hasOffer, setHasOffer] = useState(false);
@@ -93,12 +102,12 @@ export default function ContentLibrary({ isAr }: { isAr: boolean }) {
     setError(null);
     fetchContentLibrary({
       shelf, org: org?.id ?? null, format, platform,
-      has_offer: hasOffer ? true : null, q: debouncedQ || null, limit: 40,
+      has_offer: hasOffer ? true : null, q: debouncedQ || null, limit: 40, sort,
     })
       .then((r) => { if (id === reqRef.current) setData(r); })
       .catch((e) => { if (id === reqRef.current) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (id === reqRef.current) setLoading(false); });
-  }, [shelf, org, format, platform, hasOffer, debouncedQ]);
+  }, [shelf, org, format, platform, hasOffer, debouncedQ, sort]);
 
   const shelfCounts = data?.shelves ?? {};
   const allCount = useMemo(
@@ -161,6 +170,14 @@ export default function ContentLibrary({ isAr }: { isAr: boolean }) {
           <button type="button" className={`cw-chip${hasOffer ? ' on' : ''}`} onClick={() => setHasOffer((v) => !v)}>
             {isAr ? 'فيه عرض' : 'Has an offer'}
           </button>
+          <select
+            className="cw-sort"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as LibrarySort)}
+            aria-label={isAr ? 'الترتيب' : 'Sort'}
+          >
+            {SORTS.map((o) => <option key={o.key} value={o.key}>{isAr ? o.ar : o.en}</option>)}
+          </select>
         </div>
 
         {hasActiveFilter && (
@@ -334,8 +351,6 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPa
   if (row.district) facts.push({ k: isAr ? 'الحي' : 'District', v: row.district });
   if (row.ctas && row.ctas.length && row.ctas[0]) facts.push({ k: 'CTA', v: row.ctas[0] });
 
-  const likes = row.engagement?.likes;
-  const views = row.engagement?.views;
   const canExpand = Boolean(
     (row.caption && row.caption.length > 0)
     || (row.selling_points && row.selling_points.length)
@@ -417,8 +432,7 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPa
             </div>
           )}
           <div className="cw-eng">
-            {typeof likes === 'number' && <span className="cw-mono">♥ {likes.toLocaleString()}</span>}
-            {typeof views === 'number' && <span className="cw-mono">▷ {views.toLocaleString()}</span>}
+            <PostNumbers row={row} isAr={isAr} />
             {row.published_at && <span className="cw-mono">{fmtDate(row.published_at, isAr)}</span>}
             {row.has_transcript && <span className="cw-tx">{isAr ? 'مُفرّغ' : 'transcript'}</span>}
             {row.files_registered > 0 && (
@@ -598,5 +612,44 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPa
         </div>
       )}
     </div>
+  );
+}
+
+/** «▷ 12,400 · ♥ 310 · 💬 12» plus how it compares with this account's usual post. */
+export function PostNumbers({ row, isAr }: { row: Pick<LibraryRow, 'views' | 'likes' | 'comments' | 'vs_usual' | 'likely_paid' | 'at_7d' | 'at_30d' | 'usual_views' | 'usual_likes'>; isAr: boolean }) {
+  const n = (v: number | null | undefined) => (typeof v === 'number' ? Math.round(v).toLocaleString() : null);
+  const age = (r: AgeReading | null | undefined) => {
+    if (!r) return null;
+    const bits = [typeof r.views === 'number' ? `▷ ${n(r.views)}` : null, typeof r.likes === 'number' ? `♥ ${n(r.likes)}` : null].filter(Boolean);
+    return bits.length ? bits.join(' ') : null;
+  };
+  const d7 = age(row.at_7d);
+  const d30 = age(row.at_30d);
+  const usualTitle = isAr
+    ? `المعتاد لهذا الحساب: ${n(row.usual_views) ?? '—'} مشاهدة · ${n(row.usual_likes) ?? '—'} إعجاب (وسيط آخر 12 شهرًا)`
+    : `This account's usual post: ${n(row.usual_views) ?? '—'} views · ${n(row.usual_likes) ?? '—'} likes (12-month median)`;
+  return (
+    <>
+      {n(row.views) && <span className="cw-mono" title={isAr ? 'المشاهدات' : 'Views'}>▷ {n(row.views)}</span>}
+      {n(row.likes) && <span className="cw-mono" title={isAr ? 'الإعجابات' : 'Likes'}>♥ {n(row.likes)}</span>}
+      {n(row.comments) && <span className="cw-mono" title={isAr ? 'التعليقات' : 'Comments'}>💬 {n(row.comments)}</span>}
+      {typeof row.vs_usual === 'number' && (
+        <span className={`cw-vs${row.vs_usual >= 2 ? ' hi' : row.vs_usual < 0.5 ? ' lo' : ''}`} title={usualTitle}>
+          {isAr ? `${row.vs_usual.toLocaleString()}× المعتاد` : `${row.vs_usual.toLocaleString()}× usual`}
+        </span>
+      )}
+      {row.likely_paid && (
+        <span className="cw-tx" style={{ color: 'var(--cw-warn)' }} title={isAr ? 'تخمين: مشاهدات أعلى بكثير من المعتاد مع إعجابات شبه معدومة — شكل الإعلان المموّل' : 'A guess: views far above usual with almost no likes — the shape of a paid ad'}>
+          {isAr ? 'إعلان مموّل غالبًا' : 'likely paid ad'}
+        </span>
+      )}
+      {(d7 || d30) && (
+        <span className="cw-tx" title={isAr ? 'القراءة بعد 7 و30 يومًا من النشر' : 'Reading 7 and 30 days after publishing'}>
+          {d7 && <>{isAr ? '٧ أيام: ' : '7d: '}{d7}</>}
+          {d7 && d30 && ' · '}
+          {d30 && <>{isAr ? '٣٠ يومًا: ' : '30d: '}{d30}</>}
+        </span>
+      )}
+    </>
   );
 }

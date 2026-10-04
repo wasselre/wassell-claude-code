@@ -90,6 +90,8 @@ interface Body {
   shelf?: string;
   format?: string;
   has_offer?: boolean;
+  // content_library ordering (2026-10-04): recent | views | likes | vs_usual
+  sort?: string;
   q?: string;
   offset?: number;
   // attribution confirm
@@ -471,9 +473,25 @@ export default async function handler(req: Request): Promise<Response> {
           p_q: str(body.q) ?? null,
           p_limit: typeof body.limit === 'number' ? Math.min(100, Math.max(1, body.limit)) : 40,
           p_offset: typeof body.offset === 'number' ? Math.max(0, body.offset) : 0,
+          p_sort: ['recent', 'views', 'likes', 'vs_usual'].includes(str(body.sort) ?? '') ? str(body.sort) : 'recent',
         });
         if (error) return jsonError(500, error.message);
         return jsonOk({ library: data });
+      }
+
+      case 'company_profile': {
+        // One company, everything (2026-10-04): accounts + followers, posting
+        // rhythm, performance by month, top posts against the account's own
+        // usual, content mix, projects, offers, messages, catalog gaps, visual
+        // style. Read-only composite, service client; the route gates access.
+        const orgId = str(body.organization_id);
+        if (!orgId) return jsonError(400, 'organization_id required');
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { data, error } = await svc.rpc('mkt_company_profile', { p_org: orgId });
+        if (error) return jsonError(500, error.message);
+        if (!data) return jsonError(404, 'company not found');
+        return jsonOk({ profile: data });
       }
 
       case 'agent_activity':
