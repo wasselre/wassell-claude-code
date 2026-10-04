@@ -620,15 +620,24 @@ export default function MonthPage() {
       </div>
       <div className="mth-row">
         <span className="tag">
-          {data?.state === 'confirmed' || report?.state === 'confirmed'
-            ? (isAr ? 'معتمد — يعمل' : 'Confirmed — running')
-            : (isAr ? 'مسودة — لم تُعتمد' : 'Draft — not confirmed')}
+          {/* A month inside another month's stretched plan has no campaigns of
+              its own, so its own state reads "draft" — but its work IS the
+              owner's confirmed plan (2026-10-04: October said «مسودة — لم تُعتمد»
+              while its approved posts went out). */}
+          {data?.covered_by
+            ? (isAr ? `معتمد — ضمن خطة ${monthLabel(data.covered_by, true)}` : `Confirmed — part of ${monthLabel(data.covered_by, false)}'s plan`)
+            : data?.state === 'confirmed' || report?.state === 'confirmed'
+              ? (isAr ? 'معتمد — يعمل' : 'Confirmed — running')
+              : (isAr ? 'مسودة — لم تُعتمد' : 'Draft — not confirmed')}
         </span>
         {data && (
           <span className="mth-tiny">
-            {isAr
-              ? `اليوم ${monthDate(data.today, true)} · موعد اختيار الشهر ${monthDate(data.geometry.nextMonthReminderOn, true)}`
-              : `Today ${monthDate(data.today, false)} · month-choice date ${monthDate(data.geometry.nextMonthReminderOn, false)}`}
+            {data.covered_by
+              // No projects are chosen for a covered month, so it has no month-choice date.
+              ? (isAr ? `اليوم ${monthDate(data.today, true)}` : `Today ${monthDate(data.today, false)}`)
+              : isAr
+                ? `اليوم ${monthDate(data.today, true)} · موعد اختيار الشهر ${monthDate(data.geometry.nextMonthReminderOn, true)}`
+                : `Today ${monthDate(data.today, false)} · month-choice date ${monthDate(data.geometry.nextMonthReminderOn, false)}`}
           </span>
         )}
       </div>
