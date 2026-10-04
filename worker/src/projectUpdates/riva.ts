@@ -141,6 +141,40 @@ export function visibleText(html: string): string {
   ).replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * The facts a broker shares with a client, as the portal itself composes them
+ * (`projectShareMessage`): «📍 الرياض - الرمال», «المطوّر: أكنان», «نوع المشروع:
+ * شقق», the public page URL. Plus the ad licence and the description paragraph.
+ * This is what a NEW project is created from.
+ */
+export function rivaProjectMeta(html: string): Record<string, unknown> {
+  const meta: Record<string, unknown> = {};
+  const m = html.match(/projectShareMessage:\s*'((?:[^'\\]|\\.)*)'/);
+  if (m) {
+    const msg = jsUnescape(htmlUnescape(m[1]!));
+    const place = msg.match(/📍\s*([^\n]+)/)?.[1]?.trim();
+    if (place) {
+      const [city, district] = place.split(/\s+-\s+/);
+      if (city) meta.city = city.trim();
+      if (district) meta.district = district.trim();
+    }
+    const dev = msg.match(/المطو[ّ]?ر:\s*([^\n]+)/)?.[1]?.trim();
+    if (dev) meta.developer = dev;
+    const type = msg.match(/نوع المشروع:\s*([^\n]+)/)?.[1]?.trim();
+    if (type) meta.project_type_text = type;
+    const url = msg.match(/https?:\/\/riva\.sa\/project\/[^\s'"]+/)?.[0];
+    if (url) meta.public_url = url;
+    const from = msg.match(/تبدأ من\s*([\d,٬]+)/)?.[1];
+    if (from) meta.price_from = num(from);
+  }
+  const text = visibleText(html);
+  const lic = toAsciiDigits(text).match(/رخصة إعلان:\s*(\d{6,})/)?.[1];
+  if (lic) meta.ad_license = lic;
+  const desc = text.match(/من قيمة كل وحدة مباعة\s+(.{40,1800}?)(?:\s+(?:الوحدات|عرض \d|Showing)\b|$)/)?.[1];
+  if (desc) meta.description = desc.trim();
+  return meta;
+}
+
 export interface RivaCredentials {
   email: string;
   password: string;
@@ -212,6 +246,7 @@ export class RivaPortal {
     const units = new Map<string, SourceUnit>();
     let total: number | null = null;
     let name: string | null = null;
+    let meta: Record<string, unknown> = {};
     for (let round = 0; round < rounds; round++) {
       const before = units.size;
       const maxPage = total != null ? Math.ceil(total / 12) + 1 : 40;
@@ -221,6 +256,7 @@ export class RivaPortal {
         if (name == null) {
           name = extractProjectName(html);
           this.lastPageExcerpt = visibleText(html).slice(0, 2500);
+          meta = rivaProjectMeta(html);
         }
         const jsons = extractUnitJsons(html);
         if (jsons.length === 0) break;
@@ -240,6 +276,7 @@ export class RivaPortal {
       url: `${ORIGIN}/broker/projects/${id}`,
       units: [...units.values()],
       declaredTotal: total,
+      meta,
     };
   }
 }

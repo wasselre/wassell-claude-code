@@ -31,6 +31,7 @@ import {
   UNITS_MODEL_ID,
 } from './projectUpdates/apply.js';
 import { brakeReason, normUnitKey, reconcile } from './projectUpdates/reconcile.js';
+import { createProjectFromSource } from './projectUpdates/newProject.js';
 import { RivaPortal, rivaProjectIdFromUrl } from './projectUpdates/riva.js';
 import type { CrmUnit, ReconcilePolicy, ReconcileResult } from './projectUpdates/types.js';
 
@@ -232,6 +233,15 @@ async function runRiva(
   // Read each unregistered project's own page: its name (the card text runs
   // the name, city, brand and commission together) and its units.
   const newProjects: Array<Record<string, unknown>> = [];
+  let createdProjects = 0;
+  // A registered project of this portal — new ones copy its marketer, city,
+  // classification (the "house" fields every Riva project shares).
+  let siblingProject: Record<string, unknown> | null = null;
+  for (const r of registry) {
+    const pid = typeof r.data.project === 'string' ? r.data.project : null;
+    const rec = pid ? await loadRecord(supabase, pid) : null;
+    if (rec && rec.data.location && rec.data.marketer) { siblingProject = rec.data; break; }
+  }
   for (const p of listed.filter((x) => !knownIds.has(x.id))) {
     const item: Record<string, unknown> = { portal_id: p.id, card_text: p.name };
     try {
@@ -251,8 +261,24 @@ async function runRiva(
         name, units: src.units.length, declared_total: src.declaredTotal,
         available: src.units.filter((u) => u.status === 'available').length,
         crm_match: exact, likely_matches: likely.slice(0, 5),
-        page_excerpt: portal.lastPageExcerpt,
+        meta: src.meta ?? {},
       });
+      // Create it only when nothing in the CRM could already be it: an exact
+      // or likely name match is reported for a human, never duplicated.
+      if (!exact && likely.length === 0 && src.units.length > 0 && src.name) {
+        if (run.dry_run) {
+          item.would_create = true;
+        } else {
+          const created = await createProjectFromSource(supabase, {
+            runId: run.id, src: { ...src, name },
+            sourceType: 'riva_broker', sourceLabel: 'بوابة وسطاء ريفا', sourceUrl: src.url,
+            sibling: siblingProject, today, updateFrequency: 'weekly',
+          });
+          item.created = { project_id: created.projectId, code: created.code, units: created.units.created, plans: created.units.plans, failures: created.units.failures, notes: created.notes };
+          createdProjects++;
+          totalChanges += 1 + created.units.created;
+        }
+      }
     } catch (err) {
       item.error = (err as Error).message;
     }
@@ -266,14 +292,14 @@ async function runRiva(
     parse_errors: portal.parseErrors,
     portal_projects: listed.length,
     registered: registry.length,
-    applied, held, failed, total_changes: totalChanges,
+    applied, held, failed, created_projects: createdProjects, total_changes: totalChanges,
     new_projects: newProjects,
     projects,
   };
   let outcome: RunResult['outcome'];
   if (run.dry_run) outcome = 'dry_run';
   else if (held > 0 || failed > 0) outcome = applied > 0 ? 'partial' : (held > 0 ? 'held' : 'partial');
-  else outcome = totalChanges > 0 ? 'applied' : 'no_change';
+  else outcome = totalChanges > 0 || createdProjects > 0 ? 'applied' : 'no_change';
   return { outcome, summary };
 }
 

@@ -205,3 +205,24 @@ describe('visibleText', () => {
     expect(visibleText('<head><title>x</title></head><h1>أكنان 24</h1><script>var a=1</script><p>حي الرمال</p>')).toBe('أكنان 24 حي الرمال');
   });
 });
+
+describe('rivaProjectMeta — what a new project is created from', () => {
+  it('reads place / developer / type / url from the share message, licence + description from the page', async () => {
+    const { rivaProjectMeta } = await import('../projectUpdates/riva');
+    const share = '\ud83c\udfe1 \u0623\u0643\u0646\u0627\u0646 24 \n\ud83d\udccd \u0627\u0644\u0631\u064a\u0627\u0636 - \u0627\u0644\u0631\u0645\u0627\u0644 \n\ud83c\udfd7\ufe0f \u0627\u0644\u0645\u0637\u0648\u0651\u0631: \u0623\u0643\u0646\u0627\u0646 \n\ud83c\udff7\ufe0f \u0646\u0648\u0639 \u0627\u0644\u0645\u0634\u0631\u0648\u0639: \u0634\u0642\u0642\n\ud83d\udcb0 \u0627\u0644\u0623\u0633\u0639\u0627\u0631 \u062a\u0628\u062f\u0623 \u0645\u0646 692,200 \u0631.\u0633\nhttps:\/\/riva.sa\/project\/aknan-24';
+    const html = `<div x-data="{ projectShareMessage: '${share}', shareOpen: false }"><h1>أكنان 24</h1><p>رخصة إعلان: 7201136815</p><p>عمولتك على هذا المشروع 1% من قيمة كل وحدة مباعة يُعد مشروع أكنان 24 أحد المجمعات السكنية الحديثة في حي الرمال بشرق الرياض.</p></div>`;
+    expect(rivaProjectMeta(html)).toMatchObject({
+      city: 'الرياض', district: 'الرمال', developer: 'أكنان', project_type_text: 'شقق',
+      public_url: 'https://riva.sa/project/aknan-24', price_from: 692200, ad_license: '7201136815',
+    });
+    expect(String(rivaProjectMeta(html).description)).toContain('يُعد مشروع أكنان 24');
+  });
+});
+
+describe('arKey — Arabic name comparison for developer / district lookup', () => {
+  it('ignores «حي», «شركة … للتطوير العقاري», alef forms and spacing', async () => {
+    const { arKey } = await import('../projectUpdates/newProject');
+    expect(arKey('حي الرمال')).toBe(arKey('الرمال'));
+    expect(arKey('شركة أكنان للتطوير العقاري')).toBe(arKey('اكنان'));
+  });
+});
