@@ -16,6 +16,10 @@ primary_region = 'sin'
   # Shot jobs at a time per dedicated `cv` machine (read only there). The Gemini
   # call is most of each ~30 s job, so 4 fit on 2 dedicated cores (2026-10-05).
   CV_PROCESS_LOOPS = '4'
+  # Collection/reading claim loops per general machine. 3 since 2026-10-05: with
+  # shots moved off, a machine sat at ~185 MB of 459 and load ~0.2, and Apify
+  # history runs (up to ~90 min each) were the slowest part of the catch-up.
+  MARKETING_LOOPS = '3'
 
 # Two process groups, same image/command:
 #   app    — the general worker: all lanes EXCEPT the unit-pdf renderer. 512MB × 5.
