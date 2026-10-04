@@ -213,7 +213,7 @@ async function runRiva(
         totalChanges += result.updates.length + result.creates.length;
         continue;
       }
-      const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result });
+      const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result, heartbeat });
       Object.assign(entry, { status: out.failures.length ? 'partial' : 'applied', written: out });
       totalChanges += out.updated + out.created;
       if (out.updated + out.created > 0) applied++;
@@ -373,7 +373,7 @@ async function runPerProject(
         continue;
       }
       if (run.dry_run) { entry.status = 'dry_run'; totalChanges += result.updates.length + result.creates.length; continue; }
-      const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result });
+      const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result, heartbeat });
       Object.assign(entry, { status: out.failures.length ? 'partial' : 'applied', written: out });
       totalChanges += out.updated + out.created;
       if (out.updated + out.created > 0) applied++;
@@ -399,13 +399,16 @@ async function runPerProject(
 /** A complete source (lists every unit with its real status): its status wins
  *  in both directions; units it does not list are left alone and reported. */
 const COMPLETE_SOURCE_POLICY: ReconcilePolicy = { absentAvailable: 'leave', createMissing: true, updatePrices: true };
+/** Almajdiah units already match uniquely on building + number / their code;
+ *  writing MAJD-<id> onto ~1,300 units would cost ~1,300 saves for nothing. */
+const ALMAJDIAH_POLICY: ReconcilePolicy = { ...COMPLETE_SOURCE_POLICY, recordSourceId: false };
 
 const ALMAJDIAH: ProjectSourceAdapter = {
   sourceType: 'developer_api',
   label: 'API الماجدية',
   idFromUrl: majdProjectId,
   fetch: (id) => fetchMajdProject(id),
-  policy: (scope) => (scope === 'status_only' ? STATUS_ONLY_POLICY : COMPLETE_SOURCE_POLICY),
+  policy: (scope) => (scope === 'status_only' ? STATUS_ONLY_POLICY : ALMAJDIAH_POLICY),
 };
 
 /** Stamp the update-list row (and the project's last_source_update). */

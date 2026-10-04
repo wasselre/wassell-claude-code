@@ -111,11 +111,17 @@ async function uploadPlan(
 
 export async function applyResult(
   supabase: SupabaseClient,
-  args: { runId: string; projectId: string; projectName: string; result: ReconcileResult },
+  args: {
+    runId: string; projectId: string; projectName: string; result: ReconcileResult;
+    /** Called between writes — a big project must keep the run's heartbeat
+     *  fresh or the watchdog hands the run to a second machine mid-way. */
+    heartbeat?: () => Promise<void>;
+  },
 ): Promise<ApplyOutcome> {
   const out: ApplyOutcome = { updated: 0, created: 0, plans: 0, failures: [] };
 
   for (const u of args.result.updates) {
+    if (args.heartbeat) await args.heartbeat();
     try {
       const before = await patchRecord(supabase, u.unitId, u.patch);
       if (!before) continue;
@@ -138,6 +144,7 @@ export async function applyResult(
       return out;
     }
     for (let i = 0; i < args.result.creates.length; i++) {
+      if (args.heartbeat) await args.heartbeat();
       const c = args.result.creates[i]!;
       const id = randomUUID();
       const data = { ...c.data, unit_code: codes[i] as string };

@@ -264,7 +264,7 @@ export function reconcile(
       }
       // Record the source's own unit id the first time we match by something
       // weaker, so later runs match on it directly.
-      if (s.unitCode && !/^U-\d+$/i.test(s.unitCode) && !part(u.data.developer_unit_code)) {
+      if (policy.recordSourceId !== false && s.unitCode && !/^U-\d+$/i.test(s.unitCode) && !part(u.data.developer_unit_code)) {
         patch.developer_unit_code = s.unitCode;
         reasons.push('source unit id recorded');
       }

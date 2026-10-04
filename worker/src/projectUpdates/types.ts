@@ -70,6 +70,10 @@ export interface ReconcilePolicy {
   /** Status may only move FORWARD (available → reserved → sold), never back.
    *  For a project whose source here is secondary (auto_scope = status_only). */
   forwardOnly?: boolean;
+  /** Store the source's own unit id on a unit matched by a weaker key
+   *  (default true). Off where the existing keys are already unique and
+   *  stable — every backfill write costs a full record save. */
+  recordSourceId?: boolean;
 }
 
 export interface UnitPatch {

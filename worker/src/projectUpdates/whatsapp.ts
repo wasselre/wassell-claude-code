@@ -581,7 +581,7 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
       });
       if (brake) { r.held = brake; held++; if (!a.dryRun) await appendLog(supabase, projectId, `${today} — ⛔ تحديث واتساب موقوف: ${brake}`, today); continue; }
       if (a.dryRun) continue;
-      const out = await applyResult(supabase, { runId: a.runId, projectId, projectName: project.name, result });
+      const out = await applyResult(supabase, { runId: a.runId, projectId, projectName: project.name, result, heartbeat: a.heartbeat });
       r.written = out;
       written += out.updated + out.created;
       if (out.updated + out.created > 0) applied++;
