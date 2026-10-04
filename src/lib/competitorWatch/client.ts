@@ -63,6 +63,8 @@ export interface LibraryRow {
   /** Shot analysis of that video: queued / processing / analyzed / partial / failed … (null = never queued). */
   shots_status: string | null;
   shot_count: number | null;
+  /** The same post on other platforms (a cross-post), each with its own numbers. */
+  also_on: Array<{ id: string; platform: string; url: string | null; views: number | null; likes: number | null }> | null;
 }
 
 export interface AgeReading { views?: number; likes?: number; comments?: number; shares?: number; saves?: number; captured_at?: string }

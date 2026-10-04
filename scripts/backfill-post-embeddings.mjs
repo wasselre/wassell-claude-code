@@ -72,14 +72,19 @@ async function embedText(texts) {
       headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
       body: JSON.stringify({ requests: texts.map((t) => ({ model: `models/${MODEL}`, content: { parts: [{ text: t }] }, outputDimensionality: DIM })) }),
     });
-    if (r.ok || ![429, 500, 503].includes(r.status) || attempt >= 5) break;
-    await new Promise((res) => setTimeout(res, 2000 * 2 ** attempt));
+    if (r.ok || ![429, 500, 503].includes(r.status) || attempt >= 6) break;
+    // A per-minute 429 says how long to wait (retryDelay "37s"); honour it. A
+    // per-DAY quota will not clear by waiting — give up on this batch at once.
+    const peek = await r.clone().text();
+    if (/PerDay/i.test(peek)) break;
+    const hinted = Number(/"retryDelay":\s*"(\d+(?:\.\d+)?)s"/.exec(peek)?.[1]);
+    await new Promise((res) => setTimeout(res, Number.isFinite(hinted) && hinted > 0 ? (hinted + 1) * 1000 : 2000 * 2 ** attempt));
   }
   if (!r.ok) {
     const body = await r.text();
     const quota = /"quotaId":\s*"([^"]+)"/.exec(body)?.[1];
     const qv = /"quotaValue":\s*"([^"]+)"/.exec(body)?.[1];
-    const msg = `embed_text ${r.status}${quota ? ` quota=${quota}${qv ? ` limit=${qv}` : ""}` : ""}: ${body.replace(/s+/g, " ").slice(0, 200)}`;
+    const msg = `embed_text ${r.status}${quota ? ` quota=${quota}${qv ? ` limit=${qv}` : ""}` : ""}: ${body.replace(/\s+/g, " ").slice(0, 200)}`;
     await bill('error', msg);
     throw new Error(msg);
   }
@@ -131,8 +136,17 @@ async function textFor(postId, caption) {
 async function main() {
   const posts = await loadPosts();
   console.log(`[embed] ${posts.length} video posts`);
-  const { data: existing } = await sb.from('mkt_content_embeddings').select('content_post_id, text_hash');
-  const have = new Map((existing ?? []).map((e) => [e.content_post_id, e.text_hash]));
+  // Paginated: a single select stops at 1,000 rows, which made every post past
+  // the first thousand look un-embedded and get paid for again.
+  const have = new Map();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from('mkt_content_embeddings').select('content_post_id, text_hash')
+      .order('content_post_id').range(from, from + 999);
+    if (error) throw new Error(`existing embeddings: ${error.message}`);
+    for (const e of data ?? []) have.set(e.content_post_id, e.text_hash);
+    if (!data || data.length < 1000) break;
+  }
+  console.log(`[embed] ${have.size} already embedded`);
 
   let done = 0, skipped = 0, empty = 0, failed = 0, batch = [];
   const flush = async () => {
@@ -148,6 +162,7 @@ async function main() {
       done += rows.length;
     } catch (e) { failed += batch.length; console.error(`[embed] batch failed: ${e.message}`); }
     batch = [];
+    await new Promise((res) => setTimeout(res, 1500)); // stay under the per-minute embed quota
     if ((done + skipped + empty) % 200 < BATCH) console.log(`[embed] done=${done} skip=${skipped} empty=${empty} fail=${failed}`);
   };
 

@@ -493,6 +493,21 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPa
           )}
           <div className="cw-eng">
             <PostNumbers row={row} isAr={isAr} />
+            {(row.also_on ?? []).map((c) => (
+              <a
+                key={c.id}
+                className="cw-tx"
+                href={c.url ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                title={isAr ? 'نفس المنشور على منصة أخرى — أرقام تلك النسخة' : 'The same post on another platform — that copy's numbers'}
+              >
+                {isAr ? `أيضًا على ${c.platform}` : `also on ${c.platform}`}
+                {typeof c.views === 'number' ? ` ▷ ${Math.round(c.views).toLocaleString()}` : ''}
+                {typeof c.likes === 'number' ? ` ♥ ${Math.round(c.likes).toLocaleString()}` : ''}
+              </a>
+            ))}
             {row.published_at && <span className="cw-mono">{fmtDate(row.published_at, isAr)}</span>}
             {row.has_transcript && <span className="cw-tx">{isAr ? 'مُفرّغ' : 'transcript'}</span>}
             {row.files_registered > 0 && (
