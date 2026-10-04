@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { makeLoginRecoveryFetch, shareRenewal } from './loginRecoveryFetch';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -23,6 +24,18 @@ export const CLIENT_TAB_ID: string =
 export const CLIENT_BUILD_ID: string =
   typeof __BUILD_VERSION__ === 'string' ? __BUILD_VERSION__ : 'unknown';
 
+// An expired login renews itself instead of failing every request — see
+// loginRecoveryFetch.ts for why the laptop clock cannot be trusted for this.
+const fetchWithLoginRecovery = makeLoginRecoveryFetch(shareRenewal(async () => {
+  if (!supabase) return null;
+  const { data, error } = await supabase.auth.refreshSession();
+  if (error) {
+    console.error('[auth] could not renew an expired login', error);
+    return null;
+  }
+  return data.session?.access_token ?? null;
+}));
+
 export const supabase: SupabaseClient | null =
   supabaseUrl && supabaseKey
     ? createClient(supabaseUrl, supabaseKey, {
@@ -33,6 +46,7 @@ export const supabase: SupabaseClient | null =
         // MUST be verified on a real device before shipping. Back to the default
         // navigatorLock.
         global: {
+          fetch: fetchWithLoginRecovery,
           headers: {
             // T2 (2026-06-24): identify the SPA as a caller in Postgres logs /
             // conflict telemetry, alongside the per-tab + per-build ids. Mirrors
