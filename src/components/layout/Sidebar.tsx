@@ -229,7 +229,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
             {onMobileClose && !railCollapsed && (
               <button
                 onClick={onMobileClose}
-                className="md:hidden p-1.5 rounded-lg hover:bg-cream text-charcoal/40 hover:text-charcoal transition-colors"
+                className="md:hidden p-2 rounded-lg hover:bg-cream text-charcoal/40 hover:text-charcoal transition-colors"
                 aria-label={isAr ? 'إغلاق القائمة' : 'Close menu'}
               >
                 <X size={18} />

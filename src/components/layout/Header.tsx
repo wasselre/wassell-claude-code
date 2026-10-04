@@ -117,11 +117,11 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
             {getPageTitle()}
           </h1>
         </div>
-        <div className="flex items-center gap-2 md:gap-3 shrink-0">
+        <div className="flex items-center gap-1.5 md:gap-3 shrink-0">
           {/* ── Profile preview switcher (explicit per-user grant only) ── */}
           {canPreview && previewOptions.length > 0 && (
             <div
-              className={`flex items-center gap-1.5 pill ${previewProfile ? 'bg-gold/20 ring-1 ring-gold/50' : ''}`}
+              className={`hidden md:flex items-center gap-1.5 pill ${previewProfile ? 'bg-gold/20 ring-1 ring-gold/50' : ''}`}
               title={isAr ? 'معاينة التطبيق بصلاحيات ملف شخصي آخر' : 'Preview the app as another profile'}
             >
               <Eye size={14} className={previewProfile ? 'text-terracotta' : 'text-charcoal/40'} />
@@ -148,11 +148,12 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
             authEmail && (
               <button
                 onClick={() => navigate('/profile')}
-                className="flex items-center gap-2 pill hover:bg-white/80 transition-colors"
+                className="flex items-center justify-center gap-2 pill hover:bg-white/80 transition-colors min-h-9 min-w-9"
                 title={authEmail}
+                aria-label={displayName}
               >
                 <User size={14} className="text-charcoal/40" />
-                <span className="text-sm font-bold text-charcoal">{displayName}</span>
+                <span className="hidden sm:inline text-sm font-bold text-charcoal">{displayName}</span>
               </button>
             )
           ) : (
@@ -183,7 +184,7 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
             <button
               onClick={() => void handleSignOut()}
               disabled={signingOut}
-              className="pill hover:bg-white/60 transition-colors disabled:opacity-40"
+              className="pill justify-center hover:bg-white/60 transition-colors disabled:opacity-40 min-h-9 min-w-9"
               title={isAr ? 'تسجيل الخروج' : 'Sign out'}
               aria-label={isAr ? 'تسجيل الخروج' : 'Sign out'}
             >
@@ -195,7 +196,7 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
           <WhatsAppOwnerBell />
 
           {/* ── Language toggle ───────────────────────────────────── */}
-          <button onClick={toggleLanguage} className="pill">
+          <button onClick={toggleLanguage} className="pill justify-center min-h-9">
             <Languages size={15} />
             {language === 'ar' ? 'EN' : 'AR'}
           </button>

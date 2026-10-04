@@ -465,7 +465,7 @@ export default function MarketingWorkspace() {
   const showSettings = !ready || surfaces.settings !== 'hidden';
   const showLibrary = !ready || surfaces.library !== 'hidden';
 
-  const headerButton = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-charcoal/70 bg-white border border-sand/50 hover:text-copper hover:border-copper/40 transition-colors';
+  const headerButton = 'inline-flex items-center gap-1.5 px-3 py-1.5 min-h-9 rounded-lg text-xs font-bold text-charcoal/70 bg-white border border-sand/50 hover:text-copper hover:border-copper/40 transition-colors';
 
   const skeleton = (
     <div className="body">

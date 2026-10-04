@@ -119,7 +119,7 @@ export default function WhatsAppOwnerBell() {
         ref={btnRef}
         type="button"
         onClick={toggle}
-        className="pill relative hover:bg-white/80 transition-colors"
+        className="pill relative justify-center hover:bg-white/80 transition-colors min-h-9 min-w-9"
         aria-label={isAr ? 'عملاء بانتظار الرد' : 'Clients waiting for a reply'}
         title={isAr ? 'عملاء بانتظار الرد' : 'Clients waiting for a reply'}
       >
