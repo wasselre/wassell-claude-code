@@ -501,7 +501,7 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPa
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                title={isAr ? 'نفس المنشور على منصة أخرى — أرقام تلك النسخة' : 'The same post on another platform — that copy's numbers'}
+                title={isAr ? 'نفس المنشور على منصة أخرى — أرقام تلك النسخة' : 'The same post on another platform — numbers of that copy'}
               >
                 {isAr ? `أيضًا على ${c.platform}` : `also on ${c.platform}`}
                 {typeof c.views === 'number' ? ` ▷ ${Math.round(c.views).toLocaleString()}` : ''}
