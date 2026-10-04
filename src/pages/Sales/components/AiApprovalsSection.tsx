@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Building2, CheckCircle2, Loader2, MessageCircle, Send, Sparkles, Star, User, UserCheck, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -9,6 +8,7 @@ import { resolveChatSuggestion, type ChatOutcomeSuggestion } from '@/lib/chatSug
 import { CLIENT_OPTIONS_MODEL, saveClientOption, setMainOption } from '@/lib/matching/clientOptions';
 import { outcomeLabel } from '@/pages/Chats/lib/useChatOutcomeSuggestion';
 import CompleteWhatsAppFollowupModal from '@/pages/Chats/components/CompleteWhatsAppFollowupModal';
+import ChatThreadModal from '@/pages/Chats/components/ChatThreadModal';
 
 /**
  * Sales → Work Queue → AI tab, «بانتظار موافقتك»: everything the AI prepared
@@ -43,6 +43,24 @@ function ctxList(a: AiAction, key: string): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
 }
 
+/** The client's last messages, saved on the draft as {at, text}. */
+function ctxSaid(a: AiAction): { at: string | null; text: string }[] {
+  const v = a.context.client_said;
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => (x && typeof x === 'object' ? x as { at?: unknown; text?: unknown } : null))
+    .filter((x): x is { at?: unknown; text?: unknown } => !!x && typeof x.text === 'string' && x.text.trim() !== '')
+    .map((x) => ({ at: typeof x.at === 'string' ? x.at : null, text: String(x.text) }));
+}
+
+function fmtAt(iso: string | null, isAr: boolean): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(isAr ? 'ar-SA-u-nu-latn' : 'en-GB', {
+    timeZone: 'Asia/Riyadh', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
+}
+
 function MessageCard({ action, isAr, clientName, onDone }: {
   action: AiAction;
   isAr: boolean;
@@ -50,14 +68,17 @@ function MessageCard({ action, isAr, clientName, onDone }: {
   onDone: (id: string) => void;
 }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
-  const navigate = useNavigate();
   const addToast = useAppStore((s) => s.addToast);
   const [text, setText] = useState(action.body);
   const [busy, setBusy] = useState<'approve' | 'reject' | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
   const isOfficer = action.kind === 'officer_notice';
   const warnings = ctxList(action, 'warnings');
   const brief = ctxList(action, 'brief');
   const chatRecordId = ctxStr(action, 'chat_record_id');
+  const said = ctxSaid(action);
+  const reason = ctxStr(action, 'reason');
+  const reading = ctxStr(action, 'reading');
   const failed = action.status === 'failed';
   const sending = action.status === 'sending';
 
@@ -95,7 +116,7 @@ function MessageCard({ action, isAr, clientName, onDone }: {
         {chatRecordId && (
           <button
             type="button"
-            onClick={() => navigate(`/model/chats/${chatRecordId}`)}
+            onClick={() => setChatOpen(true)}
             className="ms-auto inline-flex items-center gap-1 rounded-lg bg-[#25D366] px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-90"
           >
             <MessageCircle size={12} /> {L('فتح المحادثة', 'Open chat')}
@@ -108,6 +129,37 @@ function MessageCard({ action, isAr, clientName, onDone }: {
           {brief.map((b) => <li key={b}>{b}</li>)}
         </ul>
       )}
+
+      {/* Why this message: the client's own last words, the AI's reading of
+          the chat, and the writer's reason. */}
+      {!isOfficer && (said.length > 0 || reading || reason) && (
+        <div className="mt-2 space-y-1.5 rounded-xl bg-cream/60 p-2.5 text-xs text-charcoal/80">
+          {said.length > 0 && (
+            <div>
+              <div className="mb-0.5 font-bold text-chocolate">{L('آخر ما قاله العميل', 'What the client said last')}</div>
+              {said.map((m, i) => (
+                <div key={`${m.at ?? ''}-${i}`} className="flex gap-1.5" dir="auto">
+                  {m.at && <span className="shrink-0 text-[10px] text-charcoal/50">{fmtAt(m.at, isAr)}</span>}
+                  <span className="whitespace-pre-wrap break-words">«{m.text}»</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {reading && (
+            <div>
+              <span className="font-bold text-chocolate">{L('قراءة المساعد للمحادثة: ', "The AI's reading of the chat: ")}</span>
+              <span dir="auto">{reading}</span>
+            </div>
+          )}
+          {reason && (
+            <div>
+              <span className="font-bold text-chocolate">{L('لماذا هذه الرسالة: ', 'Why this message: ')}</span>
+              <span dir="auto">{reason}</span>
+            </div>
+          )}
+        </div>
+      )}
+      {chatOpen && chatRecordId && <ChatThreadModal recordId={chatRecordId} onClose={() => setChatOpen(false)} />}
 
       {failed ? (
         <p className="mt-2 text-sm text-terracotta">
@@ -161,7 +213,7 @@ function ResultCard({ suggestion: s, isAr, onDone }: {
   onDone: (id: string) => void;
 }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
-  const navigate = useNavigate();
+  const [chatOpen, setChatOpen] = useState(false);
   const models = useAppStore((st) => st.models);
   const records = useAppStore((st) => st.records);
   const addToast = useAppStore((st) => st.addToast);
@@ -229,7 +281,7 @@ function ResultCard({ suggestion: s, isAr, onDone }: {
         {s.chat_record_id && (
           <button
             type="button"
-            onClick={() => navigate(`/model/chats/${s.chat_record_id}`)}
+            onClick={() => setChatOpen(true)}
             className="ms-auto inline-flex items-center gap-1 rounded-lg bg-[#25D366] px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-90"
           >
             <MessageCircle size={12} /> {L('فتح المحادثة', 'Open chat')}
@@ -278,13 +330,14 @@ function ResultCard({ suggestion: s, isAr, onDone }: {
           clientStatus={(client?.data.client_status as string | undefined) ?? null}
           phone={(client?.data.phone_number as string | undefined) ?? null}
           onResolveChat={() => undefined}
-          onOpenChat={() => { setOpen(false); if (s.chat_record_id) navigate(`/model/chats/${s.chat_record_id}`); }}
+          onOpenChat={() => { setOpen(false); if (s.chat_record_id) setChatOpen(true); }}
           onClose={() => { setOpen(false); onDone(s.id); }}
           suggestion={s}
           preselect
           resolveChatOnComplete={false}
         />
       )}
+      {chatOpen && s.chat_record_id && <ChatThreadModal recordId={s.chat_record_id} onClose={() => setChatOpen(false)} />}
     </div>
   );
 }

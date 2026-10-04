@@ -215,7 +215,10 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           };
           try {
             const d = await draftFollowupMessage(svc, { followupId: c.followup_id, clientId: c.client_id, chatWid: c.chat_wid, attempt: c.attempt, model, effort });
-            const context = { brief: d.brief, warnings: d.warnings, lang: d.lang, model: d.model, chat_record_id: c.chat_record_id, due_at: c.due_at };
+            const context = {
+              brief: d.brief, warnings: d.warnings, lang: d.lang, model: d.model, chat_record_id: c.chat_record_id, due_at: c.due_at,
+              reason: d.reason, client_said: d.clientSaid, reading: d.reading,
+            };
             const row = d.body
               ? { ...base, body: d.body, original_body: d.body, reference: `ai:followup:${c.followup_id}:${round}`, context }
               // The AI judged no message should go (e.g. the client said stop):
