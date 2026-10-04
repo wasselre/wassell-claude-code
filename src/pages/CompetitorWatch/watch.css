@@ -423,3 +423,13 @@
   .cw-root .cw-tiles4{grid-template-columns:1fr 1fr}
   .cw-root .cw-cogrid{grid-template-columns:1fr}
 }
+
+/* market watch (2026-10-04) */
+.cw-root .cw-mwitem{display:flex; gap:12px; align-items:flex-start; background:var(--cw-card); border:1px solid var(--cw-line); border-radius:12px; padding:12px 14px; margin-bottom:8px}
+.cw-root .cw-mwitem > .cw-pill{flex:0 0 auto; margin-top:2px}
+.cw-root .cw-mwbody{min-width:0; flex:1}
+.cw-root .cw-mwhead{font-size:14px; color:var(--cw-ink); font-weight:600; display:flex; gap:6px; align-items:center; flex-wrap:wrap}
+.cw-root .cw-mwdetail{font-size:12.5px; color:var(--cw-ink2); margin-top:3px}
+.cw-root .cw-mwposts{display:flex; gap:6px; align-items:center; margin-top:8px; flex-wrap:wrap}
+.cw-root .cw-mwpost{width:40px; height:40px; border-radius:6px; overflow:hidden; background:var(--cw-line2); display:inline-flex; align-items:center; justify-content:center; font-size:9px; color:var(--cw-ink3); text-decoration:none}
+.cw-root .cw-mwpost img{width:100%; height:100%; object-fit:cover}

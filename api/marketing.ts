@@ -92,6 +92,8 @@ interface Body {
   has_offer?: boolean;
   // content_library ordering (2026-10-04): recent | views | likes | vs_usual
   sort?: string;
+  // market_watch (2026-10-04)
+  kinds?: unknown[];
   q?: string;
   offset?: number;
   // attribution confirm
@@ -477,6 +479,25 @@ export default async function handler(req: Request): Promise<Response> {
         });
         if (error) return jsonError(500, error.message);
         return jsonOk({ library: data });
+      }
+
+      case 'market_watch': {
+        // Market Watch (2026-10-04): market news derived from what the post
+        // reader already stored — new projects, launches, offers, price
+        // changes, events, sold-out. No AI call; each item carries its proof
+        // posts. Read-only composite, service client; the route gates access.
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const KINDS = ['new_project', 'launch', 'offer', 'price', 'event', 'sold_out'];
+        const kinds = Array.isArray(body.kinds) ? body.kinds.filter((k): k is string => typeof k === 'string' && KINDS.includes(k)) : null;
+        const { data, error } = await svc.rpc('mkt_market_watch', {
+          p_days: typeof body.days === 'number' ? Math.min(365, Math.max(1, Math.round(body.days))) : 30,
+          p_kinds: kinds && kinds.length ? kinds : null,
+          p_org: str(body.organization_id) ?? null,
+          p_limit: typeof body.limit === 'number' ? Math.min(500, Math.max(1, body.limit)) : 200,
+        });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ market: data });
       }
 
       case 'company_profile': {

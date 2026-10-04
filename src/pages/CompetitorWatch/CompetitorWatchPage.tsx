@@ -18,9 +18,10 @@ import StorageSurface from './components/StorageSurface';
 import CompaniesSurface from './components/CompaniesSurface';
 import ConfirmSurface from './components/ConfirmSurface';
 import ProjectsSurface from './components/ProjectsSurface';
+import MarketWatchSurface from './components/MarketWatchSurface';
 import './watch.css';
 
-type Surface = 'library' | 'visual' | 'confirm' | 'agents' | 'pipeline' | 'storage' | 'companies' | 'projects';
+type Surface = 'library' | 'market' | 'visual' | 'confirm' | 'agents' | 'pipeline' | 'storage' | 'companies' | 'projects';
 
 export default function CompetitorWatchPage() {
   const { language } = useAppStore();
@@ -29,6 +30,8 @@ export default function CompetitorWatchPage() {
 
   const NAV: Array<{ id: Surface; ar: string; en: string; icon?: typeof Film }> = [
     { id: 'library', ar: 'مكتبة المحتوى', en: 'Content library' },
+    // Market Watch — the market's news read off competitor posts (2026-10-04).
+    { id: 'market', ar: 'أخبار السوق', en: 'Market Watch' },
     // Visual library — competitor video shots/frames (Competitor Visual Intelligence).
     { id: 'visual', ar: 'المكتبة البصرية', en: 'Visual library', icon: Film },
     { id: 'confirm', ar: 'تأكيد الروابط', en: 'Confirm links' },
@@ -66,6 +69,7 @@ export default function CompetitorWatchPage() {
       </nav>
 
       {surface === 'library' && <ContentLibrary isAr={isAr} />}
+      {surface === 'market' && <MarketWatchSurface isAr={isAr} />}
       {surface === 'visual' && <VisualLibrarySurface isAr={isAr} />}
       {surface === 'confirm' && <ConfirmSurface isAr={isAr} />}
       {surface === 'agents' && <AgentsSurface isAr={isAr} />}

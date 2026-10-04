@@ -635,7 +635,9 @@ export function PostNumbers({ row, isAr }: { row: Pick<LibraryRow, 'views' | 'li
       {n(row.comments) && <span className="cw-mono" title={isAr ? 'التعليقات' : 'Comments'}>💬 {n(row.comments)}</span>}
       {typeof row.vs_usual === 'number' && (
         <span className={`cw-vs${row.vs_usual >= 2 ? ' hi' : row.vs_usual < 0.5 ? ' lo' : ''}`} title={usualTitle}>
-          {isAr ? `${row.vs_usual.toLocaleString()}× المعتاد` : `${row.vs_usual.toLocaleString()}× usual`}
+          {row.vs_usual < 0.1
+            ? (isAr ? 'أقل من 0.1× المعتاد' : '<0.1× usual')
+            : (isAr ? `${row.vs_usual.toLocaleString()}× المعتاد` : `${row.vs_usual.toLocaleString()}× usual`)}
         </span>
       )}
       {row.likely_paid && (

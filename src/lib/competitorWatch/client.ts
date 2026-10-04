@@ -199,6 +199,20 @@ export interface CompanyProfile {
   unknown_projects: Array<{ name: string; posts: number }>;
   visual_style: Array<{ tag: string; shots: number }>;
 }
+export type MarketKind = 'new_project' | 'launch' | 'offer' | 'price' | 'event' | 'sold_out';
+export interface MarketItem {
+  kind: MarketKind; at: string; organization_id: string | null; org_name: string | null;
+  project_id: string | null; project_name: string | null;
+  /** A project name that is not in our catalog (new_project / launch). */
+  name: string | null;
+  detail: { in_catalog?: boolean; companies?: number; posts?: number; offer?: string; price?: string | null; previous?: string | null;
+            payment_plan?: string | null; message?: string | null; change_pct?: number | null } | null;
+  posts: Array<{ id: string; url: string | null; platform: string; at: string; thumb: string | null }> | null;
+}
+export interface MarketWatch { counts: Partial<Record<MarketKind, number>>; items: MarketItem[] }
+export const fetchMarketWatch = (p: { days?: number; kinds?: MarketKind[]; organization_id?: string }) =>
+  callAction<MarketWatch>('market_watch', 'market', p);
+
 export const fetchCompanyProfile = (organization_id: string) => callAction<CompanyProfile>('company_profile', 'profile', { organization_id });
 
 export const fetchAgentActivity = () => callAction<AgentActivity>('agent_activity', 'activity');
