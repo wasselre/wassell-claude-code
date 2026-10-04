@@ -190,3 +190,72 @@ export function buildFillEmptyPatch(
 export function isEmptyPrefValue(v: unknown): boolean {
   return isEmptyValue(v);
 }
+
+export interface AiPrefPatchResult extends PrefPatchResult {
+  /** Set fields: exactly the values this write ADDS (Undo removes only these). */
+  added: Record<string, string[]>;
+  /** Range fields left alone because a REP set them (the AI heard something else). */
+  keptRepValue: Array<{ slug: string; current: unknown; heard: unknown }>;
+}
+
+/**
+ * The AI's OWN save (no rep tick — operator, 2026-10-04). Same shape rules as
+ * {@link buildPrefPatch}, with one guard so the AI never silently overwrites a
+ * rep:
+ *   set fields   → UNION (only ever adds; live-schema check as usual).
+ *   range fields → written when the field is EMPTY, or when the current value
+ *                  is the one the AI itself wrote last (`aiOwned` — the customer
+ *                  changed their mind). A value a REP typed is KEPT and the
+ *                  heard value is reported in `keptRepValue`.
+ */
+export function buildAiPrefPatch(
+  current: Record<string, unknown>,
+  suggestions: Record<string, PrefSuggestionLike>,
+  fields: readonly string[],
+  optionsBySlug: Readonly<Record<string, readonly string[] | undefined>>,
+  aiOwned: ReadonlySet<string>,
+): AiPrefPatchResult {
+  const patch: Record<string, unknown> = {};
+  const dropped: Array<{ slug: string; value: string }> = [];
+  const added: Record<string, string[]> = {};
+  const keptRepValue: AiPrefPatchResult['keptRepValue'] = [];
+  for (const slug of new Set(fields)) {
+    const kind = PREF_FIELD_KINDS[slug];
+    const sug = suggestions[slug];
+    if (!kind || !sug) continue;
+    if (kind === 'set') {
+      const merged = mergeSetValues(current[slug], sug.value, new Set(optionsBySlug[slug] ?? []));
+      for (const v of merged.dropped) dropped.push({ slug, value: v });
+      if (merged.added.length > 0) { patch[slug] = merged.values; added[slug] = merged.added; }
+      continue;
+    }
+    const next = asRangeValue(sug.value);
+    if (!next) continue;
+    const cur = asRangeValue(current[slug]);
+    if (valueEqual(cur, next)) continue;
+    if (cur && !aiOwned.has(slug)) { keptRepValue.push({ slug, current: cur, heard: next }); continue; }
+    patch[slug] = next;
+  }
+  return { patch, dropped, added, keptRepValue };
+}
+
+/** Undo of ONE AI pref write on the FRESH value: a set field loses only the
+ *  values the AI added; a range goes back to `before` only if it still holds
+ *  what the AI wrote (else null = the field moved on, nothing to undo). */
+export function undoPrefValue(
+  slug: string, fresh: unknown, change: { before: unknown; after: unknown; added: unknown },
+): { value: unknown } | null {
+  const kind = PREF_FIELD_KINDS[slug];
+  if (kind === 'set') {
+    const remove = new Set(asSetValue(change.added));
+    const cur = asSetValue(fresh);
+    if (!cur.some((v) => remove.has(v))) return null;
+    const kept = cur.filter((v) => !remove.has(v));
+    return { value: kept.length ? kept : null };
+  }
+  if (kind === 'range') {
+    if (!valueEqual(asRangeValue(fresh), asRangeValue(change.after))) return null;
+    return { value: asRangeValue(change.before) };
+  }
+  return null;
+}

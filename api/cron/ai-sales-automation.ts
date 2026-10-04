@@ -29,6 +29,7 @@
  * every failure is ALSO console.error-ed.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
+import { autoApplyOutcomes } from '../_lib/outcomeAutoApply.js';
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { LEAD_PORTALS_MODEL_ID, type Rec } from '../_lib/leadPortals.js';
 import { registerOnInterest, isTransientPortalFailure, RETRY_AFTER_MS } from '../_lib/portalInterest.js';
@@ -52,6 +53,10 @@ interface Settings {
   followup_drafts: boolean;
   followup_drafts_per_day: number;
   officer_cooldown_days: number;
+  auto_save_profile: boolean;
+  auto_apply_outcomes: boolean;
+  outcome_auto_min_confidence: number;
+  outcome_quiet_minutes: number;
 }
 
 interface InterestRow {
@@ -234,6 +239,15 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       }
     }
     report.officer = officerOut;
+
+    // ── 3b. Follow-up results the AI records itself (no rep confirm) ─────────
+    // Before the drafts: a follow-up that just got its result must not also
+    // get a follow-up message drafted.
+    try {
+      report.auto_outcomes = await autoApplyOutcomes(svc, settings, { dryRun, deadline: startedAt + TIME_BUDGET_MS });
+    } catch (err) {
+      fail('auto-apply outcomes', err);
+    }
 
     // ── 4. Follow-up drafts (await approval) ─────────────────────────────────
     const { data: expired, error: xErr } = dryRun ? { data: null, error: null } : await svc.rpc('ai_actions_expire');

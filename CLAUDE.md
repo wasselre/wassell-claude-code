@@ -670,10 +670,32 @@ PRDs: `docs/prd/geo-preference-ability.md`, `docs/prd/chats.md`.
 5. **Transcribed voice notes are customer TEXT** everywhere (gate, watermark,
    the rendered conversation as «(رسالة صوتية) …», the geo card's staleness).
    A voice note still `pending` holds a read for at most 10 minutes.
-6. **Nothing auto-saves.** Both agents only mint PROPOSALS; the rep's tick + save
-   writes the client (`/api/geo-preference/review`, `/api/client-prefs/review`).
-   `auto_write_enabled` stays false. The pref review re-validates set values
-   against the LIVE clients schema at save time (unknown ⇒ dropped + console.error).
+6. **The AI saves its own proposals — with guards and Undo (changed 2026-10-04,
+   operator: "no one needs to approve … it just adds the preference to the
+   client profile").** The readers still mint PROPOSALS; right after, the AI
+   saves them itself (`api/_lib/clientPrefs/autoSave.ts`, called by
+   `readChat.ts` and, for the call audit, by the cron), switch
+   `ai_automation_settings.auto_save_profile`. It reuses the rep's save pieces
+   (mergePrefs, the geo `applyReview` core, `recordSaveWithRetry`), so there is
+   still ONE way a preference reaches a client. Guards, never loosen them:
+   a chat preference needs its quote in the CUSTOMER's own turns
+   (`customerSaidIt`); a RANGE a rep typed is never overwritten
+   (`buildAiPrefPatch` — only empty or AI-written ranges change); sets only
+   union; a call stays fill-empty-only; a place is saved only if resolved,
+   savable and NOT doubted by the verifier (else it stays for the rep). Every
+   write AND every heard-but-not-written value goes to `client_ai_changes`
+   (the chat card's «حفظه الذكاء الاصطناعي» list, Undo via
+   `/api/client-ai-changes`). The pipeline's own `auto_write_enabled` gate is
+   unrelated and stays false. The rep's review endpoints still work for
+   anything left pending. The pref save re-validates set values against the
+   LIVE clients schema (unknown ⇒ dropped + console.error).
+   Follow-up RESULTS are applied the same way (`api/_lib/outcomeAutoApply.ts`,
+   step 3b of `api/cron/ai-sales-automation.ts`): confidence ≥
+   `outcome_auto_min_confidence`, chat quiet `outcome_quiet_minutes`, no newer
+   customer message, follow-up still open, the popup's own
+   `validateFollowUpCompletion` passes — else it stays for a person. The main
+   project is set only when the client has none AND the customer's own quote
+   (not the ad's opener button) backs it.
 7. The preference extractor (`api/_lib/prefExtract.ts`) mirrors the geo
    extractor's routing exactly (stub → DeepSeek `deepseek-chat` → Claude Haiku via
    `trackedAnthropic`), and THROWS when both providers fail — never a silent empty.

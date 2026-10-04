@@ -8,8 +8,17 @@
  * Park» → the agent guessed five neighbouring districts and missed 2 of the 3
  * projects actually inside the radius. A place we cannot find is reported back
  * (unresolved), never replaced by a guess.
+ *
+ * A NAMED place goes through the geography engine's own resolver (the one the
+ * places card uses — api/_lib/geoPreference/resolver.ts): exact names only, a
+ * name shared by several places (a chain mall's branches, a station named like
+ * a district) comes back unresolved instead of silently taking the first hit,
+ * and «محطة / مترو» picks the metro station. Until 2026-10-04 this was a fuzzy
+ * top-result search of its own — a second, looser way of reading places.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { resolveAnchor } from '../geoPreference/resolver.js';
+import { createSupabaseResolverDb } from '../geoPreference/resolverDb.js';
 
 export type PlaceCategory = 'metro' | 'mall' | 'hospital' | 'university' | 'park';
 export const PLACE_CATEGORIES: PlaceCategory[] = ['metro', 'mall', 'hospital', 'university', 'park'];
@@ -62,18 +71,47 @@ export async function resolveNear(
       resolved.push({ label: CATEGORY_LABEL[c.category], max_km: c.max_km, elementIds: null, elementTypes: CATEGORY_TYPES[c.category] });
       continue;
     }
-    const { data, error } = await svc.rpc('sales_agent_find_places', { p_query: c.place, p_city_prefix: prefix, p_limit: 6 });
-    if (error) throw new Error(`places: lookup failed: ${error.message}`);
-    const rows = (data ?? []) as Array<{ id: string; name_ar: string; element_type: string }>;
-    if (!rows.length) { unresolved.push(c.place!); continue; }
-    // The best match, plus its duplicates/companions of the same kind (a
-    // university mapped as two polygons; a road and its service road).
-    const top = rows[0]!;
-    const core = top.name_ar.replace(/\s*(الفرعي|بنت عبد ?الرحمن)$/, '').trim();
-    const ids = rows.filter((r) => r.element_type === top.element_type && (r.name_ar.includes(core) || core.includes(r.name_ar))).map((r) => r.id);
-    resolved.push({ label: top.name_ar, max_km: c.max_km, elementIds: ids, elementTypes: null });
+    const hit = await resolveNamedPlace(svc, c.place!, c.max_km, prefix);
+    if (!hit) { unresolved.push(c.place!); continue; }
+    resolved.push({ label: hit.label, max_km: c.max_km, elementIds: hit.ids, elementTypes: null });
   }
   return { resolved, unresolved };
+}
+
+const CITY_OF_PREFIX: Record<string, string> = Object.fromEntries(Object.entries(CITY_PREFIX).map(([city, p]) => [p, city]));
+const ROAD_WORD = /^\s*(?:ال)?(?:طريق|شارع|دائري|محور)\s|^\s*الدائري/;
+const STATION_WORD = /محط[ةه]|مترو|\bmetro\b|\bstation\b/i;
+
+/**
+ * One named place → its geo_elements ids (uuid) and real name, through the
+ * geography engine's resolver. null = not on the map, or ambiguous (the agent
+ * asks back).
+ */
+export async function resolveNamedPlace(
+  svc: SupabaseClient, place: string, maxKm: number, prefix: string,
+): Promise<{ ids: string[]; label: string } | null> {
+  const isRoad = ROAD_WORD.test(place);
+  const r = await resolveAnchor(
+    { anchor_type: isRoad ? 'road' : 'landmark', span: place, normalized_token: place },
+    {
+      db: createSupabaseResolverDb(svc),
+      preferCountry: 'SA',
+      established_city: CITY_OF_PREFIX[prefix] ?? 'الرياض',
+      radius_m: Math.round(maxKm * 1000),
+      proximity: isRoad,
+      station: STATION_WORD.test(place),
+    },
+  );
+  const ext = r.status === 'resolved' ? (r.recipe?.resolved_element_ids ?? []).map(String) : [];
+  if (!ext.length) {
+    console.log(`[salesAgent/places] «${place}» not resolved (${r.status === 'resolved' ? 'no ids' : r.reason ?? r.status})`);
+    return null;
+  }
+  const { data, error } = await svc.from('geo_elements').select('id, name_ar, external_id').in('external_id', ext);
+  if (error) throw new Error(`places: element lookup failed: ${error.message}`);
+  const rows = (data ?? []) as Array<{ id: string; name_ar: string | null; external_id: string }>;
+  if (!rows.length) return null;
+  return { ids: rows.map((x) => x.id), label: rows[0]!.name_ar || place };
 }
 
 /** km from each project to the nearest element of the condition (projects

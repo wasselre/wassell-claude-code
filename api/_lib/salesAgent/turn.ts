@@ -27,7 +27,8 @@ import type { Zone } from './texts.js';
 import { clip } from './clip.js';
 import { createTrackedLink, loadAvailableUnits, summarizeUnit } from '../trackedLinks.js';
 import { alertRep, askRep, bookVisit, loadChatContext, recordVisit } from './escalation.js';
-import { readLocation } from './geoGate.js';
+import { readLocation, matchSavedPlaces } from './geoGate.js';
+import { loadSavedProfile, type SavedProfile } from './savedProfile.js';
 import { draftOfficerQuestion } from '../officerNoticeDraft.js';
 
 /** Photos in a project package go out 4 s apart; the follow-up question must
@@ -480,6 +481,15 @@ async function runBrainTurn(
     const age = slots.last_reply_at ? Math.round((Date.now() - new Date(slots.last_reply_at).getTime()) / 60_000) : null;
     stateLines.push(`Known wishes from EARLIER messages${age !== null ? ` (last used ${age >= 120 ? `${Math.round(age / 60)} hours` : `${age} minutes`} ago)` : ''} — may be stale, follow what they say now: ${wants.join('، ')}.`);
   }
+  // The client's SAVED profile (CRM): what reps and the chat/call readers
+  // already know. A failed read only costs this turn that context — logged.
+  let saved: SavedProfile | null = null;
+  try {
+    saved = await loadSavedProfile(svc, (await loadChatContext(svc, chatWid)).clientId);
+    if (saved?.line) stateLines.push(saved.line);
+  } catch (err) {
+    console.error(`[salesAgent] saved profile not loaded chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
+  }
   if (slots.gender === 'f') stateLines.push('The customer is a woman — use feminine forms.');
   if (slots.handed_off_at) stateLines.push(`Already handed to a colleague at ${slots.handed_off_at} — don't promise that again.`);
   for (const p of a.pending) stateLines.push(`A colleague ANSWERED the question you asked («${p.question}»): «${p.answer}» — pass it on now.`);
@@ -595,6 +605,7 @@ async function runBrainTurn(
       // turns (cached per text). The whole chat history piled up every place
       // ever named — old visits, «الجنوب», «الفرسان بعيد» — and the "area"
       // covered ~16,000 records, i.e. nothing was narrowed (2026-10-04).
+      savedArea: async () => (saved && saved.items.length ? matchSavedPlaces(svc, saved.items, saved.placeLabels) : null),
       readArea: () => {
         const startedAt = new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString();
         const current = a.turns.filter((t) => !t.at || t.at >= startedAt);

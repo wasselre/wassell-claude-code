@@ -416,7 +416,7 @@ export function buildGeoApplyData(
  */
 export interface AuditRow {
   proposal_id: string;
-  reviewer_id: string;
+  reviewer_id: string | null;
   action: ReviewAction;
   status_before: string;
   status_after: string;
@@ -431,7 +431,7 @@ export interface AuditRow {
 
 export interface ProposalPatch {
   status: string;
-  reviewed_by: string;
+  reviewed_by: string | null;
   reviewed_at: string;
   reviewer_note: string | null;
   final_expression?: GeoPreference;
@@ -465,7 +465,7 @@ export interface ReviewDeps {
 export interface ReviewInput {
   proposalId: string;
   action: ReviewAction;
-  reviewerId: string;
+  reviewerId: string | null;
   note?: string | null;
   finalExpression?: GeoPreference | null;
   /** Optimistic guard: the proposal.version the reviewer loaded. */

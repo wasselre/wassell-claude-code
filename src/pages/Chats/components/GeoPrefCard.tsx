@@ -16,6 +16,7 @@ import PlaceTiles from './PlaceTiles';
 import PrefCardSlider, { type SliderSlide } from './PrefCardSlider';
 import { SlideBody, SlideDoneView, SlideFooter } from './SlideParts';
 import OutcomeSuggestionSlide from './OutcomeSuggestionSlide';
+import AiChangesSection from './AiChangesSection';
 import { AI_TABS, defaultAiTab, type AiTab } from '../lib/aiSuggestions';
 import type { ChatOutcomeSuggestionState } from '../lib/useChatOutcomeSuggestion';
 import { buildGeoRows, GEO_OPEN, type GeoCardDTO, type GeoRow } from '../lib/geoRows';
@@ -535,7 +536,7 @@ export default function GeoPrefCard({ clientId, chatWid, task, outcome, onRecord
           ) : (
             <PrefCardSlider
               slides={sliderSlides}
-              lead={null}
+              lead={<AiChangesSection clientId={clientId} refreshKey={card?.analyzed_at ?? ''} isAr={isAr} />}
               tail={tail}
               emptyLine={emptyLine}
               notices={notices}

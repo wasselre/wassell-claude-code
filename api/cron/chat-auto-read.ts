@@ -45,6 +45,7 @@ import { makeServiceClient } from '../_lib/serviceClient.js';
 import { selectDueChats, type ReadCandidate } from '../_lib/clientPrefs/dueSelection.js';
 import { readChatForClient, type ReadChatResult } from '../_lib/clientPrefs/readChat.js';
 import { auditCall, type CallAuditStatus } from '../_lib/clientPrefs/callAudit.js';
+import { loadAutomationSettings, autoSavePlaces, autoSavePrefs } from '../_lib/clientPrefs/autoSave.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
 
@@ -206,8 +207,18 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   // done / skipped / failed / proposals = the PREFERENCE pass; geo_* = the places pass.
   const calls = {
     candidates: 0, geo_only: 0, done: 0, skipped: 0, failed: 0, proposals: 0, not_claimed: 0,
-    geo_done: 0, geo_skipped: 0, geo_failed: 0, geo_proposals: 0, deferred: 0,
+    geo_done: 0, geo_skipped: 0, geo_failed: 0, geo_proposals: 0, deferred: 0, auto_saved: 0,
   };
+  // The AI saves what the audit found onto the client (fill-empty-only, as the
+  // call audit always was). Settings read once per tick.
+  let autoSaveOn = false;
+  try {
+    autoSaveOn = (await loadAutomationSettings(sb)).auto_save_profile;
+  } catch (err) {
+    const msg = `automation settings: ${err instanceof Error ? err.message : String(err)}`;
+    console.error('[chat-auto-read]', msg);
+    errors.push(msg);
+  }
   const callDeadline = TIME_BUDGET_MS - CALL_AUDIT_RESERVE_MS;
   if (Date.now() - startedAt < callDeadline) {
     const callRes = await loadCallCandidates(sb, new Date());
@@ -238,6 +249,22 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
             calls[GEO_COUNT[r.geo.status]] += 1;
             if (r.geo.proposalId) calls.geo_proposals += 1;
             if (r.geo.status === 'failed') errors.push(`call ${c.call_id} geo: ${r.geo.reason ?? 'failed'}`);
+          }
+          if (autoSaveOn) {
+            const log = (m: string) => console.log(m);
+            const saves: Array<[string, () => Promise<unknown>]> = [];
+            if (r.proposalId) saves.push(['prefs', () => autoSavePrefs(sb, { proposalId: r.proposalId!, conversation: null, source: 'call', sourceRef: c.call_id, log })]);
+            if (r.geo?.proposalId) saves.push(['places', () => autoSavePlaces(sb, { proposalId: r.geo!.proposalId!, source: 'call', sourceRef: c.call_id, log })]);
+            for (const [what, run] of saves) {
+              try {
+                await run();
+                calls.auto_saved += 1;
+              } catch (err) {
+                const msg = `call ${c.call_id} ${what} auto-save: ${err instanceof Error ? err.message : String(err)}`;
+                console.error('[chat-auto-read]', msg);
+                errors.push(msg);
+              }
+            }
           }
         } catch (err) {
           const msg = `call ${c.call_id}/${c.client_id}: ${err instanceof Error ? err.message : String(err)}`;

@@ -251,7 +251,12 @@ export function createSupabaseResolverDb(supabase: SupabaseClient): ResolverDb {
       // A bare road name («الملك فهد») ranks behind hospitals/parks/metro stops
       // that share it, so for roads also query the «طريق …» form.
       const t = token.trim();
-      const queries = opts.kind === 'linestring' && !/^\s*(طريق|شارع|محور|الدائري)\s/.test(t) ? [`طريق ${t}`, t] : [t];
+      const base = opts.kind === 'linestring' && !/^\s*(طريق|شارع|محور|الدائري)\s/.test(t) ? [`طريق ${t}`, t] : [t];
+      // The search RPC does not fold ة/ه, ى/ي, أ/ا: «غرناطة مول» never found
+      // «غرناطه مول» (2026-10-04). Its spelling variants join the candidate
+      // stage; selection still needs an exact (folded) key, so this only
+      // widens what can be found, never what gets picked.
+      const queries = Array.from(new Set(base.flatMap((q) => lexicalVariants(q).filter((v) => !/^ال/.test(v) || q.startsWith('ال'))))).slice(0, 6);
       const pCity = await cityNameForElements(supabase, cityCache, opts.city);
       const seen = new Map<string, Record<string, unknown>>();
       for (const q of queries) {

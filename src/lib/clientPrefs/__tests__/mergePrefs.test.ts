@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPrefPatch, buildFillEmptyPatch, mergeSetValues, isSameAsSaved, type PrefSuggestionLike } from '../mergePrefs';
+import { buildPrefPatch, buildFillEmptyPatch, buildAiPrefPatch, undoPrefValue, mergeSetValues, isSameAsSaved, type PrefSuggestionLike } from '../mergePrefs';
 
 const sug = (slug: string, value: unknown): PrefSuggestionLike => ({ slug, value, quote: null, confidence: 80 });
 const OPTIONS = {
@@ -110,5 +110,43 @@ describe('buildFillEmptyPatch (call audit — never overwrite)', () => {
     const r = buildFillEmptyPatch({}, suggestions, ['purchase_objective', 'client_name', 'preferred_bedrooms'], options);
     expect(r.patch).toEqual({ purchase_objective: ['residential'] });
     expect(r.skippedFilled).toEqual([]);
+  });
+});
+
+describe('buildAiPrefPatch — the AI saves without a tick, never over a rep', () => {
+  const opts = { preferred_unit_type: ['شقة', 'فيلا', 'دور'] };
+  const s = (slug: string, value: unknown) => ({ slug, value, quote: 'q', confidence: 90 });
+  it('sets are unioned and only the new values are reported as added', () => {
+    const r = buildAiPrefPatch({ preferred_unit_type: ['شقة'] }, { preferred_unit_type: s('preferred_unit_type', ['شقة', 'فيلا', 'قصر']) }, ['preferred_unit_type'], opts, new Set());
+    expect(r.patch.preferred_unit_type).toEqual(['شقة', 'فيلا']);
+    expect(r.added.preferred_unit_type).toEqual(['فيلا']);
+    expect(r.dropped).toEqual([{ slug: 'preferred_unit_type', value: 'قصر' }]);
+  });
+  it('an empty range is filled', () => {
+    const r = buildAiPrefPatch({}, { budget: s('budget', { max: 1500000 }) }, ['budget'], opts, new Set());
+    expect(r.patch.budget).toEqual({ max: 1500000 });
+  });
+  it('a range a rep set is kept and reported', () => {
+    const r = buildAiPrefPatch({ budget: { max: 1000000 } }, { budget: s('budget', { max: 1500000 }) }, ['budget'], opts, new Set());
+    expect(r.patch).toEqual({});
+    expect(r.keptRepValue).toEqual([{ slug: 'budget', current: { max: 1000000 }, heard: { max: 1500000 } }]);
+  });
+  it('a range the AI wrote last is replaced (the customer changed their mind)', () => {
+    const r = buildAiPrefPatch({ budget: { max: 1000000 } }, { budget: s('budget', { max: 1500000 }) }, ['budget'], opts, new Set(['budget']));
+    expect(r.patch.budget).toEqual({ max: 1500000 });
+  });
+});
+
+describe('undoPrefValue', () => {
+  it('a set loses only what the AI added', () => {
+    expect(undoPrefValue('preferred_unit_type', ['شقة', 'فيلا', 'دور'], { before: ['شقة'], after: ['شقة', 'فيلا'], added: ['فيلا'] })).toEqual({ value: ['شقة', 'دور'] });
+  });
+  it('a set with nothing left to remove → null', () => {
+    expect(undoPrefValue('preferred_unit_type', ['شقة'], { before: ['شقة'], after: ['شقة', 'فيلا'], added: ['فيلا'] })).toBeNull();
+  });
+  it('a range is restored only while it still holds the AI value', () => {
+    expect(undoPrefValue('budget', { max: 1500000 }, { before: { max: 1000000 }, after: { max: 1500000 }, added: null })).toEqual({ value: { max: 1000000 } });
+    expect(undoPrefValue('budget', { max: 2000000 }, { before: null, after: { max: 1500000 }, added: null })).toBeNull();
+    expect(undoPrefValue('budget', { max: 1500000 }, { before: null, after: { max: 1500000 }, added: null })).toEqual({ value: null });
   });
 });

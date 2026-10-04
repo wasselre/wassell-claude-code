@@ -74,3 +74,13 @@ describe('keyword gate — the click-to-WhatsApp ad reply', () => {
     expect(passesKeywordGate(['\u0645\u0647\u062a\u0645 \u0628\u0645\u0634\u0631\u0648\u0639 \u064a\u0645\u0627\u0645 \u0628\u0627\u0631\u0643 14', '\u0647\u0644 \u064a\u0648\u062c\u062f \u0648\u062d\u062f\u0627\u062a \u0644\u0644\u0625\u064a\u062c\u0627\u0631']).pass).toBe(true);
   });
 });
+
+describe('the worker copy of isAdOpenerTemplate stays identical', () => {
+  it('same answer on every sample', async () => {
+    const { isAdOpenerTemplate: workerCopy } = await import('../../../../worker/src/lib/adOpener.js');
+    for (const t of [
+      'مهتم بمشروع يمام 17', 'مهتم بمشروع أكنان 25', 'مهتم بمشاريع سكنية اخرى في شمال الرياض', 'مهتم بمشاريع سكنية اخرى في شرق الرياض',
+      'مهتم بمشاريع في شمال الرياض', 'ابي شقة بالنرجس', 'مهتم بمشروع يمام 17 كم السعر وكم الدفعة الاولى', '',
+    ]) expect(workerCopy(t)).toBe(isAdOpenerTemplate(t));
+  });
+});

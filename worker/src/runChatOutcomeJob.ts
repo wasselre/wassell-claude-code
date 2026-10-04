@@ -28,6 +28,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isAdOpenerTemplate } from './lib/adOpener.js';
 import type { WorkerEnv } from './env.js';
 import { recordAiUsage, openAiCompatTokens } from './lib/aiUsage.js';
 import {
@@ -270,8 +271,10 @@ export async function runChatOutcomeJob({ supabase, env, job }: RunArgs): Promis
     .order('date', { ascending: false })
     .limit(MESSAGE_WINDOW);
   if (msgErr) throw new Error(`chat_messages read failed: ${msgErr.message}`);
-  const rows = ((msgs ?? []) as MessageRow[]).slice().reverse();
-  const lastMessageAt = rows.length ? rows[rows.length - 1]!.date : null;
+  const allRows = ((msgs ?? []) as MessageRow[]).slice().reverse();
+  const lastMessageAt = allRows.length ? allRows[allRows.length - 1]!.date : null;
+  // The ad's opener buttons are not the customer's words (adOpener.ts).
+  const rows = allRows.filter((m) => !(m.flow === 'in' && isAdOpenerTemplate(m.body)));
 
   const { text: dialogue, clientTurns } = buildChatDialogue(rows);
   const empty: ChatOutcomeResult = {

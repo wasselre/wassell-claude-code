@@ -29,6 +29,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Conversation } from '../geoPreference/extractor.js';
 import { analyzeChatConversation, chatLinkedToClient, ChatCardError, type AnalyzeOptions } from '../geoPreference/chatCard.js';
 import { gatherChatConversation } from '../geoPreference/backfillPorts.js';
+import { loadAutomationSettings, autoSavePlaces, autoSavePrefs } from './autoSave.js';
 import { passesKeywordGate } from './keywordGate.js';
 import { LEASE_SECONDS, MAX_WAIT_MS } from './dueSelection.js';
 import {
@@ -43,6 +44,8 @@ export interface ReadChatResult {
   outcome: 'read' | 'partial' | 'failed' | 'gate_skipped' | 'not_claimed' | 'nothing_new' | 'waiting';
   geo: { ran: boolean; mode?: string; error?: string };
   prefs: { ran: boolean; proposalId?: string | null; fields?: number; model?: string; error?: string };
+  /** The AI's own save of what this read found (autoSave.ts); absent when nothing was minted or it is switched off. */
+  autosave?: { prefs?: string; places?: string; error?: string };
   watermark: string | null;
   ms: number;
 }
@@ -66,8 +69,13 @@ export interface ReadChatDeps {
   release(chatWid: string, clientId: string, owner: string): Promise<void>;
   markGateSkipped(chatWid: string, clientId: string, through: string, trigger: ReadTrigger): Promise<void>;
   gather(chatWid: string): Promise<Conversation | null>;
-  analyzeGeo(clientId: string, chatWid: string, opts: AnalyzeOptions): Promise<{ mode: string }>;
+  analyzeGeo(clientId: string, chatWid: string, opts: AnalyzeOptions): Promise<{ mode: string; minted_proposal_id?: string | null }>;
   extractPrefs(input: ExtractChatPrefsInput): Promise<ExtractChatPrefsResult>;
+  /**
+   * Save what this read minted onto the client, as the AI (autoSave.ts).
+   * Optional: absent (tests) ⇒ proposals stay pending, exactly as before.
+   */
+  autoSave?(a: { clientId: string; chatWid: string; conversation: Conversation; geoProposalId: string | null; prefProposalId: string | null; log: (m: string) => void }): Promise<NonNullable<ReadChatResult['autosave']>>;
 }
 
 export function makeReadChatDeps(sb: SupabaseClient): ReadChatDeps {
@@ -104,6 +112,27 @@ export function makeReadChatDeps(sb: SupabaseClient): ReadChatDeps {
     gather: (chatWid) => gatherChatConversation(sb, chatWid),
     analyzeGeo: (clientId, chatWid, opts) => analyzeChatConversation(sb, clientId, chatWid, opts),
     extractPrefs: (input) => extractChatPrefs(sb, input),
+    async autoSave(a) {
+      const settings = await loadAutomationSettings(sb);
+      if (!settings.auto_save_profile) return { prefs: 'off', places: 'off' };
+      const out: NonNullable<ReadChatResult['autosave']> = {};
+      const errs: string[] = [];
+      // Each half on its own: a failed places save must not stop the preferences.
+      if (a.geoProposalId) {
+        try {
+          const r = await autoSavePlaces(sb, { proposalId: a.geoProposalId, source: 'chat', sourceRef: a.chatWid, log: a.log });
+          out.places = `${r.status}:${r.added}`;
+        } catch (err) { errs.push(`places: ${errMsg(err)}`); console.error(`[chat-read] client=${a.clientId} places auto-save failed:`, errMsg(err)); }
+      }
+      if (a.prefProposalId) {
+        try {
+          const r = await autoSavePrefs(sb, { proposalId: a.prefProposalId, conversation: a.conversation, source: 'chat', sourceRef: a.chatWid, log: a.log });
+          out.prefs = `${r.status}:${r.written.length}`;
+        } catch (err) { errs.push(`prefs: ${errMsg(err)}`); console.error(`[chat-read] client=${a.clientId} prefs auto-save failed:`, errMsg(err)); }
+      }
+      if (errs.length) out.error = errs.join(' | ');
+      return out;
+    },
   };
 }
 
@@ -188,9 +217,11 @@ export async function readChatForClient(sb: SupabaseClient, o: ReadChatOptions):
     let geoOk = true;
     let prefsOk = true;
     let geoAdvances = false;
+    let geoMinted: string | null = null;
     if (geoRes.status === 'fulfilled') {
       if (geoRes.value) {
         geo.mode = geoRes.value.mode;
+        geoMinted = geoRes.value.minted_proposal_id ?? null;
         geoAdvances = geoRes.value.mode !== 'skipped_recent';
       }
     } else {
@@ -228,8 +259,20 @@ export async function readChatForClient(sb: SupabaseClient, o: ReadChatOptions):
     if (!ok) {
       throw new Error(`chat read lease for ${chatWid} / ${clientId} was lost before finish (owner ${owner}) — watermarks not recorded`);
     }
+    // (i) the AI saves what it found onto the client (no rep tick). Never fails
+    // the read: a failed save leaves the proposal pending, as before.
+    let autosave: ReadChatResult['autosave'];
+    const prefMinted = prefs.proposalId ?? null;
+    if (deps.autoSave && (geoMinted || prefMinted)) {
+      try {
+        autosave = await deps.autoSave({ clientId, chatWid, conversation, geoProposalId: geoMinted, prefProposalId: prefMinted, log });
+      } catch (err) {
+        autosave = { error: errMsg(err) };
+        console.error(`[chat-read] client=${clientId} chat=${chatWid} auto-save failed:`, errMsg(err));
+      }
+    }
     log(`[chat-read] client=${clientId} chat=${chatWid} trigger=${trigger} outcome=${outcome} geo=${geo.ran ? (geo.mode ?? 'error') : 'skip'} prefs=${prefs.ran ? (prefs.error ? 'error' : `${prefs.fields ?? 0} fields`) : 'skip'} watermark=${watermark ?? '-'}`);
-    return done({ outcome, geo, prefs, watermark });
+    return done({ outcome, geo, prefs, ...(autosave ? { autosave } : {}), watermark });
   } finally {
     // (h) never leave a lease behind when finish was not reached.
     if (!finished) {

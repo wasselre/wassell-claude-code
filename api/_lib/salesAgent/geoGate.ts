@@ -102,3 +102,19 @@ export async function sideOfRoad(
     id: r.point_id, side: r.main_side, km: typeof r.km === 'number' ? r.km : parseFloat(r.km),
   }));
 }
+
+/**
+ * The client's SAVED places (location_items) → the projects inside them, through
+ * the same matcher as {@link readLocation}. null ids = nothing usable saved.
+ */
+export async function matchSavedPlaces(
+  svc: SupabaseClient, items: import('../../../src/lib/geo/locationItems.js').LocationItem[], labels: string[],
+): Promise<GeoReading> {
+  const understood = labels.map((l) => ({ place: l, wanted: true, kind: 'saved', radius_m: null }));
+  if (!items.some((i) => i.polarity !== 'exclude')) return { ids: null, understood, needs_review: 0 };
+  const { data, error } = await svc.rpc('sales_agent_geo_match', { p_items: items });
+  if (error) throw new Error(`saved places match failed: ${error.message}`);
+  const r = (data ?? {}) as { ids?: string[]; includes?: number; needs_review?: number };
+  if (!Number(r.includes ?? 0)) return { ids: null, understood, needs_review: Number(r.needs_review ?? 0) };
+  return { ids: new Set((r.ids ?? []).filter(Boolean)), understood, needs_review: Number(r.needs_review ?? 0) };
+}
