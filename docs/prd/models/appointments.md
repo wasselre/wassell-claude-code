@@ -5,7 +5,7 @@
 # Model: Appointments / المواعيد  `appointments`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-27
+**Last updated (from DB):** 2026-10-04
 **Model id:** `b032a675-6237-4436-9783-a1a253855f74`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -35,7 +35,7 @@
 | `client_name` | Client Name / اسم العميل | Text | no | half | no |  |
 | `app_id` | Appointment ID / معرف الموعد | Auto ID | no | half | yes | م ع### |
 | `appointment_date` | Appointment Date / تاريخ الموعد | Date & time | yes | half | yes |  |
-| `project_id` | Project / المشروع | Lookup | no | half | yes | → All Projects |
+| `project_id` | Project / المشروع | Lookup | no | half | yes | → Our Projects |
 | `units` | Units / الوحدات | unit_picker | no | full | yes |  |
 | `sales_rep` | Sales Rep / مندوب المبيعات | Assignee | no | half | yes | any user |
 | `appointment_status` | Appointment Status / حالة الموعد | Dropdown | no | half | yes | 6 options |
@@ -57,8 +57,8 @@
 - **Appointment ID / معرف الموعد** (`app_id`, type `auto_id`):
   - format: `م ع000` · starts at 1
 - **Project / المشروع** (`project_id`, type `lookup`):
-  - target model: All Projects
-  - shows field: `project_name`
+  - target model: Our Projects
+  - shows field: `27ae1692-c5dd-4ee7-85e2-8b9272b05afc::project_name`
   - multiple: no · max in dropdown: 20
 - **Sales Rep / مندوب المبيعات** (`sales_rep`, type `assignee`):
   - eligible users: any active user

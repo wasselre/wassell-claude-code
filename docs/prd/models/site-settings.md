@@ -5,7 +5,7 @@
 # Model: Website Settings / إعدادات الموقع  `site_settings`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-29
+**Last updated (from DB):** 2026-10-04
 **Model id:** `0fcb55a5-f7e7-452f-90db-d05c728798c2`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -13,8 +13,8 @@
 **Icon:** `globe`   ·   **Color:** `#B8734F`
 
 ## Overview
-- Sections: **14** (1 base, 13 non-base)
-- Fields: **190**
+- Sections: **9** (1 base, 8 non-base)
+- Fields: **55**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -40,190 +40,30 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `hero_eyebrow_left` | Hero Eyebrow (Left) / تمهيد البطل (يسار) | Text | no | half | no |  |
-| `hero_eyebrow_right` | Hero Eyebrow (Right) / تمهيد البطل (يمين) | Text | no | half | no |  |
-| `hero_eyebrow_right_short` | Hero Eyebrow (Short) / تمهيد البطل (مختصر) | Text | no | half | no |  |
-| `hero_eyebrow` | Hero Eyebrow / تمهيد البطل | Text | no | half | no |  |
 | `hero_title` | Hero Title / عنوان البطل | Text | no | full | no |  |
 | `hero_subtitle` | Hero Subtitle / العنوان الفرعي | Text | no | full | no |  |
 | `hero_description` | Hero Description / وصف البطل | Text area | no | full | no |  |
-| `hero_cta_primary` | Hero CTA Primary / زر البطل الأساسي | Text | no | half | no |  |
-| `hero_cta_primary_url` | Hero CTA Primary URL / رابط الزر الأساسي | URL | no | half | no |  |
-| `hero_cta_secondary` | Hero CTA Secondary / زر البطل الثانوي | Text | no | half | no |  |
-| `hero_cta_secondary_url` | Hero CTA Secondary URL / رابط الزر الثانوي | URL | no | half | no |  |
-| `hero_kpi_eyebrow` | KPI Rail Eyebrow / تمهيد لوحة الأرقام | Text | no | full | no |  |
-| `hero_pillar_1` | Pillar 1 / الركيزة 1 | Text | no | third | no |  |
-| `hero_pillar_2` | Pillar 2 / الركيزة 2 | Text | no | third | no |  |
-| `hero_pillar_3` | Pillar 3 / الركيزة 3 | Text | no | third | no |  |
-| `hero_scroll_label` | Scroll Label / تسمية التمرير | Text | no | half | no |  |
-| `stat_1_value` | KPI 1 — Value / KPI 1 — قيمة | Text | no | third | no |  |
-| `stat_1_label` | KPI 1 — Label / KPI 1 — تسمية | Text | no | third | no |  |
-| `stat_2_value` | KPI 2 — Value / KPI 2 — قيمة | Text | no | third | no |  |
-| `stat_2_label` | KPI 2 — Label / KPI 2 — تسمية | Text | no | third | no |  |
-| `stat_3_value` | KPI 3 — Value / KPI 3 — قيمة | Text | no | third | no |  |
-| `stat_3_label` | KPI 3 — Label / KPI 3 — تسمية | Text | no | third | no |  |
 | `hero_bg_image_url` | Hero Background Image / صورة خلفية البطل | URL | no | full | no |  |
 
-### 3. About / عن الشركة  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `about_index_label` | Section Index Label / مُؤشّر القسم | Text | no | half | no |  |
-| `about_eyebrow` | Section Eyebrow / تمهيد القسم | Text | no | half | no |  |
-| `about_headline` | Headline (HTML) / العنوان (يدعم HTML) | Text area | no | full | no |  |
-| `about_paragraph_1` | Paragraph 1 / الفقرة الأولى | Text area | no | full | no |  |
-| `about_paragraph_2` | Paragraph 2 / الفقرة الثانية | Text area | no | full | no |  |
-| `about_card_year` | Card: Year / بطاقة: السنة | Text | no | half | no |  |
-| `about_card_city` | Card: City / بطاقة: المدينة | Text | no | half | no |  |
-| `about_card_title` | Card: Title (HTML) / بطاقة: العنوان (HTML) | Text area | no | full | no |  |
-| `about_card_desc` | Card: Description / بطاقة: الوصف | Text area | no | full | no |  |
-| `about_audience_1_index` | Audience 1 — Index / الجمهور 1 — رقم | Text | no | third | no |  |
-| `about_audience_1_title` | Audience 1 — Title / الجمهور 1 — عنوان | Text | no | third | no |  |
-| `about_audience_1_desc` | Audience 1 — Desc / الجمهور 1 — وصف | Text area | no | third | no |  |
-| `about_audience_2_index` | Audience 2 — Index / الجمهور 2 — رقم | Text | no | third | no |  |
-| `about_audience_2_title` | Audience 2 — Title / الجمهور 2 — عنوان | Text | no | third | no |  |
-| `about_audience_2_desc` | Audience 2 — Desc / الجمهور 2 — وصف | Text area | no | third | no |  |
-
-### 4. Why Us / ما يميزنا  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `why_index_label` | Section Index Label / مُؤشّر القسم | Text | no | half | no |  |
-| `why_eyebrow` | Section Eyebrow / تمهيد القسم | Text | no | half | no |  |
-| `why_headline` | Headline (HTML) / العنوان (يدعم HTML) | Text area | no | full | no |  |
-| `why_intro` | Intro / مقدمة القسم | Text area | no | full | no |  |
-| `why_1_index` | Reason 1 — Index / سبب 1 — رقم | Text | no | third | no |  |
-| `why_1_title` | Reason 1 — Title / سبب 1 — عنوان | Text | no | third | no |  |
-| `why_1_desc` | Reason 1 — Desc / سبب 1 — وصف | Text area | no | third | no |  |
-| `why_2_index` | Reason 2 — Index / سبب 2 — رقم | Text | no | third | no |  |
-| `why_2_title` | Reason 2 — Title / سبب 2 — عنوان | Text | no | third | no |  |
-| `why_2_desc` | Reason 2 — Desc / سبب 2 — وصف | Text area | no | third | no |  |
-| `why_3_index` | Reason 3 — Index / سبب 3 — رقم | Text | no | third | no |  |
-| `why_3_title` | Reason 3 — Title / سبب 3 — عنوان | Text | no | third | no |  |
-| `why_3_desc` | Reason 3 — Desc / سبب 3 — وصف | Text area | no | third | no |  |
-| `why_4_index` | Reason 4 — Index / سبب 4 — رقم | Text | no | third | no |  |
-| `why_4_title` | Reason 4 — Title / سبب 4 — عنوان | Text | no | third | no |  |
-| `why_4_desc` | Reason 4 — Desc / سبب 4 — وصف | Text area | no | third | no |  |
-
-### 5. Stats / الأرقام البارزة  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `stats_eyebrow` | Section Eyebrow / تمهيد القسم | Text | no | full | no |  |
-| `stats_headline` | Headline (HTML) / العنوان (يدعم HTML) | Text area | no | full | no |  |
-| `stats_intro` | Intro / مقدمة القسم | Text area | no | full | no |  |
-| `stat_1_value_lg` | Stat 1 — Value / إحصاء 1 — قيمة | Text | no | half | no |  |
-| `stat_1_label_lg` | Stat 1 — Label / إحصاء 1 — تسمية | Text | no | half | no |  |
-| `stat_1_caption` | Stat 1 — Caption / إحصاء 1 — تعليق | Text area | no | half | no |  |
-| `stat_1_index` | Stat 1 — Index / إحصاء 1 — رقم القسم | Text | no | half | no |  |
-| `stat_2_value_lg` | Stat 2 — Value (HTML) / إحصاء 2 — قيمة (HTML) | Text area | no | half | no |  |
-| `stat_2_label_lg` | Stat 2 — Label / إحصاء 2 — تسمية | Text | no | half | no |  |
-| `stat_2_caption` | Stat 2 — Caption / إحصاء 2 — تعليق | Text area | no | half | no |  |
-| `stat_2_index` | Stat 2 — Index / إحصاء 2 — رقم القسم | Text | no | half | no |  |
-| `stat_3_value_lg` | Stat 3 — Value (HTML) / إحصاء 3 — قيمة (HTML) | Text area | no | half | no |  |
-| `stat_3_label_lg` | Stat 3 — Label / إحصاء 3 — تسمية | Text | no | half | no |  |
-| `stat_3_caption` | Stat 3 — Caption / إحصاء 3 — تعليق | Text area | no | half | no |  |
-| `stat_3_index` | Stat 3 — Index / إحصاء 3 — رقم القسم | Text | no | half | no |  |
-
-### 6. Tech / التقنية  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `tech_headline` | Headline / العنوان | Text | no | full | no |  |
-| `tech_intro_1` | Paragraph 1 / الفقرة الأولى | Text area | no | full | no |  |
-| `tech_intro_2` | Paragraph 2 / الفقرة الثانية | Text area | no | full | no |  |
-| `tech_bullet_1` | Bullet 1 / نقطة 1 | Text | no | half | no |  |
-| `tech_bullet_2` | Bullet 2 / نقطة 2 | Text | no | half | no |  |
-| `tech_bullet_3` | Bullet 3 / نقطة 3 | Text | no | half | no |  |
-| `tech_bullet_4` | Bullet 4 / نقطة 4 | Text | no | half | no |  |
-| `tech_quote` | Bottom Quote / الاقتباس السفلي | Text area | no | full | no |  |
-
-### 7. Customer Journey / رحلة العميل  _(color #B8734F)_
+### 3. Customer Journey / رحلة العميل  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `journey_headline` | Headline / العنوان | Text | no | full | no |  |
-| `journey_intro` | Intro / مقدمة | Text area | no | full | no |  |
-| `journey_1_title` | Step 1 — Title / مرحلة 1 — عنوان | Text | no | half | no |  |
-| `journey_1_desc` | Step 1 — Desc / مرحلة 1 — وصف | Text area | no | half | no |  |
-| `journey_2_title` | Step 2 — Title / مرحلة 2 — عنوان | Text | no | half | no |  |
-| `journey_2_desc` | Step 2 — Desc / مرحلة 2 — وصف | Text area | no | half | no |  |
-| `journey_3_title` | Step 3 — Title / مرحلة 3 — عنوان | Text | no | half | no |  |
-| `journey_3_desc` | Step 3 — Desc / مرحلة 3 — وصف | Text area | no | half | no |  |
-| `journey_4_title` | Step 4 — Title / مرحلة 4 — عنوان | Text | no | half | no |  |
-| `journey_4_desc` | Step 4 — Desc / مرحلة 4 — وصف | Text area | no | half | no |  |
-| `journey_5_title` | Step 5 — Title / مرحلة 5 — عنوان | Text | no | half | no |  |
-| `journey_5_desc` | Step 5 — Desc / مرحلة 5 — وصف | Text area | no | half | no |  |
-| `journey_6_title` | Step 6 — Title / مرحلة 6 — عنوان | Text | no | half | no |  |
-| `journey_6_desc` | Step 6 — Desc / مرحلة 6 — وصف | Text area | no | half | no |  |
-| `journey_7_title` | Step 7 — Title / مرحلة 7 — عنوان | Text | no | half | no |  |
-| `journey_7_desc` | Step 7 — Desc / مرحلة 7 — وصف | Text area | no | half | no |  |
-| `journey_8_title` | Step 8 — Title / مرحلة 8 — عنوان | Text | no | half | no |  |
-| `journey_8_desc` | Step 8 — Desc / مرحلة 8 — وصف | Text area | no | half | no |  |
 
-### 8. Capabilities / القدرات  _(color #B8734F)_
+### 4. Capabilities / القدرات  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `cap_index_label` | Section Index Label / مُؤشّر القسم | Text | no | half | no |  |
-| `cap_eyebrow` | Section Eyebrow / تمهيد القسم | Text | no | half | no |  |
 | `cap_headline` | Headline (HTML) / العنوان (يدعم HTML) | Text area | no | full | no |  |
-| `cap_intro` | Intro / مقدمة القسم | Text area | no | full | no |  |
-| `cap_1_title` | Cap 1 — Title / قدرة 1 — عنوان | Text | no | half | no |  |
-| `cap_1_desc` | Cap 1 — Desc / قدرة 1 — وصف | Text area | no | half | no |  |
-| `cap_2_title` | Cap 2 — Title / قدرة 2 — عنوان | Text | no | half | no |  |
-| `cap_2_desc` | Cap 2 — Desc / قدرة 2 — وصف | Text area | no | half | no |  |
-| `cap_3_title` | Cap 3 — Title / قدرة 3 — عنوان | Text | no | half | no |  |
-| `cap_3_desc` | Cap 3 — Desc / قدرة 3 — وصف | Text area | no | half | no |  |
-| `cap_4_title` | Cap 4 — Title / قدرة 4 — عنوان | Text | no | half | no |  |
-| `cap_4_desc` | Cap 4 — Desc / قدرة 4 — وصف | Text area | no | half | no |  |
-| `cap_5_title` | Cap 5 — Title / قدرة 5 — عنوان | Text | no | half | no |  |
-| `cap_5_desc` | Cap 5 — Desc / قدرة 5 — وصف | Text area | no | half | no |  |
-| `cap_outro_headline` | Outro — Headline / الخلاصة — عنوان | Text | no | full | no |  |
-| `cap_outro_desc` | Outro — Desc / الخلاصة — وصف | Text area | no | full | no |  |
 
-### 9. Services / الخدمات  _(color #B8734F)_
+### 5. Services / الخدمات  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `services_index_label` | Section Index Label / مُؤشّر القسم | Text | no | half | no |  |
-| `services_eyebrow` | Section Eyebrow / تمهيد القسم | Text | no | half | no |  |
 | `services_headline` | Headline (HTML) / العنوان (يدعم HTML) | Text area | no | full | no |  |
-| `services_intro` | Intro / مقدمة القسم | Text area | no | full | no |  |
-| `service_1_title` | Service 1 — Title / خدمة 1 — عنوان | Text | no | full | no |  |
-| `service_1_bullet_1` | Service 1 — Bullet 1 / خدمة 1 — نقطة 1 | Text | no | half | no |  |
-| `service_1_bullet_2` | Service 1 — Bullet 2 / خدمة 1 — نقطة 2 | Text | no | half | no |  |
-| `service_1_bullet_3` | Service 1 — Bullet 3 / خدمة 1 — نقطة 3 | Text | no | half | no |  |
-| `service_1_bullet_4` | Service 1 — Bullet 4 / خدمة 1 — نقطة 4 | Text | no | half | no |  |
-| `service_2_title` | Service 2 — Title / خدمة 2 — عنوان | Text | no | full | no |  |
-| `service_2_bullet_1` | Service 2 — Bullet 1 / خدمة 2 — نقطة 1 | Text | no | half | no |  |
-| `service_2_bullet_2` | Service 2 — Bullet 2 / خدمة 2 — نقطة 2 | Text | no | half | no |  |
-| `service_2_bullet_3` | Service 2 — Bullet 3 / خدمة 2 — نقطة 3 | Text | no | half | no |  |
-| `service_2_bullet_4` | Service 2 — Bullet 4 / خدمة 2 — نقطة 4 | Text | no | half | no |  |
-| `service_3_title` | Service 3 — Title / خدمة 3 — عنوان | Text | no | full | no |  |
-| `service_3_bullet_1` | Service 3 — Bullet 1 / خدمة 3 — نقطة 1 | Text | no | half | no |  |
-| `service_3_bullet_2` | Service 3 — Bullet 2 / خدمة 3 — نقطة 2 | Text | no | half | no |  |
-| `service_3_bullet_3` | Service 3 — Bullet 3 / خدمة 3 — نقطة 3 | Text | no | half | no |  |
-| `service_3_bullet_4` | Service 3 — Bullet 4 / خدمة 3 — نقطة 4 | Text | no | half | no |  |
-| `service_4_title` | Service 4 — Title / خدمة 4 — عنوان | Text | no | full | no |  |
-| `service_4_bullet_1` | Service 4 — Bullet 1 / خدمة 4 — نقطة 1 | Text | no | half | no |  |
-| `service_4_bullet_2` | Service 4 — Bullet 2 / خدمة 4 — نقطة 2 | Text | no | half | no |  |
-| `service_4_bullet_3` | Service 4 — Bullet 3 / خدمة 4 — نقطة 3 | Text | no | half | no |  |
-| `service_4_bullet_4` | Service 4 — Bullet 4 / خدمة 4 — نقطة 4 | Text | no | half | no |  |
 
-### 10. CTA / الدعوة للعمل  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `cta_eyebrow` | Eyebrow / تمهيد القسم | Text | no | full | no |  |
-| `cta_headline` | Headline (HTML) / العنوان (يدعم HTML) | Text area | no | full | no |  |
-| `cta_description` | Description / الوصف | Text area | no | full | no |  |
-| `cta_primary` | Primary Button / الزر الأساسي | Text | no | half | no |  |
-| `cta_primary_url` | Primary Button URL / رابط الزر الأساسي | URL | no | half | no |  |
-| `cta_secondary` | Secondary Button / الزر الثانوي | Text | no | half | no |  |
-| `cta_secondary_url` | Secondary Button URL / رابط الزر الثانوي | URL | no | half | no |  |
-
-### 11. Footer / التذييل  _(color #B8734F)_
+### 6. Footer / التذييل  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -247,7 +87,7 @@
 | `footer_copyright` | Copyright / حقوق النشر | Text | no | full | no |  |
 | `footer_back_to_top` | Back to Top / زر العودة للأعلى | Text | no | half | no |  |
 
-### 12. Map Card / بطاقة الخريطة  _(color #B8734F)_
+### 7. Map Card / بطاقة الخريطة  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -447,7 +287,7 @@
   - API value `avg_price_per_m2` → "Avg Price per m²" / "متوسط السعر الإجمالي للمتر"
   - API value `project_type` → "Project Type" / "نوع المشروع"
 
-### 13. Project Card / بطاقة المشروع  _(color #B8734F)_
+### 8. Project Card / بطاقة المشروع  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -711,7 +551,7 @@
   - API value `avg_price_per_m2` → "Avg Price per m²" / "متوسط السعر الإجمالي للمتر"
   - API value `project_type` → "Project Type" / "نوع المشروع"
 
-### 14. Unit Card / بطاقة الوحدة  _(color #B8734F)_
+### 9. Unit Card / بطاقة الوحدة  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |

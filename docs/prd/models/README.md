@@ -11,11 +11,11 @@
 | [Advertisers](advertisers.md) | `advertisers` | JSONB | — | 1 | 10 | no | 2026-07-01 |
 | [AI Agent](ai-chats.md) | `ai_chats` | JSONB | — | 1 | 5 | yes | 2026-09-27 |
 | [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 73 | no | 2026-09-29 |
-| [Appointments](appointments.md) | `appointments` | JSONB | — | 1 | 11 | no | 2026-09-27 |
+| [Appointments](appointments.md) | `appointments` | JSONB | — | 1 | 11 | no | 2026-10-04 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | — | 1 | 13 | yes | 2026-09-27 |
 | [Chats](chats.md) | `chats` | JSONB | — | 1 | 15 | yes | 2026-09-27 |
 | [Cities](cities.md) | `cities` | frozen `cities` | Geography | 1 | 12 | no | 2026-07-30 |
-| [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-08-20 |
+| [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-10-04 |
 | [Clients](clients.md) | `clients` | JSONB | — | 4 | 23 | no | 2026-09-27 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-08-20 |
 | [Contacts](contacts.md) | `contacts` | JSONB | — | 1 | 6 | no | 2026-08-10 |
@@ -44,7 +44,7 @@
 | [Regions](regions.md) | `regions` | frozen `regions` | Geography | 1 | 8 | no | 2026-07-30 |
 | [Reservations](reservations.md) | `reservations` | JSONB | — | 1 | 9 | no | 2026-09-27 |
 | [Sales Tasks](sales-tasks.md) | `sales_tasks` | JSONB | — | 3 | 16 | no | 2026-09-27 |
-| [Website Settings](site-settings.md) | `site_settings` | JSONB | — | 14 | 190 | yes | 2026-09-29 |
+| [Website Settings](site-settings.md) | `site_settings` | JSONB | — | 9 | 55 | yes | 2026-10-04 |
 | [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 1 | 7 | no | 2026-09-20 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 3 | 13 | no | 2026-09-20 |

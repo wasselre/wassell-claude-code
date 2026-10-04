@@ -5,7 +5,7 @@
 # Model: Client Property Options / خيارات العميل العقارية  `client_property_options`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-08-20
+**Last updated (from DB):** 2026-10-04
 **Model id:** `e00d8df8-905c-4fb7-a117-3aefa6fd5603`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -38,7 +38,7 @@
 | `match_score` | Match Score / نقاط التطابق | Number | no | half | yes |  |
 | `priority_rank` | Priority Rank / ترتيب الأولوية | Number | no | half | no |  |
 | `match_run_id` | Match Run ID / معرّف جولة المطابقة | Text | no | half | no |  |
-| `added_from` | Added From / أُضيف من | Dropdown | no | half | no | 3 options |
+| `added_from` | Added From / أُضيف من | Dropdown | no | half | no | 4 options |
 | `added_by` | Added By / أُضيف بواسطة | Assignee | no | half | no | any user |
 | `sales_notes` | Sales Notes / ملاحظات المبيعات | Text area | no | full | no |  |
 | `elimination_notes` | Elimination Notes / ملاحظات الاستبعاد | Text area | no | full | no |  |
@@ -66,5 +66,6 @@
   - API value `project_finder` → "Project Finder" / "الباحث عن المشاريع" · color `#B8734F`
   - API value `manual` → "Manual" / "يدوي" · color `#6B7280`
   - API value `follow_up` → "Follow-up" / "متابعة" · color `#3B82F6`
+  - API value `ai` → "AI assistant" / "المساعد الذكي" · color `#C09B5F`
 - **Added By / أُضيف بواسطة** (`added_by`, type `assignee`):
   - eligible users: any active user
