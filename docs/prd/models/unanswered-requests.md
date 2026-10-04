@@ -5,7 +5,7 @@
 # Model: Unanswered Requests / طلبات غير مجابة  `unanswered_requests`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-20
+**Last updated (from DB):** 2026-10-04
 **Model id:** `da920a2c-43c2-4b82-9c39-ac36c4602e51`
 **Storage:** unified records (JSONB)
 **Group:** Unresponded Requests
@@ -33,7 +33,7 @@
 
 - **Client ID / معرف العميل** (`client_id`, type `lookup`):
   - target model: Clients
-  - shows field: `client_id`
+  - shows field: `client_name`
   - multiple: no · max in dropdown: 20
 - **Client Name / اسم العميل** (`client_name`, type `mirror`) — read-only; shows `client_name` from the record linked via Client ID (`client_id`).
 - **Client Mobile Number / رقم جوال العميل** (`client_mobile_number`, type `mirror`) — read-only; shows `phone_number` from the record linked via Client ID (`client_id`).

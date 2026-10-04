@@ -5,7 +5,7 @@
 # Model: Reservations / الحجوزات  `reservations`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-27
+**Last updated (from DB):** 2026-10-04
 **Model id:** `5a1e0ffe-0000-4000-8000-000000000002`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -42,7 +42,7 @@
 
 - **Client / العميل** (`client_id`, type `lookup`):
   - target model: Clients
-  - shows field: `client_id`
+  - shows field: `client_name`
   - multiple: no · max in dropdown: 20
 - **Offer / العرض** (`offer_id`, type `lookup`):
   - target model: Offer Prices

@@ -5,7 +5,7 @@
 # Model: Chats / المحادثات  `chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-27
+**Last updated (from DB):** 2026-10-04
 **Model id:** `7e6c23b5-5492-413a-bc34-d928086f6e7e`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -62,7 +62,7 @@
   - eligible users: any active user
 - **Linked Client / العميل المرتبط** (`client_link`, type `lookup`):
   - target model: Clients
-  - shows field: `name`
+  - shows field: `client_name`
   - multiple: no
 - **Sales Consultant / مستشار المبيعات** (`client_owner`, type `assignee`):
   - eligible users: any active user

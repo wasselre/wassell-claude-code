@@ -9,11 +9,11 @@
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Advertisers](advertisers.md) | `advertisers` | JSONB | — | 1 | 10 | no | 2026-07-01 |
-| [AI Agent](ai-chats.md) | `ai_chats` | JSONB | — | 1 | 5 | yes | 2026-09-27 |
+| [AI Agent](ai-chats.md) | `ai_chats` | JSONB | — | 1 | 5 | yes | 2026-10-04 |
 | [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 73 | no | 2026-09-29 |
 | [Appointments](appointments.md) | `appointments` | JSONB | — | 1 | 11 | no | 2026-10-04 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | — | 1 | 13 | yes | 2026-09-27 |
-| [Chats](chats.md) | `chats` | JSONB | — | 1 | 15 | yes | 2026-09-27 |
+| [Chats](chats.md) | `chats` | JSONB | — | 1 | 15 | yes | 2026-10-04 |
 | [Cities](cities.md) | `cities` | frozen `cities` | Geography | 1 | 12 | no | 2026-07-30 |
 | [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-10-04 |
 | [Clients](clients.md) | `clients` | JSONB | — | 4 | 23 | no | 2026-09-27 |
@@ -25,29 +25,29 @@
 | [Templates Library](design-templates.md) | `design_templates` | JSONB | Designs | 1 | 7 | yes | 2026-08-20 |
 | [Companies](developers.md) | `developers` | JSONB | Projects | 1 | 7 | no | 2026-09-29 |
 | [Districts](districts.md) | `districts` | frozen `districts` | Geography | 1 | 28 | no | 2026-07-30 |
-| [Financing](financing.md) | `financing` | JSONB | — | 1 | 9 | no | 2026-09-27 |
-| [Follow-ups](followups.md) | `followups` | JSONB | — | 3 | 44 | no | 2026-09-27 |
+| [Financing](financing.md) | `financing` | JSONB | — | 1 | 9 | no | 2026-10-04 |
+| [Follow-ups](followups.md) | `followups` | JSONB | — | 3 | 44 | no | 2026-10-04 |
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-09-20 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Lead portals](lead-portals.md) | `lead_portals` | JSONB | — | 2 | 17 | no | 2026-09-29 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 86 | no | 2026-09-20 |
 | [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-09-20 |
-| [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | — | 1 | 9 | no | 2026-09-27 |
+| [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | — | 1 | 9 | no | 2026-10-04 |
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 5 | 15 | no | 2026-09-20 |
-| [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | — | 1 | 8 | no | 2026-09-27 |
-| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | — | 2 | 16 | no | 2026-09-27 |
+| [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | — | 1 | 8 | no | 2026-10-04 |
+| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | — | 2 | 16 | no | 2026-10-04 |
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 1 | 12 | yes | 2026-09-29 |
 | [Project Officers](project-officers.md) | `project_officers` | JSONB | Projects | 1 | 7 | no | 2026-09-29 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
 | [Real Estate Offices](real-estate-offices.md) | `real_estate_offices` | JSONB | Unresponded Requests | 1 | 6 | no | 2026-07-30 |
 | [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-09-20 |
 | [Regions](regions.md) | `regions` | frozen `regions` | Geography | 1 | 8 | no | 2026-07-30 |
-| [Reservations](reservations.md) | `reservations` | JSONB | — | 1 | 9 | no | 2026-09-27 |
+| [Reservations](reservations.md) | `reservations` | JSONB | — | 1 | 9 | no | 2026-10-04 |
 | [Sales Tasks](sales-tasks.md) | `sales_tasks` | JSONB | — | 3 | 16 | no | 2026-09-27 |
-| [Website Settings](site-settings.md) | `site_settings` | JSONB | — | 9 | 55 | yes | 2026-10-04 |
+| [Website Settings](site-settings.md) | `site_settings` | JSONB | — | 9 | 52 | yes | 2026-10-04 |
 | [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 1 | 7 | no | 2026-09-20 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
-| [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 3 | 13 | no | 2026-09-20 |
-| [Unit Updates](unit-updates.md) | `unit_updates` | JSONB | Projects | 1 | 9 | no | 2026-09-07 |
+| [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 3 | 13 | no | 2026-10-04 |
+| [Unit Updates](unit-updates.md) | `unit_updates` | JSONB | Projects | 1 | 10 | no | 2026-10-04 |
 | [Units](units.md) | `units` | JSONB | Projects | 8 | 52 | no | 2026-09-29 |
-| [Visits](visits.md) | `visits` | JSONB | — | 1 | 13 | no | 2026-09-27 |
+| [Visits](visits.md) | `visits` | JSONB | — | 1 | 13 | no | 2026-10-04 |

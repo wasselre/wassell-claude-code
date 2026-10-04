@@ -5,7 +5,7 @@
 # Model: Phone Calls / المكالمات  `phone_calls`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-27
+**Last updated (from DB):** 2026-10-04
 **Model id:** `1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -73,7 +73,7 @@
   - API value `unknown` → "Unknown" / "غير معروف" · color `#9ca3af`
 - **Linked Client / العميل المرتبط** (`client_link`, type `lookup`):
   - target model: Clients
-  - shows field: `name`
+  - shows field: `client_name`
   - multiple: no
 
 ### 2. Call Transcript / نص المكالمة  _(base, color #B8734F)_

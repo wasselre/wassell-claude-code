@@ -5,7 +5,7 @@
 # Model: Visits / الزيارات  `visits`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-27
+**Last updated (from DB):** 2026-10-04
 **Model id:** `372ed642-3753-40b4-9dd7-e8390f91b1f8`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -47,7 +47,7 @@
 
 - **Client / العميل** (`client_id`, type `lookup`):
   - target model: Clients
-  - shows field: `client_id`
+  - shows field: `client_name`
   - multiple: no · max in dropdown: 20
 - **Phone / رقم الجوال** (`phone`, type `phone`):
   - auto-links Client (`client_id`) by matching `phone_number` (creates if missing)

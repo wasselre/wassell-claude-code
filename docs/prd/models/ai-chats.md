@@ -5,7 +5,7 @@
 # Model: AI Agent / المساعد الذكي  `ai_chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-27
+**Last updated (from DB):** 2026-10-04
 **Model id:** `ca95e4eb-da23-47fa-9f77-3149ba5fa37c`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -43,5 +43,5 @@
   - API value `archived` → "Archived" / "مؤرشف" · color `#9ca3af`
 - **Linked Client / العميل المرتبط** (`linked_client_id`, type `lookup`):
   - target model: Clients
-  - shows field: `name`
+  - shows field: `client_name`
   - multiple: no

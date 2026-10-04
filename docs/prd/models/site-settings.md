@@ -14,14 +14,14 @@
 
 ## Overview
 - Sections: **9** (1 base, 8 non-base)
-- Fields: **55**
+- Fields: **52**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
 
 ## Card view
-- Title: Hero Title (`hero_title`)
-- Subtitle: Hero Subtitle (`hero_subtitle`)
+- Title: `67a671ae-9130-4506-8b6f-abc830d44e15` (unknown field)
+- Subtitle: `cecff803-75f4-4c1b-ac80-1b9868bf60f4` (unknown field)
 
 ## Sections & fields
 
@@ -40,9 +40,6 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `hero_title` | Hero Title / عنوان البطل | Text | no | full | no |  |
-| `hero_subtitle` | Hero Subtitle / العنوان الفرعي | Text | no | full | no |  |
-| `hero_description` | Hero Description / وصف البطل | Text area | no | full | no |  |
 | `hero_bg_image_url` | Hero Background Image / صورة خلفية البطل | URL | no | full | no |  |
 
 ### 3. Customer Journey / رحلة العميل  _(color #B8734F)_

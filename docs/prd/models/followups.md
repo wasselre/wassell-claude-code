@@ -5,7 +5,7 @@
 # Model: Follow-ups / المتابعات  `followups`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-27
+**Last updated (from DB):** 2026-10-04
 **Model id:** `764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -56,7 +56,7 @@
   - shown only when Follow-up Type (`followup_type`) is one of: `appointment_confirmation_call`
 - **Client ID / معرف العميل** (`client_id`, type `lookup`):
   - target model: Clients
-  - shows field: `client_id`
+  - shows field: `client_name`
   - multiple: no · max in dropdown: 20
 - **Visit / الزيارة** (`visit`, type `lookup`):
   - target model: Visits

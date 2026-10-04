@@ -50,7 +50,7 @@
   - default country code `+966`
 - **Client / العميل** (`client_id`, type `lookup`):
   - target model: Clients
-  - shows field: `client_id`
+  - shows field: `client_name`
   - multiple: no · max in dropdown: 20
 - **Client Name / اسم العميل** (`client_name`, type `text`):
   - auto-fills from Client (`client_id`) → `client_name`
