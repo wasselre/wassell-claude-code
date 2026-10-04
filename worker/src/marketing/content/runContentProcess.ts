@@ -100,7 +100,16 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     // Already read by Gemini: a full pass would only re-pay for the same answer.
     const { data: enr0, error: enr0Err } = await sb.from('mkt_content_enrichment').select('model, status').eq('content_post_id', contentPostId).maybeSingle();
     if (enr0Err) throw new Error(`load enrichment: ${enr0Err.message}`);
-    if (isGeminiRead(enr0 as { model: string | null; status: string | null } | null)) { stats.status = 'already_read'; return stats; }
+    if (isGeminiRead(enr0 as { model: string | null; status: string | null } | null)) {
+      // A re-collected post can have been put back to 'collected'; it is read,
+      // so say so — otherwise the sweep offers it again on every tick.
+      if (post.processing_status !== 'processed' && post.processing_status !== 'partial') {
+        const { error: stErr } = await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'processed' });
+        if (stErr) throw new Error(`restore processed status for already-read post ${contentPostId} failed: ${stErr.message}`);
+      }
+      stats.status = 'already_read';
+      return stats;
+    }
     // Paused on a daily quota: touch nothing (no download, no status change);
     // the sweep offers the post again once the pause ends.
     if (Date.now() < await readerPausedUntil(sb)) { stats.status = 'reader_paused'; return stats; }
@@ -199,7 +208,11 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     }
     stats.degraded = stats.media_failed > 0;
     stats.status = 'media_recovered';
-    await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'collected', p_media_count: stats.media_stored });
+    // A post that was already read keeps its status: re-collecting it (the
+    // 12-month history run re-ingests posts we have) must not send it back to
+    // 'collected' — 229 Gemini-read posts were demoted that way on 2026-10-05.
+    const finished = post.processing_status === 'processed' || post.processing_status === 'partial';
+    await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: finished ? String(post.processing_status) : 'collected', p_media_count: stats.media_stored });
     stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;
     return stats;
   }
