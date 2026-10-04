@@ -87,6 +87,7 @@ export type RecipeStep =
    *  1..last and reads the page's embedded Inertia JSON (`#app[data-page]`),
    *  so it follows the portal's DATA, not its table markup. */
   | CollectRowsStep
+  | SaveItemsStep
   /** `outcome` turns the stop into a recorded ANSWER instead of a failure —
    *  e.g. the portal says the client is already another broker's. */
   | { do: 'fail'; ar: string; en: string; outcome?: RecipeOutcome }
@@ -101,6 +102,31 @@ export interface CollectedRow {
   phone: string | null;
   status_code: string | null;
   status_label: string | null;
+}
+
+/**
+ * Save the HTML of every repeated item (a unit card) on a set of paginated
+ * pages, for the automated project-update lane to read later
+ * (project_update_runs). Pages are fetched INSIDE the signed-in page (same
+ * cookies), parsed there, and only the matching items' outerHTML is kept — a
+ * whole page is ~300 KB, the cards on it a few KB. Walks `?page=1,2,…` per URL
+ * until a page has no items or repeats the previous page. Riding the daily
+ * status check means one sign-in code a day covers both jobs.
+ */
+export interface SaveItemsStep {
+  do: 'save_items';
+  /** Storage file name, e.g. "units" → inventory/<portal record id>/units.json. */
+  key: string;
+  /** Page URLs with `{{page}}`, e.g. https://broker.safainv.sa/project/properties/108?page={{page}}. */
+  urls: string[];
+  /** CSS selector of ONE item, e.g. "div.unit_details". */
+  item_selector: string;
+  /** Per-URL safety ceiling — more pages FAILS loudly. Default 80. */
+  max_pages?: number;
+  /** When true, a failure here is LOGGED (run log + worker stderr) and the
+   *  recipe carries on — for a step riding on a status check whose own job
+   *  (syncing client statuses) must not be lost to an inventory hiccup. */
+  optional?: boolean;
 }
 
 export interface CollectRowsStep {
@@ -144,6 +170,19 @@ export interface CollectRowsStep {
 export function withPage(url: string, n: number): string {
   return url.replace(/\{\{\s*page\s*\}\}/g, String(n));
 }
+
+/** Runs INSIDE the portal page: fetch a URL with the page's own session and
+ *  return the outerHTML of every item. A string body for the same reason as
+ *  READ_TABLE_ROWS (no bundler helpers in the page). */
+export const READ_ITEMS = new Function('a', `
+  return fetch(a.url, { credentials: 'include' }).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' at ' + a.url);
+    return r.text();
+  }).then(function (html) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    return Array.prototype.map.call(doc.querySelectorAll(a.sel), function (el) { return el.outerHTML; });
+  });
+`);
 
 type RawTableRow = { ref: string; name: string; phone: string; status: string; status_detail: string };
 /**
@@ -327,7 +366,7 @@ export function renderTemplate(input: string, scope: TemplateScope): string {
 
 const KNOWN_STEPS = new Set([
   'goto', 'fill', 'type', 'fill_otp', 'click', 'select', 'check', 'press', 'wait', 'wait_for', 'wait_for_url',
-  'request_input', 'screenshot', 'save_html', 'assert', 'if_visible', 'phase', 'fail', 'set', 'collect_rows',
+  'request_input', 'screenshot', 'save_html', 'assert', 'if_visible', 'phase', 'fail', 'set', 'collect_rows', 'save_items',
 ]);
 
 /** Parse the `recipe` field (JSON text or an already-parsed array). Throws a
@@ -396,6 +435,8 @@ export interface RecipeRuntime {
   checkCancelled: () => Promise<void>;
   /** Store the page HTML as run evidence (`save_html`). Absent ⇒ the step fails loudly. */
   saveHtml?: (label: string) => Promise<void>;
+  /** Store what `save_items` read. Absent ⇒ the step fails loudly. */
+  saveItems?: (key: string, data: { saved_at: string; pages: Record<string, string[][]> }) => Promise<void>;
   /** Where `collect_rows` puts what it read. Absent on a registration run,
    *  where a `collect_rows` step is a recipe mistake and fails loudly. */
   collected?: CollectedRow[];
@@ -544,6 +585,43 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
       rt.log(`request_input ${step.key}`);
       const answer = await rt.requestInput(step);
       scope.input[step.key] = answer;
+      return;
+    }
+    case 'save_items': {
+      if (!rt.saveItems) throw new RecipeError('حفظ العناصر غير متاح هنا', 'save_items is not available here', index);
+      if (!step.key || !Array.isArray(step.urls) || !step.item_selector) {
+        throw new RecipeError('save_items يحتاج key و urls و item_selector', 'save_items needs key, urls and item_selector', index);
+      }
+      const maxPages = step.max_pages ?? 80;
+      const pages: Record<string, string[][]> = {};
+      try {
+      for (const tpl of step.urls) {
+        const list: string[][] = [];
+        let prevSig = '';
+        for (let n = 1; ; n++) {
+          if (n > maxPages) {
+            throw new RecipeError(`أكثر من ${maxPages} صفحة في ${tpl}`, `More than ${maxPages} pages at ${tpl}; raise max_pages`, index);
+          }
+          await rt.checkCancelled();
+          const url = r(withPage(tpl, n));
+          const items = (await page.evaluate(READ_ITEMS as (a: { url: string; sel: string }) => Promise<string[]>, { url, sel: step.item_selector })) as string[];
+          const sig = items.length ? items[0]!.slice(0, 400) : '';
+          if (items.length === 0 || sig === prevSig) break;
+          prevSig = sig;
+          list.push(items);
+        }
+        rt.log(`save_items ${tpl}: ${list.reduce((a, x) => a + x.length, 0)} items on ${list.length} pages`);
+        pages[tpl] = list;
+      }
+      await rt.saveItems(step.key, { saved_at: new Date().toISOString(), pages });
+      } catch (err) {
+        // Scoped to save_items with optional:true. A cancellation still
+        // propagates (it is not an inventory failure).
+        if (!step.optional || err instanceof RecipeCancelledError) throw err;
+        const msg = err instanceof Error ? err.message : String(err);
+        rt.log(`save_items (optional) FAILED — the rest of the recipe continues: ${msg}`);
+        console.error(`[portal] optional save_items ${step.key} failed: ${msg}`);
+      }
       return;
     }
     case 'save_html': {

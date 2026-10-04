@@ -308,6 +308,19 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       requestInput,
       checkCancelled: assertLive,
       collected: isCheck ? [] : undefined,
+      // `save_items` (the portal's unit cards) — read by the project-update
+      // lane. One file per portal + key, overwritten each run; the private
+      // bucket because broker pages carry commission terms.
+      saveItems: async (key, payload) => {
+        const safeKey = key.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 40) || 'items';
+        const path = `inventory/${job.portalRecordId}/${safeKey}.json`;
+        const body = JSON.stringify(payload);
+        const { error } = await supabase.storage.from(BUCKET).upload(path, new Blob([body], { type: 'application/json' }), {
+          contentType: 'application/json', upsert: true,
+        });
+        if (error) throw new Error(`save_items upload failed: ${error.message}`);
+        log(`saved ${Object.values(payload.pages).reduce((a, p) => a + p.reduce((b, x) => b + x.length, 0), 0)} items → ${path} (${body.length} bytes)`);
+      },
       saveHtml: async (label: string) => {
         // Evidence for recipe authoring. NOT added to the screenshot list (the
         // chat card renders that list as images); the path is logged instead.

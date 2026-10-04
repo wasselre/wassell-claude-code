@@ -34,6 +34,7 @@ import { brakeReason, normUnitKey, reconcile } from './projectUpdates/reconcile.
 import { createProjectFromSource } from './projectUpdates/newProject.js';
 import { fetchMajdProject, majdProjectId } from './projectUpdates/almajdiah.js';
 import { RivaPortal, rivaProjectIdFromUrl } from './projectUpdates/riva.js';
+import { fetchPublic, fetchSafaProject, loadBrokerSnapshot, safaProjectId, type PublicListing } from './projectUpdates/safa.js';
 import { runWhatsAppGroup } from './projectUpdates/whatsapp.js';
 import type { CrmUnit, ReconcilePolicy, ReconcileResult, SourceProject } from './projectUpdates/types.js';
 
@@ -318,7 +319,8 @@ export interface ProjectSourceAdapter {
   label: string;                                   // «API الماجدية» — for logs + notes
   idFromUrl: (url: unknown) => string | null;
   fetch: (id: string) => Promise<SourceProject>;
-  policy: (scope: string) => ReconcilePolicy;
+  /** May depend on what the fetch found (Safa: is the broker list fresh?). */
+  policy: (scope: string, src: SourceProject) => ReconcilePolicy;
 }
 
 async function runPerProject(
@@ -349,7 +351,10 @@ async function runPerProject(
       const src = await adapter.fetch(sourceId);
       const crm = (await loadAll(supabase, UNITS_MODEL_ID, { key: 'project_id', value: projectId })) as CrmUnit[];
       const developerId = typeof project.data.developer === 'string' ? project.data.developer : null;
-      const result = reconcile(crm, src.units, adapter.policy(scope), {
+      const policy = adapter.policy(scope, src);
+      entry.absent_policy = policy.absentAvailable;
+      if (src.meta) entry.source_meta = src.meta;
+      const result = reconcile(crm, src.units, policy, {
         projectId, developerId, projectName, sourceLabel: adapter.label, today,
       });
       const brake = brakeReason(result, { share: settings.brake_share, minUnits: settings.brake_min_units });
@@ -459,6 +464,29 @@ export async function runProjectUpdateJob(args: {
       return runRiva(supabase, run, settings, scoped, heartbeat);
     case 'developer_api':
       return runPerProject(supabase, run, settings, scoped, heartbeat, ALMAJDIAH);
+    case 'safa_broker': {
+      // The broker cards come from the portal's daily status check (one SMS
+      // code a day covers both). Without a fresh file the run still updates
+      // prices and adds units, but marks nothing sold.
+      const broker = await loadBrokerSnapshot(supabase);
+      // Read every project's public listing FIRST, so the run knows whether the
+      // public site is answering at all before it lets "absent" mean "sold".
+      const pubs = new Map<string, PublicListing>();
+      for (const row of scoped) {
+        const id = safaProjectId(row.data.source_url);
+        if (id && !pubs.has(id)) { pubs.set(id, await fetchPublic(id)); await heartbeat(); }
+      }
+      const publicHealthy = [...pubs.values()].some((p) => p.units.length > 0);
+      return runPerProject(supabase, run, settings, scoped, heartbeat, {
+        sourceType: 'safa_broker',
+        label: 'بوابة كسب + موقع صفا',
+        idFromUrl: safaProjectId,
+        fetch: (id) => fetchSafaProject(id, broker, pubs.get(id) ?? { units: [], comingSoon: false }, publicHealthy),
+        policy: (scope, src) => scope === 'status_only'
+          ? STATUS_ONLY_POLICY
+          : { absentAvailable: src.meta?.absent_means_sold ? 'sold' : 'leave', createMissing: true, updatePrices: true, keepReserved: true },
+      });
+    }
     case 'whatsapp_group': {
       const r = await runWhatsAppGroup({
         supabase, runId: run.id, dryRun: run.dry_run, params: run.params,

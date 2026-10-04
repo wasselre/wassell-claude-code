@@ -323,3 +323,51 @@ describe('brakeReason — a source that shares no unit with the CRM', () => {
     expect(brakeReason(reconcile(crmUnits, src, RIVA, CTX), { share: 0.5, minUnits: 6 })).toMatch(/shares no unit/);
   });
 });
+
+describe('Safa adapter', () => {
+  // A real public card (safainv.sa/project/units/64, 2026-10-04), trimmed.
+  const card = `<div class="top-img overflow-hidden"><div class="item"><div class="overlay unitCard" data-id="13207"></div></div></div>
+    <div class="label"> <a href="javascript:void(0)"> <i class="fa fa-key"></i> للبيع </a> <a class="mx-1 projectName"> SF085 </a> </div>
+    <div class="category_type"> <span class="type"> شقة </span> </div>
+    <div class="unit_details p-3 pt-4"> <div class="unit_info"> <div class="title"> <span class="unit-title" style="font-size: 15px">SF085-A01-F01-001-APT</span>
+    <div class="info"><div class="location"><span> Jeddah </span></div><div class="space"><span class="">166.53 م²</span></div></div></div>
+    <div class="price" dir="ltr"> <img src="x"> 717,773 <div class="icons d-flex align-items-center mt-3"> <span> 3 </span> <span class="mx-3"> 3 </span> <span> الأول </span> </div> </div></div></div>`;
+  it('reads a public card — and keeps its price only as a note (different basis)', async () => {
+    const { parsePublicCard } = await import('../projectUpdates/safa');
+    const u = parsePublicCard(card, false)!;
+    expect(u).toMatchObject({ unitModel: 'SF085-A01-F01-001-APT', unitCode: 'SF085-A01-F01-001-APT', unitType: 'شقة', status: 'available', area: 166.53, bedrooms: 3, bathrooms: 3, floor: 'الأول', price: null });
+    expect(u.description).toContain('717,773');
+  });
+  it('a «قريباً» project lists units as under construction', async () => {
+    const { parsePublicCard } = await import('../projectUpdates/safa');
+    expect(parsePublicCard(card, true)!.status).toBe('under_construction');
+  });
+  it('a broker card: the code incl. roof units (-R01-), the unit price not the commission', async () => {
+    const { parseBrokerCard } = await import('../projectUpdates/safa');
+    const u = parseBrokerCard('<div class="unit_details"><span>SF083-A01-R01-019-APT</span><span>142.5 م²</span><span>السعر 1,195,000 ر.س</span><span>عمولتك 23,900 ر.س</span><a href="/property/5521">عرض المزيد</a></div>')!;
+    expect(u).toMatchObject({ unitModel: 'SF083-A01-R01-019-APT', price: 1_195_000, area: 142.5, sourceId: '5521' });
+  });
+  it('union: the broker price wins; a public-only unit carries no price', async () => {
+    const { unionSafa } = await import('../projectUpdates/safa');
+    const u = unionSafa(
+      [{ sourceId: 'b', unitModel: 'A', price: 1_500_000, status: 'available' }],
+      [{ sourceId: 'p', unitModel: 'A', price: null, status: 'available', area: 100 }, { sourceId: 'q', unitModel: 'B', price: null, status: 'available' }],
+    );
+    expect(u.find((x) => x.unitModel === 'A')).toMatchObject({ price: 1_500_000, area: 100 });
+    expect(u.find((x) => x.unitModel === 'B')!.price).toBeNull();
+  });
+  it('keepReserved: a unit we marked reserved is not flipped back by a list that never shows reservations', () => {
+    const r = reconcile([crm('u1', { unit_model: 'A', unit_status: 'reserved' }), crm('u2', { unit_model: 'B', unit_status: 'sold' })],
+      [src('A', { status: 'available' }), src('B', { status: 'available' })],
+      { absentAvailable: 'sold', createMissing: true, updatePrices: true, keepReserved: true }, CTX);
+    expect(r.updates.map((x) => [x.unitId, x.patch.unit_status])).toEqual([['u2', 'available']]);
+  });
+});
+
+describe('recipe engine knows save_items', () => {
+  it('parses a status recipe that ends in save_items', async () => {
+    const { parseRecipe } = await import('../portals/recipe');
+    const steps = parseRecipe(JSON.stringify([{ do: 'goto', url: 'https://x' }, { do: 'save_items', key: 'units', item_selector: 'div.unit_details', urls: ['https://x/p/1?page={{page}}'] }]));
+    expect(steps[1]!.do).toBe('save_items');
+  });
+});

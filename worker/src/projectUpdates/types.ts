@@ -74,6 +74,9 @@ export interface ReconcilePolicy {
    *  (default true). Off where the existing keys are already unique and
    *  stable — every backfill write costs a full record save. */
   recordSourceId?: boolean;
+  /** A source that never shows reservations (Safa) must not turn a CRM
+   *  «reserved» unit back to available just because it still lists it. */
+  keepReserved?: boolean;
 }
 
 export interface UnitPatch {

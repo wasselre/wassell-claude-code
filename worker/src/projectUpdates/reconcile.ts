@@ -247,7 +247,8 @@ export function reconcile(
       const patch: Record<string, unknown> = {};
       const reasons: string[] = [];
       const cur = crmStatus(u.data);
-      const forwardOk = !policy.forwardOnly || (STATUS_RANK[s.status ?? ''] ?? -1) > (STATUS_RANK[cur] ?? -1);
+      const forwardOk = (!policy.forwardOnly || (STATUS_RANK[s.status ?? ''] ?? -1) > (STATUS_RANK[cur] ?? -1))
+        && !(policy.keepReserved && cur === 'reserved');
       if (s.status && s.status !== cur && forwardOk) {
         patch.unit_status = s.status;
         reasons.push(`status ${cur || '∅'} → ${s.status}`);
