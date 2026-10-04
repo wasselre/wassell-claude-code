@@ -166,7 +166,7 @@ function instructions(group: string, today: string): string {
     'Item kinds:',
     '- units_status: specific units that were booked/reserved or sold («تفاصيل الحجز: ريا النخيل مبنى 6 | شقة 2»). A booking = reserved. Transcribe each unit\'s identifiers exactly as written (block «بلك», building «مبنى/عمارة», floor, unit number «شقة/فيلا/وحدة», code).',
     '- available_list: a list of units with prices or availability (usually an attached PDF/image price list, or a text like «المتاح حالياً فقط دور اول - 1.199.000»). One unit per row: identifiers, type, area, the price the customer pays now. list_scope=complete only when the source presents it as the units still available («الوحدات المتاحة», «المتاح حالياً فقط»); then buildings_covered = the buildings the list covers (empty if it covers the whole project).',
-    '- project_terms: broker commission («عمولتكم 3% حتى 15 اكتوبر»), handover date, payment plan, a time-limited offer or discount.',
+    '- project_terms: broker commission («عمولتكم 3% حتى 15 اكتوبر»), handover date, payment plan, a time-limited offer or discount. Skip an offer or commission whose period ended before today.',
     '- new_project: a project announced in the group that is NOT in the PROJECTS list.',
     'Rules: project_id must come from the PROJECTS list (match the name as the group writes it, e.g. «ربى النخيل» = «ريا النخيل», «جديل» = the جديل project); null when it is not there. Never invent a unit, price or identifier. A "starting from" price is NOT a unit price. Numbers like 1.199.000 mean 1199000. evidence must be copied exactly from the message text.',
     'Call record_project_updates once with all items (an empty list is a normal answer).',
@@ -447,7 +447,11 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
   const ordered = [...items].sort((x, y) => (x.kind === 'new_project' ? -1 : 0) - (y.kind === 'new_project' ? -1 : 0));
   const createdByName = new Map<string, string>();
 
+  // A catch-up run can be limited to some kinds (e.g. only the bookings).
+  const onlyKinds = Array.isArray(a.params.only_kinds) ? new Set(a.params.only_kinds as string[]) : null;
+
   for (const it of ordered) {
+    if (onlyKinds && !onlyKinds.has(it.kind)) { results.push({ kind: it.kind, messages: it.message_ids, skipped: 'not in only_kinds' }); continue; }
     const cited = (it.message_ids ?? []).map((l) => byLabel.get(l)).filter(Boolean) as ChatMessage[];
     const r: Record<string, unknown> = { kind: it.kind, messages: it.message_ids, project: it.project_name_as_written ?? null };
     results.push(r);
@@ -511,6 +515,11 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
 
       if (it.kind === 'project_terms') {
         const t = it.terms ?? {};
+        // Terms that already ended are history, not an update.
+        if (t.commission_until && /^d{4}-d{2}-d{2}$/.test(t.commission_until) && t.commission_until < today) {
+          r.dropped = `expired on ${t.commission_until}`;
+          continue;
+        }
         const bits: string[] = [];
         if (t.commission_percent != null) bits.push(`عمولة الوسيط ${t.commission_percent}%${t.commission_until ? ` حتى ${t.commission_until}` : ''}`);
         if (t.offer) bits.push(`عرض: ${t.offer}`);
