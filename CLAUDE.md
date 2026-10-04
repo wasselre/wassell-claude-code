@@ -1103,6 +1103,25 @@ rule for telling them apart is what question each answers:
 5. **Each system has its own kill switch and they are not linked.** Turning off
    collection does not stop CV, and turning off CV does not stop collection. If
    you want both off, flip both.
+7. **Shot jobs run on the dedicated `cv` Fly process group (2026-10-05)**, not
+   on the five general `app` machines (performance-2x, dedicated cores,
+   `CV_PROCESS_LOOPS` jobs each, default 2; `fly scale count cv=N`). On the
+   512MB shared-cpu machines the ffmpeg steps were throttled 5-20x once hot
+   (cut detection 2.4 s → up to 58 s) and starved post reading on the same CPU
+   (~2,000 → ~400 reads/h). **At `cv=0` no shot job runs anywhere** unless
+   `CV_ON_GENERAL=1` is set — scaling the group to zero is how you stop paying
+   for it, so do it deliberately. The general machines run `MARKETING_LOOPS`
+   (default 2) collection/reading claim loops so an 80-minute Apify history run
+   no longer blocks a machine's reading, and `mkt_job_claim_next` takes external
+   collection before internal reading (`2026-10-05_01_catchup_speed.sql`).
+8. **Gemini HTTP 402 ("prepayment credits are depleted") is a PAUSE, not an
+   error to retry.** It rides the daily-quota path (`DAILY_QUOTA_MARK` +
+   `CREDITS_DEPLETED`): reading pauses with one critical alert, shot jobs are
+   deferred with the attempt given back, both re-check every 15 minutes. Before
+   this (2026-10-04) an empty AI Studio prepay balance produced ~4,500 failed
+   calls in 8 hours, no alert, and 97 terminally failed jobs. The prepay balance
+   lives on billing account `011C2F-58EC49-36BF53` (project "Default Gemini
+   Project") — keep auto-reload ON there.
 6. **CV admits at most `cv.max_videos_per_day` NEW videos per day** (500 since
    the Gemini switch 2026-10-04, ≈ $15/day at ~$0.03 per video; was 10 on
    Modal, set 2026-09-15; `mkt_settings`, Riyadh day). The gate lives in
