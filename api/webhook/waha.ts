@@ -152,6 +152,15 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // ad attribution. Everything below gates on this. Defaults to false (normal
   // sales behavior) if the role can't be resolved.
   const isOps = await isOperationsSession(session);
+  // The OFFICE-OUTREACH line (office_outreach_settings.device_id) writes to
+  // real-estate offices, never to customers. Its threads are stored and shown
+  // like any other, but stay out of the sales funnel exactly like the
+  // operations line: an office's reply ("we have a villa in Al-Malqa") must not
+  // start the auto-reply bot, ad attribution, client linking or a follow-up.
+  // Kept separate from isOps because the portal code relay below belongs to the
+  // operations line only.
+  const isOutreach = await isOfficeOutreachSession(session);
+  const internalLine = isOps || isOutreach;
 
   // WhatsApp Status posts and broadcasts are not conversations. Ingesting them
   // created customer-looking chats in the list — 9 of them — and one shadowed a
@@ -235,7 +244,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // resolution: an ad lead without an ad ID is attributed from this text.
   const recovered = recoverWahaText(p);
   // A group is never a lead: no ad attribution, no bot, no follow-ups.
-  const inFunnel = !isOps && !groupWid;
+  const inFunnel = !internalLine && !groupWid;
   const adReferral = flow === 'in' && inFunnel ? extractAdReferral(p) : null;
   const adMeta = adReferral ? await attachAdResolution(adReferral, { body: recovered?.text ?? null }) : null;
 
@@ -378,8 +387,9 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     // Only a genuinely new inbound message bumps unread (retry-safe).
     incrementUnread: flow === 'in' && isNew,
     // No reopen push-back for WAHA — chat status is fully CRM-owned.
-    // Operations-line threads skip client-linking + the sales-funnel reconcile.
-    isOperations: isOps,
+    // Operations- and outreach-line threads skip client-linking + the
+    // sales-funnel reconcile.
+    isOperations: internalLine,
     group: groupWid ? { name: () => getGroupSubject(session, groupWid) } : null,
   });
 
@@ -701,6 +711,41 @@ async function isOperationsSession(session: string): Promise<boolean> {
     console.error('[webhook.waha] ops-role check failed:', err instanceof Error ? err.message : String(err));
     return false;
   }
+}
+
+/**
+ * Is this WAHA session the OFFICE-OUTREACH line? (office_outreach_settings.device_id)
+ *
+ * One singleton row, cached per warm instance with the same 30 s TTL as the
+ * ops role, so changing the line in «إعدادات الإرسال» takes effect without a
+ * redeploy. On a lookup failure we keep the last VERIFIED answer rather than
+ * guessing: guessing "not outreach" would let the bot answer an office, and
+ * guessing "outreach" would silence the bot for a customer. Only before the
+ * first successful lookup does a failure fall back to `false`.
+ */
+const outreachLine: { device: string | null; ts: number; loaded: boolean } = { device: null, ts: 0, loaded: false };
+async function isOfficeOutreachSession(session: string): Promise<boolean> {
+  if (!session) return false;
+  const now = Date.now();
+  if (!outreachLine.loaded || now - outreachLine.ts >= OPS_ROLE_TTL_MS) {
+    try {
+      const { data, error } = await getServiceSupabase()
+        .from('office_outreach_settings')
+        .select('device_id')
+        .eq('id', 1)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      outreachLine.device = (data as { device_id?: string | null } | null)?.device_id ?? null;
+      outreachLine.ts = now;
+      outreachLine.loaded = true;
+    } catch (err) {
+      console.error(
+        `[webhook.waha] outreach-line check failed (${outreachLine.loaded ? 'reusing the last known line' : 'no known line yet'}):`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+  return outreachLine.device !== null && outreachLine.device === session;
 }
 
 async function verifyHmacSha512(body: string, secret: string, headerHex: string | null): Promise<boolean> {

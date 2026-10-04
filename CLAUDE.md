@@ -628,6 +628,12 @@ ordinary units / projects. Messages ride `scheduled_whatsapp_jobs`
    ~3,500 jobs). Keep that function set-based: its old per-row loop took 68 s
    and made every project save from the app time out (2026-09-14 → 2026-09-28).
    Test projects therefore queue real jobs — cancel them when you clean up.
+8. **The office line stays OUT of the sales funnel.** `api/webhook/waha.ts`
+   treats the line in `office_outreach_settings.device_id` like the operations
+   line (`internalLine`): stored and shown, but no bot, no ad attribution, no
+   client linking, no follow-up reconcile. Without it the auto-reply bot (on
+   for every chat) would answer an office as if it were a new customer. The
+   portal code relay stays on the operations line only (`isOps`).
 
 ## Chat auto-read (WhatsApp → geography + preference proposals) (added 2026-09-27)
 
