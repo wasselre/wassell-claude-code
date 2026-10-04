@@ -134,3 +134,6 @@ vite.config.local.mjs
 
 # Supabase CLI scratch (written by any `supabase` invocation)
 supabase/.temp/
+
+# Phone check reports (scripts/phone-check.mjs)
+.phone-check/

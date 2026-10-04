@@ -12,7 +12,8 @@
     "backfill:reels": "node scripts/backfill-reel-analysis.mjs",
     "typecheck:api": "tsc --noEmit -p tsconfig.api.json",
     "study-runner": "node scripts/claude-study-runner.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "phone-check": "node scripts/phone-check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",
