@@ -28,6 +28,9 @@ function loadEnv() {
       if (!env[k]) env[k] = t.slice(i + 1).trim().replace(/^["']|["']$/g, '');
     }
   } catch { /* .env.local optional when the vars are already in env */ }
+  // The AI-usage recorder reads process.env, not this object: without this
+  // every call from this script was unmetered (seen 2026-10-04).
+  for (const k of ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) if (!process.env[k] && env[k]) process.env[k] = env[k];
   return env;
 }
 
