@@ -1,6 +1,6 @@
 # PRD: Automated project updates (portals + developer WhatsApp groups)
 
-**Status:** Live (Riva portal weekly; WhatsApp groups of Al-Ramz, Safa, Riva)
+**Status:** Live — Riva portal + Almajdiah API weekly; WhatsApp groups of Al-Ramz, Safa, Riva. Safa built (waits for its first saved portal snapshot). Al-Ramz portal being explored; Binghatti blocked (reCAPTCHA).
 **Last updated:** 2026-10-04
 **Related PRDs:** projects-units.md, chats.md, lead-portal-registration.md, data-migration.md (archived wizard)
 
@@ -15,6 +15,16 @@ Nothing waits for approval. Every change is recorded with its old and new value,
 ## Why it exists
 On 2026-10-04, 34 of the 37 active projects in the update list were past their update date: the weekly refresh was a manual Claude session following each project's `migration_instructions`, and developers' WhatsApp updates were applied only when someone read them. Reps were quoting prices and availability that had changed weeks earlier (Aknan 23 had dropped ~20% on the portal; four Raya Al-Nakheel bookings announced on 13–17 Sep were still "available").
 
+## Sources
+| Source (`source_type`) | How it is read | Status |
+|---|---|---|
+| Riva broker portal (`riva_broker`, 21 projects) | plain-HTTP sign-in with the `lead_portals` Riva login; unit JSON in each card | weekly, live |
+| Almajdiah API (`developer_api`, 10 projects) | public `etmaam.almajdiah.com/api/client/v1/projects/<id>` — every unit with its real status; price = `price_before_tax` | weekly, live |
+| Safa (`safa_broker`, 12 projects) | public `safainv.sa/project/units/<id>` + the broker cards the portal's DAILY STATUS CHECK saves (`save_items` step → `portal-registrations/inventory/<portal>/units.json`; one SMS code a day through the WhatsApp relay covers both) | built; scheduled once the first snapshot is verified |
+| Developer WhatsApp groups | Claude Opus 5.5 reads new messages + PDFs/images | live |
+| Al-Ramz Drive sheets | the Drive FOLDER is not publicly listable (only single files are) | not automatable as is — Al-Ramz updates arrive through the WhatsApp group; the Al-Ramz broker portal's projects page is captured daily (`save_items` key `projects`) to see whether it carries units |
+| Binghatti broker portal | sign-in = user id + SMS code + Google reCAPTCHA | **not automated by design** — we don't build automation around a CAPTCHA |
+
 ## Key behaviors
 - **One reconciler for every source.** A source only fetches + parses into a common snapshot; `reconcile.ts` decides what changes. Units are matched on, in order: our unit code (U-n) / the source's own unit id (`developer_unit_code`, e.g. `RIVA-901`), the unit title, block + number, building + number, block + building + floor, building + floor — each used only when it points at exactly ONE unit on both sides. A unit that matches two is reported as ambiguous, never guessed.
 - **The source's status wins; prices only from a real price.** A source showing no price («عند الطلب») never clears ours. A "starting from" headline is never written as a unit price.
@@ -25,6 +35,9 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 - **Grounding of the WhatsApp reader (enforced in code):** each item must cite the messages it came from and quote the text verbatim (normalised) unless it comes from an attached file; the project must be one of the group's own developer/marketer's projects; the model never picks a CRM unit — it only transcribes identifiers.
 - **New projects** are created from what the source states (portal: the broker share text — district, developer, type, public page; licence; description) plus the house fields of a sibling project (marketer, city/region, classification). A name that matches or contains an existing CRM project is reported, never duplicated (Riva's «جديل الرمال» = our «أدوار جديل الرمال»). New projects are **not** added to `our_projects` — publishing to wassel.re stays a human decision.
 - **Groups stay outside the sales funnel** (already true in `api/webhook/waha.ts`): no bot reply, no lead, no follow-up task from a developer group.
+- **Almajdiah:** a complete source — its status wins both ways; units it does not list are reported, not touched. Identity = the full unit code where the API uses one (`TY01-H-0-1`), else building + number; مكانة carries `developer_unit_code = MAJD-<id>` (mapped once 2026-10-04, every pair's area agreed).
+- **Safa:** neither source shows sold/reserved, so "absent from BOTH lists → sold" applies only when the broker snapshot is < 36 h old AND the public site returned units for at least one project in the run (a soft-blocked public site answers «لا توجد نتائج» for everything — that must never read as "sold out"). Prices come ONLY from broker cards (the public price is on another basis — VAT / discount); a public-only new unit is created without a price, the public figure in its notes. A unit WE marked reserved is never flipped back to available by a list that cannot show reservations (`keepReserved`).
+- **A source that shares NO unit with the CRM is held** (≥ 5 units each side) — a wrong project link or a different numbering, not a reason to stack a second inventory (دروازة: the API lists Block 1, our 22 units are Blocks 3–4).
 - **Ended terms are dropped** (a commission or offer whose period is over is history, not an update).
 
 ## User flows
@@ -50,13 +63,19 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 | `worker/src/runProjectUpdateJob.ts` | the run: Riva portal loop, new-project discovery, stamping, dispatch |
 | `worker/src/projectUpdates/reconcile.ts` | the one reconciler + safety brake |
 | `worker/src/projectUpdates/riva.ts` | Riva broker portal: login, scrape, parse |
+| `worker/src/projectUpdates/almajdiah.ts` | Almajdiah public units API |
+| `worker/src/projectUpdates/safa.ts` | Safa public site + broker snapshot, union, freshness/health guards |
+| `worker/src/portals/recipe.ts` (`save_items`) | the status-check step that saves a portal's unit cards |
+| `supabase/migrations/2026-10-04_13_register_almajdiah_updates.sql` | Almajdiah projects in the update list |
+| `supabase/migrations/2026-10-04_14_safa_status_check_saves_units.sql` | Safa / Al-Ramz status recipes save their pages |
 | `worker/src/projectUpdates/whatsapp.ts` | WhatsApp group reader |
 | `worker/src/projectUpdates/newProject.ts` | create a project + units + registry row |
 | `worker/src/projectUpdates/apply.ts` | writes + change log + plan upload |
 | `worker/src/__tests__/projectUpdates.test.ts` | rules above, pinned |
 
 ## Open questions / known limitations
-- **Only Riva is on the weekly portal schedule.** Safa (broker portal with SMS code + public site), Menaco, Almajdiah's API, Binghatti's portal and Al-Ramz's Drive sheets still need their adapters; their projects keep the manual recipe until then.
+- Menaco (2 projects) has no adapter yet. Binghatti (43) cannot be signed into unattended (reCAPTCHA) — options: someone downloads its all-units Excel weekly and the system ingests the file, or a human-assisted sign-in. Al-Ramz's Drive folder is private; its updates come through the WhatsApp group.
+- دروازة's update-list link points at a different phase than our units (held every week until the link is fixed).
 - A Riva project that leaves the portal is reported, not retired (retirement removes it from the website — a human decision).
 - WhatsApp videos and PowerPoint files are not read (only text, PDFs and images).
 - A "complete" list without building/block numbers is skipped (it cannot say which units it covers).
