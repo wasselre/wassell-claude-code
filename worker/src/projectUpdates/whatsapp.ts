@@ -225,6 +225,29 @@ function toSourceUnits(units: ExtractedUnit[] | undefined, statusOverride?: Unit
   });
 }
 
+const PORTAL_SOURCES = new Set(['riva_broker', 'safa_broker', 'menaco', 'developer_api']);
+
+/** The buildings / blocks a list's own rows name, at the most specific level
+ *  each row gives: `bg:<block>#<building>`, else `g:<building>`, else `b:<block>`. */
+export function listCoverage(src: SourceUnit[]): Set<string> {
+  const out = new Set<string>();
+  for (const u of src) {
+    const b = u.block ? normUnitKey(u.block) : '';
+    const g = u.buildingNumber ? normUnitKey(u.buildingNumber) : '';
+    if (b && g) out.add(`bg:${b}#${g}`);
+    else if (g) out.add(`g:${g}`);
+    else if (b) out.add(`b:${b}`);
+  }
+  return out;
+}
+
+/** Is a CRM unit inside a list's coverage? */
+export function inCoverage(scope: Set<string>, d: Record<string, unknown>): boolean {
+  const b = normUnitKey(d.block);
+  const g = normUnitKey(d.building_number);
+  return (!!b && !!g && scope.has(`bg:${b}#${g}`)) || (!!g && scope.has(`g:${g}`)) || (!!b && scope.has(`b:${b}`));
+}
+
 function unitSample(units: Array<{ data: Record<string, unknown> }>): string {
   const pick = units.slice(0, 4).map((u) => {
     const d = u.data;
@@ -475,6 +498,16 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
       r.project = project.name;
       const reg = await registryFor(supabase, projectId);
       if (reg?.data.auto_scope === 'off') { r.dropped = 'automatic updates are off for this project'; continue; }
+      // A project kept current by a PORTAL run gets bookings and terms from the
+      // chat, but not its price lists: the portal is the source of truth and a
+      // chat file would fight it (found 2026-10-04: Riva's Aknan 23 PDF vs the
+      // portal applied minutes earlier). auto_scope=status_only flips that —
+      // the portal is secondary there (ستون الندى: Al-Ramz's own files lead).
+      const portalLed = reg && PORTAL_SOURCES.has(String(reg.data.source_type)) && reg.data.auto_scope !== 'status_only';
+      if (it.kind === 'available_list' && portalLed) {
+        r.dropped = `price list skipped: ${project.name} is updated from its portal (${String(reg!.data.source_type)})`;
+        continue;
+      }
 
       if (it.kind === 'project_terms') {
         const t = it.terms ?? {};
@@ -514,9 +547,15 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
         .map((u, i) => ({ ...u, status: it.kind === 'units_status' ? (it.units?.[i]?.status === 'sold' ? 'sold' : 'reserved') as UnitStatus : (u.status ?? 'available') as UnitStatus }));
       if (src.length === 0) { r.dropped = 'no units'; continue; }
       let crm = await loadUnits(supabase, projectId);
-      const covered = (it.buildings_covered ?? []).map((b) => normUnitKey(b)).filter(Boolean);
-      if (it.kind === 'available_list' && it.list_scope === 'complete' && covered.length) {
-        crm = crm.filter((u) => covered.includes(normUnitKey(u.data.building_number)) || covered.includes(normUnitKey(u.data.block)));
+      if (it.kind === 'available_list' && it.list_scope === 'complete') {
+        // "Not on the list → sold" applies ONLY to the buildings the list itself
+        // covers — derived from its own rows, never from the model's claim. A
+        // list for buildings 1+2 must not sell buildings 3 and 4 (the 2026-09-21
+        // ستون الندى file would have marked ~66 units sold without this).
+        const scope = listCoverage(src);
+        if (scope.size === 0) { r.dropped = 'complete list without building/block numbers — cannot tell which units it covers'; continue; }
+        crm = crm.filter((u) => inCoverage(scope, u.data));
+        r.buildings_covered = [...scope];
       }
       // A list row needs a price AND an area to count as a released unit.
       const policy = policyFor(it);

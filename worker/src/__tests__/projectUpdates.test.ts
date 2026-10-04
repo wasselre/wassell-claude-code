@@ -274,3 +274,22 @@ describe('WhatsApp evidence check — an update must be quoted from the cited me
     expect(evidenceHolds('عمولة ٣٪', ['عمولة 3٪ لفترة محدودة'])).toBe(true);
   });
 });
+
+describe('listCoverage — "not on the list → sold" only inside the buildings the list names', () => {
+  it('a list for buildings 1 and 2 never touches buildings 3 and 4', async () => {
+    const { listCoverage, inCoverage } = await import('../projectUpdates/whatsapp');
+    const scope = listCoverage([{ sourceId: null, unitModel: null, buildingNumber: '1' }, { sourceId: null, unitModel: null, buildingNumber: '2' }]);
+    expect(inCoverage(scope, { building_number: '1' })).toBe(true);
+    expect(inCoverage(scope, { building_number: '3' })).toBe(false);
+  });
+  it('block + building rows cover that pair only', async () => {
+    const { listCoverage, inCoverage } = await import('../projectUpdates/whatsapp');
+    const scope = listCoverage([{ sourceId: null, unitModel: null, block: '53', buildingNumber: '3' }]);
+    expect(inCoverage(scope, { block: '53', building_number: '3' })).toBe(true);
+    expect(inCoverage(scope, { block: '56', building_number: '3' })).toBe(false);
+  });
+  it('rows with no building or block cover nothing (the run refuses to guess)', async () => {
+    const { listCoverage } = await import('../projectUpdates/whatsapp');
+    expect(listCoverage([{ sourceId: null, unitModel: 'A1' }]).size).toBe(0);
+  });
+});
