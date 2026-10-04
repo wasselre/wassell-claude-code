@@ -5,7 +5,7 @@
 // hidden field never blocks it (same fail-open posture as fieldVisibility.ts).
 
 import type { SalesProcessConfig, FollowUpOutcomeConfig, OutcomeRequires } from './types';
-import { getFollowUpTypeConfig, getOutcomeConfig, DEFAULT_SALES_PROCESS } from './config';
+import { getFollowUpTypeConfig, getOutcomeConfig, DEFAULT_SALES_PROCESS } from './config.js';
 
 export interface ValidationProblem {
   /** Follow-up field slug the problem concerns (for focus), if any. */
