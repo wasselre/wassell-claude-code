@@ -11,7 +11,6 @@ import { useState } from 'react';
 import { Film } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import ContentLibrary from './components/ContentLibrary';
-import VisualLibrarySurface from './components/VisualLibrarySurface';
 import AgentsSurface from './components/AgentsSurface';
 import PipelineSurface from './components/PipelineSurface';
 import StorageSurface from './components/StorageSurface';
@@ -21,7 +20,7 @@ import ProjectsSurface from './components/ProjectsSurface';
 import MarketWatchSurface from './components/MarketWatchSurface';
 import './watch.css';
 
-type Surface = 'library' | 'market' | 'visual' | 'confirm' | 'agents' | 'pipeline' | 'storage' | 'companies' | 'projects';
+type Surface = 'library' | 'market' | 'confirm' | 'agents' | 'pipeline' | 'storage' | 'companies' | 'projects';
 
 export default function CompetitorWatchPage() {
   const { language } = useAppStore();
@@ -32,8 +31,8 @@ export default function CompetitorWatchPage() {
     { id: 'library', ar: 'مكتبة المحتوى', en: 'Content library' },
     // Market Watch — the market's news read off competitor posts (2026-10-04).
     { id: 'market', ar: 'أخبار السوق', en: 'Market Watch' },
-    // Visual library — competitor video shots/frames (Competitor Visual Intelligence).
-    { id: 'visual', ar: 'المكتبة البصرية', en: 'Visual library', icon: Film },
+    // The Visual library is no longer a tab: its shots open from each post in the
+    // Content library, and its scene search is the library's «search by scene» mode.
     { id: 'confirm', ar: 'تأكيد الروابط', en: 'Confirm links' },
     { id: 'agents', ar: 'الوكلاء والتشغيل', en: 'Agents & runs' },
     { id: 'pipeline', ar: 'مسار المحتوى', en: 'Content pipeline' },
@@ -70,7 +69,6 @@ export default function CompetitorWatchPage() {
 
       {surface === 'library' && <ContentLibrary isAr={isAr} />}
       {surface === 'market' && <MarketWatchSurface isAr={isAr} />}
-      {surface === 'visual' && <VisualLibrarySurface isAr={isAr} />}
       {surface === 'confirm' && <ConfirmSurface isAr={isAr} />}
       {surface === 'agents' && <AgentsSurface isAr={isAr} />}
       {surface === 'pipeline' && <PipelineSurface isAr={isAr} />}

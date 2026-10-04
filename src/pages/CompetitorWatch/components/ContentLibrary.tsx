@@ -6,6 +6,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchContentLibrary, type AgeReading, type LibraryResult, type LibraryRow, type LibrarySort, fetchDesignRead, setAttribution } from '@/lib/competitorWatch/client';
 import { setDesignExample } from '@/lib/marketingOS/creativeClient';
+import ShotDetailDrawer from './ShotDetailDrawer';
+import VideoFilmstrip from './VideoFilmstrip';
+import VisualLibrarySurface from './VisualLibrarySurface';
 import type { PostRead, SlideRead, VisualDesignReadRow } from '@/lib/creative/contracts';
 import { useAppStore } from '@/stores/appStore';
 import { resolveEffectiveProfile } from '@/lib/permissions';
@@ -89,6 +92,10 @@ export default function ContentLibrary({ isAr, presetOrg }: { isAr: boolean; pre
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  // One library (2026-10-04): posts and their shots live here; «search by scene»
+  // is the old Visual library, now a mode of this page instead of its own tab.
+  const [mode, setMode] = useState<'posts' | 'scenes'>('posts');
+  const [overlay, setOverlay] = useState<{ kind: 'media' | 'video' | 'shot'; id: string } | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q.trim()), 350);
@@ -117,7 +124,54 @@ export default function ContentLibrary({ isAr, presetOrg }: { isAr: boolean; pre
   const unclassified = shelfCounts[''] ?? 0;
   const hasActiveFilter = Boolean(org || shelf !== null || format || platform || hasOffer);
 
+  const overlays = (
+    <>
+      {overlay?.kind === 'shot' && (
+        <ShotDetailDrawer
+          shotId={overlay.id}
+          isAr={isAr}
+          onClose={() => setOverlay(null)}
+          onOpenShot={(id) => setOverlay({ kind: 'shot', id })}
+          onOpenVideo={(id) => setOverlay({ kind: 'video', id })}
+        />
+      )}
+      {(overlay?.kind === 'video' || overlay?.kind === 'media') && (
+        <VideoFilmstrip
+          videoId={overlay.kind === 'video' ? overlay.id : undefined}
+          contentMediaId={overlay.kind === 'media' ? overlay.id : undefined}
+          isAr={isAr}
+          onClose={() => setOverlay(null)}
+          onOpenShot={(id) => setOverlay({ kind: 'shot', id })}
+        />
+      )}
+    </>
+  );
+
+  // The company page opens the library pre-filtered to one company; scene search
+  // spans every company, so the mode switch is not offered there.
+  const modeBar = presetOrg ? null : (
+    <div className="cw-modes" role="tablist">
+      <button type="button" role="tab" aria-selected={mode === 'posts'} className={`cw-chip${mode === 'posts' ? ' on' : ''}`} onClick={() => setMode('posts')}>
+        {isAr ? 'المنشورات' : 'Posts'}
+      </button>
+      <button type="button" role="tab" aria-selected={mode === 'scenes'} className={`cw-chip${mode === 'scenes' ? ' on' : ''}`} onClick={() => setMode('scenes')}>
+        {isAr ? 'البحث بالمشهد' : 'Search by scene'}
+      </button>
+    </div>
+  );
+
+  if (mode === 'scenes') {
+    return (
+      <>
+        {modeBar}
+        <VisualLibrarySurface isAr={isAr} />
+      </>
+    );
+  }
+
   return (
+    <>
+    {modeBar}
     <div className="cw-lib">
       <aside className="cw-shelves">
         <div className="cw-cap">{isAr ? 'الرفوف — حسب الغرض' : 'Shelves — by purpose'}</div>
@@ -235,6 +289,7 @@ export default function ContentLibrary({ isAr, presetOrg }: { isAr: boolean; pre
             onOrg={() => { if (row.organization_id) setOrg({ id: row.organization_id, name: row.org_name ?? '' }); }}
             projectChoices={projectChoices}
             onPatch={(patch) => patchRow(row.id, patch)}
+            onShots={row.video_media_id ? () => setOverlay({ kind: 'media', id: row.video_media_id ?? '' }) : undefined}
           />
         ))}
 
@@ -243,6 +298,8 @@ export default function ContentLibrary({ isAr, presetOrg }: { isAr: boolean; pre
         )}
       </div>
     </div>
+    {overlays}
+    </>
   );
 }
 
@@ -270,9 +327,12 @@ function designReadSummary(read: VisualDesignReadRow, isAr: boolean): string {
   return bits.join(' · ');
 }
 
-function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPatch }: {
+const SHOTS_READY = new Set(['analyzed', 'partial']);
+const SHOTS_PENDING = new Set(['queued', 'processing', 'frames_done', 'analyzing']);
+
+function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPatch, onShots }: {
   row: LibraryRow; isAr: boolean; isAdmin: boolean; open: boolean; onToggle: () => void; onOrg: () => void;
-  projectChoices: ProjectChoice[]; onPatch: (patch: Partial<LibraryRow>) => void;
+  projectChoices: ProjectChoice[]; onPatch: (patch: Partial<LibraryRow>) => void; onShots?: () => void;
 }) {
   // «تصحيح المشروع» — the one correction path (writes both tables, locks the post).
   const [fixOpen, setFixOpen] = useState(false);
@@ -446,6 +506,16 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPa
               </span>
             )}
             {exDone && <span className="cw-tx">{isAr ? 'في سجل الأمثلة' : 'In examples'}</span>}
+            {onShots && row.shots_status && SHOTS_READY.has(row.shots_status) && (
+              <button className="cw-expand" type="button" onClick={(e) => { e.stopPropagation(); onShots(); }}>
+                {isAr ? `اللقطات (${row.shot_count ?? 0})` : `Shots (${row.shot_count ?? 0})`}
+              </button>
+            )}
+            {onShots && row.shots_status && SHOTS_PENDING.has(row.shots_status) && (
+              <span className="cw-tx" title={isAr ? 'يُقسَّم الفيديو إلى لقطات تلقائيًا' : 'The video is being split into shots'}>
+                {isAr ? 'اللقطات قيد التجهيز' : 'shots being prepared'}
+              </span>
+            )}
             {canExpand && (
               <button className="cw-expand" type="button" onClick={onToggle}>
                 {open ? (isAr ? 'إخفاء' : 'Hide') : (isAr ? 'اقرأ الكامل' : 'Read full')}

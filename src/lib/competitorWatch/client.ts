@@ -58,6 +58,11 @@ export interface LibraryRow {
   /** A guess: views far above usual with almost no likes — the shape of a paid ad. */
   likely_paid: boolean | null;
   account_handle: string | null;
+  /** The post's stored video (first one), when it has one — opens its shots. */
+  video_media_id: string | null;
+  /** Shot analysis of that video: queued / processing / analyzed / partial / failed … (null = never queued). */
+  shots_status: string | null;
+  shot_count: number | null;
 }
 
 export interface AgeReading { views?: number; likes?: number; comments?: number; shares?: number; saves?: number; captured_at?: string }
