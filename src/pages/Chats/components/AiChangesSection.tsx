@@ -20,6 +20,7 @@ interface AiChange {
   field: string | null;
   before_value: unknown;
   after_value: unknown;
+  added: unknown;
   applied: boolean;
   note: string | null;
   source: 'chat' | 'call' | 'agent';
@@ -83,7 +84,9 @@ export default function AiChangesSection({ clientId, refreshKey, isAr }: Props) 
       return `${t('chats.ai_changes.outcome', { label: outcome })}${main}`;
     }
     if (c.kind === 'place') {
-      return c.applied ? t('chats.ai_changes.place', { label: c.label ?? '' }) : t('chats.ai_changes.doubted', { label: c.label ?? '' });
+      const n = Array.isArray(c.added) ? c.added.length : 0;
+      const label = `${c.label ?? ''}${n > 1 ? ` (${n})` : ''}`;
+      return c.applied ? t('chats.ai_changes.place', { label }) : t('chats.ai_changes.doubted', { label });
     }
     const field = c.field ? fieldLabel(c.field) : '';
     if (!c.applied) {

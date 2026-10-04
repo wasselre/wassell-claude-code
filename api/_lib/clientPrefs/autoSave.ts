@@ -265,6 +265,33 @@ const itemLabel = (it: LocationItem): string => {
   return o.district_label || o.label || o.element_label || '';
 };
 
+/**
+ * PURE — the items one save ADDED, grouped by the mention that produced them,
+ * so the trail (and Undo) is one line per thing the customer said: «شمال
+ * الرياض» is ONE line holding its 37 districts, not 37 lines (the backfill
+ * logged 1,088 rows for 45 proposals before this, 2026-10-04). Items no mention
+ * claims (should not happen) form one last group.
+ */
+export function groupAddedByMention(
+  expression: GeoPreference, keptEvidenceIds: string[], added: LocationItem[],
+): Array<{ label: string; items: LocationItem[] }> {
+  const remaining = new Map(added.map((it) => [locationItemSignature(it), it]));
+  const placements = placementsByEvidence(expression);
+  const out: Array<{ label: string; items: LocationItem[] }> = [];
+  for (const id of keptEvidenceIds) {
+    const own = geoPreferenceToLocationItems(pruneGeoExpression(expression, keptEvidenceIds.filter((x) => x !== id)));
+    const items: LocationItem[] = [];
+    for (const it of own) {
+      const sig = locationItemSignature(it);
+      const hit = remaining.get(sig);
+      if (hit) { items.push(hit); remaining.delete(sig); }
+    }
+    if (items.length) out.push({ label: placements[id]?.label || items.map(itemLabel).filter(Boolean).slice(0, 3).join('، '), items });
+  }
+  if (remaining.size) out.push({ label: [...remaining.values()].map(itemLabel).filter(Boolean).slice(0, 3).join('، '), items: [...remaining.values()] });
+  return out;
+}
+
 export interface AutoSavePlacesResult {
   status: 'saved' | 'nothing' | 'skipped';
   added: number;
@@ -364,8 +391,8 @@ export async function autoSavePlaces(
   }
 
   await logAiChanges(sb, [
-    ...addedItems.map((it) => ({
-      client_id: prop.client_id, kind: 'place' as const, field: 'location_items', added: [it], label: itemLabel(it),
+    ...groupAddedByMention(pruned, keep, addedItems).map((g) => ({
+      client_id: prop.client_id, kind: 'place' as const, field: 'location_items', added: g.items, label: g.label,
       source: a.source, source_ref: a.sourceRef, proposal_id: prop.id,
     })),
     ...doubtedRows.map((d) => ({

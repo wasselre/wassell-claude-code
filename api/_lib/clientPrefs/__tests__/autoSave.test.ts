@@ -40,3 +40,20 @@ describe('auto-save places — only what is resolved, savable and not doubted', 
     expect(placementIsSavable({ polarity: 'include', operation: 'directional_band', element_ids: ['R'], resolved: true, label: '', side: null })).toBe(false);
   });
 });
+
+describe('groupAddedByMention — one trail line per thing the customer said', () => {
+  it('groups added items by the mention that produced them', async () => {
+    const { groupAddedByMention } = await import('../autoSave.js');
+    const { geoPreferenceToLocationItems } = await import('../../../geo-preference/review.js');
+    const e = expr([
+      { eid: 'e1', recipe: recipe({ operation: 'district_union', resolved_element_ids: [D1, D2], source_anchors: [anchor('شمال الرياض')] }) },
+      { eid: 'e2', recipe: recipe({ resolved_element_ids: ['33333333-3333-4333-8333-333333333333'], source_anchors: [anchor('العليا')] }) },
+    ]);
+    const all = geoPreferenceToLocationItems(e);
+    const g = groupAddedByMention(e, ['e1', 'e2'], all);
+    expect(g.map((x) => [x.label, x.items.length])).toEqual([['شمال الرياض', 2], ['العليا', 1]]);
+    // only what was actually ADDED is listed (D1 was already saved)
+    const g2 = groupAddedByMention(e, ['e1', 'e2'], all.filter((i) => (i as { district_id?: string }).district_id !== D1));
+    expect(g2.map((x) => [x.label, x.items.length])).toEqual([['شمال الرياض', 1], ['العليا', 1]]);
+  });
+});
