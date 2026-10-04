@@ -14,8 +14,12 @@ import { monthName, num, shortDate, toArabicDigits } from './format';
 const AR_MON = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
 const EN_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export interface DailyRow { day: string; spend: number; leads: number; qualified: number }
-export interface DayBucket { label: string; spend: number; leads: number; qualified: number }
+export interface DailyRow {
+  day: string; spend: number; leads: number; qualified: number; impressions?: number; clicks?: number;
+}
+export interface DayBucket {
+  label: string; spend: number; leads: number; qualified: number; impressions: number; clicks: number;
+}
 
 /**
  * Fill a [fromIso, toIso) window day-by-day (so gaps read as zero), then bucket
@@ -43,12 +47,15 @@ export function bucketDaily(
       : mode === 'week' ? `${num(wkStart.getDate(), isAr)} ${mon(wkStart.getMonth())}`
         : mon(d.getMonth());
     if (curKey !== key) {
-      items.push({ label, spend: 0, leads: 0, qualified: 0 });
+      items.push({ label, spend: 0, leads: 0, qualified: 0, impressions: 0, clicks: 0 });
       curKey = key;
     }
     const b = items[items.length - 1];
     const row = byDay.get(iso);
-    if (b && row) { b.spend += row.spend; b.leads += row.leads; b.qualified += row.qualified; }
+    if (b && row) {
+      b.spend += Number(row.spend); b.leads += Number(row.leads); b.qualified += Number(row.qualified);
+      b.impressions += Number(row.impressions ?? 0); b.clicks += Number(row.clicks ?? 0);
+    }
   }
   return { mode, items };
 }

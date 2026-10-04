@@ -5352,7 +5352,8 @@ export default async function handler(req: Request): Promise<Response> {
         );
         const undated = undatedCampaigns(allCampaigns);
 
-        // Period-scoped paid figures. mos_execution_daily is the dated source.
+        // Period-scoped paid figures, from the dated Meta daily sync
+        // (mos_ad_metrics_daily) plus hand-entered days — see mos_paid_analytics.
         // There is NO lifetime fallback any more: a period with no dated rows
         // has genuinely spent nothing, and substituting last month's total was
         // read as this month's spend. Lifetime rides alongside as its own
@@ -5483,7 +5484,7 @@ export default async function handler(req: Request): Promise<Response> {
           prevFromIso = pf.toISOString().slice(0, 10);
           prevToIso = fromIso;
         } else {
-          const period = periodRaw === 'month' || periodRaw === 'quarter' || periodRaw === 'year' ? periodRaw : 'month';
+          const period = periodRaw === 'week' || periodRaw === 'month' || periodRaw === 'quarter' || periodRaw === 'year' ? periodRaw : 'month';
           const { weekStart, weekEnd } = periodBounds(period, str(body.week_of));
           const prev = previousPeriodBounds(period, str(body.week_of));
           fromIso = weekStart.slice(0, 10);

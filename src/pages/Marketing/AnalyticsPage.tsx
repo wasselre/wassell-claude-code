@@ -6,11 +6,15 @@
  * efficiency metrics (CPM · CPC · CTR · CPL), the impressions→clicks→leads
  * funnel, daily trends, and per-platform / per-campaign breakdowns.
  *
- * Data honesty: spend/leads/qualified are dated (mos_execution_daily) → real
- * daily trends. Impressions/clicks are lifetime-per-execution, so CPM/CPC/CTR
- * are PERIOD AGGREGATES, not daily trends — the page says so rather than faking
- * a line. Until daily figures are entered, the trend panels show an honest
- * empty state and the metric cards show real totals.
+ * Data source: every figure is DATED — the Meta daily sync
+ * (mos_ad_metrics_daily, one row per ad per day) plus hand-entered days for any
+ * execution the sync doesn't cover. So a period shows that period's spend,
+ * leads, impressions and clicks, and the previous-period deltas are real.
+ *
+ * Lifetime money with no daily breakdown at all (`undated_spend`) cannot be
+ * placed in any period; it is reported in a note BESIDE the figures, never
+ * folded into them. Until 2026-10-04 this page showed lifetime totals for every
+ * period ("the numbers are wrong for the month").
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -31,14 +35,13 @@ const PLATFORM_COLOR: Record<string, string> = {
 
 interface Media { cpm: number; cpc: number; ctr: number; cpl: number }
 
-function media(t: PaidAnalyticsWindow['totals']): Media {
-  const cplLeads = t.leads > 0 ? t.leads : t.exec_leads;
-  const cplSpend = t.leads > 0 ? t.spend : t.exec_spend;
+/** Period figures only — a window's spend over that window's volume. */
+function media(t: Pick<PaidAnalyticsWindow['totals'], 'spend' | 'leads' | 'impressions' | 'clicks'>): Media {
   return {
-    cpm: t.impressions > 0 ? (t.exec_spend / t.impressions) * 1000 : 0,
-    cpc: t.clicks > 0 ? t.exec_spend / t.clicks : 0,
+    cpm: t.impressions > 0 ? (t.spend / t.impressions) * 1000 : 0,
+    cpc: t.clicks > 0 ? t.spend / t.clicks : 0,
     ctr: t.impressions > 0 ? (t.clicks / t.impressions) * 100 : 0,
-    cpl: cplLeads > 0 ? cplSpend / cplLeads : 0,
+    cpl: t.leads > 0 ? t.spend / t.leads : 0,
   };
 }
 
@@ -68,7 +71,7 @@ export default function AnalyticsPage() {
       setData(await fetchPaidAnalytics(
         s.period === 'custom'
           ? { period: 'custom', from: s.from, to: s.to }
-          : { period: s.period === 'week' ? 'month' : s.period, anchorIso: s.anchorIso },
+          : { period: s.period, anchorIso: s.anchorIso },
       ));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -87,13 +90,17 @@ export default function AnalyticsPage() {
 
   const t = cur?.totals;
   const hasDaily = (t?.daily_days ?? 0) > 0;
-  const hSpend = t ? (hasDaily ? t.spend : t.exec_spend) : 0;
-  const hLeads = t ? (hasDaily ? t.leads : t.exec_leads) : 0;
-  const pT = prev?.totals;
-  const pSpend = pT ? (pT.daily_days > 0 ? pT.spend : pT.exec_spend) : 0;
-  const pLeads = pT ? (pT.daily_days > 0 ? pT.leads : pT.exec_leads) : 0;
+  // The period's figures, including when they are zero — never lifetime.
+  const hSpend = t?.spend ?? 0;
+  const hLeads = t?.leads ?? 0;
+  const pSpend = prev?.totals.spend ?? 0;
+  const pLeads = prev?.totals.leads ?? 0;
+  const undatedSpend = t?.undated_spend ?? 0;
 
   const cplSeries: Point[] = bk ? bk.items.map((b) => ({ label: b.label, value: b.leads > 0 ? b.spend / b.leads : 0 })) : [];
+  const spark = (pick: (x: Media) => number): number[] | undefined => (
+    hasDaily && bk ? bk.items.map((b) => pick(media(b))) : undefined
+  );
 
   return (
     <>
@@ -144,18 +151,18 @@ export default function AnalyticsPage() {
               <span>{isAr ? 'CPM · CPC · CTR · CPL' : 'CPM · CPC · CTR · CPL'}</span>
             </div>
             <div className="an-g4" style={{ marginBottom: 6 }}>
-              <MediaCard abbr="CPM" name={isAr ? 'تكلفة الألف ظهور' : 'Cost / 1k impressions'} val={m.cpm} prev={mPrev?.cpm ?? 0} unit={isAr ? 'ر.س' : 'SAR'} dec={1} invert isAr={isAr} />
-              <MediaCard abbr="CPC" name={isAr ? 'تكلفة النقرة' : 'Cost / click'} val={m.cpc} prev={mPrev?.cpc ?? 0} unit={isAr ? 'ر.س' : 'SAR'} dec={2} invert isAr={isAr} />
-              <MediaCard abbr="CTR" name={isAr ? 'نسبة النقر' : 'Click-through'} val={m.ctr} prev={mPrev?.ctr ?? 0} unit={isAr ? '٪' : '%'} dec={2} isAr={isAr} />
+              <MediaCard abbr="CPM" name={isAr ? 'تكلفة الألف ظهور' : 'Cost / 1k impressions'} val={m.cpm} prev={mPrev?.cpm ?? 0} unit={isAr ? 'ر.س' : 'SAR'} dec={1} invert isAr={isAr} spark={spark((x) => x.cpm)} />
+              <MediaCard abbr="CPC" name={isAr ? 'تكلفة النقرة' : 'Cost / click'} val={m.cpc} prev={mPrev?.cpc ?? 0} unit={isAr ? 'ر.س' : 'SAR'} dec={2} invert isAr={isAr} spark={spark((x) => x.cpc)} />
+              <MediaCard abbr="CTR" name={isAr ? 'نسبة النقر' : 'Click-through'} val={m.ctr} prev={mPrev?.ctr ?? 0} unit={isAr ? '٪' : '%'} dec={2} isAr={isAr} spark={spark((x) => x.ctr)} />
               <MediaCard
                 abbr="CPL" name={isAr ? 'تكلفة العميل' : 'Cost / lead'} val={m.cpl} prev={mPrev?.cpl ?? 0} unit={isAr ? 'ر.س' : 'SAR'} dec={0} invert isAr={isAr}
-                spark={hasDaily ? cplSeries.map((p) => p.value) : undefined}
+                spark={spark((x) => x.cpl)}
               />
             </div>
             <div className="an-note" style={{ marginBottom: 16 }}>
               {isAr
-                ? <>CPM · CPC · CTR محسوبة من إجمالي الظهور والنقرات للحملات ضمن الفترة (لا تُخزَّن يوميًا بعد)، وCPL من الإنفاق والعملاء. تصبح كلها سلسلة زمنية يومية فور إدخال الأرقام اليومية للحملات.</>
-                : <>CPM · CPC · CTR are computed from the period&apos;s total impressions and clicks (not stored daily yet); CPL from spend and leads. All become daily trends once daily campaign figures are entered.</>}
+                ? <>الأرقام يومية من مزامنة ميتا ومحصورة بالفترة المختارة. العملاء هنا هم من تحسبهم ميتا.</>
+                : <>Figures are daily, from the Meta sync, and limited to the selected period. Leads here are the ones Meta counts.</>}
             </div>
 
             {/* media funnel */}
@@ -270,11 +277,14 @@ export default function AnalyticsPage() {
               </div>
             </div>
 
-            <div className="an-note">
-              {isAr
-                ? <>الأرقام أعلاه تشمل حملات لا تحمل تواريخ بعد، لذا لا تتغيّر بتغيّر الفترة حتى تُؤرَّخ الحملات أو تُدخَل الأرقام اليومية. عندها تُصفّى تلقائيًا بالفترة المختارة.</>
-                : <>Figures above include campaigns that carry no dates yet, so they don&apos;t change with the period until campaigns are dated or daily figures entered — then they filter to the selected range automatically.</>}
-            </div>
+            {undatedSpend > 0 && (
+              /* Beside the period, never inside it: this money has no days. */
+              <div className="an-note">
+                {isAr
+                  ? <>{num(Math.round(undatedSpend), true)} ر.س أُنفقت على حملات قديمة بلا أرقام يومية، فلا تدخل في أي فترة ولا تظهر أعلاه.</>
+                  : <>{num(Math.round(undatedSpend), false)} SAR was spent on older campaigns with no daily figures, so it belongs to no period and is not included above.</>}
+              </div>
+            )}
           </>
         )}
       </div>

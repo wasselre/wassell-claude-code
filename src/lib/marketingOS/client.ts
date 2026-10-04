@@ -2009,10 +2009,16 @@ export type AnalyticsPeriod = 'week' | 'month' | 'quarter' | 'year' | 'custom';
 export interface PaidAnalyticsWindow {
   from: string;
   to: string;
-  daily: Array<{ day: string; spend: number; leads: number; qualified: number }>;
+  daily: Array<{
+    day: string; spend: number; leads: number; qualified: number; impressions: number; clicks: number;
+  }>;
   totals: {
     spend: number; leads: number; qualified: number; daily_days: number;
-    impressions: number; clicks: number; exec_spend: number; exec_leads: number;
+    impressions: number; clicks: number;
+    /** LIFETIME across every execution — not the window. */
+    exec_spend: number; exec_leads: number;
+    /** Lifetime money with no daily breakdown — belongs to no period. */
+    undated_spend: number; undated_leads: number;
   };
   by_platform: Array<{ platform: string; spend: number; impressions: number; clicks: number; leads: number }>;
   by_campaign: Array<{
