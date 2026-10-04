@@ -587,7 +587,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       stats.inserted = r.media_stored;
       stats.skipped = r.media_failed + r.transcribe_failed;
       if (r.errors.length) stats.errors.push(...r.errors.slice(0, 10));
-      apifyCost = { usage_total_usd: r.cost_usd, status: r.status, transcribed: r.transcribed, images: r.images_analyzed, frames: r.frames_analyzed, primary_project: r.primary_project, degraded: r.degraded };
+      apifyCost = { usage_total_usd: r.cost_usd, status: r.status, transcribed: r.transcribed, images: r.images_analyzed, frames: r.frames_analyzed, primary_project: r.primary_project, degraded: r.degraded, timings_ms: r.timings_ms };
       // A post that produced nothing usable, lost its whole OCR step, or was left
       // unroutable is NOT a succeeded job. Until this throw existed, every one of
       // those returned normally and index.ts called mkt_job_complete — which is

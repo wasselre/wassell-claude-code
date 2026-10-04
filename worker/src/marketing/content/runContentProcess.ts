@@ -38,6 +38,8 @@ export interface ContentProcessStats {
   fatal_errors: string[];
   /** True when the post completed but incompletely. Surfaced in the job result so a health query can count green-but-thin runs instead of reading them as clean. */
   degraded: boolean;
+  /** Wall-clock milliseconds per step (2026-10-04) — what a post read spends its time on. */
+  timings_ms: Record<string, number>;
 }
 
 export interface ContentProcessOptions {
@@ -72,7 +74,10 @@ export interface ContentProcessOptions {
 }
 
 export async function runContentProcess(sb: SupabaseClient, contentPostId: string, opts: ContentProcessOptions = {}): Promise<ContentProcessStats> {
-  const stats: ContentProcessStats = { post_id: contentPostId, media_total: 0, media_stored: 0, media_failed: 0, videos: 0, transcribed: 0, transcribe_failed: 0, images_analyzed: 0, frames_analyzed: 0, enriched: false, primary_project: null, attributions: 0, status: 'processing', cost_usd: 0, errors: [], fatal_errors: [], degraded: false };
+  const stats: ContentProcessStats = { post_id: contentPostId, media_total: 0, media_stored: 0, media_failed: 0, videos: 0, transcribed: 0, transcribe_failed: 0, images_analyzed: 0, frames_analyzed: 0, enriched: false, primary_project: null, attributions: 0, status: 'processing', cost_usd: 0, errors: [], fatal_errors: [], degraded: false, timings_ms: {} };
+  let stepStart = Date.now();
+  // Call when a step ENDS; adds the time since the previous mark to that step.
+  const mark = (step: string): void => { const now = Date.now(); stats.timings_ms[step] = (stats.timings_ms[step] ?? 0) + (now - stepStart); stepStart = now; };
 
   // Terminal "this post did not process" exit. Marks the post failed rather than
   // advancing it, so a post with a dead OCR step is never handed to the runner
@@ -108,6 +113,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     return stats;
   }
   await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'processing' });
+  mark('load');
 
   // latest raw payload holds the media URLs (media_refs was historically empty)
   const { data: rawRow } = await sb.from('mkt_raw_ingestions').select('payload').eq('external_identity', post.external_id).order('created_at', { ascending: false }).limit(1).maybeSingle();
@@ -180,6 +186,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     }
   }
 
+  mark('media');
   // ── media-recovery exit (see ContentProcessOptions.mediaOnly) ─────────────
   // Leaves processing_status at 'collected' on purpose: the media ARE recovered,
   // but the post genuinely still owes OCR + enrichment, and the backlog sweep
@@ -222,6 +229,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     }
   }
 
+  mark('cv_enqueue');
   // ── videos: audio → transcribe; sample frames for vision ──
   const visionInputs: Array<{ mediaId: string; source: 'image' | 'frame' | 'thumbnail'; frameTsMs: number | null; buffer: Buffer; mime: string | null }> = [];
   let transcriptText = '';
@@ -277,6 +285,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     }
   }
 
+  mark('transcribe');
   // ── visual text (OCR generation) ──
   // Idempotency: if this post already has visual_text, REUSE it and skip the
   // vision call (a reprocess shouldn't re-pay for OCR — and lets us re-run the
@@ -378,6 +387,7 @@ ${transcriptText}`.trim(), 160) };
     try {
       const out = await readAndDecide(sb, { id: contentPostId, organization_id: post.organization_id as string | null, caption: (post.caption as string | null) ?? null },
         storedRefs.map((r) => ({ mediaId: r.mediaId, kind: r.kind, bytes: r.bytes, durationMs: r.durationMs })), transcriptText, pending);
+      mark('read_and_decide');
       stats.cost_usd += out.costUsd;
       stats.images_analyzed = out.imagesRead;
       stats.frames_analyzed = 0;
@@ -407,6 +417,7 @@ ${transcriptText}`.trim(), 160) };
     stats.degraded = deterministicPartial || stats.errors.length > 0;
     stats.status = deterministicPartial ? 'partial' : 'processed';
     stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;
+    console.log(`[content] read post=${contentPostId} platform=${String(post.platform)} media=${stats.media_stored} videos=${stats.videos} cost=$${stats.cost_usd} ${Object.entries(stats.timings_ms).map(([k, v]) => `${k}=${(v / 1000).toFixed(1)}s`).join(' ')}`);
     return stats;
   }
   const ctx = await loadAttributionContext(sb);

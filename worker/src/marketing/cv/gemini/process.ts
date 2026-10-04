@@ -59,6 +59,21 @@ export interface GeminiProcessResult {
   partial_reason: string | null;
   cost_usd: number;
   gemini_via: 'inline' | 'file' | null;
+  /** Wall-clock milliseconds per step, in order (2026-10-04) — what a video job spends its time on. */
+  timings_ms: Record<string, number>;
+  /** Size of the analysed input, so step times can be read per minute / per MB. */
+  video_ms: number;
+  video_bytes: number;
+}
+
+/** Records how long each step took: call mark(step) when that step ENDS. */
+function stepTimer(): { mark: (step: string) => void; out: Record<string, number> } {
+  const out: Record<string, number> = {};
+  let last = Date.now();
+  return {
+    out,
+    mark(step: string) { const now = Date.now(); out[step] = (out[step] ?? 0) + (now - last); last = now; },
+  };
 }
 
 interface PlannedShot {
@@ -146,22 +161,28 @@ async function pruneOldFrames(sb: SupabaseClient, videoId: string, keep: Readonl
 export async function processVideoWithGemini(deps: GeminiProcessDeps, video: CvVideoRow, opts: GeminiProcessOptions): Promise<GeminiProcessResult> {
   const { sb, ai } = deps;
   if (!video.source_url) throw new Error(`permanent: video ${video.id} has no source_url`);
+  const tm = stepTimer();
   const settings = await readCvSettings(sb);
   if (opts.analyze) await checkBudget(sb, `processing video ${video.id}`);
 
   await setVideo(sb, video.id, { status: 'processing', error: null }, 'mark processing');
+  tm.mark('setup');
   const dir = await mkdtemp(join(tmpdir(), 'cv-gemini-'));
   let costUsd = 0;
   try {
     // ── 1. media ────────────────────────────────────────────────────────────
     const src = join(dir, 'src');
     await downloadToFile(video.source_url, src);
+    tm.mark('download');
     const probe = await probeVideo(src);
+    tm.mark('probe');
     const partial = probe.durationMs > MAX_ANALYZED_MS;
     const durationMs = Math.min(probe.durationMs, MAX_ANALYZED_MS);
     const partialReason = partial ? `video is ${Math.round(probe.durationMs / 60000)} min; the first ${MAX_ANALYZED_MS / 60000} min were analysed` : null;
     const silent = await silentCopy(src, dir, durationMs);
+    tm.mark('silent_copy');
     const cuts = (await detectCuts(silent.path)).filter((c) => c.t_ms < durationMs);
+    tm.mark('detect_cuts');
 
     // ── 2. shots ────────────────────────────────────────────────────────────
     let planned: PlannedShot[];
@@ -170,6 +191,7 @@ export async function processVideoWithGemini(deps: GeminiProcessDeps, video: CvV
     let geminiVia: 'inline' | 'file' | null = null;
     if (opts.analyze) {
       const ctx = await loadVideoContext(sb, video.content_media_id, video.content_post_id);
+      tm.mark('load_context');
       transcriptSegments = ctx.transcriptSegments;
       const transcript: TranscriptSegment[] = segmentsForShot(ctx.transcriptSegments, 0, durationMs);
       const res = await analyzeVideoWithGemini({
@@ -177,6 +199,7 @@ export async function processVideoWithGemini(deps: GeminiProcessDeps, video: CvV
         transcriptLanguage: ctx.transcriptLanguage, contentType: ctx.contentType, campaignMessage: ctx.campaignMessage,
         partialNote: partial ? `Only the first ${MAX_ANALYZED_MS / 60000} minutes are shown.` : null,
       });
+      tm.mark('gemini_video');
       geminiVia = res.via;
       costUsd += res.costUsd;
       await addCost(sb, 'cv_process', video.id, { role: 'shot_analyzer', provider: 'gemini', model: res.model, version: ANALYSIS_VERSION_GEMINI, cost_usd: res.costUsd, latency_ms: res.latencyMs });
@@ -194,6 +217,7 @@ export async function processVideoWithGemini(deps: GeminiProcessDeps, video: CvV
       if (s.keyframes.length > 1) { total -= s.keyframes.length - 1; s.keyframes = [s.keyframes[Math.floor(s.keyframes.length / 2)]!]; }
     }
 
+    tm.mark('plan');
     // ── 3. keyframes → bucket ───────────────────────────────────────────────
     const jobs = planned.flatMap((s) => s.keyframes.map((ts) => ({ ts, shot_no: s.shot_no })));
     const frames: PlannedFrame[] = await mapLimit(jobs, UPLOAD_CONCURRENCY, async ({ ts, shot_no }) => {
@@ -206,8 +230,10 @@ export async function processVideoWithGemini(deps: GeminiProcessDeps, video: CvV
       return { ts_ms: ts, shot_no, path, url, width: size?.width ?? null, height: size?.height ?? null, bytes: buf.length };
     });
 
+    tm.mark('frames_extract_upload');
     // ── 4. embeddings ───────────────────────────────────────────────────────
     const img = await ai.embed('embed_image', { image_urls: frames.map((f) => f.url) });
+    tm.mark('embed_image');
     if (img.vectors.length !== frames.length) throw new Error(`provider:gemini embed_image returned ${img.vectors.length} vectors for ${frames.length} frames`);
     if (typeof img.cost_usd === 'number') {
       costUsd += img.cost_usd;
@@ -226,6 +252,7 @@ export async function processVideoWithGemini(deps: GeminiProcessDeps, video: CvV
     if (opts.analyze) {
       const texts = planned.map((s, i) => embeddingText({ ar: s.gemini?.summary_ar ?? '', en: s.gemini?.summary_en ?? '' }, shotText[i]!.ocr, shotText[i]!.transcript));
       const tx = await ai.embed('embed_text', { texts });
+      tm.mark('embed_text');
       if (tx.vectors.length !== texts.length) throw new Error(`provider:gemini embed_text returned ${tx.vectors.length} vectors for ${texts.length} shots`);
       textVecs = tx.vectors;
       if (typeof tx.cost_usd === 'number') {
@@ -234,6 +261,7 @@ export async function processVideoWithGemini(deps: GeminiProcessDeps, video: CvV
       }
     }
 
+    tm.mark('cost_bookkeeping');
     // ── 5. write ────────────────────────────────────────────────────────────
     const { error: resetErr } = await sb.rpc('mkt_cv_reset_video', { p_video_id: video.id });
     if (resetErr) throw new Error(`mkt_cv_reset_video failed: ${resetErr.message}`);
@@ -292,6 +320,7 @@ export async function processVideoWithGemini(deps: GeminiProcessDeps, video: CvV
       if (error) throw new Error(`write shot ${s.shot_no} of video ${video.id} failed: ${error.message}`);
     }
 
+    tm.mark('db_write');
     // ── 6. finish ───────────────────────────────────────────────────────────
     const seq = purposes.filter((p, i) => i === 0 || purposes[i - 1] !== p);
     const micro = [...byNo.values()].filter((r) => r.is_micro).length;
@@ -316,10 +345,13 @@ export async function processVideoWithGemini(deps: GeminiProcessDeps, video: CvV
       analysis_version: structure.version,
     }, 'finalize video');
 
+    tm.mark('finalize');
     const pruned = await pruneOldFrames(sb, video.id, new Set(frames.map((f) => f.path)));
     if (pruned > 0) console.log(`[cv] video=${video.id} removed ${pruned} old frame image(s)`);
-    console.log(`[cv] gemini video=${video.id} shots=${planned.length} frames=${frames.length} cuts=${cuts.length} via=${geminiVia ?? '-'} cost=$${costUsd.toFixed(4)}${partial ? ' PARTIAL' : ''}`);
-    return { video_id: video.id, shots: planned.length, frames: frames.length, keyframes: frames.length, partial, partial_reason: partialReason, cost_usd: Math.round(costUsd * 1e6) / 1e6, gemini_via: geminiVia };
+    tm.mark('prune_old_frames');
+    const steps = Object.entries(tm.out).map(([k, v]) => `${k}=${(v / 1000).toFixed(1)}s`).join(' ');
+    console.log(`[cv] gemini video=${video.id} shots=${planned.length} frames=${frames.length} cuts=${cuts.length} via=${geminiVia ?? '-'} cost=$${costUsd.toFixed(4)}${partial ? ' PARTIAL' : ''} dur=${Math.round(durationMs / 1000)}s ${steps}`);
+    return { video_id: video.id, shots: planned.length, frames: frames.length, keyframes: frames.length, partial, partial_reason: partialReason, cost_usd: Math.round(costUsd * 1e6) / 1e6, gemini_via: geminiVia, timings_ms: tm.out, video_ms: durationMs, video_bytes: silent.bytes };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch((e: unknown) => console.error(`[cv] temp cleanup of ${dir} failed:`, e));
   }
