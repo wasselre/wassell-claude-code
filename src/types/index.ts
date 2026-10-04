@@ -2762,6 +2762,7 @@ export interface AppState {
    *  for one project (its interested customers) or one client (their projects).
    *  `name` is the OTHER side's display name. Throws on a read failure. */
   loadTrackedInterest: (filter: { projectId?: string; clientId?: string }) => Promise<TrackedInterestRow[]>;
+  loadClientProjectInterest: (clientId: string) => Promise<ClientProjectInterestRow[]>;
   /** The history behind one customer × project score: every action, oldest
    *  first, with the points it added (SQL `tracked_interest_timeline` — the one
    *  scoring implementation). Throws on a read failure. */
@@ -2981,6 +2982,21 @@ export interface TrackedInterestRow {
   unit_links: number;
   /** Client name (project view) or project name (client view); null = unknown. */
   name: string | null;
+}
+
+/** One client's interest in one project (v_client_project_interest, 0–100):
+ *  the link score + an appointment booked or a visit done + what the customer's
+ *  own messages say about it (the AI's reading). 'rejected' scores 0. */
+export interface ClientProjectInterestRow {
+  client_id: string;
+  project_id: string;
+  link_score: number;
+  appointments: number;
+  no_shows: number;
+  visits: number;
+  message_level: 'asked' | 'wants' | 'rejected' | null;
+  message_quote: string | null;
+  score: number;
 }
 
 /** One row of `tracked_interest_timeline`: an action (or a link going out) with

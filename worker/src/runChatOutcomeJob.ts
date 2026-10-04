@@ -60,16 +60,18 @@ export interface ChatOutcomeResult {
    *  the high-interest signal (portal registration + officer notice draft). */
   mainProjectId: string | null;
   mainProjectName: string | null;
-  /** Projects the CUSTOMER clearly said they want / don't want, each backed by
-   *  their own words (checked against their messages). The worker writes them
-   *  to the client's options (client_option_mark). */
+  /** Projects the CUSTOMER clearly said they want / don't want / kept asking
+   *  about, each backed by their own words (checked against their messages).
+   *  The worker writes them to the client's options (client_option_mark) and to
+   *  the message part of the interest score (client_project_message_signal). */
   reactions: ProjectReaction[];
 }
 
 export interface ProjectReaction {
   projectId: string;
   projectName: string;
-  status: 'interested' | 'not_interested';
+  /** asked = real questions about it (price, units, plan, location, delivery), no yes/no yet. */
+  status: 'interested' | 'not_interested' | 'asked';
   quote: string;
 }
 
@@ -228,9 +230,11 @@ customer's words into an ABSOLUTE ISO 8601 datetime with offset and quote the ex
 Arabic phrase. «بكرة» → tomorrow 10:00. «الأسبوع الجاي» → +7 days 10:00. «بعد العيد» → null.
 
 PROJECT REACTIONS. For each project in the list below that the CUSTOMER clearly reacted to in
-their own messages, give "interested" (asked to visit, asked for units/prices of it, said it
-suits them) or "not_interested" (said it doesn't suit, too far, too expensive, not what they
-want). Quote the customer's exact words. Only clear reactions — a project they never mentioned
+their own messages, give "interested" (asked to visit, said it suits them, wants to go ahead),
+"not_interested" (said it doesn't suit, too far, too expensive, not what they want), or
+"asked" (asked real questions about THIS project — its price, units, payment plan, location,
+delivery — without saying yes or no yet). Quote the customer's exact words (one of their
+questions for "asked"). Only clear reactions — a project they never mentioned
 gets nothing. This is independent of the outcome (also when the outcome is none).
 
 MAIN PROJECT. When the outcome is interested, appointment_booked or request_offer, choose the
@@ -243,7 +247,7 @@ ${projectList}
 Reply with ONLY this JSON object — no prose, no markdown fence:
 {
   "main_project": "<P-number from the list, or null>",
-  "project_reactions": [{"project": "<P-number>", "status": "interested | not_interested", "quote": "<the customer's exact words>"}],
+  "project_reactions": [{"project": "<P-number>", "status": "interested | not_interested | asked", "quote": "<the customer's exact words>"}],
   "outcome": "<one value from the list, or none>",
   "confidence": <0-100>,
   "summary": "<1-2 sentence Arabic summary of where the conversation stands>",
@@ -352,7 +356,7 @@ export async function runChatOutcomeJob({ supabase, env, job }: RunArgs): Promis
     const proj = ref ? projects[Number(ref[1]) - 1] : undefined;
     const status = str(o.status);
     const quote = str(o.quote) ?? '';
-    if (!proj || (status !== 'interested' && status !== 'not_interested') || norm(quote).length < 2) continue;
+    if (!proj || (status !== 'interested' && status !== 'not_interested' && status !== 'asked') || norm(quote).length < 2) continue;
     if (!customerText.includes(norm(quote))) {
       console.warn(`[run-chat] job=${job.id} dropped a reaction for ${proj.name}: quote not in the customer's messages`);
       continue;

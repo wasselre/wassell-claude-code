@@ -1306,14 +1306,23 @@ async function claimAndRunOneChatOutcome(): Promise<boolean> {
     if (doneErr) console.error(`[worker] chat_outcome_suggestion_ready RPC failed: ${doneErr.message}`);
     else console.log(`[worker] chat-outcome job=${job.id} → ${r.outcome ?? 'none'}`);
     // What the customer said about each project goes straight onto their
-    // options (operator, 2026-10-04). client_option_mark never overrides a
-    // rep's eliminated / reserved / closed.
+    // options (operator, 2026-10-04) and into the message part of their
+    // interest score. client_option_mark never overrides a rep's eliminated /
+    // reserved / closed; a project they only asked about is just 'presented'.
     for (const rx of r.reactions) {
       const { data: marked, error: markErr } = await supabase.rpc('client_option_mark', {
-        p_client: job.clientId, p_project: rx.projectId, p_status: rx.status, p_source: `ai_outcome:${job.id}`,
+        p_client: job.clientId, p_project: rx.projectId,
+        p_status: rx.status === 'asked' ? 'presented' : rx.status, p_source: `ai_outcome:${job.id}`,
       });
       if (markErr) console.error(`[worker] client_option_mark failed client=${job.clientId} project=${rx.projectId}: ${markErr.message}`);
       else console.log(`[worker] chat-outcome job=${job.id} option ${rx.projectName} → ${String(marked)}`);
+      const { data: sig, error: sigErr } = await supabase.rpc('client_project_message_signal', {
+        p_client: job.clientId, p_project: rx.projectId,
+        p_level: rx.status === 'interested' ? 'wants' : rx.status === 'not_interested' ? 'rejected' : 'asked',
+        p_quote: rx.quote.slice(0, 300), p_source: `ai_outcome:${job.id}`,
+      });
+      if (sigErr) console.error(`[worker] client_project_message_signal failed client=${job.clientId} project=${rx.projectId}: ${sigErr.message}`);
+      else console.log(`[worker] chat-outcome job=${job.id} message signal ${rx.projectName} → ${String(sig)}`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

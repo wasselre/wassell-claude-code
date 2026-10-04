@@ -8,9 +8,10 @@ import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
   Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass, Send,
   LayoutList, LayoutGrid, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal, CheckSquare, Square, Trash2, FileText,
+  CalendarClock, Footprints,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import type { AppRecord } from '@/types';
+import type { AppRecord, ClientProjectInterestRow } from '@/types';
 import {
   CLIENT_OPTION_STATUS_META, CLIENT_OPTION_SOURCE_META, CLIENT_OPTION_STATUS_ORDER,
   optionSourceUrl, setMainOption, updateOptionStatus, eliminateOption, reactivateOption,
@@ -215,26 +216,70 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
     return map;
   }, [options, records, marketModelId]);
 
-  // How much the client engaged with each project's tracked links (0–100,
-  // v_project_interest — the same score the AI uses for "high interest").
-  // Highest across the client's chats.
-  const loadTrackedInterest = useAppStore((s) => s.loadTrackedInterest);
-  const [interestByProject, setInterestByProject] = useState<Map<string, number>>(new Map());
+  // The client's interest in each project (0–100, v_client_project_interest —
+  // the same score the AI uses for "high interest"): links + appointment or
+  // visit + what their messages say. Reloads when an appointment / visit
+  // changes in the store.
+  const loadClientProjectInterest = useAppStore((s) => s.loadClientProjectInterest);
+  const apptModelId = useMemo(() => models.find((m) => m.name === 'appointments')?.id ?? null, [models]);
+  const visitsModelId = useMemo(() => models.find((m) => m.name === 'visits')?.id ?? null, [models]);
+  const ourProjectsModelId = useMemo(() => models.find((m) => m.name === 'our_projects')?.id ?? null, [models]);
+  const apptRecords = apptModelId ? records[apptModelId] : undefined;
+  const visitRecords = visitsModelId ? records[visitsModelId] : undefined;
+  const [interestByProject, setInterestByProject] = useState<Map<string, ClientProjectInterestRow>>(new Map());
   useEffect(() => {
     let alive = true;
-    loadTrackedInterest({ clientId: client.id })
-      .then((rows) => {
-        if (!alive) return;
-        const m = new Map<string, number>();
-        for (const r of rows) m.set(r.project_id, Math.max(m.get(r.project_id) ?? 0, r.score));
-        setInterestByProject(m);
-      })
+    loadClientProjectInterest(client.id)
+      .then((rows) => { if (alive) setInterestByProject(new Map(rows.map((r) => [r.project_id, r]))); })
       .catch((e: unknown) => {
         // The chip is extra information; the cards still render without it.
-        console.error('[ClientOptionsTab] link interest read failed:', e instanceof Error ? e.message : e);
+        console.error('[ClientOptionsTab] interest score read failed:', e instanceof Error ? e.message : e);
       });
     return () => { alive = false; };
-  }, [client.id, loadTrackedInterest]);
+  }, [client.id, loadClientProjectInterest, apptRecords, visitRecords]);
+
+  // Appointments and visits for this client, keyed by the all_projects id the
+  // option points at (visits point at our_projects → mapped via its `project`).
+  const eventsByProject = useMemo(() => {
+    const map = new Map<string, Array<{ id: string; kind: 'appointment' | 'visit'; at: string; status: string }>>();
+    const push = (pid: string, e: { id: string; kind: 'appointment' | 'visit'; at: string; status: string }) => {
+      if (!pid) return;
+      const list = map.get(pid) ?? [];
+      list.push(e);
+      map.set(pid, list);
+    };
+    for (const a of apptRecords ?? []) {
+      if (a.data.client_id !== client.id) continue;
+      push(String(a.data.project_id ?? ''), { id: a.id, kind: 'appointment', at: String(a.data.appointment_date ?? ''), status: String(a.data.appointment_status ?? '') });
+    }
+    const ourToMaster = new Map<string, string>();
+    for (const p of (ourProjectsModelId ? records[ourProjectsModelId] : undefined) ?? []) {
+      if (typeof p.data.project === 'string') ourToMaster.set(p.id, p.data.project);
+    }
+    for (const v of visitRecords ?? []) {
+      if (v.data.client_id !== client.id) continue;
+      push(ourToMaster.get(String(v.data.project_id ?? '')) ?? '', { id: v.id, kind: 'visit', at: String(v.data.scheduled_datetime ?? ''), status: String(v.data.visit_result ?? '') });
+    }
+    for (const list of map.values()) list.sort((x, y) => y.at.localeCompare(x.at));
+    return map;
+  }, [apptRecords, visitRecords, records, ourProjectsModelId, client.id]);
+
+  // Bilingual option label for a dropdown value on the appointments / visits model.
+  const optionLabel = (modelId: string | null, field: string, value: string): string => {
+    if (!value) return '';
+    const m = models.find((x) => x.id === modelId);
+    for (const sec of m?.schema.sections ?? []) {
+      const f = sec.fields.find((x) => x.name === field);
+      const o = f?.options?.find((x) => x.value === value);
+      if (o) return isAr ? o.label_ar : o.label_en;
+    }
+    return value;
+  };
+  const fmtWhen = (iso: string): string => {
+    const d = new Date(iso);
+    if (!iso || Number.isNaN(d.getTime())) return iso || '—';
+    return d.toLocaleString(isAr ? 'ar-SA-u-nu-latn' : 'en-GB', { timeZone: 'Asia/Riyadh', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
 
   const [statusFilter, setStatusFilter] = useState<ClientOptionStatus | 'all'>('all');
   const [showEliminated, setShowEliminated] = useState(false);
@@ -763,14 +808,24 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
             <span className="inline-flex shrink-0 items-center rounded-full bg-charcoal/5 px-2 py-0.5 text-[11px] font-bold text-charcoal/70">{d.match_score}%</span>
           )}
           {d.source_type === 'project' && interestByProject.has(String(d.source_id ?? '')) && (() => {
-            const score = interestByProject.get(String(d.source_id ?? '')) ?? 0;
-            const tone = score >= 40 ? 'border-copper/50 bg-copper/10 text-copper' : 'border-sand/60 bg-cream/50 text-charcoal/70';
+            const it = interestByProject.get(String(d.source_id ?? ''))!;
+            const tone = it.message_level === 'rejected'
+              ? 'border-red-200 bg-red-50 text-red-700'
+              : it.score >= 40 ? 'border-copper/50 bg-copper/10 text-copper' : 'border-sand/60 bg-cream/50 text-charcoal/70';
+            const parts = [
+              `${L('الروابط', 'Links')} ${it.link_score}`,
+              it.visits > 0 ? L('زار المشروع', 'Visited') : it.appointments > 0 ? L('حجز موعد', 'Appointment booked') : null,
+              it.no_shows > 0 ? L(`لم يحضر ${it.no_shows}`, `No-show ${it.no_shows}`) : null,
+              it.message_level === 'wants' ? L('قال إنه يناسبه', 'Said it suits them')
+                : it.message_level === 'asked' ? L('سأل عنه', 'Asked about it')
+                : it.message_level === 'rejected' ? L('قال إنه لا يناسبه', 'Said it does not suit them') : null,
+            ].filter(Boolean).join(' · ');
             return (
               <span
                 className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${tone}`}
-                title={L('تفاعل العميل مع روابط المشروع (من 100)', "Client's engagement with the project links (out of 100)")}
+                title={`${parts}${it.message_quote ? ` — «${it.message_quote}»` : ''}`}
               >
-                {L('الاهتمام', 'Interest')} {score}/100
+                {L('الاهتمام', 'Interest')} {it.score}/100
               </span>
             );
           })()}
@@ -812,6 +867,24 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
             <Spec icon={<BedDouble size={12} />} label={L('الغرف', 'Bedrooms')} value={beds} isAr={isAr} />
             <Spec icon={<Bath size={12} />} label={L('دورات المياه', 'Bathrooms')} value={baths} isAr={isAr} />
           </div>
+
+          {/* Appointments and visits registered for this project. */}
+          {d.source_type === 'project' && (eventsByProject.get(String(d.source_id ?? '')) ?? []).length > 0 && (
+            <div className="space-y-1 rounded-lg border border-sand/40 px-2.5 py-1.5">
+              {(eventsByProject.get(String(d.source_id ?? '')) ?? []).map((e) => (
+                <div key={e.id} className="flex flex-wrap items-center gap-1.5 text-xs text-charcoal/80">
+                  {e.kind === 'appointment' ? <CalendarClock size={12} className="shrink-0 text-copper" /> : <Footprints size={12} className="shrink-0 text-copper" />}
+                  <span className="font-semibold">{e.kind === 'appointment' ? L('موعد زيارة', 'Appointment') : L('زيارة', 'Visit')}</span>
+                  <span className="text-charcoal/60">{fmtWhen(e.at)}</span>
+                  {e.status && (
+                    <span className="rounded-full bg-cream/70 px-1.5 py-0.5 text-[10px] font-bold text-charcoal/70">
+                      {e.kind === 'appointment' ? optionLabel(apptModelId, 'appointment_status', e.status) : optionLabel(visitsModelId, 'visit_result', e.status)}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Sales notes (inline-editable) */}
           {editNotesId === r.id ? (

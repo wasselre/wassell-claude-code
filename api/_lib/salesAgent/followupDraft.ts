@@ -198,8 +198,18 @@ export async function draftFollowupMessage(
   // The AI's own reading: the latest outcome reading + every project in the
   // client's options with its status.
   const reading = ((readingRes.data ?? []) as { suggested_outcome: string | null; summary: string | null; suggested_main_project_name: string | null }[])[0];
+  // Interest per project: links + appointment/visit + what their messages say.
+  const { data: intRows, error: intErr } = await svc.from('v_client_project_interest')
+    .select('project_id, score, visits, appointments, message_level').eq('client_id', args.clientId);
+  if (intErr) throw new Error(`interest score read failed: ${intErr.message}`);
+  const interestOf = new Map(((intRows ?? []) as { project_id: string; score: number; visits: number; appointments: number; message_level: string | null }[])
+    .map((r) => [r.project_id, r]));
   const optionLines = ((optRes.data ?? []) as { data: Record<string, unknown> }[])
-    .map((o) => `- ${s(o.data.source_name) || '—'}: ${s(o.data.status) || 'suitable'}${o.data.is_main === true ? ' (المشروع الرئيسي)' : ''}`);
+    .map((o) => {
+      const it = interestOf.get(s(o.data.source_id));
+      const extra = it ? ` | درجة الاهتمام ${it.score}/100${it.visits ? ' — زار المشروع' : it.appointments ? ' — حجز موعد' : ''}` : '';
+      return `- ${s(o.data.source_name) || '—'}: ${s(o.data.status) || 'suitable'}${o.data.is_main === true ? ' (المشروع الرئيسي)' : ''}${extra}`;
+    });
 
   // Projects sent, with the facts the message may quote.
   const sentIds = [...new Set(((sentRes.data ?? []) as { project_id: string | null }[]).map((r) => r.project_id).filter((x): x is string => !!x))].slice(0, 8);

@@ -51,6 +51,7 @@ import { isRetiredModel } from '@/lib/featureFlags';
 import type {
   TrackedLinkEngagement,
   TrackedInterestRow,
+  ClientProjectInterestRow,
   InterestTimelineEvent,
   AgentQuestion,
   AppState,
@@ -1822,6 +1823,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       score: Number(r.score) || 0,
       name: names.get((filter.projectId ? r.client_id : r.project_id) ?? '') ?? null,
     }));
+  },
+  loadClientProjectInterest: async (clientId) => {
+    if (!supabase || !clientId) return [];
+    const { data, error } = await supabase
+      .from('v_client_project_interest')
+      .select('client_id, project_id, link_score, appointments, no_shows, visits, message_level, message_quote, score')
+      .eq('client_id', clientId)
+      .order('score', { ascending: false })
+      .limit(1000);
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as ClientProjectInterestRow[]).map((r) => ({ ...r, score: Number(r.score) || 0 }));
   },
   loadAgentQuestions: async (chatWid) => {
     if (!supabase || !chatWid) return [];

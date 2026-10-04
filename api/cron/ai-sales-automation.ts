@@ -2,9 +2,10 @@
  * GET / POST /api/cron/ai-sales-automation — the AI sales automation, every
  * five minutes (operator, 2026-10-04).
  *
- *   1. HIGH INTEREST from the links: `client_interest_detect_links(threshold)`
- *      records every (client, project) whose tracked-link interest score is at
- *      or above the threshold (40). High interest from the AI — a positive
+ *   1. HIGH INTEREST from the interest score: `client_interest_detect_links(threshold)`
+ *      records every (client, project) whose score in v_client_project_interest
+ *      (links + appointment/visit + what the customer's messages say) is at or
+ *      above the threshold (40). High interest from the AI — a positive
  *      follow-up result with a chosen main project — is recorded by the outcome
  *      agent itself (chat_outcome_suggestion_ready).
  *   2. PORTAL (automatic — the only thing that acts on its own): each new
@@ -117,10 +118,10 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 
     // ── 1. High interest from the links ──────────────────────────────────────
     if (dryRun) {
-      const { data: hot, error: hErr } = await svc.from('v_project_interest').select('chat_wid, project_id, score')
+      const { data: hot, error: hErr } = await svc.from('v_client_project_interest').select('client_id, project_id, score')
         .gte('score', settings.interest_score_threshold);
-      if (hErr) fail('link interest (dry run)', hErr);
-      else report.link_interest_pairs = (hot ?? []).length;
+      if (hErr) fail('interest score (dry run)', hErr);
+      else report.interest_pairs = (hot ?? []).length;
     } else {
       const { data: n, error: dErr } = await svc.rpc('client_interest_detect_links', { p_threshold: settings.interest_score_threshold });
       if (dErr) fail('client_interest_detect_links', dErr);
