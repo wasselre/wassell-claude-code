@@ -9,8 +9,9 @@
  *     A registration with a company covers ALL its projects, and the portals
  *     refuse a phone they already hold, so there is nothing more to send;
  *   · a run for the pair is already live → IN PROGRESS;
- *   · an earlier INTEREST run for the pair exists → not tried again (one
- *     interest attempt per client × portal, on top of the ad attempt);
+ *   · an earlier INTEREST run for the pair exists → not tried again, UNLESS it
+ *     failed because the portal or the browser misbehaved (a timeout…): then
+ *     it is retried ≥ 20 min later, up to 3 interest attempts (interestRetry);
  *   · otherwise a run is queued exactly like the ad sweep's (origin 'auto' so
  *     the OTP relay works, owner = the client's owner), tagged with interest_id.
  *
@@ -29,7 +30,7 @@ import {
 
 export type PortalOutcome =
   | { portal_id: string; portal: string; status: 'queued'; job_id: string; parked: boolean }
-  | { portal_id: string; portal: string; status: 'covered' | 'in_progress' | 'interest_attempt_used' | 'skipped' | 'failed'; reason?: string };
+  | { portal_id: string; portal: string; status: 'covered' | 'in_progress' | 'interest_attempt_used' | 'retry_later' | 'skipped' | 'failed'; reason?: string };
 
 export interface InterestRegistration {
   status: 'done' | 'no_portal' | 'missing_record';
@@ -37,6 +38,42 @@ export interface InterestRegistration {
 }
 
 const LIVE = ['queued', 'running', 'awaiting_input'];
+
+interface JobRow { id: string; status: string; interest_id: string | null; error_message: string | null; finished_at: string | null }
+
+/** Interest attempts per client × portal, counting the first. */
+export const MAX_INTEREST_ATTEMPTS = 3;
+/** A failed attempt is retried no sooner than this. */
+export const RETRY_AFTER_MS = 20 * 60_000;
+
+/**
+ * The portal or the browser misbehaved — not something about the client or the
+ * project. 2026-10-04: Riva's new-client form did not open within 30 s for one
+ * client, and the same recipe registered the next client 4 minutes later; the
+ * first client was never tried again. A missing project / missing fields row
+ * (written by this file, «لم يُسجَّل…») is NOT transient.
+ */
+export function isTransientPortalFailure(message: string | null): boolean {
+  const m = message ?? '';
+  if (!m || m.startsWith('لم يُسجَّل')) return false;
+  return /timeout|timed out|net::err|target (page|closed)|browser has been closed|session (closed|expired)|econnreset|socket hang up|navigation failed/i.test(m);
+}
+
+/**
+ * May an interest registration run again for this client × portal?
+ *   'go'    — no interest attempt yet, or only transient failures, the last one
+ *             long enough ago, and fewer than MAX_INTEREST_ATTEMPTS;
+ *   'later' — the last transient failure is too recent;
+ *   'used'  — an attempt finished (any non-failed status), a failure was NOT
+ *             transient, or the attempts are used up.
+ */
+export function interestRetry(interestJobs: readonly JobRow[], now = Date.now()): 'go' | 'later' | 'used' {
+  if (interestJobs.length === 0) return 'go';
+  if (interestJobs.length >= MAX_INTEREST_ATTEMPTS) return 'used';
+  if (interestJobs.some((j) => j.status !== 'failed' || !isTransientPortalFailure(j.error_message))) return 'used';
+  const last = Math.max(...interestJobs.map((j) => (j.finished_at ? Date.parse(j.finished_at) : now)));
+  return now - last < RETRY_AFTER_MS ? 'later' : 'go';
+}
 
 export async function registerOnInterest(
   svc: Svc,
@@ -79,13 +116,15 @@ export async function registerOnInterest(
 
     const { data: jobs, error: jobsErr } = await svc
       .from('portal_registration_jobs')
-      .select('id, status, interest_id')
+      .select('id, status, interest_id, error_message, finished_at')
       .eq('client_record_id', args.clientId)
       .eq('portal_record_id', portal.id);
     if (jobsErr) throw new Error(`existing-job check failed: ${jobsErr.message}`);
-    const rows = (jobs ?? []) as { id: string; status: string; interest_id: string | null }[];
+    const rows = (jobs ?? []) as JobRow[];
     if (rows.some((j) => LIVE.includes(j.status))) { out.push({ ...base, status: 'in_progress' }); continue; }
-    if (rows.some((j) => j.interest_id)) { out.push({ ...base, status: 'interest_attempt_used' }); continue; }
+    const again = interestRetry(rows.filter((j) => j.interest_id));
+    if (again === 'used') { out.push({ ...base, status: 'interest_attempt_used' }); continue; }
+    if (again === 'later') { out.push({ ...base, status: 'retry_later' }); continue; }
 
     if (portal.otp_channel && portal.otp_channel !== 'none' && !portal.otp_whatsapp_relay) {
       const reason = `portal "${portal.name}" needs a ${portal.otp_channel} code and has no WhatsApp code relay`;

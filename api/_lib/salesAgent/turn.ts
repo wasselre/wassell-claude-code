@@ -28,6 +28,7 @@ import { clip } from './clip.js';
 import { createTrackedLink, loadAvailableUnits, summarizeUnit } from '../trackedLinks.js';
 import { alertRep, askRep, bookVisit, loadChatContext, recordVisit } from './escalation.js';
 import { readLocation } from './geoGate.js';
+import { draftOfficerQuestion } from '../officerNoticeDraft.js';
 
 /** Photos in a project package go out 4 s apart; the follow-up question must
  *  land after the last one (mirrors aiSendProject's SPACING_MS). */
@@ -37,6 +38,8 @@ const REPEAT_WINDOW_MS = 30 * 60_000;
 /** A new conversation answers messages from this long before it started (the
  *  message that started it arrives seconds earlier; 5 min pulled in unrelated ones). */
 const START_WINDOW_MS = 90_000;
+/** The area the customer describes is read from this many of the latest turns. */
+const AREA_TURNS = 8;
 
 const SYSTEM_KINDS = ['reaction', 'call_log', 'e2e_notification', 'notification', 'notification_template', 'gp2', 'protocol', 'ciphertext', 'revoked'];
 
@@ -96,6 +99,30 @@ async function loadRecentTurns(
     }
     return { who: r.flow === 'in' ? 'customer' : 'us', text, isNew, at: r.date };
   });
+
+  // Our own replies still in the send queue are part of the conversation too.
+  // A reply waits behind the project's media (10–15 s), so the next turn used
+  // to start before it reached chat_messages, not see it, and answer the same
+  // thing again in other words (2026-10-04: two «أكنان 25…» lines 2 s apart).
+  const { data: queued, error: qErr } = await svc
+    .from('scheduled_whatsapp_jobs')
+    .select('body, status, created_at')
+    .eq('chat_wid', chatWid)
+    .like('reference', 'ai%')
+    .in('status', ['queued', 'running', 'sent'])
+    .gte('created_at', new Date(Date.now() - 15 * 60_000).toISOString())
+    .order('created_at', { ascending: true });
+  if (qErr) throw new Error(`sales agent: queued replies read failed: ${qErr.message}`);
+  const seen = new Set(turns.filter((t) => t.who === 'us').map((t) => t.text.trim()));
+  let added = false;
+  for (const q of (queued ?? []) as Array<{ body: string | null; created_at: string }>) {
+    const body = (q.body ?? '').trim();
+    if (!body || seen.has(body)) continue;
+    seen.add(body);
+    turns.push({ who: 'us', text: body, isNew: false, at: q.created_at });
+    added = true;
+  }
+  if (added) turns.sort((x, y) => (x.at ?? '').localeCompare(y.at ?? ''));
   return { turns, newestCustomerAt, deviceId, newCustomerText: newText.join(' '), lastOursAt };
 }
 
@@ -564,8 +591,15 @@ async function runBrainTurn(
           return { ok: false, error: msg };
         }
       },
-      // Read-only: the geography agent over this chat's turns (cached per text).
-      readArea: () => readLocation(svc, a.turns.map((t) => ({ who: t.who, text: t.text })), null),
+      // Read-only: the geography agent over the CURRENT conversation's last
+      // turns (cached per text). The whole chat history piled up every place
+      // ever named — old visits, «الجنوب», «الفرسان بعيد» — and the "area"
+      // covered ~16,000 records, i.e. nothing was narrowed (2026-10-04).
+      readArea: () => {
+        const startedAt = new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString();
+        const current = a.turns.filter((t) => !t.at || t.at >= startedAt);
+        return readLocation(svc, current.slice(-AREA_TURNS).map((t) => ({ who: t.who, text: t.text })), null);
+      },
       recordVisit: async (projectId, day) => {
         if (dryRun) return { ok: true };
         try {
@@ -582,6 +616,21 @@ async function runBrainTurn(
         slots.handed_off_at = new Date().toISOString();
         if (dryRun) return;
         await notifyRep(svc, chatWid, `المساعد الآلي (${reason}): ${note}`);
+        // A discount / last-price / payment question → the project's officer,
+        // as a draft with the customer's own words (AI tab, needs approval).
+        const projectId = sentIds[sentIds.length - 1];
+        if (reason === 'negotiation' && projectId && a.newCustomerText.trim()) {
+          try {
+            const ctx = await loadChatContext(svc, chatWid);
+            if (ctx.clientId) {
+              const r = await draftOfficerQuestion(svc, { clientId: ctx.clientId, projectId, clientChatWid: chatWid, question: a.newCustomerText });
+              console.log(`[salesAgent] officer question chat=${chatWid} project=${projectId} → ${r.status}`);
+            }
+          } catch (err) {
+            // The rep was already notified above; the officer draft is extra.
+            console.error(`[salesAgent] officer question draft failed chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
+          }
+        }
       },
     },
     { model: a.model, effort: a.effort, svc },

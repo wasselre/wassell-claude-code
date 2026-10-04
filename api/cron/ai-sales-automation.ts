@@ -30,7 +30,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { LEAD_PORTALS_MODEL_ID, type Rec } from '../_lib/leadPortals.js';
-import { registerOnInterest } from '../_lib/portalInterest.js';
+import { registerOnInterest, isTransientPortalFailure, RETRY_AFTER_MS } from '../_lib/portalInterest.js';
 import { draftOfficerNotice } from '../_lib/officerNoticeDraft.js';
 import { draftFollowupMessage } from '../_lib/salesAgent/followupDraft.js';
 
@@ -151,6 +151,51 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         } catch (err) {
           // Left undone on purpose: the next tick retries this event.
           fail(`portal step interest=${ev.id}`, err);
+        }
+      }
+
+      // 2b. Retry an interest registration the PORTAL broke (a timeout, a
+      // dropped browser session) — ≥ 20 min later, ≤ 3 attempts per client ×
+      // portal (registerOnInterest → interestRetry decides). Only the pair's
+      // LATEST job counts, so a pair already retried or registered is left alone.
+      const { data: failedJobs, error: fErr } = await svc.from('portal_registration_jobs')
+        .select('id, interest_id, client_record_id, portal_record_id, error_message, finished_at, created_at')
+        .eq('origin', 'auto').eq('status', 'failed').not('interest_id', 'is', null)
+        .gte('finished_at', new Date(Date.now() - 3 * 86_400_000).toISOString())
+        .lte('finished_at', new Date(Date.now() - RETRY_AFTER_MS).toISOString())
+        .order('finished_at', { ascending: true }).limit(50);
+      if (fErr) throw new Error(`failed portal jobs read failed: ${fErr.message}`);
+      const retryable = ((failedJobs ?? []) as Array<{ id: string; interest_id: string; client_record_id: string; portal_record_id: string; error_message: string | null; created_at: string }>)
+        .filter((j) => isTransientPortalFailure(j.error_message));
+      if (retryable.length) {
+        const { data: later, error: lErr } = await svc.from('portal_registration_jobs')
+          .select('client_record_id, portal_record_id, created_at')
+          .in('client_record_id', [...new Set(retryable.map((j) => j.client_record_id))]);
+        if (lErr) throw new Error(`portal job history read failed: ${lErr.message}`);
+        const newest = new Map<string, string>();
+        for (const r of (later ?? []) as Array<{ client_record_id: string; portal_record_id: string; created_at: string }>) {
+          const k = `${r.client_record_id}|${r.portal_record_id}`;
+          if (!newest.has(k) || newest.get(k)! < r.created_at) newest.set(k, r.created_at);
+        }
+        const done = new Set<string>();
+        for (const j of retryable) {
+          if (newest.get(`${j.client_record_id}|${j.portal_record_id}`) !== j.created_at || done.has(j.interest_id)) continue;
+          done.add(j.interest_id);
+          const { data: ev, error: eErr } = await svc.from('client_project_interest')
+            .select('id, client_id, project_id').eq('id', j.interest_id).maybeSingle();
+          if (eErr) { fail(`portal retry interest=${j.interest_id}`, eErr); continue; }
+          if (!ev) continue;
+          if (dryRun) { portalOut.push({ interest: j.interest_id, would: 'retry registration' }); continue; }
+          try {
+            const e = ev as { id: string; client_id: string; project_id: string };
+            const r = await registerOnInterest(svc, { interestId: e.id, clientId: e.client_id, projectId: e.project_id, autoPortalRows: autoPortals });
+            const { error: uErr } = await svc.from('client_project_interest')
+              .update({ portal_result: { ...r, retried_at: new Date().toISOString(), retry_of: j.id } }).eq('id', e.id);
+            if (uErr) throw new Error(`recording the retry failed: ${uErr.message}`);
+            portalOut.push({ interest: e.id, retry_of: j.id, ...r });
+          } catch (err) {
+            fail(`portal retry interest=${j.interest_id}`, err);
+          }
         }
       }
     }

@@ -698,7 +698,10 @@ export async function runBrain(
     }
 
     const text = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('\n').trim();
-    if (text === '<no_reply>' || text === '') { out.reply = null; return out; }
+    // «<no_reply>» anywhere means "send nothing" — the model sometimes adds a
+    // note after it, which failed the guard twice and fell back to «بيتواصل
+    // معك زميلي» for a customer who only said «تمام مشكور» (2026-10-04).
+    if (text === '' || /<\s*no_reply\s*>/i.test(text)) { out.reply = null; return out; }
 
     const verdict = checkReply(text, { lang: ctx.lang, grounded: groundedNumbers(grounding) });
     if (verdict.ok) { out.reply = text; return out; }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkReply, groundedNumbers, numbersInText } from '../guard.js';
+import { checkReply, groundedNumbers, numbersInText, spokenAmounts } from '../guard.js';
 
 // Facts shaped like catalog.ts returns them (صفا 78, live 2026-09-29).
 const TOOLS = [{
@@ -53,3 +53,29 @@ describe('checkReply', () => {
     expect(checkReply('Sure, how many bedrooms?', { lang: 'en', grounded: G }).ok).toBe(true);
   });
 });
+
+describe('spoken amounts are checked whole (2026-10-04)', () => {
+  // أكنان 25 villas: 250 m², 2,830,000.
+  const V = groundedNumbers([{ projects: [{ name: 'أكنان 25', price_from: 2830000, area: 250 }] }, 'كم سعرها']);
+
+  it('«مليون و830 ألف» is 1,830,000 — not the 2,830,000 the facts give', () => {
+    expect(spokenAmountsValues('بمليون و830 ألف')).toEqual([1830000]);
+    const r = checkReply('فلل أكنان 25 بمليون و830 ألف، تبيها؟', { lang: 'ar', grounded: V });
+    expect(r.ok).toBe(false);
+    expect(r.problems.join(' ')).toContain('1,830,000');
+  });
+
+  it('the right spoken price passes', () => {
+    expect(checkReply('فلل أكنان 25 بمليونين و830 ألف، تبيها؟', { lang: 'ar', grounded: V }).ok).toBe(true);
+    expect(checkReply('فلل أكنان 25 بـ2 مليون و830 ألف، تبيها؟', { lang: 'ar', grounded: V }).ok).toBe(true);
+  });
+
+  it('a budget the customer said in words may be repeated', () => {
+    const C = groundedNumbers(['ميزانيتي مليون و900']);
+    expect(checkReply('تمام، حدود مليون و900، تبيها جاهزة؟', { lang: 'ar', grounded: C }).ok).toBe(true);
+  });
+});
+
+function spokenAmountsValues(t: string): number[] {
+  return spokenAmounts(t).map((a) => a.value);
+}

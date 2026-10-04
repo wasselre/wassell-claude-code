@@ -80,7 +80,8 @@ export function groundedNumbers(sources: unknown[]): Set<number> {
   const walk = (v: unknown): void => {
     if (v === null || v === undefined) return;
     if (typeof v === 'number') { add(v); return; }
-    if (typeof v === 'string') { for (const n of numbersInText(v)) add(n); return; }
+    // A spoken amount in a source («ميزانيتي مليون و900») grounds the whole value too.
+    if (typeof v === 'string') { for (const n of numbersInText(v)) add(n); for (const a of spokenAmounts(v)) add(a.value); return; }
     if (Array.isArray(v)) { for (const x of v) walk(x); return; }
     if (typeof v === 'object') { for (const x of Object.values(v as Record<string, unknown>)) walk(x); }
   };
@@ -123,5 +124,34 @@ export function checkReply(text: string, opts: { lang: 'ar' | 'en'; grounded: Se
   if (ungrounded.length) {
     problems.push(`numbers not found in the tool results or the customer's words: ${[...new Set(ungrounded)].join(', ')} — only quote numbers the tools returned`);
   }
+  // A spoken amount is checked WHOLE: «مليون و830 ألف» = 1,830,000. Read digit
+  // by digit only «830» is seen — and 830 is part of 2,830,000 — so a reply
+  // that said مليون instead of مليونين passed (2026-10-04, أكنان 25 villas).
+  const big = [...opts.grounded].filter((g) => g >= 100_000);
+  for (const a of spokenAmounts(t)) {
+    if (!big.some((g) => Math.abs(g - a.value) < 1000)) {
+      problems.push(`the amount «${a.text}» = ${a.value.toLocaleString('en-US')} is not a price in the tool results — say the full price exactly as the facts give it`);
+    }
+  }
   return { ok: problems.length === 0, problems };
+}
+
+/**
+ * Spoken Arabic amounts WITH a remainder — «مليون و830 ألف», «مليونين و849»,
+ * «2 مليون و100 ألف» — as whole numbers. Amounts without a remainder («مليون»,
+ * «2.8 مليون») are rounded talk and are left to the digit check.
+ */
+export function spokenAmounts(text: string): Array<{ text: string; value: number }> {
+  const out: Array<{ text: string; value: number }> = [];
+  const t = foldDigits(text);
+  const re = /(?:(\d+(?:[.,]\d+)?)\s*)?(مليونين|مليون)\s*و\s*(\d{1,3}(?:[,٬]\d{3})*)(?:\s*(?:ألف|الف))?/g;
+  for (const m of t.matchAll(re)) {
+    const lead = m[1] ? Number(m[1].replace(',', '.')) : null;
+    const millions = m[2] === 'مليونين' ? 2 : (lead ?? 1);
+    const restRaw = Number((m[3] ?? '').replace(/[,٬]/g, ''));
+    if (!Number.isFinite(millions) || !Number.isFinite(restRaw)) continue;
+    const rest = restRaw < 1000 ? restRaw * 1000 : restRaw;
+    out.push({ text: m[0].trim(), value: Math.round(millions * 1_000_000 + rest) });
+  }
+  return out;
 }
