@@ -50,7 +50,8 @@ import {
   deriveMinSpendSar, rankCreatives, RANKING_DEFAULTS,
   type Bilingual, type CreativeRow, type MetricTotals, type RankingResult, type RankingSettings,
 } from './marketing/creativeRanking.js';
-import { leadsInWindow, ourLeadsForAds, type OurLead } from './marketing/ourLeads.js';
+import { leadsInWindow, ourLeadsForAds, riyadhDay, type OurLead } from './marketing/ourLeads.js';
+import { planWeeklySlate, type SlateCreative, type SlatePlan } from './marketing/weeklySlate.js';
 
 export interface RefreshDeps {
   supabase: SupabaseClient;
@@ -96,8 +97,19 @@ export function isMissingObject(err: { code?: string | null; message?: string } 
   return m.includes('does not exist') || m.includes('could not find the table') || m.includes('could not find the function');
 }
 
+/**
+ * The operator's weekly rule (2026-10-05): five new a week, keep the best one of
+ * last week, stop the others — `marketing/weeklySlate.ts`. When
+ * `mos_settings.planning.weekly_rule` names it, the tick runs
+ * `reconcileWeeklySlates` INSTEAD of the ranking swap (decide → confirm →
+ * apply) and the first-batch activation.
+ */
+export const WEEKLY_RULE = 'keep_best_of_last_batch';
+
 export interface PlanningSettings {
   refreshLoopEnabled: boolean;
+  /** `'ranking'` (the old decide/confirm/apply swap) or the operator's weekly rule. */
+  weeklyRule: 'ranking' | typeof WEEKLY_RULE;
   autoApplyDefaultDecision: boolean;
   minActiveCreatives: number;
   /**
@@ -116,6 +128,7 @@ export interface PlanningSettings {
 
 export const PLANNING_FALLBACK: PlanningSettings = {
   refreshLoopEnabled: true,
+  weeklyRule: 'ranking',
   autoApplyDefaultDecision: false,
   minActiveCreatives: 5,
   // Five new a week plus the at-most-two the margin guard can keep.
@@ -143,6 +156,7 @@ export async function loadPlanningSettings(sb: SupabaseClient): Promise<Planning
   }
   return {
     refreshLoopEnabled: bool(v.refresh_loop_enabled, true),
+    weeklyRule: v.weekly_rule === WEEKLY_RULE ? WEEKLY_RULE : 'ranking',
     autoApplyDefaultDecision: bool(v.auto_apply_default_decision, false),
     minActiveCreatives,
     maxActiveCreatives: Math.max(maxActiveCreatives, minActiveCreatives),
@@ -1279,6 +1293,411 @@ export async function activateDueSlots(
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
+/* 2c. The weekly rule — keep the best of last week, stop the rest            */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * How often ONE machine re-checks the slates. Five machines run this lane, so
+ * between them the slates are looked at roughly every minute; a batch day's
+ * turnover therefore lands within minutes of midnight. Throttled because each
+ * check reads the ads' first-week numbers and their WhatsApp leads.
+ */
+export const WEEKLY_RECONCILE_EVERY_MS = 5 * 60_000;
+let lastWeeklyReconcileAt = 0;
+
+interface SlateAdRow extends AdRow { retired_at: string | null }
+const SLATE_AD_FIELDS = `${AD_FIELDS}, retired_at`;
+
+interface MetricDayRow {
+  ad_row_id: string; day: string;
+  spend: number | null; clicks: number | null; leads: number | null;
+}
+
+const chunked = <T>(xs: T[], n: number): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+};
+
+/** Daily rows for these ads, paged — never cut at PostgREST's 1,000-row page. */
+async function readMetricDays(
+  sb: SupabaseClient, ids: string[], since: string, until: string,
+): Promise<{ rows: MetricDayRow[]; error: string | null }> {
+  const rows: MetricDayRow[] = [];
+  const PAGE = 1000;
+  for (const part of chunked([...new Set(ids)], 150)) {
+    for (let from = 0; ; from += PAGE) {
+      const res = await sb.from('mos_ad_metrics_daily')
+        .select('ad_row_id, day, spend, clicks, leads')
+        .in('ad_row_id', part).gte('day', since).lte('day', until)
+        .order('ad_row_id', { ascending: true }).order('day', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (res.error) return { rows: [], error: `mos_ad_metrics_daily read failed: ${res.error.code ?? ''} ${res.error.message}` };
+      const page = (res.data ?? []) as MetricDayRow[];
+      rows.push(...page);
+      if (page.length < PAGE) break;
+    }
+  }
+  return { rows, error: null };
+}
+
+/**
+ * The keeper already chosen for this batch, as stored on its cycle.
+ * `undefined` = not chosen yet; `null` = chosen, and the previous batch had none.
+ */
+function storedKeepOf(decision: unknown, batchDay: string): string | null | undefined {
+  const d = (decision ?? {}) as Record<string, unknown>;
+  if (d.rule !== WEEKLY_RULE || d.batch_day !== batchDay) return undefined;
+  return typeof d.keep_key === 'string' ? d.keep_key : null;
+}
+
+export interface WeeklyReconcileOutcome {
+  executions: number;
+  activated: number;
+  paused: number;
+}
+
+/**
+ * Enforce the weekly rule (`marketing/weeklySlate.ts`) on every running Meta
+ * execution that a plan made creative slots for. Idempotent and derived from
+ * the CURRENT state each time: what is live on Meta, which batch each creative
+ * belongs to, and the keeper stored for the current batch.
+ */
+export async function reconcileWeeklySlates(
+  deps: RefreshDeps, meta: MetaMarketingClient, planning: PlanningSettings,
+): Promise<WeeklyReconcileOutcome> {
+  const out: WeeklyReconcileOutcome = { executions: 0, activated: 0, paused: 0 };
+  if (Date.now() - lastWeeklyReconcileAt < WEEKLY_RECONCILE_EVERY_MS) return out;
+  lastWeeklyReconcileAt = Date.now();
+  const { supabase: sb } = deps;
+  const today = riyadhToday();
+
+  const exRes = await sb.from('mos_campaign_executions').select('id')
+    .eq('status', 'running').eq('platform', 'meta');
+  if (exRes.error) {
+    if (isMissingObject(exRes.error)) throw new MissingPlanningSchemaError(`mos_campaign_executions: ${exRes.error.message}`);
+    console.error('[refresh] weekly rule: running executions read failed:', exRes.error.code, exRes.error.message);
+    return out;
+  }
+  const ids = ((exRes.data ?? []) as Array<{ id: string }>).map((e) => e.id);
+  // Same guard as the old apply: never re-activate what the cutover stopped.
+  const blocked = await cutoverBlockedExecutions(sb, ids);
+  for (const id of ids) {
+    if (blocked.has(id)) continue;
+    try {
+      const r = await reconcileExecutionSlate(deps, meta, planning, id, today);
+      if (r) {
+        out.executions += 1;
+        out.activated += r.activated;
+        out.paused += r.paused;
+      }
+    } catch (e) {
+      if (e instanceof MissingPlanningSchemaError) throw e;
+      // One execution failing must never stop the others — and never quietly.
+      console.error(`[refresh] weekly rule: execution ${id} failed:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return out;
+}
+
+/** One execution. Exported for the live dry-run harness; the lane calls `reconcileWeeklySlates`. */
+export async function reconcileExecutionSlate(
+  deps: RefreshDeps, meta: MetaMarketingClient, planning: PlanningSettings,
+  executionId: string, today: string,
+): Promise<{ activated: number; paused: number } | null> {
+  const { supabase: sb, log } = deps;
+  const nowIso = (): string => new Date().toISOString();
+
+  // ── 1. the batches: the slots the plan made, by their start day ──────────
+  const slotRes = await sb.from('mos_creative_slots').select('content_id, activate_on')
+    .eq('execution_id', executionId).not('activate_on', 'is', null);
+  if (slotRes.error) {
+    if (isMissingObject(slotRes.error)) throw new MissingPlanningSchemaError(`mos_creative_slots: ${slotRes.error.message}`);
+    console.error(`[refresh] weekly rule: slots read failed for ${executionId}:`, slotRes.error.message);
+    return null;
+  }
+  const slotRows = (slotRes.data ?? []) as Array<{ content_id: string | null; activate_on: string }>;
+  const batchDays = [...new Set(slotRows.map((s) => s.activate_on))].sort();
+  // Not a planned month (a legacy execution has no slots): the rule does not apply.
+  if (batchDays.length === 0) return null;
+  const currentBatch = [...batchDays].reverse().find((d) => d <= today) ?? null;
+  if (!currentBatch) return null;
+  const batchOf = new Map<string, string>();
+  for (const s of slotRows) {
+    if (!s.content_id) continue;
+    const prev = batchOf.get(s.content_id);
+    if (!prev || s.activate_on < prev) batchOf.set(s.content_id, s.activate_on);
+  }
+
+  // ── 2. the ads: one creative = the feed row + its story shadow ────────────
+  const adsRes = await sb.from('mos_execution_ads').select(SLATE_AD_FIELDS)
+    .eq('execution_id', executionId).is('archived_at', null);
+  if (adsRes.error) {
+    console.error(`[refresh] weekly rule: ads read failed for ${executionId}:`, adsRes.error.message);
+    return null;
+  }
+  const all = (adsRes.data ?? []) as SlateAdRow[];
+  const primaries = all.filter((a) => a.placement_variant !== 'story');
+  const storiesOf = new Map<string, SlateAdRow[]>();
+  for (const a of all) {
+    if (a.placement_variant !== 'story' || !a.pair_id) continue;
+    const list = storiesOf.get(a.pair_id);
+    if (list) list.push(a); else storiesOf.set(a.pair_id, [a]);
+  }
+  const rowIdsOf = (a: SlateAdRow): string[] => [a.id, ...(storiesOf.get(a.id) ?? []).map((s) => s.id)];
+
+  const contentIds = [...new Set(primaries.map((a) => a.content_id).filter((x): x is string => !!x))];
+  const refOf = new Map<string, string>();
+  if (contentIds.length > 0) {
+    const refRes = await sb.from('mos_content').select('id, ref').in('id', contentIds);
+    if (refRes.error) console.error('[refresh] weekly rule: content refs read failed:', refRes.error.message);
+    for (const r of (refRes.data ?? []) as Array<{ id: string; ref: string | null }>) {
+      if (r.ref) refOf.set(r.id, r.ref);
+    }
+  }
+  const byKey = new Map(primaries.map((a) => [a.id, a]));
+  const refOfKey = (key: string | null): string | null => {
+    const row = key ? byKey.get(key) : undefined;
+    return row?.content_id ? refOf.get(row.content_id) ?? row.label : row?.label ?? null;
+  };
+
+  // ── 3. the cycles; the current batch's holds the stored keeper ───────────
+  const cycRes = await sb.from('mos_refresh_cycles')
+    .select('id, execution_id, round, refresh_on, ready_by, production_start_on, decision_due_on, status, decision')
+    .eq('execution_id', executionId).order('round', { ascending: true });
+  if (cycRes.error) {
+    console.error(`[refresh] weekly rule: cycles read failed for ${executionId}:`, cycRes.error.message);
+    return null;
+  }
+  const cycles = (cycRes.data ?? []) as RefreshCycleRow[];
+  const cycle = cycles.find((c) => c.refresh_on === currentBatch) ?? null;
+  let storedKeep = cycle ? storedKeepOf(cycle.decision, currentBatch) : undefined;
+
+  // ── 4. each creative's own first week: spend, clicks, Meta's and OUR leads ─
+  const startOf = (a: SlateAdRow): string => riyadhDay(a.activated_at ?? a.created_at ?? nowIso());
+  const yesterday = addDays(today, -1);
+  const windowOf = (a: SlateAdRow): { since: string; until: string } | null => {
+    const since = startOf(a);
+    const natural = addDays(since, AUDITION_DAYS - 1);
+    const until = natural < yesterday ? natural : yesterday;
+    return until < since ? null : { since, until };
+  };
+  const onMeta = primaries.filter((a) => !!a.platform_ad_id);
+  const metricIds = onMeta.flatMap(rowIdsOf);
+  const since = onMeta.map(startOf).sort()[0] ?? today;
+  let metricRows: MetricDayRow[] = [];
+  let ourLeads: OurLead[] = [];
+  if (metricIds.length > 0 && since <= yesterday) {
+    const m = await readMetricDays(sb, metricIds, since, yesterday);
+    if (m.error) {
+      // Ranking on a silent zero would keep the wrong creative and stop the
+      // right one. Do nothing this round; say why.
+      console.error(`[refresh] weekly rule: ${executionId} — ${m.error}`);
+      return null;
+    }
+    metricRows = m.rows;
+    const l = await ourLeadsForAds(sb, metricIds, { since, until: yesterday });
+    if (l.error) {
+      console.error(`[refresh] weekly rule: ${executionId} — OUR leads read failed: ${l.error}`);
+      return null;
+    }
+    ourLeads = l.leads;
+  }
+  const creatives: SlateCreative[] = primaries.map((a) => {
+    const ids = rowIdsOf(a);
+    const w = windowOf(a);
+    const days = w ? metricRows.filter((r) => ids.includes(r.ad_row_id) && r.day >= w.since && r.day <= w.until) : [];
+    return {
+      key: a.id,
+      ref: refOfKey(a.id),
+      batchDay: a.content_id ? batchOf.get(a.content_id) ?? null : null,
+      onMeta: !!a.platform_ad_id,
+      status: a.status ?? '',
+      activatedAt: a.activated_at,
+      retiredAt: a.retired_at,
+      leads: w ? leadsInWindow(ourLeads.filter((x) => ids.includes(x.adRowId)), w.since, w.until) : 0,
+      metaLeads: days.reduce((s, r) => s + numOf(r.leads), 0),
+      spend: days.reduce((s, r) => s + numOf(r.spend), 0),
+      clicks: days.reduce((s, r) => s + numOf(r.clicks), 0),
+    };
+  });
+  const planOf = (keep: string | null | undefined): SlatePlan => planWeeklySlate({
+    today, batchDays, creatives, minActive: planning.minActiveCreatives, storedKeep: keep,
+  });
+  let plan = planOf(storedKeep);
+
+  // ── 5. the keeper is chosen ONCE per batch and stored on its cycle ───────
+  // Five machines run this; the conditional write lets exactly one choose, and
+  // everyone then acts on what was stored — never on their own choice — so two
+  // machines can never keep different creatives and stop each other's keeper.
+  if (cycle && storedKeep === undefined) {
+    const decision = {
+      rule: WEEKLY_RULE,
+      batch_day: plan.currentBatch,
+      previous_batch_day: plan.previousBatch,
+      keep_key: plan.keep,
+      keep_ref: refOfKey(plan.keep),
+      lead_source: plan.leadSource,
+      ranking: plan.ranking.map((r) => ({
+        ad_row_id: r.key, ref: r.ref, leads: r.leads,
+        spend: Math.round(r.spend), cost_per_lead: r.costPerLead == null ? null : Math.round(r.costPerLead),
+        clicks: r.clicks,
+      })),
+      // What the old readers look at: the keeper is the only "keep".
+      keep: plan.keep ? [plan.keep] : [],
+      replace: [],
+      decided_at: nowIso(),
+    };
+    const claim = await sb.from('mos_refresh_cycles')
+      .update({ decision, status: 'partial', updated_at: nowIso() })
+      .eq('id', cycle.id)
+      .or(`decision->>rule.is.null,decision->>rule.neq.${WEEKLY_RULE},decision->>batch_day.is.null,decision->>batch_day.neq.${currentBatch}`)
+      .select('id');
+    if (claim.error) {
+      console.error(`[refresh] weekly rule: storing the keeper failed for cycle ${cycle.id}:`, claim.error.message);
+      return null;
+    }
+    const again = await sb.from('mos_refresh_cycles').select('decision, status').eq('id', cycle.id).maybeSingle();
+    if (again.error) {
+      console.error(`[refresh] weekly rule: re-reading cycle ${cycle.id} failed:`, again.error.message);
+      return null;
+    }
+    const row = again.data as { decision: Record<string, unknown> | null; status: string } | null;
+    storedKeep = storedKeepOf(row?.decision, currentBatch);
+    if (storedKeep === undefined) {
+      console.error(`[refresh] weekly rule: cycle ${cycle.id} has no stored keeper after the write — acting on nothing this round`);
+      return null;
+    }
+    cycle.decision = row?.decision ?? null;
+    cycle.status = row?.status ?? cycle.status;
+    if ((claim.data ?? []).length > 0) {
+      log(`weekly rule: ${executionId} batch ${currentBatch} — kept ${refOfKey(storedKeep) ?? 'none'} from ${plan.previousBatch ?? 'no earlier batch'}`);
+    }
+    plan = planOf(storedKeep);
+  } else if (!cycle && plan.previousBatch) {
+    console.error(`[refresh] weekly rule: ${executionId} has no refresh cycle for ${currentBatch} — the keeper cannot be stored, so it is re-chosen every round`);
+  }
+
+  // ── 6. this week's creatives go live ────────────────────────────────────
+  let activatedRefs: string[] = [];
+  const toActivate = plan.activate.map((k) => byKey.get(k)).filter((a): a is SlateAdRow => !!a);
+  if (toActivate.length > 0) {
+    const { active, errors } = await activateOnMeta(meta, toActivate, all, log, `weekly rule ${executionId}`);
+    for (const row of active) {
+      const at = row.activated_at ?? nowIso();
+      const upd = await sb.from('mos_execution_ads')
+        .update({ status: 'running', activated_at: at, updated_at: nowIso() }).in('id', rowIdsOf(row as SlateAdRow));
+      if (upd.error) {
+        // Live on Meta, not in our row. Never quiet: every later step reads it.
+        console.error(`[refresh] weekly rule: ${row.id} is ACTIVE on Meta but the status write failed:`, upd.error.message);
+        continue;
+      }
+      const c = creatives.find((x) => x.key === row.id);
+      if (c) { c.status = 'running'; c.activatedAt = at; }
+      activatedRefs.push(refOfKey(row.id) ?? row.id);
+    }
+    if (errors.length > 0) console.error(`[refresh] weekly rule: ${executionId} activation errors — ${errors.join(' | ')}`);
+    // Stop only against what is REALLY live now.
+    plan = planOf(storedKeep);
+  }
+
+  // ── 7. stop what must stop (worst first; the minimum is already held) ─────
+  const pausedRefs: string[] = [];
+  for (const key of plan.pause) {
+    const row = byKey.get(key);
+    if (!row) continue;
+    const metaIds = metaIdsOf(row, all);
+    try {
+      for (const id of metaIds) await meta.setStatus(id, 'PAUSED');
+    } catch (e) {
+      console.error(`[refresh] weekly rule: pausing ${refOfKey(key) ?? key} failed:`, e instanceof Error ? e.message : e);
+      continue;
+    }
+    const upd = await sb.from('mos_execution_ads')
+      .update({ status: 'paused', retired_at: nowIso(), updated_at: nowIso() }).in('id', rowIdsOf(row));
+    if (upd.error) {
+      console.error(`[refresh] weekly rule: ${refOfKey(key) ?? key} is PAUSED on Meta but the status write failed:`, upd.error.message);
+      continue;
+    }
+    const c = creatives.find((x) => x.key === key);
+    if (c) { c.status = 'paused'; c.retiredAt = nowIso(); }
+    pausedRefs.push(refOfKey(key) ?? key);
+  }
+  if (activatedRefs.length > 0 || pausedRefs.length > 0) {
+    log(`weekly rule: ${executionId} — live now: ${activatedRefs.join(', ') || 'none'}; stopped: ${pausedRefs.join(', ') || 'none'}`);
+  }
+
+  // ── 8. what happened, on the cycle — written only when it changes ────────
+  if (cycle && storedKeepOf(cycle.decision, currentBatch) !== undefined) {
+    const prior = (cycle.decision ?? {}) as Record<string, unknown>;
+    const holdRefs = plan.holdForMinimum.map((k) => refOfKey(k) ?? k);
+    const keepRef = refOfKey(storedKeep ?? null);
+    const summary: Bilingual = {
+      ar: `${keepRef ? `أُبقي على ${keepRef} الأفضل من دفعة ${plan.previousBatch}` : 'لا دفعة سابقة يُختار منها'}.`
+        + (holdRefs.length > 0
+          ? ` يبقى ${holdRefs.join('، ')} يعمل حتى تعمل تصاميم هذا الأسبوع (الحد الأدنى ${planning.minActiveCreatives} إعلانات).`
+          : ' لا يعمل غير تصاميم هذا الأسبوع والتصميم المُبقى.'),
+      en: `${keepRef ? `Kept ${keepRef}, the best of the ${plan.previousBatch} batch` : 'No earlier batch to keep from'}.`
+        + (holdRefs.length > 0
+          ? ` ${holdRefs.join(', ')} keep running until this week's designs are live (minimum ${planning.minActiveCreatives} ads).`
+          : ' Only this week\'s designs and the kept one are running.'),
+    };
+    const history = Array.isArray(prior.history) ? (prior.history as unknown[]) : [];
+    const changed = activatedRefs.length > 0 || pausedRefs.length > 0
+      || JSON.stringify(prior.hold_for_minimum ?? []) !== JSON.stringify(holdRefs);
+    const status = holdRefs.length > 0 ? 'partial' : 'applied';
+    if (changed || cycle.status !== status) {
+      const upd = await sb.from('mos_refresh_cycles').update({
+        status,
+        decision: {
+          ...prior,
+          hold_for_minimum: holdRefs,
+          live_after: plan.liveAfter,
+          summary,
+          history: [
+            ...history,
+            ...(activatedRefs.length > 0 || pausedRefs.length > 0
+              ? [{ at: nowIso(), activated: activatedRefs, paused: pausedRefs }] : []),
+          ].slice(-50),
+          updated_at: nowIso(),
+        },
+        updated_at: nowIso(),
+      }).eq('id', cycle.id);
+      if (upd.error) console.error(`[refresh] weekly rule: cycle ${cycle.id} record write failed:`, upd.error.message);
+    }
+  }
+
+  // ── 9. the old rule's leftovers: no decision waits on a person any more ──
+  const now = nowIso();
+  for (const c of cycles) {
+    const d = (c.decision ?? {}) as Record<string, unknown>;
+    if (d.rule === WEEKLY_RULE || !['deciding', 'decided', 'applying'].includes(c.status)) continue;
+    if (c.refresh_on && c.refresh_on < currentBatch) {
+      const upd = await sb.from('mos_refresh_cycles')
+        .update({ status: 'skipped', decision: { ...d, superseded_by: WEEKLY_RULE, superseded_at: now }, updated_at: now })
+        .eq('id', c.id).in('status', ['deciding', 'decided', 'applying']);
+      if (upd.error) console.error(`[refresh] weekly rule: superseding cycle ${c.id} failed:`, upd.error.message);
+    } else if (c.refresh_on && c.refresh_on > currentBatch) {
+      // Its batch has not started: clear the old ranking so it waits for its day.
+      const upd = await sb.from('mos_refresh_cycles')
+        .update({ status: 'producing', decision: {}, updated_at: now })
+        .eq('id', c.id).in('status', ['deciding', 'decided', 'applying']);
+      if (upd.error) console.error(`[refresh] weekly rule: resetting cycle ${c.id} failed:`, upd.error.message);
+    }
+  }
+  const tasks = await sb.from('mos_manual_tasks')
+    .update({
+      status: 'cancelled', closed_at: now, updated_at: now,
+      done_note: 'القرار الأسبوعي صار تلقائيًا: يُبقى الأفضل من دفعة الأسبوع الماضي ويتوقف الباقي. / The weekly decision is automatic now: the best of last week is kept and the rest stop.',
+    })
+    .eq('kind', 'refresh_decision').eq('status', 'open')
+    .in('entity_id', cycles.map((c) => c.id));
+  if (tasks.error) console.error(`[refresh] weekly rule: closing decision tasks failed for ${executionId}:`, tasks.error.message);
+
+  return { activated: activatedRefs.length, paused: pausedRefs.length };
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
 /* 3. Daily per-ad metrics                                                    */
 /* ────────────────────────────────────────────────────────────────────────── */
 
@@ -1385,6 +1804,8 @@ export interface RefreshTickResult {
   activated: number;
   decided: number;
   applied: number;
+  /** The weekly rule's round, when it is the rule in force (2026-10-05). */
+  weekly?: WeeklyReconcileOutcome;
   metrics: MetricsSyncOutcome | null;
   /** Sweeps whose table or function is not in this database yet. */
   missing: string[];
@@ -1421,6 +1842,19 @@ export async function runRefreshCycleTick(deps: RefreshDeps): Promise<RefreshTic
       throw e;
     }
   };
+
+  // The operator's weekly rule (2026-10-05) REPLACES the ranking swap and the
+  // first-batch activation: it switches each batch on and stops last week's
+  // ads but the best one, on its own. Running the old sweeps beside it would
+  // re-open decision tasks for a choice nobody has to make any more.
+  if (planning.weeklyRule === WEEKLY_RULE) {
+    if (!meta) return { activated: 0, decided: 0, applied: 0, metrics: null, missing };
+    const metrics = await guarded('metrics', () => syncDailyAdMetrics(deps, meta), null as MetricsSyncOutcome | null);
+    const weekly = await guarded('weekly', () => reconcileWeeklySlates(deps, meta, planning),
+      { executions: 0, activated: 0, paused: 0 } as WeeklyReconcileOutcome);
+    if (missing.length >= 2) throw new MissingPlanningSchemaError(missing.join(' | '));
+    return { activated: weekly.activated, decided: 0, applied: 0, weekly, metrics, missing };
+  }
 
   // Activation runs FIRST: §3.6 is "activate the five new, THEN judge the
   // running set", and the judging reads `activated_at`, which activation is

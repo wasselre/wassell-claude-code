@@ -37,6 +37,13 @@ export interface PlanningSettings {
   previewEnabled: boolean;
   reservationsEnforced: boolean;
   refreshLoopEnabled: boolean;
+  /**
+   * The weekly paid rule: `'ranking'` (decide → confirm → apply swap) or
+   * `'keep_best_of_last_batch'` (operator, 2026-10-05: each batch goes live on
+   * its day; last week's best is kept, the rest stop — the worker's
+   * `marketing/weeklySlate.ts`). Mirrors the worker's reader.
+   */
+  weeklyRule: 'ranking' | 'keep_best_of_last_batch';
   autoApplyDefaultDecision: boolean;
   minActiveCreatives: number;
   adsCreatedPaused: boolean;
@@ -57,6 +64,7 @@ export const PLANNING_DEFAULTS: PlanningSettings = {
   previewEnabled: true,
   reservationsEnforced: true,
   refreshLoopEnabled: true,
+  weeklyRule: 'ranking',
   autoApplyDefaultDecision: false,
   minActiveCreatives: 5,
   adsCreatedPaused: true,
@@ -98,6 +106,7 @@ export async function loadPlanningSettings(sb: SupabaseClient): Promise<Planning
     previewEnabled: bool(v.preview_enabled, true),
     reservationsEnforced: bool(v.reservations_enforced, true),
     refreshLoopEnabled: bool(v.refresh_loop_enabled, true),
+    weeklyRule: v.weekly_rule === 'keep_best_of_last_batch' ? 'keep_best_of_last_batch' : 'ranking',
     autoApplyDefaultDecision: bool(v.auto_apply_default_decision, false),
     minActiveCreatives: num(v.min_active_creatives, 5),
     adsCreatedPaused: bool(v.ads_created_paused, true),

@@ -987,6 +987,35 @@ Migrations: `2026-09-30_04_release_handoff_retry_cap.sql`,
 `2026-09-30_05_release_story_interlock_off.sql`,
 `2026-10-01_01_instagram_full_rows.sql`. PRD: `docs/prd/marketing-workspace.md`.
 
+## Paid ads: five new a week, keep the best of last week (added 2026-10-05)
+
+Operator rule: each week a batch of five new ads goes live; the previous
+batch's single best ad keeps running and everything else stops. Enforced by
+`reconcileWeeklySlates` (`worker/src/runRefreshCycleJob.ts`, the pure rule in
+`worker/src/marketing/weeklySlate.ts`), on while
+`mos_settings.planning.weekly_rule = 'keep_best_of_last_batch'`.
+
+**What it replaced, and why it never paused anything (Sep 22 → Oct 4):** the
+ranking swap waited for a manager's confirmation that never came; it kept
+every ad it could not "judge" (spend/impression gates no ad on a split budget
+reaches); and `mos_settings.meta_auto_ad.status = 'ACTIVE'` created each ad
+live on approval, outside the batches, so the swap — which pauses only as many
+as it activates from ready slots — had nothing to swap.
+
+**Hard rules — never violate:**
+1. **Never set `meta_auto_ad.status = 'ACTIVE'` again.** It makes every
+   approved design go live at once, outside its batch — exactly how the slate
+   grew unchecked. Ads are created PAUSED and go live on their batch day.
+2. **The keeper is chosen ONCE per batch and stored on the batch's refresh
+   cycle** (`decision.keep_key`), by a conditional write so exactly one of the
+   five worker machines chooses; everyone acts on what is stored. Re-choosing
+   every round would let two machines stop each other's keeper.
+3. **Never below `planning.min_active_creatives` live.** When a week's designs
+   are late, the best of the ads due to stop keep running until the new ones
+   are live. Never "fix" a held ad by lowering the minimum to zero.
+4. **Nothing the rule paused is re-activated, and an ad a person paused is not
+   turned back on** (only never-started ads are activated).
+
 ## Marketing OS capabilities are DATA (added 2026-08-06)
 
 The Marketing workspace (`/m`) permission model has TWO axes, both editable in **Marketing → Settings → Roles and permissions** (`SettingsAccess.tsx`, ONE table since 2026-10-04: role columns × tab-visibility ticks + capability BUNDLE ticks) — the SAME component is also embedded as the «أدوار التسويق» tab of the Sales app's **Settings → Team & Access** (`/settings/team`, 2026-09-29), which puts people, Sales access levels (`profiles`), Sales jobs (`roles` domain='sales') and Marketing roles on one page. The engines stay separate — it is one page, not one engine. Marketing role ASSIGNMENT is editable in both Team & Access → People and Marketing → «الأدوار ومن يشغلها»; a Marketing-role tick goes through the atomic `mos_role_grant` RPC in both. Known, pre-existing gap: the People editor's **Save** (sales jobs, profile, name) still writes the person's whole `role_assignments` array from what the editor loaded, so a Marketing role changed elsewhere while that editor is open is overwritten on Save:
