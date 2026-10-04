@@ -1,7 +1,7 @@
 # PRD: Home Page
 
 **Status:** Live
-**Last updated:** 2026-04-18
+**Last updated:** 2026-10-04 (**Recent records show readable names.** «آخر السجلات» used to print a record's title field raw, so a follow-up (title = its client lookup) showed the client's UUID and an unnamed chat showed «—». It now uses `resolveRecordTitle` (follows a lookup to the linked record, falls back to the next readable field) and shows an unnamed chat's `…@c.us` address as +phone. Root cause found alongside: 11 lookups to Clients pointed their display at a clients field that does not exist (`client_id` / `name`); migration `2026-10-04_client_lookup_display_name.sql` repointed them to `client_name` — every generic surface that shows a linked client through that setting now shows the name.) | 2026-04-18
 **Related PRDs:** navigation-layout.md, dashboards.md, record-management.md
 
 ## What it is (in plain English)

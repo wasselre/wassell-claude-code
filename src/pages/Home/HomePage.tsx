@@ -7,6 +7,7 @@ import { Users, PhoneCall, Building2, Zap, Plus, Hammer, Calendar, TrendingUp } 
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import { activeClientsOnly } from '@/lib/clients/retirement';
+import { resolveRecordTitle } from '@/lib/recordTitle';
 
 export default function HomePage() {
   const { t } = useTranslation();
@@ -132,10 +133,13 @@ export default function HomePage() {
                 const model = models.find((m) => m.id === rec.model_id);
                 if (!model) return null;
                 const Icon = getIconComponent(model.icon);
-                const titleField = model.schema.sections
-                  .flatMap((s) => s.fields)
-                  .find((f) => f.id === model.card_config.title_field_id);
-                const title = titleField ? String(rec.data[titleField.name] ?? '') : `#${rec.id.slice(0, 8)}`;
+                // Follows a lookup title (a follow-up's client) to the linked record's
+                // name, and falls back to the next readable field when the title is
+                // empty — it used to print the raw value (a client's UUID, or —).
+                const rawTitle = resolveRecordTitle(model, rec, records, models);
+                // An unnamed WhatsApp chat falls back to its chat address
+                // ("9665…@c.us"); show it as the phone number it is.
+                const title = rawTitle?.replace(/^(\d{8,15})@(c\.us|s\.whatsapp\.net)$/, '+$1') ?? null;
 
                 return (
                   <button
