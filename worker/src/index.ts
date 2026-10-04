@@ -3998,6 +3998,30 @@ async function scheduledWhatsappPollLoop(): Promise<void> {
   }
 }
 
+// Orphan release at boot (2026-10-05). On Fly the worker id is the machine id,
+// which survives a restart — so any marketing / cv job still 'running' under
+// this id when the process starts was cut off by the restart (a deploy, a
+// crash). Left alone it holds its provider slot until its lease expires: up to
+// 100 minutes for an Apify history run, during which collection is blocked by a
+// ghost. Hand those jobs back to the queue now, and give back the attempt the
+// restart cost them. Only with a stable machine id; a local run never matches.
+async function releaseOrphanedJobs(): Promise<void> {
+  if (!process.env.FLY_MACHINE_ID) return;
+  for (const table of ['mkt_collection_jobs', 'mkt_cv_jobs'] as const) {
+    const { data: rows, error } = await supabase.from(table).select('id, attempts')
+      .eq('status', 'running').eq('worker_id', env.WORKER_ID);
+    if (error) { console.error(`[worker] orphan scan of ${table} failed: ${error.message}`); continue; }
+    for (const r of (rows ?? []) as Array<{ id: string; attempts: number }>) {
+      const { error: upErr } = await supabase.from(table)
+        .update({ status: 'queued', worker_id: null, lease_expires_at: null, attempts: Math.max(0, (r.attempts ?? 1) - 1) })
+        .eq('id', r.id).eq('status', 'running').eq('worker_id', env.WORKER_ID);
+      if (upErr) console.error(`[worker] could not release orphaned ${table} job=${r.id}: ${upErr.message}`);
+      else console.log(`[worker] released orphaned ${table} job=${r.id} (cut off by a restart)`);
+    }
+  }
+}
+await releaseOrphanedJobs().catch((e: unknown) => console.error('[worker] orphan release failed:', e));
+
 // Drain the queues concurrently for the lifetime of the process.
 let loops: Array<Promise<void>>;
 if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'render') {
