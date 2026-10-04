@@ -21,6 +21,7 @@ import { imageToBoundedJpeg, toTempFile, cleanup } from './ffmpegMedia.js';
 import { silentCopy, probeVideo } from '../cv/gemini/media.js';
 import { validateEnrichmentResults, type EnrichAnswer, type EnrichCandidate, type EnrichEvidence, type ValidEnrichment } from './enrichmentValidate.js';
 import { decidePostWithGemini, readPostWithGemini, GEMINI_RULE_VERSION, READER_MODEL, type PostContext, type ReadMedia } from './geminiRead.js';
+import { CREDITS_DEPLETED } from '../../ai/providers/geminiHttp.js';
 
 export type ContentReader = 'gemini' | 'runner';
 /** Longest stretch of a video the reader watches (same ceiling as the shot pipeline). */
@@ -45,9 +46,11 @@ export async function pauseReader(sb: SupabaseClient, retryAfterSec: number, rea
   const { error } = await sb.from('mkt_settings').upsert({ key: 'content.reader_paused_until', value: until, updated_at: new Date().toISOString() }, { onConflict: 'key' });
   if (error) throw new Error(`pausing the reader failed: ${error.message}`);
   const day = new Date().toISOString().slice(0, 10);
+  const broke = reason.includes(CREDITS_DEPLETED);
   const { error: alertErr } = await sb.rpc('mkt_alert_emit', {
-    p_kind: 'content_reader_quota', p_dedup_key: `content_reader_quota:${day}`,
-    p_title: 'Competitor post reading paused: Gemini daily quota reached', p_severity: 'warning',
+    p_kind: 'content_reader_quota', p_dedup_key: `content_reader_quota:${broke ? 'credits:' : ''}${day}`,
+    p_title: broke ? 'Competitor post reading paused: Gemini prepaid balance is empty — top up AI Studio' : 'Competitor post reading paused: Gemini daily quota reached',
+    p_severity: broke ? 'critical' : 'warning',
     p_subject_type: 'content', p_subject_id: day,
     p_body: `Gemini refused with a per-day quota; reading resumes by itself at ${until}. A *FreeTier* quota means the key's Google project has no paid balance left (top up the prepay balance). ${reason.slice(0, 300)}`,
     p_evidence: { until, reason: reason.slice(0, 1000) },

@@ -78,6 +78,14 @@ export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHtt
     clearTimeout(timer);
     if (!res.ok) {
       const snippet = (await safeText(res)).slice(0, 1500);
+      if (res.status === 402) {
+        // "Your prepayment credits are depleted": nothing works until someone
+        // tops up the AI Studio prepay balance. Same path as a daily quota —
+        // callers defer the work and pause, then try again every 15 minutes, so
+        // a top-up resumes everything by itself. (2026-10-04: ~4,500 calls
+        // failed over 8 hours before this existed, with no pause and no alert.)
+        throw providerError('gemini', `${DAILY_QUOTA_MARK} ${CREDITS_DEPLETED} — retry after ${CREDITS_RECHECK_SEC}s: ${snippet.replace(/\s+/g, ' ').slice(0, 200)}`);
+      }
       const daily = res.status === 429 ? dailyQuotaOf(snippet) : null;
       if (daily) {
         // A per-DAY quota does not refill in seconds — retrying here only burns
@@ -104,8 +112,11 @@ export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHtt
   }
 }
 
-/** In every error thrown for an exhausted per-day quota (429 with a *PerDay* quotaId). */
+/** In every error thrown for an exhausted per-day quota (429 with a *PerDay* quotaId) or an empty prepaid balance (402). */
 export const DAILY_QUOTA_MARK = 'daily_quota_exhausted';
+/** Names the 402 case inside a DAILY_QUOTA_MARK error: the AI Studio prepaid balance is empty. */
+export const CREDITS_DEPLETED = 'prepayment_credits_depleted';
+const CREDITS_RECHECK_SEC = 900;
 
 /** `{quota, retryAfterSec}` when a 429 body names a per-day quota; else null. Pure — tested. */
 export function dailyQuotaOf(body: string): { quota: string; retryAfterSec: number } | null {
