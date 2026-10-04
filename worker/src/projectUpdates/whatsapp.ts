@@ -391,13 +391,21 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
     model: MODEL,
     max_tokens: 16000,
     system: instructions(group.label, today),
+    // Opus 5.5 refuses a FORCED tool_choice ("tool"/"any"); 'auto' plus the
+    // system prompt's "call record_project_updates once" is what it accepts.
     tools: [TOOL],
-    tool_choice: { type: 'tool', name: TOOL.name },
+    tool_choice: { type: 'auto' },
     messages: [{ role: 'user', content }],
   });
   if (res.stop_reason === 'max_tokens') throw new Error('extraction hit max_tokens — batch too large');
-  const block = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
-  const items = (((block?.input ?? {}) as { items?: ExtractedItem[] }).items ?? []);
+  const block = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === TOOL.name);
+  // No tool call is NOT "no updates" — it is a failed read. Fail loudly so the
+  // watermark stays put and the batch is read again.
+  if (!block) {
+    const said = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join(' ').slice(0, 300);
+    throw new Error(`model did not call ${TOOL.name} (stop=${res.stop_reason}): ${said}`);
+  }
+  const items = (((block.input ?? {}) as { items?: ExtractedItem[] }).items ?? []);
   await a.heartbeat();
 
   // ── validate + apply
