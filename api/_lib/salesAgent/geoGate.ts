@@ -72,6 +72,11 @@ async function run(svc: SupabaseClient, conv: Conversation, clientId: string | n
   // الملك سلمان» was distributed into "Narjis north of the road" and the
   // alternative was lost (found 2026-10-04).
   ctx.conversation = conv;
+  // «قريب من X» with no distance: assume 3 km for a landmark, 1 km for a metro
+  // station (operator, 2026-10-04) — the same numbers as the near tool (brain
+  // rule 6e). The agent says it back. A copy, never a mutation: the places card
+  // must keep asking.
+  ctx.resolution = { ...ctx.resolution, default_near_radius_m: { landmark: 3000, metro: 1000 } };
   const result = await deps.runReviewFirst(extracted.evidence, extracted.relations, ctx, { proposals: memoryStore() });
   const compiled = result.compiled;
   await hydrateClipGeometry(svc, compiled);

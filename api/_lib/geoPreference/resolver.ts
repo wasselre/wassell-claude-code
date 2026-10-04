@@ -272,6 +272,16 @@ export interface ResolutionContext {
    * scope, ask ('established_city_contradicted').
    */
   forbid_established?: boolean;
+  /**
+   * WhatsApp sales agent ONLY (operator, 2026-10-04: "assume 3 km landmark,
+   * 1 km metro"): a venue named with no distance («قريب من الرياض بارك»)
+   * resolves at this radius instead of asking — the agent says the distance
+   * back («خلال 3 كيلو تقريباً»), so the customer can correct it. NEVER set on
+   * the places card / backfill: those mint proposals a rep saves onto the
+   * client, and a guessed distance must not be saved as the customer's
+   * (HARD RULE 4 still holds there). The fact carries radius_source 'default'.
+   */
+  default_near_radius_m?: { landmark: number; metro: number };
   /** TEST-ONLY: checks switched off (the monotonicity property). Never set in production. */
   disabled?: ReadonlySet<CheckName>;
   /** Explicit radius/band in METRES (landmark within_radius, road within_distance). */
@@ -1103,20 +1113,30 @@ async function resolveVenueElement(
  * `within_distance` of the SHAPE (review.ts maps it to an element rule measured
  * to the geometry).
  */
+/** The assumed «near» radius on the sales agent's path ({@link ResolutionContext.default_near_radius_m}); null elsewhere. */
+export function defaultNearRadius(ctx: Pick<ResolutionContext, 'default_near_radius_m'>, pick: Pick<ElementCandidate, 'category'>): number | null {
+  const d = ctx.default_near_radius_m;
+  if (!d) return null;
+  return pick.category === 'metro_stations' ? d.metro : d.landmark;
+}
+
 async function resolveLandmark(anchor: AnchorToken, ctx: ResolutionContext): Promise<ResolutionResult> {
   const { pick, result } = await resolveVenueElement([anchor.normalized_token, anchor.span], ctx);
   if (!pick) return result!;
-  // A distance rule ALWAYS needs a stated distance — no silent default (HARD RULE 4).
-  if (!isNum(ctx.radius_m)) return needsConfirm('missing_radius');
-  const facts: ResolutionFacts = { ...elementFacts(ctx, pick), radius_source: 'stated' };
+  // A distance rule needs a stated distance — no silent default (HARD RULE 4) —
+  // except on the sales agent's path, which says its assumed distance back.
+  const stated = isNum(ctx.radius_m) ? ctx.radius_m : null;
+  const radius = stated ?? defaultNearRadius(ctx, pick);
+  if (radius === null) return needsConfirm('missing_radius');
+  const facts: ResolutionFacts = { ...elementFacts(ctx, pick), radius_source: stated !== null ? 'stated' : 'default' };
   if (pick.geom_kind === 'polygon') {
     return resolved(makeRecipe('within_distance', [anchor], [pick.external_id], ctx, {
-      radius_or_band_m: ctx.radius_m, universe_source: 'explicit',
+      radius_or_band_m: radius, universe_source: 'explicit',
     }), undefined, facts);
   }
   if (!isNum(pick.lat) || !isNum(pick.lng)) return needsConfirm('outside_admin');
   const recipe = makeRecipe('within_radius', [anchor], [pick.external_id], ctx, {
-    radius_or_band_m: ctx.radius_m, universe_source: 'explicit',
+    radius_or_band_m: radius, universe_source: 'explicit',
   });
   return resolved(recipe, undefined, facts);
 }

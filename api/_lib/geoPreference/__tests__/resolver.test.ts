@@ -204,6 +204,27 @@ describe('resolveAnchor — underspecified operations (no silent default)', () =
     expect(r.reason).toBe('missing_radius');
   });
 
+  it('sales agent path: no distance → 3 km landmark / 1 km metro, marked default; a stated one still wins', async () => {
+    const el = (category: string) => fakeDb({
+      async findElements() {
+        return [{
+          external_id: 'x', name_ar: 'كافد', name_en: 'KAFD', aliases: [], geom_kind: 'point',
+          category, type: 't', city: 'الرياض', country_code: 'SA',
+          lat: 24.76, lng: 46.64, confidence_score: 1, review_status: 'approved', is_active: true,
+        }];
+      },
+    });
+    const near = { landmark: 3000, metro: 1000 };
+    const land = await resolveAnchor(anchor('landmark', 'كافد'), ctx({ db: el('business_zone'), default_near_radius_m: near }));
+    expect(land.recipe?.radius_or_band_m).toBe(3000);
+    expect(land.facts?.radius_source).toBe('default');
+    const metro = await resolveAnchor(anchor('landmark', 'كافد'), ctx({ db: el('metro_stations'), default_near_radius_m: near }));
+    expect(metro.recipe?.radius_or_band_m).toBe(1000);
+    const stated = await resolveAnchor(anchor('landmark', 'كافد'), ctx({ db: el('metro_stations'), default_near_radius_m: near, radius_m: 500 }));
+    expect(stated.recipe?.radius_or_band_m).toBe(500);
+    expect(stated.facts?.radius_source).toBe('stated');
+  });
+
   it('a landmark WITH an explicit radius → within_radius resolved', async () => {
     const db = fakeDb({
       async findElements() {
