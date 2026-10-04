@@ -5,7 +5,8 @@
  *   1. HIGH INTEREST from the interest score: `client_interest_detect_links(threshold)`
  *      records every (client, project) whose score in v_client_project_interest
  *      (links + appointment/visit + what the customer's messages say) is at or
- *      above the threshold (40). High interest from the AI — a positive
+ *      above the PORTAL threshold (15; registration). The officer is told only
+ *      at 40 (step 3, v_interest_officer_due). High interest from the AI — a positive
  *      follow-up result with a chosen main project — is recorded by the outcome
  *      agent itself (chat_outcome_suggestion_ready).
  *   2. PORTAL (automatic — the only thing that acts on its own): each new
@@ -42,7 +43,10 @@ const EVENTS_PER_TICK = 20;
 const DRAFTS_PER_TICK = 6;
 
 interface Settings {
+  /** The officer is told at this score (40). */
   interest_score_threshold: number;
+  /** A portal registration starts at this score (15). */
+  portal_score_threshold: number;
   portal_on_interest: boolean;
   officer_notice_drafts: boolean;
   followup_drafts: boolean;
@@ -119,11 +123,11 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     // ── 1. High interest from the links ──────────────────────────────────────
     if (dryRun) {
       const { data: hot, error: hErr } = await svc.from('v_client_project_interest').select('client_id, project_id, score')
-        .gte('score', settings.interest_score_threshold);
+        .gte('score', settings.portal_score_threshold);
       if (hErr) fail('interest score (dry run)', hErr);
       else report.interest_pairs = (hot ?? []).length;
     } else {
-      const { data: n, error: dErr } = await svc.rpc('client_interest_detect_links', { p_threshold: settings.interest_score_threshold });
+      const { data: n, error: dErr } = await svc.rpc('client_interest_detect_links', { p_threshold: settings.portal_score_threshold });
       if (dErr) fail('client_interest_detect_links', dErr);
       else report.new_link_interest = n;
     }
@@ -204,10 +208,13 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     // ── 3. Officer notice drafts (await approval) ────────────────────────────
     const officerOut: unknown[] = [];
     if (settings.officer_notice_drafts) {
-      const { data: todo, error: tErr } = await svc.from('client_project_interest')
+      // Only events whose CURRENT score reached the officer threshold (40), or
+      // the AI's follow-up reading (interested / booked / offer). A 15+ event
+      // was registered in the portal; it waits here until its score reaches 40.
+      const { data: todo, error: tErr } = await svc.from('v_interest_officer_due')
         .select('id, client_id, project_id, source, score, chat_wid, detected_at')
-        .is('officer_done_at', null).order('detected_at', { ascending: true }).limit(EVENTS_PER_TICK);
-      if (tErr) throw new Error(`interest events read failed: ${tErr.message}`);
+        .order('detected_at', { ascending: true }).limit(EVENTS_PER_TICK);
+      if (tErr) throw new Error(`officer-due events read failed: ${tErr.message}`);
       for (const ev of (todo ?? []) as InterestRow[]) {
         if (dryRun) { officerOut.push({ interest: ev.id, would: 'draft officer notice' }); continue; }
         try {
