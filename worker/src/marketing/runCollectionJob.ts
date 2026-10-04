@@ -392,7 +392,12 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
           timeoutMs = LONG_RUN_TIMEOUT_MS;
         }
       }
-      if (job.provider === 'youtube' && job.kind === 'incremental' && paramLimit == null && !acct!.history_done_at) windowMode = 'history';
+      if (job.provider === 'youtube' && job.kind === 'incremental' && paramLimit == null && !acct!.history_done_at) {
+        windowMode = 'history';
+        // Free, but a big channel (up to 40 pages) can outlast the 10-minute
+        // lease; a second machine would then repeat the whole walk.
+        await extendJobLease(sb, job.id, LONG_RUN_LEASE_MS);
+      }
 
       // INCREMENTAL always fetches the newest page (cursor null) so repeat runs
       // re-see recent posts and dedup UPDATES them — idempotent. Only BACKFILL
