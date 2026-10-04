@@ -4,6 +4,7 @@ import { runReviewFirst } from '../orchestrator.js';
 import type { ProposalStore, ProposalInput, ProposalRecord, RunContext } from '../orchestrator.js';
 import type { ResolverDb } from '../resolver.js';
 import type { SatUniverse } from '../satisfiability.js';
+import { fakeCityLabel, fakeRoadAxis } from './fakeGeoMap.js';
 import type { GateConfig } from '../gate.js';
 import {
   processBackfillJob, runBackfillBatch, type BackfillDeps, type BackfillJob,
@@ -90,6 +91,8 @@ class FakeProposalStore implements ProposalStore {
 const fakeResolverDb: ResolverDb = {
   findDistricts: async () => [], findCities: async () => [], findRegions: async () => [],
   findElements: async () => [], zoneDistricts: async () => [], districtForPoint: async () => null,
+  // An empty map: every road is unknown (found:false), no city, no catalogued name.
+  roadAxis: fakeRoadAxis({}), cityLabel: fakeCityLabel([]), namesInText: async () => [],
 };
 const inertUniverse: SatUniverse = { universe: [], cellsOf: () => [], inventoryIn: () => 0 };
 const config: GateConfig = {

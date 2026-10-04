@@ -96,6 +96,15 @@ describe('pruneExpression', () => {
     const e: GeoPreference = { schema_version: 'v1', groups: [{ id: 'g', role: 'primary', strength: 'soft', priority: 1, clauses: [{ op: 'include', anyOf: [ref('AB'), ref('A')] }] }] };
     expect(ids(pruneExpression(e, ['A']))).toEqual([[['geo:AB']]]);
   });
+  it('round 3 #24: a mention\'s sub-ref `geo:<id>:admin` goes with it — unticking never leaves part of it behind', () => {
+    const e: GeoPreference = { schema_version: 'v1', groups: [{ id: 'g', role: 'primary', strength: 'soft', priority: 1, clauses: [
+      { op: 'include', anyOf: [ref('A')] },
+      { op: 'include', anyOf: [ref('A:admin')] },
+      { op: 'include', anyOf: [ref('AB:admin'), ref('B')] },
+    ] }] };
+    expect(ids(pruneExpression(e, ['A']))).toEqual([[['geo:AB:admin', 'geo:B']]]);
+    expect(ids(pruneExpression(e, ['AB']))).toEqual([[['geo:A'], ['geo:A:admin'], ['geo:B']]]);
+  });
 });
 
 describe('laterOf', () => {

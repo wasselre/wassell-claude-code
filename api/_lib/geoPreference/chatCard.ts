@@ -574,6 +574,8 @@ async function runReReview(
   try {
     const ctx = await deps.buildRunContext(clientId, evidence.length);
     ctx.checkpoint_id = cp.id;
+    // The customer's own turns join each mention's texts (a distance, an anchor's words).
+    ctx.conversation = conversation;
     const result = await deps.runReviewFirst(evidence, relations, ctx, { proposals: deps.proposals });
     proposalId = result.proposal?.id ?? null;
     log(`[geo-chat-card] client=${clientId} chat=${conversation.id} mode=re_review decision=${result.decision} evidence=${evidence.length} proposal=${proposalId ?? 'none'}`);
@@ -618,6 +620,8 @@ async function runExtract(
   logGuard(log, clientId, conversation, guarded.demoted);
   const ctx = await deps.buildRunContext(clientId, evidence.length);
   if (checkpointId) ctx.checkpoint_id = checkpointId;
+  // The customer's own turns join each mention's texts (a distance, an anchor's words).
+  ctx.conversation = conversation;
   const result = await deps.runReviewFirst(evidence, relations, ctx, { proposals: deps.proposals });
   const proposalId = result.proposal?.id ?? null;
   // Superseded AFTER the new reading succeeded, so a failed extraction leaves

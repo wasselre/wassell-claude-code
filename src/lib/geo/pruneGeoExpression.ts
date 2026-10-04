@@ -9,7 +9,10 @@
  * `/api/geo-preference/review`.
  *
  * Rules:
- *  - every `anyOf` ref whose `geometry_id` is `geo:<dropped id>` is removed;
+ *  - every `anyOf` ref whose `geometry_id` is `geo:<dropped id>` — or a
+ *    sub-ref of that mention, `geo:<dropped id>:<part>` (proposals stored
+ *    before 2026-10-03 could carry a `geo:<id>:admin` clause) — is removed, so
+ *    unticking a mention never leaves part of it behind;
  *  - a clause left with no refs is removed (an empty OR would mean "nothing");
  *  - a group left with no clauses is removed.
  * Refs that do not follow the `geo:<id>` convention are never touched.
@@ -25,12 +28,25 @@ export interface PrunableClause<R extends PrunableRef = PrunableRef> { anyOf: R[
 export interface PrunableGroup<C extends PrunableClause = PrunableClause> { clauses: C[] }
 export interface PrunableExpression<G extends PrunableGroup = PrunableGroup> { groups: G[] }
 
+/** The mention a ref belongs to: `geo:<id>` and `geo:<id>:<part>` → `<id>`; anything else → null. */
+export function refEvidenceId(geometryId: unknown): string | null {
+  if (typeof geometryId !== 'string' || !geometryId.startsWith('geo:')) return null;
+  const rest = geometryId.slice(4);
+  const cut = rest.indexOf(':');
+  const id = cut >= 0 ? rest.slice(0, cut) : rest;
+  return id || null;
+}
+
 export function pruneGeoExpression<T extends PrunableExpression>(expr: T, dropEvidenceIds: readonly string[]): T {
-  const drop = new Set(dropEvidenceIds.map((id) => `geo:${id}`));
+  const drop = new Set(dropEvidenceIds);
+  const dropped = (r: PrunableRef): boolean => {
+    const id = refEvidenceId(r.geometry_id);
+    return id !== null && drop.has(id);
+  };
   const groups = (Array.isArray(expr.groups) ? expr.groups : [])
     .map((g) => {
       const clauses = (Array.isArray(g.clauses) ? g.clauses : [])
-        .map((c) => ({ ...c, anyOf: (Array.isArray(c.anyOf) ? c.anyOf : []).filter((r) => !drop.has(r.geometry_id)) }))
+        .map((c) => ({ ...c, anyOf: (Array.isArray(c.anyOf) ? c.anyOf : []).filter((r) => !dropped(r)) }))
         .filter((c) => c.anyOf.length > 0);
       return { ...g, clauses };
     })
@@ -44,7 +60,8 @@ export function expressionEvidenceIds(expr: PrunableExpression | null | undefine
   for (const g of expr?.groups ?? []) {
     for (const c of g.clauses ?? []) {
       for (const r of c.anyOf ?? []) {
-        if (typeof r.geometry_id === 'string' && r.geometry_id.startsWith('geo:')) out.add(r.geometry_id.slice(4));
+        const id = refEvidenceId(r.geometry_id);
+        if (id) out.add(id);
       }
     }
   }

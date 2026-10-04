@@ -30,8 +30,51 @@ export interface AnchorToken {
   span: string;
   /** normalized/canonicalized token (folded ة→ه, ى→ي, stripped حي, etc.) */
   normalized_token: string;
-  /** how this anchor participates in a relation, when relevant */
+  /** how this anchor participates in a relation, when relevant. Free text from
+   *  the model; the vocabulary the extractor is told to use (geo-extract/v9c) is
+   *  `proximity` («قريب من X») and `boundary_start` / `boundary_end` (the two
+   *  roads of «بين طريقين»). anchorPrep.ts reads it tolerantly. */
   role_in_relation?: string;
+  /**
+   * A distance the customer STATED, in metres («خلال 3 كيلو من …» → 3000).
+   * Absent / null = no number was said — never a guess. Validated on parse
+   * ({@link sanitizeDistanceM}); stored inside the evidence row's `anchors`
+   * jsonb, so no column/migration is involved. Added 2026-10-03 (geo-extract/v9;
+   * v9b: a travel TIME is never a distance; v9c: a one-anchor road side carries
+   * its own distance).
+   */
+  distance_m?: number | null;
+}
+
+/** Plausible stated-distance bounds (metres) — outside them the number is dropped. */
+export const DISTANCE_M_MIN = 50;
+export const DISTANCE_M_MAX = 50_000;
+
+/**
+ * A finite distance in [{@link DISTANCE_M_MIN}, {@link DISTANCE_M_MAX}] metres,
+ * else null. A string is read the way a model writes it in an Arabic
+ * conversation: Arabic-Indic / Persian digits («٢٠٠٠», «۲۰۰۰»), the Arabic
+ * decimal «٫», a thousands separator («2,000», «٢٬٠٠٠») and a trailing METRE
+ * unit («2000 م», «2000 m») — never another unit («2 كم» is not 2 m, it is
+ * dropped). Before 2026-10-03 such a string became NaN and was dropped, and on
+ * a one-anchor road side the band silently fell back to the 5 km default.
+ */
+export function sanitizeDistanceM(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? parseMetres(v) : NaN;
+  if (!Number.isFinite(n) || n < DISTANCE_M_MIN || n > DISTANCE_M_MAX) return null;
+  return Math.round(n);
+}
+
+function parseMetres(raw: string): number {
+  let s = raw.trim()
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+    .replace(/٫/g, '.')
+    .replace(/\s*(?:م|متر|مترا|أمتار|امتار|m|meters?|metres?)\s*$/i, '')
+    .trim();
+  // A thousands separator only where it groups exactly three digits («2,000»).
+  if (/^\d{1,3}([,٬]\d{3})+(\.\d+)?$/.test(s)) s = s.replace(/[,٬]/g, '');
+  return s === '' || !/^\d+(\.\d+)?$/.test(s) ? NaN : Number(s);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -175,7 +218,11 @@ export interface GeometryRecipe {
   source_anchors: AnchorToken[];
   resolved_element_ids: string[];    // district_ids / road element_ids / landmark ids
   radius_or_band_m?: number;
-  /** district_side_clip: which side of the road (the last element id) is kept. */
+  /** district_side_clip: which side of the road (the last element id) is kept.
+   *  directional_band: which side of the road the band lies on — set by the
+   *  resolver from the parsed direction word (2026-10-03), so consumers never
+   *  re-guess it from names («جنوب الدائري الشمالي» is SOUTH). Older bands
+   *  have none. */
   side?: CardinalSide;
   /** district_side_clip: the clipped shape, computed by wassell_districts_side_of_road
    *  at proposal time. Stored NEXT TO the recipe (never instead of it), so the
@@ -200,6 +247,29 @@ export interface ResolutionResult {
   recipe?: GeometryRecipe;
   candidate_margin?: number;   // gap to 2nd candidate; below threshold ⇒ needs_confirm
   reason?: string;             // e.g. tie, missing_radius, outside_admin, ambiguous_entity
+  /**
+   * What the resolver KNEW when it picked (the scope city, the element's city,
+   * the districts' cities, where a radius came from) — the map facts the
+   * demote-only checks (invariants.ts) read. IN MEMORY ONLY: never copied into
+   * a recipe, a proposal or any stored row (the proposal stores recipes only).
+   */
+  facts?: ResolutionFacts;
+}
+
+/** See {@link ResolutionResult.facts}. Every field is optional: a resolved branch fills what it knows. */
+export interface ResolutionFacts {
+  /** The city (as passed) an element / zone lookup was scoped to. */
+  scope_city?: string;
+  /** Whether that scope city was named in the mention or is the established one. */
+  scope_source?: 'named' | 'established';
+  /** geo_elements.city of the picked element (its ENGLISH label, «Riyadh»); null when the row had none. */
+  element_city?: string | null;
+  /** zone_union: the Arabic city name passed to the zone RPC that returned the districts. */
+  zone_city?: string;
+  /** District picks: district id → DistrictCandidate.city_name_en. */
+  district_city_en?: Record<string, string>;
+  /** Where a band / distance came from: a number the customer stated, or the documented default depth. */
+  radius_source?: 'stated' | 'default';
 }
 
 // ────────────────────────────────────────────────────────────────────────────

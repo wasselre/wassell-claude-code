@@ -1,7 +1,7 @@
 import {
   type Placement, type LocationItemDTO, type VerifierResultDTO, type DistrictInfo,
 } from '@/pages/GeoGrade/lib/shared';
-import { placementLine, verifierMentionLine } from '@/pages/GeoGrade/lib/placementLine';
+import { placementLine, placementSavable, sideClipStateOf, verifierMentionLine } from '@/pages/GeoGrade/lib/placementLine';
 import type { PrunableExpression } from '@/lib/geo/pruneGeoExpression';
 
 /**
@@ -46,9 +46,28 @@ export interface GeoRow {
   span: string;
   placement: Placement;
   line: { text: string; tone: 'ok' | 'none' | 'warn' };
-  /** Unresolved placements are bare names, not real places — never saved. */
+  /**
+   * Unresolved placements are bare names, not real places — never saved. Nor is
+   * a side clip with no part on that side (review.ts saves nothing for it).
+   */
   savable: boolean;
+  /**
+   * Why a RESOLVED place is still not savable — a side clip with nothing on that
+   * side ('side_empty') or whose part was never computed ('side_missing'), or a
+   * road side whose side is unknown ('band_no_side', a legacy diagonal band);
+   * null otherwise. The tile shows it in place of «يحتاج تأكيد».
+   */
+  blocked: 'side_empty' | 'side_missing' | 'band_no_side' | null;
   doubt: string | null;
+}
+
+/** Why a resolved placement cannot be saved, else null (see {@link GeoRow.blocked}). */
+export function blockedReason(p: Placement): GeoRow['blocked'] {
+  if (!p.resolved) return null;
+  if (p.operation === 'directional_band') return placementSavable(p) ? null : 'band_no_side';
+  if (p.operation !== 'district_side_clip') return null;
+  const s = sideClipStateOf(p);
+  return s === 'empty' ? 'side_empty' : s === 'missing' ? 'side_missing' : null;
 }
 
 /** Proposal statuses a rep can still act on / that mean "saved". */
@@ -71,7 +90,8 @@ export function buildGeoRows(card: GeoCardDTO | null, isAr: boolean): GeoRow[] {
       span: m.mention_span,
       placement,
       line: placementLine(placement, m.preference_role, card.names, isAr),
-      savable: placement.resolved,
+      savable: placementSavable(placement),
+      blocked: blockedReason(placement),
       doubt: vl && vl.tone === 'warn' ? vl.text : null,
     });
   }

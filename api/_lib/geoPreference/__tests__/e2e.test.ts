@@ -5,6 +5,7 @@ import type { ResolverDb, ResolutionContext, DistrictCandidate } from '../resolv
 import type { SatUniverse } from '../satisfiability.js';
 import type { GateConfig } from '../gate.js';
 import type { Evidence, AnchorToken, EvidenceRelation } from '../ontology.js';
+import { fakeCityLabel, fakeRoadAxis } from './fakeGeoMap.js';
 
 /**
  * END-TO-END integration for the Geography Understanding Ability.
@@ -47,6 +48,10 @@ function fakeDb(): ResolverDb {
       return [];
     },
     async districtForPoint() { return null; },
+    // No roads, cities or venues in this map: every road is unknown (found:false).
+    roadAxis: fakeRoadAxis({}),
+    cityLabel: fakeCityLabel([]),
+    namesInText: async () => [],
   };
 }
 

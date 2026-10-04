@@ -44,6 +44,7 @@ import type {
   GeoPreference,
   GeoOperation,
 } from '../_lib/geoPreference/ontology.js';
+import { sideClipRings, sideClipState, bandSide } from '../_lib/geoPreference/placementText.js';
 import {
   parseLocationItems,
   newDistrictItem,
@@ -88,9 +89,12 @@ export const DEFAULT_RADIUS_M = 3000;
 //   district_polygon | district_union | pin_containing_district → district item
 //   zone_union                                     → district item (its ids are district record ids)
 //   within_radius | pin_point                                    → within_radius rule
-//   within_distance | corridor                                   → within_distance rule
+//   within_distance                                              → within_distance rule
+//   corridor                       → within_distance per road ONLY with a stated width (else nothing)
 //   directional_band                                             → a cardinal rule
-//                                                (falls back to within_distance)
+//                                  (side = placementText.bandSide; NO side → nothing)
+//   district_side_clip   → one drawn shape per kept polygon; NOTHING when the
+//                          clip keeps nothing or was never computed
 // ────────────────────────────────────────────────────────────────────────────
 
 /** Read a recipe's concrete resolved geo ids (district ids / element external ids). */
@@ -110,17 +114,39 @@ function anchorLabel(anchors: { span?: string; normalized_token?: string }[] | u
 
 const CARDINAL_WORD = /^(north|south|east|west|شمال|جنوب|شرق|غرب)$/i;
 
-function detectDirectionRule(
-  anchors: { anchor_type?: string; span?: string; normalized_token?: string }[] | undefined,
-): DirectionRule | null {
-  for (const a of anchors ?? []) {
-    const t = `${a.normalized_token ?? ''} ${a.span ?? ''}`.toLowerCase();
-    if (/north|شمال/.test(t)) return 'north_of';
-    if (/south|جنوب/.test(t)) return 'south_of';
-    if (/east|شرق/.test(t)) return 'east_of';
-    if (/west|غرب/.test(t)) return 'west_of';
-  }
-  return null;
+type AnchorLike = { anchor_type?: string; span?: string; normalized_token?: string };
+
+/** The direction anchor of a band's source anchors (the first typed 'direction', else the first). */
+function directionAnchor(anchors: AnchorLike[]): AnchorLike | undefined {
+  return anchors.find((a) => a.anchor_type === 'direction') ?? anchors[0];
+}
+
+/**
+ * The side of a road a directional_band lies on — {@link bandSide}, the ONE
+ * reading the card and the verifier show: the recipe's `side` (recorded by the
+ * resolver since 2026-10-03), else for an older band ONLY the leading direction
+ * word of the text the resolver parsed (a substring scan read «جنوب الدائري
+ * الشمالي» as NORTH because the road's own name contains «الشمالي»). A band
+ * with no side (a legacy diagonal) gets null → nothing is saved.
+ */
+function bandSideRule(recipe: { side?: string | null; source_anchors?: AnchorLike[] }): DirectionRule | null {
+  const side = bandSide(recipe);
+  return side ? SIDE_RULE[side] ?? null : null;
+}
+
+/**
+ * The chip label of a road side: the ROAD, not the whole phrase — the chip
+ * already says the side («غرب الملك فهد (حتى 5 كم)», never «غرب غرب الملك فهد»).
+ * The direction anchor's referent after its direction word, else the road
+ * anchor beside it (legacy split shape), else the first anchor.
+ */
+function bandLabel(anchors: AnchorLike[]): string {
+  const d = directionAnchor(anchors);
+  const text = (d?.span || d?.normalized_token || '').trim();
+  const rest = text.replace(/^\s*(?:ال)?(شمال|جنوب|شرق|غرب)(?:\s+(?:ال)?(شمال|جنوب|شرق|غرب))?(?=\s|$)/, '').trim();
+  if (d?.anchor_type === 'direction' && rest && rest !== text) return rest;
+  const road = anchors.find((a) => a.anchor_type === 'road');
+  return (road?.span || road?.normalized_token || anchorLabel(anchors)).trim();
 }
 
 /** Drop pure cardinal tokens; what's left is the reference road/line element(s). */
@@ -151,31 +177,21 @@ function anchorRefToItems(
 
   if (op === 'district_side_clip') {
     // The clipped shape (computed at proposal time) → one drawn shape per polygon.
-    // Without a shape (legacy row / RPC refused) fall back to the districts plus
-    // the side rule on the road, which is the same meaning as an AND.
-    const road = ids[ids.length - 1]!;
-    const districts = ids.slice(0, -1);
+    // A clip that keeps NOTHING (every district lies on the other side) saves
+    // nothing — never the districts it just dropped. A legacy row with no shape
+    // at all saves nothing either: the old "districts + side rule" fallback was
+    // an OR-union of location items, i.e. the WHOLE district (2026-10-03). The
+    // card marks such a mention untickable with the same reason
+    // (placementText.sideClipState).
+    if (sideClipState(recipe) !== 'ok') return [];
     const side = typeof recipe.side === 'string' ? recipe.side : '';
     const kept = (recipe.clip_parts ?? []).filter((p) => p.kept).map((p) => p.name).filter(Boolean);
     const name = kept.length ? kept.join('، ') : label;
-    const sideLabel = SIDE_LABEL_AR[side] ? `${SIDE_LABEL_AR[side]} ${label && /الملك|طريق|شارع/.test(label) ? '' : ''}` : '';
-    const clip = recipe.clip_geojson;
-    if (clip && Array.isArray(clip.coordinates)) {
-      const polys = clip.type === 'Polygon' ? [clip.coordinates] : (clip.coordinates as unknown[]);
-      const out: LocationItem[] = [];
-      polys.forEach((poly, i) => {
-        const ring = Array.isArray(poly) ? (poly[0] as unknown) : null;
-        if (!Array.isArray(ring) || ring.length < 4) return;
-        const closed = ring.map((pt) => [Number((pt as number[])[0]), Number((pt as number[])[1])] as [number, number]);
-        if (closed[0]![0] !== closed[closed.length - 1]![0] || closed[0]![1] !== closed[closed.length - 1]![1]) closed.push([...closed[0]!] as [number, number]);
-        out.push(newDrawnAreaItem(closed, `${name}${sideLabel ? ` (${sideLabel.trim()} الطريق)` : ''}${polys.length > 1 ? ` ${i + 1}` : ''}`, polarity));
-      });
-      if (out.length) return out;
-    }
-    const rule = SIDE_RULE[side];
-    const fallback: LocationItem[] = districts.map((id) => newDistrictItem(id, label || id, polarity));
-    if (rule) fallback.push(newElementRuleItem(label || road, { rule, element_id: road, distance_m: DIRECTION_DEFAULT_M }, polarity));
-    return fallback;
+    const sideLabel = SIDE_LABEL_AR[side] ?? '';
+    const rings = sideClipRings(recipe.clip_geojson);
+    return rings.map((ring, i) => newDrawnAreaItem(
+      ring, `${name}${sideLabel ? ` (${sideLabel} الطريق)` : ''}${rings.length > 1 ? ` ${i + 1}` : ''}`, polarity,
+    ));
   }
 
   switch (op) {
@@ -189,21 +205,32 @@ function anchorRefToItems(
       const d = radiusM(recipe.radius_or_band_m);
       return ids.map((id) => newElementRuleItem(label || id, { rule: 'within_radius', element_id: id, distance_m: d }, polarity));
     }
-    case 'within_distance':
-    case 'corridor': {
+    case 'within_distance': {
       const d = radiusM(recipe.radius_or_band_m);
       return ids.map((id) => newElementRuleItem(label || id, { rule: 'within_distance', element_id: id, distance_m: d }, polarity));
     }
+    case 'corridor': {
+      // «بين طريقين» has no between-two-roads geometry downstream; a corridor
+      // with no stated width would become one silent 3 km band PER ROAD along
+      // its whole length (HARD RULE 4). The resolver no longer produces one;
+      // a stray row saves nothing rather than that.
+      if (!(typeof recipe.radius_or_band_m === 'number' && recipe.radius_or_band_m > 0)) return [];
+      const d = recipe.radius_or_band_m;
+      return ids.map((id) => newElementRuleItem(label || id, { rule: 'within_distance', element_id: id, distance_m: d }, polarity));
+    }
     case 'directional_band': {
-      const dir = detectDirectionRule(anchors);
+      // A band with no side used to fall back to `within_distance` at the 5 km
+      // default: a strip on BOTH sides of the whole road, at a width the
+      // customer never said («شمال شرق طريق الملك فهد»). It saves nothing now;
+      // the card marks it untickable (placementSavable).
+      const dir = bandSideRule({ side: recipe.side, source_anchors: anchors });
+      if (!dir) return [];
       const roadIds = roadIdsOf(ids);
+      const name = bandLabel(anchors);
       const d = typeof recipe.radius_or_band_m === 'number' && recipe.radius_or_band_m > 0
         ? recipe.radius_or_band_m
         : DIRECTION_DEFAULT_M;
-      if (dir) {
-        return roadIds.map((id) => newElementRuleItem(label || id, { rule: dir, element_id: id, distance_m: d }, polarity));
-      }
-      return roadIds.map((id) => newElementRuleItem(label || id, { rule: 'within_distance', element_id: id, distance_m: d }, polarity));
+      return roadIds.map((id) => newElementRuleItem(name || id, { rule: dir, element_id: id, distance_m: d }, polarity));
     }
     default:
       // Unknown/unmapped operation → best-effort district so nothing is dropped silently.

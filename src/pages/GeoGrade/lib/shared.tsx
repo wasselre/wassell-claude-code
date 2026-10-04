@@ -26,9 +26,17 @@ export interface Placement {
   element_ids: string[];
   resolved: boolean;
   label: string;
-  /** district_side_clip: which side of the road (last element id) is kept. */
+  /** district_side_clip: which side of the road (last element id) is kept; directional_band: the band's side. */
   side?: string | null;
   clip_parts?: Array<{ name: string; kept: boolean; crossed: boolean; kept_km2: number | null; total_km2: number | null }> | null;
+  /** within_radius / within_distance / corridor / directional_band: the band or radius in metres. */
+  radius_m?: number;
+  /**
+   * district_side_clip: 'ok' = some part lies on that side; 'empty' = computed,
+   * nothing lies on that side; 'missing' = never computed. Only 'ok' is saved
+   * (api/_lib/geoPreference/placementText.ts sideClipState).
+   */
+  clip_state?: 'ok' | 'empty' | 'missing';
 }
 
 export interface LocationItemDTO {

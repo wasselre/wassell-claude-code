@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   placementsByEvidence, placementElementIds, placementSentence, renderPlacements, verifierMentionsFor,
+  sideClipState, sideClipRings, leadingSide, kmText, bandSide,
   type Placement, type PlaceName,
 } from '../placementText.js';
 import type { GeoPreference, GeometryRecipe, AnchorToken } from '../ontology.js';
@@ -90,12 +91,31 @@ describe('placementSentence', () => {
         { name: 'العليا', kept: false, crossed: false, kept_km2: 0, total_km2: 3 },
       ],
     }, NAMES);
-    expect(s).toBe('حدّد: النرجس (4.2 من 6.1 كم²)، العليا (كله على الجهة الأخرى — أُسقط) — غرب طريق الملك فهد');
+    expect(s).toBe('حدّد: النرجس (4.2 من 6.1 كم²)، العليا (كله على الجهة الأخرى — أُسقط) — الجزء الغربي من طريق الملك فهد');
   });
 
-  it('a radius names the landmark and the distance', () => {
-    expect(placementSentence({ ...base, operation: 'within_radius', element_ids: [ROAD], radius_m: 2000 }, NAMES)).toBe('حدّد: ضمن 2 كم من طريق الملك فهد');
+  it('a clip that keeps nothing, or was never computed, says so — it will save nothing', () => {
+    const clip = { ...base, operation: 'district_side_clip', element_ids: [D1, ROAD], side: 'north' } as Placement;
+    expect(placementSentence({ ...clip, clip_state: 'empty', clip_parts: [{ name: 'النرجس', kept: false, crossed: false, kept_km2: 0, total_km2: 6 }] }, NAMES))
+      .toBe('لا يقع جزء من الحي على هذا الجانب: النرجس — الجزء الشمالي من طريق الملك فهد');
+    expect(placementSentence({ ...clip, clip_state: 'missing' }, NAMES))
+      .toBe('تعذّر حساب الجزء: النرجس (الرياض) — الجزء الشمالي من طريق الملك فهد');
+  });
+
+  it('a radius / distance reads «قرب X · N كم»; a corridor keeps its width', () => {
+    expect(placementSentence({ ...base, operation: 'within_radius', element_ids: [ROAD], radius_m: 2000 }, NAMES)).toBe('حدّد: قرب طريق الملك فهد · 2 كم');
+    expect(placementSentence({ ...base, operation: 'within_distance', element_ids: [ROAD], radius_m: 2500 }, NAMES)).toBe('حدّد: قرب طريق الملك فهد · 2.5 كم');
+    expect(placementSentence({ ...base, operation: 'within_distance', element_ids: [ROAD] }, NAMES)).toBe('حدّد: قرب طريق الملك فهد');
     expect(placementSentence({ ...base, operation: 'corridor', element_ids: [ROAD], radius_m: 1500 }, NAMES)).toBe('حدّد: على امتداد طريق الملك فهد (بعرض 1.5 كم)');
+  });
+
+  it('a road side reads «غرب طريق الملك فهد · 5 كم» from its side; with no side it says it will save nothing (round 3, #20)', () => {
+    const band = { ...base, operation: 'directional_band', element_ids: [ROAD], radius_m: 5000, label: 'غرب الملك فهد' } as Placement;
+    expect(placementSentence({ ...band, side: 'west' }, NAMES)).toBe('حدّد: غرب طريق الملك فهد · 5 كم');
+    // The sentence never re-guesses a side from the label: `side` is bandSide(), the reading review.ts saves by.
+    expect(placementSentence(band, NAMES)).toBe('تعذّر تحديد جهة الطريق: طريق الملك فهد — لن يُحفظ');
+    expect(placementSentence({ ...band, side: 'south', element_ids: ['RUH-RING-0853'] }, { 'RUH-RING-0853': { name_ar: 'الدائري الشمالي' } }))
+      .toBe('حدّد: جنوب الدائري الشمالي · 5 كم');
   });
 
   it('an unresolved mention says no real place was picked', () => {
@@ -117,7 +137,7 @@ describe('renderPlacements / verifierMentionsFor', () => {
   it('renderPlacements returns one mention per placement', () => {
     expect(renderPlacements(e, NAMES)).toEqual([
       { evidence_id: 'e1', polarity: 'include', placed: 'حدّد: النرجس (الرياض)', on_map: true },
-      { evidence_id: 'e2', polarity: 'exclude', placed: 'استبعد: ضمن 1 كم من العليا (الرياض)', on_map: true },
+      { evidence_id: 'e2', polarity: 'exclude', placed: 'استبعد: قرب العليا · 1 كم', on_map: true },
     ]);
   });
 
@@ -131,5 +151,86 @@ describe('renderPlacements / verifierMentionsFor', () => {
     expect(out[0]).toMatchObject({ on_map: true, placed: 'حدّد: النرجس (الرياض)', mention_span: 'أبي النرجس' });
     expect(out[1]).toMatchObject({ on_map: false, placed: 'اعتبره ليس تفضيلًا — لم يضع شيئًا على الخريطة' });
     expect(out[2]).toMatchObject({ on_map: false, polarity: 'exclude', placed: 'لم يُوضع على الخريطة' });
+  });
+});
+
+describe('side clips, sides and distances in words (2026-10-03)', () => {
+  const ring: [number, number][] = [[46.6, 24.7], [46.62, 24.7], [46.62, 24.72], [46.6, 24.72]];
+
+  it('sideClipState: ok / empty (computed, nothing on that side) / missing (never computed)', () => {
+    expect(sideClipState({ clip_geojson: { type: 'MultiPolygon', coordinates: [[ring]] }, clip_parts: [{ kept: true }] })).toBe('ok');
+    expect(sideClipState({ clip_geojson: { type: 'MultiPolygon', coordinates: [] }, clip_parts: [{ kept: false }] })).toBe('empty');
+    expect(sideClipState({ clip_geojson: { type: 'MultiPolygon', coordinates: [[ring]] }, clip_parts: [{ kept: false }] })).toBe('empty');
+    expect(sideClipState({ clip_geojson: { type: 'MultiPolygon', coordinates: [] }, clip_parts: [] })).toBe('empty');
+    // Parts but no shape: never computed here, so «تعذّر حساب الجزء» — not "nothing on that side".
+    expect(sideClipState({ clip_parts: [{ kept: true }] })).toBe('missing');
+    expect(sideClipState({ clip_parts: [] })).toBe('missing');
+    expect(sideClipState({})).toBe('missing');
+  });
+
+  it('sideClipRings closes an open ring and skips degenerate ones', () => {
+    const rings = sideClipRings({ type: 'MultiPolygon', coordinates: [[ring], [[[1, 1], [2, 2]]]] });
+    expect(rings).toHaveLength(1);
+    expect(rings[0]![0]).toEqual(rings[0]![rings[0]!.length - 1]);
+    expect(sideClipRings({ type: 'Polygon', coordinates: [ring] })).toHaveLength(1);
+    expect(sideClipRings(null)).toEqual([]);
+  });
+
+  it('placementsByEvidence carries the clip state of a side clip only', () => {
+    const p = placementsByEvidence(expr([
+      { eid: 'e1', recipe: recipe({ operation: 'district_side_clip', resolved_element_ids: [D1, ROAD], side: 'west', clip_geojson: { type: 'MultiPolygon', coordinates: [] }, clip_parts: [{ district_id: D1, name: 'النرجس', crossed: false, kept: false, kept_km2: 0, total_km2: 6 }] }) },
+      { eid: 'e2', recipe: recipe({ resolved_element_ids: [D2] }) },
+      { eid: 'e3', recipe: recipe({ operation: 'directional_band', resolved_element_ids: [ROAD], side: 'east', radius_or_band_m: 5000 }) },
+    ]));
+    expect(p.e1!.clip_state).toBe('empty');
+    expect(p.e2!.clip_state).toBeUndefined();
+    expect(p.e3).toMatchObject({ side: 'east', radius_m: 5000 });
+  });
+
+  it('bandSide: the recipe side; a LEGACY band reads the leading word of the token the resolver parsed — never the span as a second try (round 3, #13, #21, #22)', () => {
+    const dir = (span: string, normalized_token = span): AnchorToken => ({ anchor_type: 'direction', span, normalized_token });
+    expect(bandSide({ side: 'west', source_anchors: [dir('شمال طريق الملك فهد')] })).toBe('west');
+    expect(bandSide({ source_anchors: [dir('جنوب الدائري الشمالي')] })).toBe('south');
+    // A diagonal in the parsed token has no side — the span («الشمال الشرقي …», which reads as plain north) is NOT tried.
+    expect(bandSide({ source_anchors: [dir('الشمال الشرقي من طريق الملك فهد', 'شمال شرق طريق الملك فهد')] })).toBeNull();
+    expect(bandSide({ source_anchors: [dir('شمال شرق طريق الملك فهد')] })).toBeNull();
+    // An English legacy span: ONE reading on the server for the save, the card and the verifier.
+    expect(bandSide({ source_anchors: [dir('west of King Fahd Road', 'west king fahd road')] })).toBe('west');
+    // placementsByEvidence ships that side to the card (which never re-guesses it).
+    const p = placementsByEvidence(expr([
+      { eid: 'e1', recipe: recipe({ operation: 'directional_band', resolved_element_ids: [ROAD], radius_or_band_m: 5000, source_anchors: [dir('west of King Fahd Road', 'west king fahd road')] }) },
+      { eid: 'e2', recipe: recipe({ operation: 'directional_band', resolved_element_ids: [ROAD], radius_or_band_m: 5000, source_anchors: [dir('شمال شرق طريق الملك فهد')] }) },
+    ]));
+    expect(p.e1!.side).toBe('west');
+    expect(placementSentence(p.e1!, NAMES)).toBe('حدّد: غرب طريق الملك فهد · 5 كم');
+    expect(p.e2!.side).toBeNull();
+    expect(placementSentence(p.e2!, NAMES)).toBe('تعذّر تحديد جهة الطريق: طريق الملك فهد — لن يُحفظ');
+  });
+
+  it('placementsByEvidence ignores a legacy `geo:<id>:admin` sub-ref — it is not a mention of its own (round 3, #24)', () => {
+    const e: GeoPreference = {
+      schema_version: 'v1',
+      groups: [{ id: 'g1', role: 'primary', strength: 'soft', priority: 1, clauses: [
+        { op: 'include', anyOf: [{ geometry_id: 'geo:e1', recipe: recipe({ operation: 'within_distance', resolved_element_ids: [ROAD], radius_or_band_m: 2000 }) }] },
+        { op: 'include', anyOf: [{ geometry_id: 'geo:e1:admin', recipe: recipe({ resolved_element_ids: [D1] }) }] },
+      ] }],
+    };
+    expect(Object.keys(placementsByEvidence(e))).toEqual(['e1']);
+  });
+
+  it('leadingSide reads only the FIRST word: a direction inside the road name never counts; a diagonal has no side', () => {
+    expect(leadingSide('جنوب الدائري الشمالي')).toBe('south');
+    expect(leadingSide('الغرب')).toBe('west');
+    expect(leadingSide('الدائري الشمالي')).toBeNull();
+    expect(leadingSide('شمال شرق الرياض')).toBeNull();
+    expect(leadingSide('north of King Fahd')).toBe('north');
+    expect(leadingSide('northeast')).toBeNull();
+  });
+
+  it('kmText: one decimal under 10 km, whole km from 10 up', () => {
+    expect(kmText(5000)).toBe('5');
+    expect(kmText(2500)).toBe('2.5');
+    expect(kmText(750)).toBe('0.8');
+    expect(kmText(12_400)).toBe('12');
   });
 });

@@ -259,10 +259,90 @@ describe('geoPreferenceToLocationItems — district_side_clip (2026-09-15)', () 
     expect(d.label).toContain('غرب');
     expect(d.polarity).toBe('include');
   });
-  it('without a shape → the districts plus the side rule on the road (same meaning, AND)', () => {
-    const items = geoPreferenceToLocationItems(JSON.parse(JSON.stringify(base)));
-    expect(items.map((i) => i.kind)).toEqual(['district', 'element_rule']);
-    const rule = items[1] as Extract<LocationItem, { kind: 'element_rule' }>;
-    expect(rule.conditions[0]).toMatchObject({ rule: 'west_of', element_id: 'RUH-ROAD-0694' });
+  it('a legacy row with NO shape saves nothing — the old "districts + side rule" fallback was the WHOLE district (2026-10-03)', () => {
+    const noClip = JSON.parse(JSON.stringify(base));
+    delete noClip.groups[0].clauses[0].anyOf[0].recipe.clip_parts;
+    expect(geoPreferenceToLocationItems(noClip)).toEqual([]);
+    // Parts without a shape cannot be drawn either.
+    expect(geoPreferenceToLocationItems(JSON.parse(JSON.stringify(base)))).toEqual([]);
+  });
+
+  it('a clip that keeps NOTHING (every district on the other side) saves nothing — never the district it dropped (finding 23)', () => {
+    const empty = JSON.parse(JSON.stringify(base));
+    const recipe = empty.groups[0].clauses[0].anyOf[0].recipe;
+    recipe.clip_geojson = { type: 'MultiPolygon', coordinates: [] };
+    recipe.clip_parts = [{ district_id: 'd-malqa', name: 'حي الملقا', crossed: false, kept: false, kept_km2: 0, total_km2: 21.85 }];
+    recipe.resolved_element_ids = ['d-malqa', 'RUH-ROAD-0681'];
+    recipe.side = 'north';
+    expect(geoPreferenceToLocationItems(empty)).toEqual([]);
+    // Parts all dropped wins even if a stray polygon is present.
+    recipe.clip_geojson = { type: 'MultiPolygon', coordinates: [[ring]] };
+    expect(geoPreferenceToLocationItems(empty)).toEqual([]);
+  });
+});
+
+describe('geoPreferenceToLocationItems — directional_band side and label (2026-10-03)', () => {
+  const band = (anchors: AnchorToken[], side?: 'north' | 'south' | 'east' | 'west', band_m?: number): GeoPreference => {
+    const ref = anchorRef('directional_band', ['RUH-RING-0853'], { anchors, band: band_m });
+    if (side) ref.recipe!.side = side;
+    return pref([group([clause('include', [ref])])]);
+  };
+  const rule = (items: LocationItem[]) => (items[0]?.kind === 'element_rule' ? items[0] : null);
+
+  it('the recipe\'s side wins over any name: «جنوب الدائري الشمالي» is SOUTH (finding 21)', () => {
+    const items = geoPreferenceToLocationItems(band([{ anchor_type: 'direction', span: 'جنوب الدائري الشمالي', normalized_token: 'جنوب الدائري الشمالي' }], 'south'));
+    expect(rule(items)?.conditions[0]).toMatchObject({ rule: 'south_of', element_id: 'RUH-RING-0853', distance_m: 5000 });
+  });
+
+  it('a legacy band with no side reads ONLY the leading direction word — never one inside the road\'s name', () => {
+    const one = geoPreferenceToLocationItems(band([{ anchor_type: 'direction', span: 'جنوب الدائري الشمالي', normalized_token: 'جنوب الدائري الشمالي' }]));
+    expect(rule(one)?.conditions[0]).toMatchObject({ rule: 'south_of' });
+    const split = geoPreferenceToLocationItems(band([
+      { anchor_type: 'direction', span: 'غرب', normalized_token: 'غرب' },
+      { anchor_type: 'road', span: 'طريق الدائري الشرقي', normalized_token: 'طريق الدائري الشرقي' },
+    ]));
+    expect(rule(split)?.conditions[0]).toMatchObject({ rule: 'west_of' });
+    // A diagonal has no road side → NOTHING (round 3, #13/#16): it used to save a
+    // 5 km within_distance strip on BOTH sides of the whole road.
+    const diag = geoPreferenceToLocationItems(band([{ anchor_type: 'direction', span: 'شمال شرق الملك فهد', normalized_token: 'شمال شرق الملك فهد' }]));
+    expect(diag).toEqual([]);
+  });
+
+  it('round 3 #13/#16: a band with no side never becomes a both-sides within_distance corridor', () => {
+    // The new resolver never produces one (a diagonal asks); a stored one saves nothing.
+    expect(geoPreferenceToLocationItems(band([{ anchor_type: 'direction', span: 'شمال شرق طريق الملك فهد', normalized_token: 'شمال شرق طريق الملك فهد' }], undefined, 5000))).toEqual([]);
+    expect(geoPreferenceToLocationItems(band([{ anchor_type: 'direction', span: 'وسط الملك فهد', normalized_token: 'وسط الملك فهد' }]))).toEqual([]);
+    expect(geoPreferenceToLocationItems(band([{ anchor_type: 'road', span: 'طريق الملك فهد', normalized_token: 'طريق الملك فهد' }]))).toEqual([]);
+  });
+
+  it('round 3 #21: the side comes from the token the resolver PARSED — a diagonal there never falls through to the span', () => {
+    const anchors: AnchorToken[] = [{ anchor_type: 'direction', span: 'الشمال الشرقي من طريق الملك فهد', normalized_token: 'شمال شرق طريق الملك فهد' }];
+    expect(geoPreferenceToLocationItems(band(anchors))).toEqual([]);
+    // The adjectival diagonal on its own is a diagonal too.
+    expect(geoPreferenceToLocationItems(band([{ anchor_type: 'direction', span: 'الشمال الشرقي من طريق الملك فهد', normalized_token: 'الشمال الشرقي من طريق الملك فهد' }]))).toEqual([]);
+    // A recorded side always wins.
+    expect(rule(geoPreferenceToLocationItems(band(anchors, 'north')))?.conditions[0]).toMatchObject({ rule: 'north_of' });
+  });
+
+  it('the chip is labelled with the ROAD, so it reads «غرب الملك فهد», never «غرب غرب الملك فهد» (finding 24)', () => {
+    const folded = geoPreferenceToLocationItems(band([{ anchor_type: 'direction', span: 'غرب الملك فهد', normalized_token: 'غرب الملك فهد' }], 'west'));
+    expect(rule(folded)?.element_label).toBe('الملك فهد');
+    const split = geoPreferenceToLocationItems(band([
+      { anchor_type: 'direction', span: 'شمال', normalized_token: 'شمال' },
+      { anchor_type: 'road', span: 'طريق الملك سلمان', normalized_token: 'طريق الملك سلمان' },
+    ], 'north', 2000));
+    expect(rule(split)?.element_label).toBe('طريق الملك سلمان');
+    expect(rule(split)?.conditions[0]).toMatchObject({ rule: 'north_of', distance_m: 2000 });
+  });
+});
+
+describe('geoPreferenceToLocationItems — a corridor never saves a silent width (HARD RULE 4)', () => {
+  it('no stated width → nothing; a stated width → that width per road', () => {
+    expect(geoPreferenceToLocationItems(pref([group([clause('include', [anchorRef('corridor', ['r1', 'r2'], { span: 'بين طريقين' })])])]))).toEqual([]);
+    const items = geoPreferenceToLocationItems(pref([group([clause('include', [anchorRef('corridor', ['r1', 'r2'], { span: 'بين طريقين', band: 1500 })])])]));
+    expect(items.map((i) => (i.kind === 'element_rule' ? i.conditions[0] : null))).toEqual([
+      { rule: 'within_distance', element_id: 'r1', distance_m: 1500 },
+      { rule: 'within_distance', element_id: 'r2', distance_m: 1500 },
+    ]);
   });
 });

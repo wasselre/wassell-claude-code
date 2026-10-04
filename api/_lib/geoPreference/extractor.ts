@@ -34,6 +34,7 @@ import { trackedAnthropic } from '../aiUsage.js';
 import { llmText, llmRoutingEnabled, logLlmFallback } from '../textLlm.js';
 import { estimateExtractionTokens, type LlmBudget } from './llmBudget.js';
 import { isProjectMention, projectMentionsIn } from './projectGuard.js';
+import { sanitizeDistanceM } from './ontology.js';
 import type {
   Evidence,
   EvidenceRelation,
@@ -55,7 +56,7 @@ import type {
   RelationMemberRef,
 } from './ontology.js';
 
-export const EXTRACTOR_VERSION = 'geo-extract/v8'; // v8: one conversation per channel + per-mention turn attribution + unlabelled-call rules
+export const EXTRACTOR_VERSION = 'geo-extract/v9d'; // v9d: a one-anchor road side only when the customer said it CONTIGUOUSLY; span / mention_span are verbatim contiguous words (a stated distance's words inside mention_span); «على طريق X» is along the road (role 'along'), never a side of it; a road said with no direction word is a road anchor, never a direction (2026-10-04); v9c: a road side's distance rides on its ONE direction anchor; «الفهد» / «السلمان» / «حي سلمان» are never rewritten to «الملك …» (2026-10-03); v9b: «جنوب سلمان» example normalizes to «جنوب الملك سلمان», a travel TIME is never a distance (2026-10-03); v9: road sides as ONE direction anchor, royal short road names, full venue names, stated distance_m (2026-10-03); v8: one conversation per channel + per-mention turn attribution + unlabelled-call rules
 const CLAUDE_FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -170,8 +171,20 @@ export const EXTRACT_SYSTEM_PROMPT = `أنت محلّل دلالي لفريق ع
 
 مبدأ حاكم — أنت تُخرِج رموز المرجع + العلاقات فقط:
 - لا تحلّ الإحداثيات، لا تختار «أي حي باسم كذا»، لا تُخمّن جغرافيا. أخرِج anchors كرموز typed فقط.
-- كل anchor: { anchor_type, span (النص الحرفي كما قاله), normalized_token (بعد طيّ ة→ه، ى→ي، حذف «حي» والتطويل), role_in_relation? }.
+- كل anchor: { anchor_type, span (النص الحرفي كما قاله), normalized_token (بعد طيّ ة→ه، ى→ي، حذف «حي» والتطويل), role_in_relation?, distance_m? }.
 - anchor_type ∈ [district, city, region, town, direction, road, landmark, pin, relative_ref].
+
+قواعد شكل الـ anchors (إلزامية):
+- جهة من طريق = anchor واحد من نوع direction يشمل الطريق في span نفسه فقط إذا قالها العميل متصلةً («غرب الملك فهد»، «شمال طريق الملك سلمان»)، لا anchorين: «غرب الملك فهد» →{ anchor_type:'direction', span:'غرب الملك فهد', normalized_token:'غرب الملك فهد' }. وكذلك «جنوب سلمان» → { anchor_type:'direction', span:'جنوب سلمان', normalized_token:'جنوب الملك سلمان' } (الاسم الملكي القصير يُكتب في normalized_token كاملًا: «الملك سلمان»)، و«شمال طريق الملك سلمان» → span:'شمال طريق الملك سلمان'. إن ذكر معها حيًا («النرجس شمال طريق الملك سلمان») فالحي anchor مستقل من نوع district، والجهة+الطريق anchor واحد.
+- span و mention_span نصّان حرفيان متصلان من كلام العميل كما كتبه: لا تجمع في span واحد كلماتٍ متباعدة في كلامه، ولا تضف إليه كلمة لم يقلها. إن ذكر العميل مسافة فاجعل كلماتها («خلال 3 كيلو») داخل mention_span.
+- «على طريق X» / «على شارع X» تعني على امتداد الطريق، وليست جهةً منه: anchor من نوع road مع role_in_relation:'along'. مثال: «شمال الرياض على طريق الملك فهد» → [direction 'شمال الرياض'] و [road 'طريق الملك فهد', role_in_relation:'along'] — وليس «شمال طريق الملك فهد» أبدًا.
+- طريقٌ ذُكر بلا كلمة جهة = anchor من نوع road وليس direction: «قريب من طريق الملك فهد تقريبًا 2 كيلو» → { anchor_type:'road', span:'طريق الملك فهد', normalized_token:'طريق الملك فهد', role_in_relation:'proximity', distance_m:2000 }.
+- اسم ملكي قصير بعد جهة («سلمان»، «فهد»، «خالد»، «عبدالله»، «عبدالعزيز»، «فيصل»، «سعود») هو طريق الملك … وليس حيًا أبدًا: «شمال سلمان» = شمال طريق الملك سلمان. الحي يُقال دائمًا بـ«حي» («حي الملك سلمان»، «جنوب حي سلمان» = الحي، فلا تكتبه «الملك سلمان»). هذا للصيغة المجرّدة بلا «ال» فقط: «الفهد»، «السلمان»، «الفيصلية»، «الخالدية» أسماء أماكن (أحياء في مدن أخرى) — لا تحوّلها إلى «الملك …» أبدًا، واكتبها في normalized_token كما قالها العميل: «شمال الفهد» → normalized_token:'شمال الفهد'.
+- المَعلَم المسمّى (مول، حديقة، جامعة، مستشفى، مطار…) = anchor واحد من نوع landmark باسمه الكامل كما قاله العميل، ولا يُختصر إلى اسم مدينة أبدًا: «قريب من الرياض بارك» → { anchor_type:'landmark', span:'الرياض بارك' } (وليس city «الرياض»)، «جامعة الأميرة نورة» → landmark، «مستشفى الحبيب» → landmark.
+- «قريب من X» / «جنب X» / «مشي من X»: ضع role_in_relation:'proximity' على anchor الـ X.
+- «بين طريق A وطريق B»: anchorان من نوع road، الأول role_in_relation:'boundary_start' والثاني 'boundary_end'.
+- distance_m (اختياري): إن ذكر العميل مسافة رقمية فسجّلها رقمًا بالأمتار (بأرقام لاتينية، بلا وحدة) على anchor المَعلَم/الطريق — وفي جهة من طريق (anchor direction واحد يشمل الطريق) سجّلها على ذلك الـ direction نفسه، ولا تُنشئ anchor طريق ثانيًا لأجلها: «خلال 3 كيلو من …» → 3000، «كيلوين» → 2000، «500 متر» → 500، «نص كيلو» → 500، و«غرب الملك فهد خلال 2 كيلو» → { anchor_type:'direction', span:'غرب الملك فهد', normalized_token:'غرب الملك فهد', distance_m:2000 }. إن لم يذكر رقمًا فلا تضع distance_m أبدًا — «قريب» أو «مشي» وحدها ليست رقمًا، لا تخمّن.
+- مدة التنقّل ليست مسافة: «10 دقائق»، «5 دقايق مشي»، «ربع ساعة بالسيارة»، «ساعة» — لا تحوّل الوقت إلى أمتار أبدًا، ولا تضع distance_m.
 
 العلاقات (EvidenceRelation) بين الإشارات:
 - any_of: بدائل «أو» متكافئة. all_of: شروط «و» مجتمعة. ranked_alternative: بدائل مرتّبة (الأفضل أولًا في ordering). exception: استثناء من هدفٍ (target). comparison: مقارنة بين موقعين (مثل «المهدية أفضل من الجبيلة» أو طرحهما للمقارنة).
@@ -497,7 +510,13 @@ function repairAnchors(raw: unknown): AnchorToken[] {
     const role = typeof o.role_in_relation === 'string' && o.role_in_relation.trim()
       ? o.role_in_relation.trim()
       : undefined;
-    out.push({ anchor_type, span, normalized_token, ...(role ? { role_in_relation: role } : {}) });
+    // A stated distance in METRES; implausible / non-numeric ⇒ dropped (never guessed).
+    const distance_m = sanitizeDistanceM(o.distance_m);
+    out.push({
+      anchor_type, span, normalized_token,
+      ...(role ? { role_in_relation: role } : {}),
+      ...(distance_m !== null ? { distance_m } : {}),
+    });
   }
   return out;
 }

@@ -16,6 +16,7 @@ import {
 } from '../orchestrator';
 import { type ResolverDb, type DistrictCandidate } from '../resolver';
 import { type SatUniverse } from '../satisfiability';
+import { fakeCityLabel, fakeRoadAxis } from './fakeGeoMap.js';
 import type {
   GateSignals,
   MaximumSafeAction,
@@ -194,6 +195,10 @@ function fakeResolverDb(): ResolverDb {
     async findElements() { return []; },
     async zoneDistricts() { return []; },
     async districtForPoint() { return null; },
+    // No roads, cities or venues in this map: every road is unknown (found:false).
+    roadAxis: fakeRoadAxis({}),
+    cityLabel: fakeCityLabel([]),
+    namesInText: async () => [],
   };
 }
 

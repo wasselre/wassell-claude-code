@@ -35,10 +35,27 @@ describe('placementTitle', () => {
     const ids = ['d1', 'd2', 'd3', 'd4', 'x5', 'x6', 'x7'];
     expect(placementTitle(pl({ operation: 'district_union', element_ids: ids, label: 'شمال الرياض' }), names, true)).toBe('شمال الرياض · ٧ حيًا');
   });
-  it('a side clip is the side of the road', () => {
+  it('a side clip is the districts and their part on that side of the road', () => {
     const p = pl({ operation: 'district_side_clip', element_ids: ['d1', 'd2', 'r1'], side: 'north' });
-    expect(placementTitle(p, names, true)).toBe('شمال طريق الملك فهد');
-    expect(placementTitle(p, names, false)).toBe('North of King Fahd Road');
+    expect(placementTitle(p, names, true)).toBe('الربوة، الملقا — الجزء الشمالي من طريق الملك فهد');
+    expect(placementTitle(p, names, false)).toBe('Al Rabwah, Al Malqa — the part north of King Fahd Road');
+  });
+  it('a road side shows the side and the band depth, in Arabic digits in Arabic (finding 25)', () => {
+    const p = pl({ operation: 'directional_band', element_ids: ['r1'], side: 'west', radius_m: 5000 });
+    expect(placementTitle(p, names, true)).toBe('غرب طريق الملك فهد · ٥ كم');
+    expect(placementTitle(p, names, false)).toBe('West of King Fahd Road · 5 km');
+    expect(placementTitle({ ...p, radius_m: 2500 }, names, true)).toBe('غرب طريق الملك فهد · ٢٫٥ كم');
+    // The side comes from the SERVER (placementText.bandSide, the reading the save
+    // uses) — the card never re-guesses it from the label (round 3, #22). No side
+    // → just the road; the line says it will not be saved.
+    expect(placementTitle({ ...p, side: null, label: 'شرق الملك فهد' }, names, true)).toBe('طريق الملك فهد');
+  });
+  it('a distance rule reads «قرب X · N كم»', () => {
+    const p = pl({ operation: 'within_distance', element_ids: ['park'], radius_m: 3000 });
+    const n = { ...names, park: { name_ar: 'الرياض بارك', name_en: 'Riyadh Park', city: 'الرياض' } };
+    expect(placementTitle(p, n, true)).toBe('قرب الرياض بارك · ٣ كم');
+    expect(placementTitle(p, n, false)).toBe('Near Riyadh Park · 3 km');
+    expect(placementTitle({ ...p, operation: 'within_radius', radius_m: 12_000 }, n, true)).toBe('قرب الرياض بارك · ١٢ كم');
   });
   it('an unresolved mention is its bare name (element_ids are names, not ids)', () => {
     expect(placementTitle(pl({ resolved: false, element_ids: ['حي الورود'] }), names, true)).toBe('حي الورود');

@@ -171,6 +171,8 @@ export async function processBackfillJob(
       }
       const ctx = await deps.buildRunContext(job.clientId, evidence.length);
       if (checkpointId) ctx.checkpoint_id = checkpointId;
+      // The customer's own turns join each mention's texts (a distance, an anchor's words).
+      ctx.conversation = conversation;
       const result = await deps.runReviewFirst(evidence, relations, ctx, {
         proposals: deps.proposals,
       });
