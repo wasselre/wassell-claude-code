@@ -967,6 +967,16 @@ rule for telling them apart is what question each answers:
   `MARKETING_COLLECTION_ENABLED`. Tables: `mkt_content_posts`,
   `mkt_content_media`, `mkt_content_enrichment`, `mkt_visual_text` (OCR of the
   creative as a whole), `mkt_transcripts`. Runs on EVERYTHING collected.
+  **Since 2026-10-04 posts are read and matched by Gemini inside
+  `content_process`** (`worker/src/marketing/content/geminiEnrich.ts`), not by
+  the Claude runner: one gemini-3.8-flash call per post (whole video or all
+  images) → screen text + project pick with a verbatim quote → the SAME proof
+  checker (`enrichmentValidate.ts`, a parity-tested COPY of
+  `scripts/lib/mkt-enrichment-validate.mjs` — change both) → the runner's
+  persistence. Switch `mkt_settings content.reader` ('gemini' | 'runner'),
+  daily cap `content.reader_daily_budget_usd`, quota pause
+  `content.reader_paused_until`. Nothing is written before the answer passes
+  the checker, so a failed re-read never erases a post's previous decision.
 - **Visual Intelligence (CV)** — *"what does this footage look like, shot by shot?"*
   Queue `mkt_cv_jobs`, lanes `cvProcessPollLoop` + `cvAnalyzePollLoop`, gated by
   THREE independent switches: `CV_LANES_ENABLED` (env), `GEMINI_API_KEY` present

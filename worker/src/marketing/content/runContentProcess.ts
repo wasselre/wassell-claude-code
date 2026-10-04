@@ -19,6 +19,9 @@ import { loadAttributionContext, publisherProjects, scopedIndex } from './attrib
 import { sha256Hex } from '../adIntel.js';
 import { cvEnabled } from '../cv/settings.js';
 import { runFramesOnly, stageVideoFrames } from './videoFrames.js';
+import { contentReader, isGeminiRead, pauseReader, readAndDecide, readerPausedUntil, redecideFromStored, type ContentReader } from './geminiEnrich.js';
+import { dailyQuotaRetryAfter } from '../../ai/providers/geminiHttp.js';
+import { GEMINI_RULE_VERSION } from './geminiRead.js';
 
 export interface ContentProcessStats {
   post_id: string; media_total: number; media_stored: number; media_failed: number;
@@ -84,7 +87,19 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
 
   const { data: post } = await sb.from('mkt_content_posts').select('id, platform, external_id, social_account_id, organization_id, post_type, caption, processing_status').eq('id', contentPostId).maybeSingle();
   if (!post) throw new Error(`content post not found: ${contentPostId}`);
-  if (opts.narrowOnly) return narrowOnlyPass(sb, contentPostId, post as PostRow, stats);
+  // Which reader turns the evidence into a decision: the Gemini reader inside
+  // this job, or the Claude runner via 'awaiting_intelligence' (rollback path).
+  const reader: ContentReader = opts.mediaOnly || opts.framesOnly ? 'runner' : await contentReader(sb);
+  if (opts.narrowOnly) return narrowOnlyPass(sb, contentPostId, post as PostRow, stats, reader);
+  if (reader === 'gemini') {
+    // Already read by Gemini: a full pass would only re-pay for the same answer.
+    const { data: enr0, error: enr0Err } = await sb.from('mkt_content_enrichment').select('model, status').eq('content_post_id', contentPostId).maybeSingle();
+    if (enr0Err) throw new Error(`load enrichment: ${enr0Err.message}`);
+    if (isGeminiRead(enr0 as { model: string | null; status: string | null } | null)) { stats.status = 'already_read'; return stats; }
+    // Paused on a daily quota: touch nothing (no download, no status change);
+    // the sweep offers the post again once the pause ends.
+    if (Date.now() < await readerPausedUntil(sb)) { stats.status = 'reader_paused'; return stats; }
+  }
   if (opts.framesOnly) {
     const f = await runFramesOnly(sb, contentPostId);
     stats.videos = f.videos;
@@ -250,8 +265,9 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
             stats.transcribe_failed++; stats.errors.push(`transcribe: ${reason}`);
           }
         }
-        // frames for vision
-        if (durationMs) {
+        // frames for vision — only the runner path reads sampled frames; the
+        // Gemini reader watches the whole video.
+        if (durationMs && reader === 'runner') {
           const frames = await sampleFrames(tmp.path, durationMs, 6);
           for (const f of frames) visionInputs.push({ mediaId: ref.mediaId, source: 'frame', frameTsMs: f.tsMs, buffer: f.jpeg, mime: 'image/jpeg' });
         }
@@ -266,8 +282,12 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   // vision call (a reprocess shouldn't re-pay for OCR — and lets us re-run the
   // downstream intelligence handoff without re-spending on vision).
   let visualTextBlob = '';
-  const { data: existingVt } = await sb.from('mkt_visual_text').select('text, content_media_id, source').eq('content_post_id', contentPostId);
-  if (existingVt && existingVt.length > 0) {
+  const { data: existingVt } = reader === 'runner'
+    ? await sb.from('mkt_visual_text').select('text, content_media_id, source').eq('content_post_id', contentPostId)
+    : { data: [] as Array<{ text: string | null; content_media_id: string; source: string }> };
+  if (reader === 'gemini') {
+    // nothing here: the Gemini reader below reads every image and the whole video
+  } else if (existingVt && existingVt.length > 0) {
     visualTextBlob = existingVt.map((v) => (v.text as string) ?? '').filter(Boolean).join(' ');
     stats.images_analyzed = existingVt.length;
     // "The post has visual text" used to mean "skip everything" — but the text
@@ -350,6 +370,45 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     stats.fatal_errors.push('no media stored — nothing to process');
     return failPost();
   }
+  if (reader === 'gemini') {
+    // Gemini reads the media, decides the project (proof-checked) and the post
+    // ends processed / partial in this same job — no runner hand-off.
+    const pending = { account_identity: await accountIdentity(sb, post.social_account_id as string | null), deterministic_partial: deterministicPartial, snippet: headByCodePoints(`${post.caption ?? ''}
+${transcriptText}`.trim(), 160) };
+    try {
+      const out = await readAndDecide(sb, { id: contentPostId, organization_id: post.organization_id as string | null, caption: (post.caption as string | null) ?? null },
+        storedRefs.map((r) => ({ mediaId: r.mediaId, kind: r.kind, bytes: r.bytes, durationMs: r.durationMs })), transcriptText, pending);
+      stats.cost_usd += out.costUsd;
+      stats.images_analyzed = out.imagesRead;
+      stats.frames_analyzed = 0;
+      stats.enriched = true;
+      stats.primary_project = out.primaryProjectId;
+      stats.attributions = out.candidates;
+      if (out.rejected) stats.errors.push(`attribution_rejected: ${out.rejected}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.startsWith('permanent:')) { stats.fatal_errors.push(`reader: ${msg}`); return failPost(); }
+      const quotaWait = dailyQuotaRetryAfter(msg);
+      if (quotaWait !== null) {
+        await pauseReader(sb, quotaWait, msg);
+        const { error: backErr } = await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'awaiting_intelligence', p_media_count: stats.media_stored });
+        if (backErr) throw new Error(`put post ${contentPostId} back after a quota pause failed: ${backErr.message}`);
+        stats.status = 'reader_paused';
+        stats.degraded = true;
+        return stats;
+      }
+      // Put the post where the sweep's Gemini stage finds it again (its previous
+      // decision, if any, is untouched — nothing was written before the answer),
+      // then fail the job so the queue's own retry/backoff applies too.
+      const { error: backErr } = await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'awaiting_intelligence', p_media_count: stats.media_stored });
+      if (backErr) console.error(`[content] post=${contentPostId} could not be put back for a re-read: ${backErr.message}`);
+      throw new Error(`gemini reader failed for post ${contentPostId}: ${msg}`);
+    }
+    stats.degraded = deterministicPartial || stats.errors.length > 0;
+    stats.status = deterministicPartial ? 'partial' : 'processed';
+    stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;
+    return stats;
+  }
   const ctx = await loadAttributionContext(sb);
   const pubProjects = await publisherProjects(sb, ctx, post.organization_id as string | null);
   const index = scopedIndex(ctx, pubProjects);
@@ -413,7 +472,7 @@ interface PostRow {
  *   renarrowed     candidates changed or exist → pointer cleared, candidates
  *                  stored, post handed back to the runner (awaiting_intelligence)
  */
-async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: PostRow, stats: ContentProcessStats): Promise<ContentProcessStats> {
+async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: PostRow, stats: ContentProcessStats, reader: ContentReader): Promise<ContentProcessStats> {
   const { data: enr, error: enrErr } = await sb.from('mkt_content_enrichment')
     .select('id, model, rule_version, status, primary_project_id, candidate_projects, result, attribution_locked_at')
     .eq('content_post_id', contentPostId).maybeSingle();
@@ -443,7 +502,7 @@ async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: P
   // (e.g. after a matcher tweak) must not spend AI time on unchanged posts.
   const fingerprint = (c: Array<{ projectId: string; strength: string }>) => c.map((x) => `${x.projectId}:${x.strength}`).sort().join('|');
   const prevCands = (Array.isArray(enr?.candidate_projects) ? enr!.candidate_projects : []) as Array<{ projectId: string; strength: string }>;
-  if (enr?.status === 'done' && enr.rule_version === 'enrich-runner-v2' && fingerprint(prevCands) === fingerprint(candidates)) {
+  if (enr?.status === 'done' && (enr.rule_version === 'enrich-runner-v2' || enr.rule_version === GEMINI_RULE_VERSION) && fingerprint(prevCands) === fingerprint(candidates)) {
     stats.status = 'unchanged';
     return stats;
   }
@@ -481,6 +540,17 @@ async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: P
   }
   if (candidates.length === 0) {
     stats.status = 'no_candidates';
+    return stats;
+  }
+  // Gemini path: a post Gemini already read is re-decided right here from its
+  // stored words (text only, no media). One read by an older reader is handed
+  // to the sweep instead, which gives it a full Gemini read.
+  if (reader === 'gemini' && isGeminiRead(enr as { model: string | null; status: string | null } | null)) {
+    const out = await redecideFromStored(sb, { id: contentPostId, organization_id: post.organization_id, caption: post.caption }, candidates, result);
+    stats.cost_usd += out.costUsd;
+    stats.primary_project = out.primaryProjectId;
+    stats.enriched = true;
+    stats.status = 'redecided';
     return stats;
   }
   // Checked: an unchecked failure here left the post 'processed' with its

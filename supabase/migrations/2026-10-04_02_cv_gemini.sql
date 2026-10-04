@@ -95,9 +95,6 @@ UPDATE public.mkt_cv_frames SET embedding = NULL WHERE embedding IS NOT NULL;
 DELETE FROM public.mkt_content_embeddings WHERE model IS DISTINCT FROM 'gemini-embedding-2';
 
 -- 5 ── queue everything ───────────────────────────────────────────────────────
--- Jobs still queued from the Modal era keep their place but get fresh attempts.
-UPDATE public.mkt_cv_jobs SET attempts = 0, max_attempts = 5, error = NULL, next_run_at = now()
- WHERE status = 'queued';
 -- Every existing video (stuck 'processing' / 'analyzing' ones included) is redone.
 UPDATE public.mkt_cv_videos SET status = 'queued', error = NULL, updated_at = now()
  WHERE status <> 'queued';
@@ -114,6 +111,10 @@ BEGIN
   SELECT count(*) INTO n_wassel FROM public.mkt_cv_enqueue_wassel_backlog(100000, NULL, ARRAY['video','photo']);
   RAISE NOTICE 'cv gemini re-run queued: % competitor videos, % wassel assets', n_comp, n_wassel;
 END $q$;
+-- Every queued job (Modal-era leftovers and the ones just created) starts
+-- fresh with 5 attempts: Gemini overload bursts can eat a few.
+UPDATE public.mkt_cv_jobs SET attempts = 0, max_attempts = 5, error = NULL, next_run_at = now()
+ WHERE status = 'queued';
 
 -- 6 ── switches ───────────────────────────────────────────────────────────────
 -- 500 new videos a day ≈ $15/day at the measured ~$0.03 per video; the daily

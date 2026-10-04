@@ -76,7 +76,10 @@ async function embedText(texts) {
     await new Promise((res) => setTimeout(res, 2000 * 2 ** attempt));
   }
   if (!r.ok) {
-    const msg = `embed_text ${r.status}: ${(await r.text()).slice(0, 200)}`;
+    const body = await r.text();
+    const quota = /"quotaId":\s*"([^"]+)"/.exec(body)?.[1];
+    const qv = /"quotaValue":\s*"([^"]+)"/.exec(body)?.[1];
+    const msg = `embed_text ${r.status}${quota ? ` quota=${quota}${qv ? ` limit=${qv}` : ""}` : ""}: ${body.replace(/s+/g, " ").slice(0, 200)}`;
     await bill('error', msg);
     throw new Error(msg);
   }

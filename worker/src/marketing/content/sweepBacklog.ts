@@ -42,8 +42,9 @@ import { repairMediaDimensions } from '../../repairMediaDimensions.js';
 import { sweepApifyStorage } from '../apifyStorageSweep.js';
 import { repairFileMediaMeta } from '../../repairFileMediaMeta.js';
 import { backfillContentEtags } from '../../backfillContentEtags.js';
+import { contentReader, readerPausedUntil } from './geminiEnrich.js';
 
-export interface SweepStats { media_recover: number; visual_ocr: number; frame_jobs: number; frame_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { reader: string; gemini_reads: number; gemini_rereads: number; reader_spend_today_usd: number; reader_over_budget: boolean; media_recover: number; visual_ocr: number; frame_jobs: number; frame_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
 /** Stage 5 ceilings. A cv_process job is a multi-minute GPU run on Modal, so
  *  the re-enqueue is deliberately small per tick; anything it does not reach
@@ -127,6 +128,17 @@ const MAX_FRAME_BATCHES = 10;
  *  the owner's other work. Enough to keep the lane fed, never enough to build a
  *  queue that commits hours of capacity before anyone can look at the output. */
 const MAX_ENRICH_JOBS_PER_TICK = 10;
+/** Gemini reader (content.reader = 'gemini'): posts waiting for a decision that
+ *  get a full read per tick, and posts read by an OLDER reader (the runner) that
+ *  are re-read per tick. Each read is one content_process job on the internal
+ *  provider (3 at a time), ~15-60 s, so ~60 per 5-minute tick keeps the lane
+ *  busy without building a queue nobody can see the end of. */
+const MAX_GEMINI_READS_PER_TICK = 60;
+const MAX_GEMINI_REREADS_PER_TICK = 40;
+/** Daily ceiling on Gemini reader spend unless mkt_settings
+ *  `content.reader_daily_budget_usd` says otherwise. At ~$0.004 an image post
+ *  and ~$0.014 a video (60-post test, 2026-10-04) $25 is ~2,000 posts a day. */
+const DEFAULT_READER_BUDGET_USD = 25;
 const ENRICH_QUEUE_HIGH_WATER = 30;
 const ENRICH_POSTS_PER_BATCH = 15;
 /** Minimum gap before re-attempting a post whose media download already failed.
@@ -201,9 +213,23 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, frame_jobs: 0, frame_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, etags_filled: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { reader: 'runner', gemini_reads: 0, gemini_rereads: 0, reader_spend_today_usd: 0, reader_over_budget: false, media_recover: 0, visual_ocr: 0, frame_jobs: 0, frame_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, etags_filled: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
+
+  // Which reader decides projects. Under 'gemini' the runner lanes (stages 2,
+  // 2a, 2b, 4) are not fed at all; full content_process passes read and decide.
+  const reader = await contentReader(sb);
+  stats.reader = reader;
+  let readerBudgetOk = true;
+  if (reader === 'gemini') {
+    const spend = await readerSpendToday(sb);
+    const budget = await readerBudgetUsd(sb);
+    stats.reader_spend_today_usd = Math.round(spend * 100) / 100;
+    const pausedUntil = await readerPausedUntil(sb);
+    readerBudgetOk = spend < budget && Date.now() >= pausedUntil;
+    stats.reader_over_budget = !readerBudgetOk;
+  }
 
   // ── backlog depth guard ───────────────────────────────────────────────────
   const { count: queuedCount } = await sb.from('mkt_collection_jobs')
@@ -355,7 +381,7 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   //
   // `postsNeedingOcr` (the 'collected'-scoped set) is still computed above and
   // still drives stage 3's readiness test; it is simply not the OCR scope.
-  const needOcr = (await postsWithUnreadImages(sb)).filter((id) => !ocrInFlight.has(id));
+  const needOcr = reader === 'runner' ? (await postsWithUnreadImages(sb)).filter((id) => !ocrInFlight.has(id)) : [];
   if (needOcr.length > 0) {
     const { count: ocrQueued } = await sb.from('claude_jobs')
       .select('id', { count: 'exact', head: true })
@@ -374,7 +400,7 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   // treat "has visual text" as "done" — so the frames, where the price / offer /
   // phone overlays are, went unread for 1,167 of 1,406 videos. The backlog
   // lives in the data (mkt_videos_needing_frames), not in a one-off script.
-  {
+  if (reader === 'runner') {
     const { data, error } = await sb.rpc('mkt_videos_needing_frames', { p_limit: FRAME_JOBS_PER_TICK });
     if (error) throw new Error(`sweep: videos-needing-frames failed: ${error.message}`);
     for (const row of (data ?? []) as Array<{ content_post_id: string }>) {
@@ -385,7 +411,7 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   }
 
   // ── stage 2b: staged frames → the same free OCR lane, under the same cap ──
-  {
+  if (reader === 'runner') {
     const { count: ocrQueued } = await sb.from('claude_jobs')
       .select('id', { count: 'exact', head: true })
       .eq('kind', 'mkt_visual_ocr').in('status', ['pending', 'running']);
@@ -417,9 +443,12 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   // ── stage 3: full processing, once the evidence is on hand ────────────────
   // Eligible = media stored AND (visual text present OR nothing to OCR). The
   // second arm covers video-only posts, whose evidence is the transcript.
+  // Under the Gemini reader a post is ready as soon as its media is stored —
+  // Gemini reads the images itself, there is no OCR lane to wait for.
   const readyForFull = postIds.filter((id) =>
-    storedAny.has(id) && !inFlight.has(id) && (hasVisualText.has(id) || !storedImagey.has(id)));
-  for (const id of readyForFull.slice(0, MAX_PROCESS_ENQUEUE)) {
+    storedAny.has(id) && !inFlight.has(id) && (reader === 'gemini' || hasVisualText.has(id) || !storedImagey.has(id)));
+  const processCap = reader === 'gemini' ? (readerBudgetOk ? MAX_PROCESS_ENQUEUE : 0) : MAX_PROCESS_ENQUEUE;
+  for (const id of readyForFull.slice(0, processCap)) {
     await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: id, from: 'sweep' }, p_priority: 40, p_requested_by: null, p_fallback_of: null });
     stats.content_process++;
   }
@@ -447,9 +476,40 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   // tightly bounded: it tops the queue up to ENRICH_QUEUE_HIGH_WATER and stops.
   // The lane is a singleton, drains at its own pace, and parks itself on a
   // subscription limit (claude_job_block) rather than hammering.
-  const { count: enrichQueued } = await sb.from('claude_jobs')
-    .select('id', { count: 'exact', head: true })
-    .eq('kind', 'mkt_content_enrichment').in('status', ['pending', 'running']);
+  if (reader === 'gemini' && readerBudgetOk) {
+    // Posts left waiting for the runner, and posts an older reader decided,
+    // get a full Gemini read (content_process re-uses stored media and
+    // transcripts; only the read itself is new).
+    const awaitingIds = (await pageAll<{ id: string }>(
+      (from, to) => sb.from('mkt_content_posts').select('id')
+        .eq('processing_status', 'awaiting_intelligence')
+        .order('id', { ascending: true }).range(from, to),
+      MAX_GEMINI_READS_PER_TICK * 4, 'awaiting scan')).map((r) => r.id).filter((id) => !inFlight.has(id));
+    for (const id of awaitingIds.slice(0, MAX_GEMINI_READS_PER_TICK)) {
+      const { error } = await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: id, from: 'sweep-gemini' }, p_priority: 45, p_requested_by: null, p_fallback_of: null });
+      if (error) throw new Error(`sweep: gemini read enqueue failed: ${error.message}`);
+      inFlight.add(id);
+      stats.gemini_reads++;
+    }
+    // Re-read: done decisions by a non-Gemini reader, newest posts first is not
+    // needed — order by id keeps the walk stable across ticks.
+    const olderReads = await pageAll<{ content_post_id: string }>(
+      (from, to) => sb.from('mkt_content_enrichment').select('content_post_id')
+        .eq('status', 'done').or('model.is.null,model.not.like.gemini*')
+        .order('content_post_id', { ascending: true }).range(from, to),
+      MAX_GEMINI_REREADS_PER_TICK * 4, 'reread scan');
+    for (const r of olderReads.filter((x) => !inFlight.has(x.content_post_id)).slice(0, MAX_GEMINI_REREADS_PER_TICK)) {
+      const { error } = await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: r.content_post_id, from: 'sweep-gemini-reread' }, p_priority: 70, p_requested_by: null, p_fallback_of: null });
+      if (error) throw new Error(`sweep: gemini re-read enqueue failed: ${error.message}`);
+      inFlight.add(r.content_post_id);
+      stats.gemini_rereads++;
+    }
+  }
+  const { count: enrichQueued } = reader === 'runner'
+    ? await sb.from('claude_jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('kind', 'mkt_content_enrichment').in('status', ['pending', 'running'])
+    : { count: ENRICH_QUEUE_HIGH_WATER };
   let budget = Math.min(MAX_ENRICH_JOBS_PER_TICK, ENRICH_QUEUE_HIGH_WATER - (enrichQueued ?? 0));
   if (budget > 0) {
     // The RPC is per-organization, so find the orgs that actually have unread
@@ -580,4 +640,24 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   }
 
   return stats;
+}
+
+
+/** Gemini reader spend since Riyadh midnight, from the ai_usage ledger. */
+async function readerSpendToday(sb: SupabaseClient): Promise<number> {
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const since = new Date(`${day}T00:00:00+03:00`).toISOString();
+  const rows = await pageAll<{ cost_usd: number | null }>(
+    (from, to) => sb.from('ai_usage').select('cost_usd')
+      .eq('call_site', 'worker/marketing/geminiRead').gte('created_at', since)
+      .order('id', { ascending: true }).range(from, to),
+    200_000, 'reader spend scan');
+  return rows.reduce((sum, r) => sum + (Number(r.cost_usd) || 0), 0);
+}
+
+async function readerBudgetUsd(sb: SupabaseClient): Promise<number> {
+  const { data, error } = await sb.from('mkt_settings').select('value').eq('key', 'content.reader_daily_budget_usd').maybeSingle();
+  if (error) throw new Error(`content.reader_daily_budget_usd read failed: ${error.message}`);
+  const n = Number((data as { value?: unknown } | null)?.value);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_READER_BUDGET_USD;
 }

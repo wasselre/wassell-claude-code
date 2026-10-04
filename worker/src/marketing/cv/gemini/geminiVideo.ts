@@ -156,7 +156,7 @@ export interface GeminiVideoResult {
   via: 'inline' | 'file';
 }
 
-async function uploadFile(path: string, bytes: number): Promise<{ name: string; uri: string }> {
+export async function uploadFile(path: string, bytes: number): Promise<{ name: string; uri: string }> {
   const key = geminiApiKey();
   const start = await fetch(`${GEMINI_API_BASE}/upload/v1beta/files`, {
     method: 'POST',
@@ -194,7 +194,7 @@ async function uploadFile(path: string, bytes: number): Promise<{ name: string; 
   throw new Error('provider:gemini uploaded video was not ready after 5 minutes');
 }
 
-async function deleteFile(name: string): Promise<void> {
+export async function deleteFile(name: string): Promise<void> {
   const r = await fetch(`${GEMINI_API_BASE}/v1beta/${name}`, { method: 'DELETE', headers: { 'x-goog-api-key': geminiApiKey() }, signal: AbortSignal.timeout(30_000) });
   // A leftover file costs nothing and Google deletes it after 48 h — log, do not fail the video.
   if (!r.ok) console.error(`[cv/gemini] delete uploaded file ${name} failed: HTTP ${r.status}`);

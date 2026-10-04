@@ -8,7 +8,7 @@ import { sweepContentBacklog } from '../sweepBacklog.js';
 // for that table. Enough to pin the STAGE SELECTION, which is the part that
 // decides whether a post is ever processed at all.
 // ---------------------------------------------------------------------------
-interface Canned { posts?: unknown[]; media?: unknown[]; visual?: unknown[]; inFlight?: unknown[]; ocrInFlight?: unknown[]; jobCount?: number; ocrCount?: number; enrichQueued?: number; awaitingOrgs?: unknown[]; leaseWon?: boolean }
+interface Canned { posts?: unknown[]; media?: unknown[]; visual?: unknown[]; inFlight?: unknown[]; ocrInFlight?: unknown[]; jobCount?: number; ocrCount?: number; enrichQueued?: number; awaitingOrgs?: unknown[]; leaseWon?: boolean; settings?: Record<string, unknown>; olderReads?: unknown[]; readerSpend?: unknown[] }
 
 /** PostgREST's server-side row cap. The fake enforces it so a `.limit()` that
  *  exceeds it cannot silently pass in tests while truncating in production. */
@@ -28,7 +28,7 @@ function fakeSb(c: Canned) {
     // media_kind, so without this a VIDEO row satisfies an images-only query and
     // the video-only test passes while the production query would not.
     const filters: Array<{ col: string; vals: unknown[] }> = [];
-    for (const m of ['select', 'lt', 'order', 'limit', 'neq']) b[m] = chain;
+    for (const m of ['select', 'lt', 'order', 'limit', 'neq', 'or', 'gte']) b[m] = chain;
     b.eq = (col: string, val: unknown) => { filters.push({ col, vals: [val] }); return b; };
     b.in = (col: string, vals: unknown[]) => { filters.push({ col, vals }); return b; };
     b.range = (from: number, to: number) => { range = [from, to]; return b; };
@@ -45,10 +45,20 @@ function fakeSb(c: Canned) {
       const [from, to] = range ?? [0, DB_MAX_ROWS - 1];
       return kept.slice(from, Math.min(to + 1, from + DB_MAX_ROWS));
     };
+    // Single-setting reads (content.reader, its budget, its pause).
+    b.maybeSingle = () => {
+      const key = filters.find((f) => f.col === 'key')?.vals[0] as string | undefined;
+      const v = key !== undefined ? c.settings?.[key] : undefined;
+      return Promise.resolve({ data: v === undefined ? null : { value: v }, error: null });
+    };
     b.then = (resolve: (v: unknown) => unknown) => {
+      if (table === 'mkt_content_enrichment') return resolve({ data: page(c.olderReads ?? []), error: null });
+      if (table === 'ai_usage') return resolve({ data: page(c.readerSpend ?? []), error: null });
       if (table === 'mkt_settings') return resolve({ data: c.leaseWon === false ? [] : [{ key: 'x' }], error: null });
       if (table === 'mkt_content_posts') {
         const awaiting = filters.some((f) => f.col === 'processing_status' && f.vals.includes('awaiting_intelligence'));
+        // Under the Gemini reader the awaiting scan selects post ids.
+        if (awaiting && c.settings?.['content.reader'] === 'gemini') return resolve({ data: page((c.awaitingOrgs ?? []).map((a, i) => ({ id: (a as { id?: string }).id ?? `aw${i}` }))), error: null });
         return resolve({ data: page(awaiting ? (c.awaitingOrgs ?? []) : (c.posts ?? [])), error: null });
       }
       if (table === 'mkt_content_media') return resolve({ data: page(c.media ?? []), error: null });
@@ -249,5 +259,58 @@ describe('sweepContentBacklog', () => {
     const stats = await sweepContentBacklog(sb, 'w1');
     expect(stats.skipped_queue_full).toBe(true);
     expect(enqueued).toHaveLength(0);
+  });
+
+  describe('with the Gemini reader (content.reader = gemini)', () => {
+    const gem = { 'content.reader': 'gemini' };
+
+    it('does not feed the runner OCR lane and reads an image post as soon as its media is stored', async () => {
+      const { sb, ocrInserts, enqueued } = fakeSb({ settings: gem, posts: [post('p1')], media: [stored('p1', 'image')] });
+      const stats = await sweepContentBacklog(sb, 'w1');
+      expect(stats.reader).toBe('gemini');
+      expect(ocrInserts).toHaveLength(0);
+      expect(stats.visual_ocr).toBe(0);
+      expect(stats.content_process).toBe(1);
+      expect((enqueued[0].p_params as { media_only?: boolean }).media_only).toBeUndefined();
+    });
+
+    it('sends posts waiting for a decision to a full Gemini read, never to the runner', async () => {
+      const { sb, enqueued, intelligenceCalls } = fakeSb({ settings: gem, awaitingOrgs: [{ id: 'a1' }, { id: 'a2' }] });
+      const stats = await sweepContentBacklog(sb, 'w1');
+      expect(stats.gemini_reads).toBe(2);
+      expect(intelligenceCalls).toHaveLength(0);
+      expect(enqueued.map((e) => (e.p_params as { content_post_id: string }).content_post_id)).toEqual(['a1', 'a2']);
+    });
+
+    it('re-reads posts an older reader decided', async () => {
+      const { sb, enqueued } = fakeSb({ settings: gem, olderReads: [{ content_post_id: 'r1' }, { content_post_id: 'r2' }] });
+      const stats = await sweepContentBacklog(sb, 'w1');
+      expect(stats.gemini_rereads).toBe(2);
+      expect(enqueued.every((e) => (e.p_params as { from: string }).from === 'sweep-gemini-reread')).toBe(true);
+    });
+
+    it('enqueues no reads once the day\'s budget is spent', async () => {
+      const { sb, enqueued } = fakeSb({ settings: { ...gem, 'content.reader_daily_budget_usd': 1 }, readerSpend: [{ cost_usd: 0.6 }, { cost_usd: 0.5 }],
+        posts: [post('p1')], media: [stored('p1', 'image')], awaitingOrgs: [{ id: 'a1' }], olderReads: [{ content_post_id: 'r1' }] });
+      const stats = await sweepContentBacklog(sb, 'w1');
+      expect(stats.reader_over_budget).toBe(true);
+      expect(stats.reader_spend_today_usd).toBe(1.1);
+      expect(enqueued).toHaveLength(0);
+    });
+
+    it('enqueues no reads while Google\'s daily quota pause is on', async () => {
+      const until = new Date(Date.now() + HOUR).toISOString();
+      const { sb, enqueued } = fakeSb({ settings: { ...gem, 'content.reader_paused_until': until }, awaitingOrgs: [{ id: 'a1' }], olderReads: [{ content_post_id: 'r1' }] });
+      const stats = await sweepContentBacklog(sb, 'w1');
+      expect(stats.reader_over_budget).toBe(true);
+      expect(enqueued).toHaveLength(0);
+    });
+
+    it('still recovers media while the reader is paused (that costs no AI)', async () => {
+      const { sb, enqueued } = fakeSb({ settings: { ...gem, 'content.reader_paused_until': new Date(Date.now() + HOUR).toISOString() }, posts: [post('p1')] });
+      const stats = await sweepContentBacklog(sb, 'w1');
+      expect(stats.media_recover).toBe(1);
+      expect((enqueued[0].p_params as { media_only?: boolean }).media_only).toBe(true);
+    });
   });
 });
