@@ -490,6 +490,31 @@ async function buildTokenContext(
     for (const row of data ?? []) {
       (recordsByModel[row.model_id as string] ??= []).push(row as unknown as AppRecord);
     }
+    // One more hop: a lookup target that only MIRRORS a field from a record it
+    // links to (an Our Projects entry → its master project's name / location).
+    // substituteFieldTokens reads those through mirrorSourceFor, so load them.
+    const hop2 = new Set<string>();
+    for (const row of (data ?? []) as Array<{ model_id: string; data: Record<string, unknown> }>) {
+      const tFields = ctx.models.find((m) => m.id === row.model_id)?.schema.sections.flatMap((s) => s.fields) ?? [];
+      for (const m of tFields) {
+        const viaId = m.type === 'mirror' ? m.mirror_via_lookup_field_id : m.type === 'section_mirror' ? m.section_mirror_via_lookup_field_id : null;
+        const via = viaId ? tFields.find((f) => f.id === viaId) : undefined;
+        if (!via || via.type !== 'lookup') continue;
+        const raw = row.data?.[via.name];
+        const id = Array.isArray(raw) ? raw[0] : raw;
+        if (typeof id === 'string' && id && !wantIds.has(id)) hop2.add(id);
+      }
+    }
+    if (hop2.size > 0) {
+      const { data: d2, error: e2 } = await ctx.supabase
+        .from('unified_records')
+        .select('id, model_id, data')
+        .in('id', [...hop2]);
+      if (e2) console.error(`[workflow-runner] mirrored lookup-token context load failed: ${e2.message}`);
+      for (const row of d2 ?? []) {
+        (recordsByModel[row.model_id as string] ??= []).push(row as unknown as AppRecord);
+      }
+    }
   }
 
   // Prefetch translation overlays for the |ar / |en formatters.

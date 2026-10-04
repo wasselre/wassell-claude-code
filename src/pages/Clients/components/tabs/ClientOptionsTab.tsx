@@ -239,7 +239,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
   }, [client.id, loadClientProjectInterest, apptRecords, visitRecords]);
 
   // Appointments and visits for this client, keyed by the all_projects id the
-  // option points at (visits point at our_projects → mapped via its `project`).
+  // option points at. Both point at OUR projects → mapped via its `project`.
   const eventsByProject = useMemo(() => {
     const map = new Map<string, Array<{ id: string; kind: 'appointment' | 'visit'; at: string; status: string }>>();
     const push = (pid: string, e: { id: string; kind: 'appointment' | 'visit'; at: string; status: string }) => {
@@ -248,13 +248,14 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
       list.push(e);
       map.set(pid, list);
     };
-    for (const a of apptRecords ?? []) {
-      if (a.data.client_id !== client.id) continue;
-      push(String(a.data.project_id ?? ''), { id: a.id, kind: 'appointment', at: String(a.data.appointment_date ?? ''), status: String(a.data.appointment_status ?? '') });
-    }
     const ourToMaster = new Map<string, string>();
     for (const p of (ourProjectsModelId ? records[ourProjectsModelId] : undefined) ?? []) {
       if (typeof p.data.project === 'string') ourToMaster.set(p.id, p.data.project);
+    }
+    for (const a of apptRecords ?? []) {
+      if (a.data.client_id !== client.id) continue;
+      const pid = String(a.data.project_id ?? '');
+      push(ourToMaster.get(pid) ?? '', { id: a.id, kind: 'appointment', at: String(a.data.appointment_date ?? ''), status: String(a.data.appointment_status ?? '') });
     }
     for (const v of visitRecords ?? []) {
       if (v.data.client_id !== client.id) continue;
@@ -816,9 +817,9 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
           )}
           {d.source_type === 'project' && interestByProject.has(String(d.source_id ?? '')) && (() => {
             const it = interestByProject.get(String(d.source_id ?? ''))!;
-            const tone = it.message_level === 'rejected'
-              ? 'border-red-200 bg-red-50 text-red-700'
-              : it.score >= 40 ? 'border-copper/50 bg-copper/10 text-copper' : 'border-sand/60 bg-cream/50 text-charcoal/70';
+            // A "no" does not erase what the client did before: the score is
+            // kept and the option's status (not interested) carries the "no".
+            const tone = it.score >= 40 ? 'border-copper/50 bg-copper/10 text-copper' : 'border-sand/60 bg-cream/50 text-charcoal/70';
             const parts = [
               `${L('الروابط', 'Links')} ${it.link_score}`,
               it.visits > 0 ? L('زار المشروع', 'Visited') : it.appointments > 0 ? L('حجز موعد', 'Appointment booked') : null,

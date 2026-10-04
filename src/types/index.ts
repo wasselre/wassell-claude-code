@@ -2986,7 +2986,8 @@ export interface TrackedInterestRow {
 
 /** One client's interest in one project (v_client_project_interest, 0–100):
  *  the link score + an appointment booked or a visit done + what the customer's
- *  own messages say about it (the AI's reading). 'rejected' scores 0. */
+ *  own messages say about it (the AI's reading). Appointments / visits count for
+ *  OUR projects only; 'rejected' adds nothing but keeps the rest of the score. */
 export interface ClientProjectInterestRow {
   client_id: string;
   project_id: string;

@@ -56,8 +56,13 @@ export function resolveFollowupContext(
   const appointment = findRecord(models, records, 'appointments', asString(data.appointment_id));
   // Appointment's project, else the client's MAIN project option (then the
   // first still-active project option) from Client Options.
+  // An appointment's project is an Our Projects entry (since 2026-10-04) —
+  // its `project` link is the master project; older appointments stored the
+  // master id directly.
+  const apptProject = asString(appointment?.project_id);
+  const ourEntry = apptProject ? findRecord(models, records, 'our_projects', apptProject) : null;
   const projectId =
-    asString(appointment?.project_id) ??
+    (ourEntry ? asString(ourEntry.project) : apptProject) ??
     (clientId ? clientActiveOptionRefs(models, records, clientId, 'project')[0]?.sourceId ?? null : null);
   const project = findRecord(models, records, 'all_projects', projectId);
 

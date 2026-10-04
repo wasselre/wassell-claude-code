@@ -174,8 +174,18 @@ export async function draftFollowupMessage(
   if (refIds.length) {
     const { data: refRows, error: rErr } = await svc.from('records').select('id, data').in('id', refIds);
     if (rErr) throw new Error(`visit projects read failed: ${rErr.message}`);
-    for (const r of (refRows ?? []) as { id: string; data: Record<string, unknown> }[]) {
-      nameOf.set(r.id, s(r.data.project_name) || s(r.data.name) || s(r.data.title));
+    // Appointments and visits point at Our Projects entries, which carry no
+    // name of their own — the name is on the master project they link to.
+    const rows = (refRows ?? []) as { id: string; data: Record<string, unknown> }[];
+    const masterOf = new Map(rows.filter((r) => s(r.data.project)).map((r) => [r.id, s(r.data.project)]));
+    const masterNames = new Map<string, string>();
+    if (masterOf.size) {
+      const { data: mRows, error: mErr2 } = await svc.from('records').select('id, data').in('id', [...new Set(masterOf.values())]);
+      if (mErr2) throw new Error(`visit master projects read failed: ${mErr2.message}`);
+      for (const r of (mRows ?? []) as { id: string; data: Record<string, unknown> }[]) masterNames.set(r.id, s(r.data.project_name));
+    }
+    for (const r of rows) {
+      nameOf.set(r.id, masterNames.get(masterOf.get(r.id) ?? '') || s(r.data.project_name) || s(r.data.name) || s(r.data.title));
     }
   }
   const visitLines = [

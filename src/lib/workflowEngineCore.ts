@@ -152,6 +152,42 @@ function getModelRecords(
   return byModel[modelId] ?? [];
 }
 
+/**
+ * The record a model's MIRROR reads `fieldName` from: the model has a `mirror`
+ * of that field, or a `section_mirror` whose source section holds it, through
+ * one of its own lookups. Returns the linked record (from the context's
+ * records) and the field definition there, or null. One extra hop only.
+ */
+export function mirrorSourceFor(
+  model: AppModel,
+  record: AppRecord,
+  fieldName: string,
+  context: SubstituteTokensContext,
+): { record: AppRecord; field: TokenValueOrigin['field'] } | null {
+  const fields = model.schema.sections.flatMap((s) => s.fields);
+  for (const m of fields) {
+    let viaId: string | null | undefined = null;
+    if (m.type === 'mirror' && m.mirror_target_field_name === fieldName) viaId = m.mirror_via_lookup_field_id;
+    else if (m.type === 'section_mirror') viaId = m.section_mirror_via_lookup_field_id;
+    if (!viaId) continue;
+    const via = fields.find((f) => f.id === viaId);
+    if (!via || via.type !== 'lookup' || !via.lookup_model_id) continue;
+    const sourceModel = context.models?.find((x) => x.id === via.lookup_model_id);
+    if (m.type === 'section_mirror') {
+      const section = sourceModel?.schema.sections.find((s) => s.id === m.section_mirror_source_section_id);
+      if (!section?.fields.some((f) => f.name === fieldName)) continue;
+      if (m.section_mirror_field_mode === 'custom' && !(m.section_mirror_field_names ?? []).includes(fieldName)) continue;
+    }
+    const raw = record.data[via.name];
+    const linkedId = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof linkedId !== 'string' || !linkedId) continue;
+    const linked = getModelRecords(context.recordsByModel, via.lookup_model_id).find((r) => r.id === linkedId);
+    if (!linked) continue;
+    return { record: linked, field: sourceModel?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === fieldName) };
+  }
+  return null;
+}
+
 /** What produced the token's value — lets language formatters resolve option
  *  labels (field metadata) and translations (owning record id). */
 interface TokenValueOrigin {
@@ -276,9 +312,19 @@ export function substituteFieldTokens(
         value = targetRecord.data[dotField];
         origin.recordId = targetRecord.id;
         origin.fieldSlug = dotField;
-        origin.field = context.models
-          ?.find((m) => m.id === lookupField.lookup_model_id)
-          ?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === dotField);
+        const targetModel = context.models?.find((m) => m.id === lookupField.lookup_model_id);
+        origin.field = targetModel?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === dotField);
+        if (value === undefined && targetModel) {
+          // The target only SHOWS this field through a mirror of a record it
+          // links to (e.g. an Our Projects entry mirrors its master project's
+          // name and location) — read it where the mirror reads it.
+          const via = mirrorSourceFor(targetModel, targetRecord, dotField, context);
+          if (via) {
+            value = via.record.data[dotField];
+            origin.recordId = via.record.id;
+            origin.field = via.field;
+          }
+        }
       }
 
       if (value === null || value === undefined) return '';

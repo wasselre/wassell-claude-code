@@ -199,9 +199,15 @@ export async function bookVisit(
   const ctx = await loadChatContext(svc, chatWid);
   const clientId = await ensureClient(svc, ctx);
   const apptModel = await modelId(svc, 'appointments');
+  // Appointments point at OUR projects (since 2026-10-04, like visits); map the
+  // master project to its Our Projects entry.
+  const { data: ours, error: oErr } = await svc.from('records').select('id')
+    .eq('model_id', await modelId(svc, 'our_projects')).eq('data->>project', a.projectId).limit(1);
+  if (oErr) throw new Error(`our-project lookup failed: ${oErr.message}`);
+  const ourProjectId = (ours as Array<{ id: string }> | null)?.[0]?.id ?? null;
 
   const { data: dup, error: dErr } = await svc.from('records').select('id')
-    .eq('model_id', apptModel).eq('data->>client_id', clientId).eq('data->>project_id', a.projectId)
+    .eq('model_id', apptModel).eq('data->>client_id', clientId).eq('data->>project_id', ourProjectId ?? '')
     .like('data->>appointment_date', `${a.day}%`).in('data->>appointment_status', ['scheduled', 'confirmed', 'rescheduled']).limit(1);
   if (dErr) throw new Error(`appointment check failed: ${dErr.message}`);
   const when = `${a.day}T${hhmm}`;
@@ -216,7 +222,7 @@ export async function bookVisit(
     p_data: {
       ...(typeof appId === 'string' && appId ? { app_id: appId } : {}),
       client_id: clientId, phone_number: ctx.phone, client_name: ctx.clientName ?? ctx.name ?? ctx.phone,
-      appointment_date: when, project_id: a.projectId, sales_rep: ctx.repUserId, appointment_status: 'scheduled',
+      appointment_date: when, ...(ourProjectId ? { project_id: ourProjectId } : {}), sales_rep: ctx.repUserId, appointment_status: 'scheduled',
       notes: `حجزه المساعد الآلي من محادثة واتساب — الوقت: ${approx}. لم تُرسل للعميل رسالة تأكيد آلية.`,
     },
     p_expected_version: null,
@@ -224,7 +230,7 @@ export async function bookVisit(
   if (error) throw new Error(`appointment save failed: ${error.message}`);
   await alertRep(svc, ctx, {
     title: 'موعد زيارة حجزه المساعد الآلي',
-    body: `${a.projectName} — ${a.day} — ${approx}.\nالعميل وافق في المحادثة. أكّد الموعد معه قبلها.`,
+    body: `${a.projectName} — ${a.day} — ${approx}.\nالعميل وافق في المحادثة. أكّد الموعد معه قبلها.${ourProjectId ? '' : '\nالمشروع ليس ضمن مشاريعنا المعتمدة، فسُجّل الموعد بلا مشروع.'}`,
     kind: 'visit_booked', dedupe: `agent-visit:${chatWid}:${a.projectId}:${a.day}`,
     meta: { project_id: a.projectId, day: a.day },
   });
