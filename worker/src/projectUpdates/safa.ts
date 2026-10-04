@@ -159,7 +159,11 @@ export async function loadBrokerSnapshot(supabase: SupabaseClient, now = Date.no
     }
     byProject.set(pid, [...seen.values()]);
   }
-  return { savedAt: j.saved_at, fresh: now - Date.parse(j.saved_at) <= BROKER_MAX_AGE_MS, byProject };
+  // A snapshot whose cards could not be read at all (portal markup changed,
+  // empty pages) is NOT a list — treating it as one would make every unit
+  // missing from the public site look sold.
+  const parsed = [...byProject.values()].reduce((n, u) => n + u.length, 0);
+  return { savedAt: j.saved_at, fresh: parsed > 0 && now - Date.parse(j.saved_at) <= BROKER_MAX_AGE_MS, byProject };
 }
 
 /** Union of the two lists; the broker price wins when both have the unit. */
