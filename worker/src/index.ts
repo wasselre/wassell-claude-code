@@ -3000,8 +3000,11 @@ async function claimAndRunOneMarketing(): Promise<boolean> {
   return true;
 }
 
-async function marketingPollLoop(): Promise<void> {
-  let lastMaint = 0;
+// `slot` > 0 = an extra claim loop on the same machine (MARKETING_LOOPS). Only
+// slot 0 runs the watchdog / scheduler / backlog sweep, so adding slots adds
+// claim capacity without multiplying the maintenance work.
+async function marketingPollLoop(slot = 0): Promise<void> {
+  let lastMaint = slot === 0 ? 0 : Number.POSITIVE_INFINITY;
   while (!shuttingDown) {
     marketingBusy = true;
     let didClaim = false;
@@ -4007,6 +4010,22 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
   // override. The general machines skip the unit-pdf loop entirely (see else).
   console.log('[worker] render-only machine (unit-pdf) — group=' + (process.env.FLY_PROCESS_GROUP ?? 'n/a'));
   loops = [unitPdfPollLoop()];
+} else if (process.env.FLY_PROCESS_GROUP === 'cv') {
+  // DEDICATED SHOT MACHINES (2026-10-05). Video shot jobs spend most of their
+  // time in ffmpeg (cut detection, frame extraction). On the 512MB shared-cpu
+  // general machines that work is throttled once the burst credit runs out —
+  // measured 2026-10-04: cut detection 2.4 s fresh vs 10–58 s hot, the whole
+  // job 29 s vs 64–145 s — and it starved post reading on the same CPU (reads
+  // fell from ~2,000/h to ~400/h). These machines have dedicated cores and run
+  // ONLY the cv lanes; CV_PROCESS_LOOPS jobs at a time (default 2).
+  if (!cvLanesActive) {
+    console.error(`[worker] cv-only machine but cv lanes are inactive (${env.CV_LANES_ENABLED ? 'GEMINI_API_KEY unset' : 'CV_LANES_ENABLED=0'}) — nothing to run`);
+    loops = [];
+  } else {
+    const n = Math.max(1, Math.min(8, Number(process.env.CV_PROCESS_LOOPS ?? 2) || 2));
+    console.log(`[worker] cv-only machine — ${n} shot loop(s) + 1 analyze loop`);
+    loops = [...Array.from({ length: n }, () => cvProcessPollLoop()), cvAnalyzePollLoop()];
+  }
 } else if (env.WORKFLOW_PROOF_ONLY) {
   // LOCAL PROOF MODE ONLY — register ONLY the workflow loop so a local run
   // against a preview endpoint can't claim/process live deck/image/document/
@@ -4119,15 +4138,25 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
   // on, the DB global pause (mkt_settings.collection_paused) + per-account enable
   // keep it inert until a pilot account is explicitly turned on.
   if (env.MARKETING_COLLECTION_ENABLED) {
-    console.log('[worker] marketing collection loop enabled (DB pause/enable still gate actual runs)');
-    loops.push(marketingPollLoop());
+    // Two claim loops per machine by default: a collection job waits on Apify for
+    // up to ~80 min (a large account's 12-month history), and with one loop it
+    // held the machine's only slot — post reading stalled behind it.
+    const mktLoops = Math.max(1, Math.min(4, Number(process.env.MARKETING_LOOPS ?? 2) || 2));
+    console.log(`[worker] marketing collection loops enabled ×${mktLoops} (DB pause/enable still gate actual runs)`);
+    for (let i = 0; i < mktLoops; i++) loops.push(marketingPollLoop(i));
   } else {
     console.log('[worker] marketing collection loop disabled (MARKETING_COLLECTION_ENABLED != 1)');
   }
   // ── cv lanes (W-CV) ── Competitor Visual Intelligence. Skipped (logged once)
   // when GEMINI_API_KEY is unset or CV_LANES_ENABLED=0; even when registered the
   // DB flag mkt_settings.cv.enabled decides whether a job is ever claimed.
-  if (cvLanesActive) {
+  // On Fly the general `app` machines leave shots to the dedicated `cv` group;
+  // set CV_ON_GENERAL=1 (fly secrets) to run them here again, e.g. if the cv
+  // group is scaled to zero. Off Fly (local runs) nothing changes.
+  const cvOnGeneral = process.env.FLY_PROCESS_GROUP !== 'app' || process.env.CV_ON_GENERAL === '1';
+  if (cvLanesActive && !cvOnGeneral) {
+    console.log('[worker] cv lanes run on the dedicated cv machines, not here (CV_ON_GENERAL=1 to override)');
+  } else if (cvLanesActive) {
     console.log('[worker] cv lanes enabled (gemini; DB cv.enabled still gates claims)');
     loops.push(cvProcessPollLoop(), cvAnalyzePollLoop());
   } else {

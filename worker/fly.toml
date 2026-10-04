@@ -23,6 +23,7 @@ primary_region = 'sin'
 [processes]
   app = 'node dist/index.js'
   render = 'node dist/index.js'
+  cv = 'node dist/index.js'
 
 [http_service]
   internal_port = 8080
@@ -52,3 +53,12 @@ primary_region = 'sin'
   size = 'shared-cpu-2x'
   memory = '2048mb'
   processes = ['render']
+
+# cv — video shot jobs ONLY (ffmpeg + Gemini). Dedicated cores: on shared-cpu the
+# ffmpeg steps were throttled 5-20x and starved post reading (measured
+# 2026-10-04). Scale with `fly scale count cv=N`; at 0, set CV_ON_GENERAL=1 or
+# no shot job runs anywhere.
+[[vm]]
+  size = 'performance-2x'
+  memory = '4096mb'
+  processes = ['cv']
