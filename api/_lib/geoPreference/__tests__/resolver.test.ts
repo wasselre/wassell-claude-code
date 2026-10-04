@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  resolveAnchor, parseDirection, placeKey, roadKey, cityArabicName, sameCity, stripDirectionClitic, spanReferent, RESOLVER_VERSION,
+  resolveAnchor, parseDirection, placeKey, roadKey, cityArabicName, sameCity, stripDirectionClitic, spanReferent, RESOLVER_VERSION, stationNameForms,
   type ResolverDb, type ResolutionContext, type DistrictCandidate, type ElementCandidate, type CityCandidate,
 } from '../resolver.js';
 import type { AnchorToken } from '../ontology.js';
@@ -750,5 +750,49 @@ describe('stripDirectionClitic / spanReferent', () => {
     expect(spanReferent({ span: 'شرق طريق الدمام' })).toBe('طريق الدمام');
     expect(spanReferent({ span: 'بالشمال' })).toBe('');
     expect(spanReferent({ span: 'سلمان' })).toBe('');
+  });
+});
+
+describe('resolveAnchor — a venue said as a station (ctx.station)', () => {
+  const el = (external_id: string, name_ar: string, category: string, lat = 24.7, lng = 46.7): ElementCandidate => ({
+    external_id, name_ar, name_en: '', aliases: [], geom_kind: 'point', category, type: 't', city: 'الرياض',
+    country_code: 'SA', lat, lng, confidence_score: 1, review_status: 'approved', is_active: true,
+  });
+  const map = [
+    el('hosp', 'مستشفى الإيمان', 'hospitals', 24.60, 46.75),
+    el('st-iman', 'محطة مستشفى الإيمان', 'metro_stations', 24.62, 46.77),
+    el('kafd-area', 'مركز الملك عبدالله المالي', 'business_zones', 24.76, 46.64),
+    el('st-kafd', 'مركز الملك عبدالله المالي', 'metro_stations', 24.767, 46.643),
+  ];
+  const db = fakeDb({
+    async findElements(token) {
+      const k = placeKey(token);
+      return map.filter((e) => placeKey(e.name_ar) === k);
+    },
+  });
+  const near = { landmark: 3000, metro: 1000 };
+
+  it('stationNameForms strips the station words', () => {
+    expect(stationNameForms('محطة مترو مركز الملك عبدالله المالي')).toEqual(['مركز الملك عبدالله المالي', 'محطة مركز الملك عبدالله المالي']);
+    expect(stationNameForms('مترو العزيزية')).toEqual(['العزيزية', 'محطة العزيزية']);
+    expect(stationNameForms('محطة')).toEqual([]);
+  });
+  it('«محطة مترو X» picks the station named X, not the business area of the same name, at the metro radius', async () => {
+    const r = await resolveAnchor(anchor('landmark', 'محطة مترو مركز الملك عبدالله المالي'), ctx({ db, station: true, default_near_radius_m: near }));
+    expect(r.recipe?.resolved_element_ids).toEqual(['st-kafd']);
+    expect(r.recipe?.radius_or_band_m).toBe(1000);
+  });
+  it('a hospital name said after «محطة» picks «محطة مستشفى الإيمان»', async () => {
+    const r = await resolveAnchor(anchor('landmark', 'مستشفى الإيمان'), ctx({ db, station: true, default_near_radius_m: near }));
+    expect(r.recipe?.resolved_element_ids).toEqual(['st-iman']);
+  });
+  it('without «محطة» the hospital stays the hospital', async () => {
+    const r = await resolveAnchor(anchor('landmark', 'مستشفى الإيمان'), ctx({ db, default_near_radius_m: near }));
+    expect(r.recipe?.resolved_element_ids).toEqual(['hosp']);
+    expect(r.recipe?.radius_or_band_m).toBe(3000);
+  });
+  it('the stripped name never picks a non-station («محطة مترو X» with no station X asks)', async () => {
+    const r = await resolveAnchor(anchor('landmark', 'محطة مترو مستشفى الإيمان القديم'), ctx({ db, station: true, default_near_radius_m: near }));
+    expect(r.status).toBe('needs_confirm');
   });
 });

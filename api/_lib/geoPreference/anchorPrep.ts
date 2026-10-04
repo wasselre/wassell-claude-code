@@ -104,7 +104,7 @@ import { distancesIn } from './distanceText.js';
 /** The per-anchor companions this module derives (merged over the run context). */
 export type AnchorContext = Pick<
   ResolutionContext,
-  'radius_m' | 'proximity' | 'city' | 'admin_city' | 'city_unclear' | 'referent_is_road' | 'confirm_city' | 'ask_reason'
+  'radius_m' | 'proximity' | 'city' | 'admin_city' | 'city_unclear' | 'referent_is_road' | 'confirm_city' | 'ask_reason' | 'station'
 >;
 
 /** A city / region the mention NAMES (for the conversation check I9). */
@@ -485,6 +485,23 @@ function precededBy(tokens: readonly MentionToken[], o: Occurrence, phrases: rea
     }
     return true;
   });
+}
+
+/** Words that say the venue is a STATION (folded). */
+const STATION_WORD_SET: ReadonlySet<string> = new Set(['محطة', 'مترو', 'المترو', 'metro', 'station'].map(foldWord));
+const STATION_PHRASES = ['محطة مترو', 'محطة المترو', 'محطة', 'مترو', 'المترو', 'metro station', 'station', 'metro']
+  .map((p) => tokenize(p).map((t) => t.f));
+
+/**
+ * The customer said the venue is a station: a station word inside its span
+ * («محطة مترو العليا»), or right before it in their words — the extractor
+ * often keeps only the name («قريبة من محطة مستشفى الإيمان» → span «مستشفى
+ * الإيمان»). Sets ResolutionContext.station (resolver: a metro station of
+ * that name wins over a same-named hospital / district).
+ */
+export function saidAsStation(texts: readonly (readonly MentionToken[])[], a: Pick<AnchorToken, 'span' | 'normalized_token'>): boolean {
+  if (tokenize(String(a.span ?? '')).some((t) => STATION_WORD_SET.has(t.f))) return true;
+  return texts.some((tk) => locateAnchor(tk, a).some((o) => precededBy(tk, o, STATION_PHRASES)));
 }
 
 /** A proximity phrase stands, as whole words, right before one of `occ`. */
@@ -1082,6 +1099,7 @@ export function prepareMention(e: Evidence, opts: PrepareOptions = {}): Prepared
       }
     }
     if (elementLike(it) && it.prox) ctx.proximity = true;
+    if (t === 'landmark' && saidAsStation(texts, it.a)) ctx.station = true;
     it.ctx = ctx;
   }
 

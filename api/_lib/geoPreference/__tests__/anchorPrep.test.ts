@@ -1036,3 +1036,19 @@ describe('V8 — a road side offered as an alternative («او …»)', () => {
     expect(offeredAsAlternative(ev(side, []))).toBe(false);
   });
 });
+
+describe('P10 — a venue said as a station', () => {
+  const conv = (text: string): Conversation => ({ channel: 'chat', id: 'c', turns: [{ speaker: 'client', text, ref: 'm1' }] });
+  const station = (p: { contexts: Array<{ station?: boolean }> }) => p.contexts.map((c) => c.station === true);
+  it('a station word inside the span', () => {
+    expect(station(prepareMention(ev('قريبة من محطة مترو العليا', [a('landmark', 'محطة مترو العليا')])))).toEqual([true]);
+  });
+  it('«محطة» right before the name in the customer\u2019s turn, though the span dropped it', () => {
+    const e = ev('مستشفى الإيمان', [a('landmark', 'مستشفى الإيمان')]);
+    expect(station(prepareMention(e, { conversation: conv('ابي شقة قريبة من محطة مستشفى الإيمان') }))).toEqual([true]);
+  });
+  it('no station word → not a station', () => {
+    const e = ev('مستشفى الإيمان', [a('landmark', 'مستشفى الإيمان')]);
+    expect(station(prepareMention(e, { conversation: conv('ابي شقة قريبة من مستشفى الإيمان') }))).toEqual([false]);
+  });
+});

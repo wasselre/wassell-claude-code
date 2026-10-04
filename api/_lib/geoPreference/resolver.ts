@@ -282,6 +282,14 @@ export interface ResolutionContext {
    * (HARD RULE 4 still holds there). The fact carries radius_source 'default'.
    */
   default_near_radius_m?: { landmark: number; metro: number };
+  /**
+   * The customer said «محطة» / «مترو» / "station" with this venue (anchorPrep
+   * P10 — in the span, or right before it in their words). A METRO STATION of
+   * that name then wins over a same-named district / hospital / business area
+   * («محطة مستشفى الإيمان», «محطة مترو مركز الملك عبدالله المالي»), see
+   * {@link resolveVenueElement}. No station by that name → the normal lookup.
+   */
+  station?: boolean;
   /** TEST-ONLY: checks switched off (the monotonicity property). Never set in production. */
   disabled?: ReadonlySet<CheckName>;
   /** Explicit radius/band in METRES (landmark within_radius, road within_distance). */
@@ -1064,6 +1072,22 @@ function venueClusters(cands: readonly ElementCandidate[]): number {
   return new Set(cands.map((_, i) => find(i))).size;
 }
 
+/** geo_elements.category of a metro / tram / monorail station. */
+export const METRO_STATION_CATEGORY = 'metro_stations';
+
+const STATION_PREFIX = /^\s*(?:(?:محطة|محطه)(?:\s+(?:مترو|المترو|قطار|القطار))?|(?:مترو|المترو)(?:\s+(?:محطة|محطه))?|(?:the\s+)?(?:metro\s+station|metro|station))\s+/i;
+
+/**
+ * The names a station said as «محطة مترو X» (or «مترو X», «X» after «محطة»)
+ * may be stored under: «X» and «محطة X» — the map has both «العزيزية» and
+ * «محطة الدوح». Empty only for a token that is nothing but a station word.
+ */
+export function stationNameForms(token: string): string[] {
+  const bare = `${String(token ?? '').trim()} `.replace(STATION_PREFIX, '').trim();
+  if (!bare) return [];
+  return [bare, `محطة ${bare}`];
+}
+
 /**
  * A named venue's element: POINT and POLYGON matches are gathered TOGETHER
  * (malls, parks, universities, hospitals… are mostly polygons — «الرياض بارك»
@@ -1082,17 +1106,31 @@ async function resolveVenueElement(
   if (ctx.city_unclear) return { pick: null, result: needsConfirm('ambiguous_entity') };
   const contradicted = scopeContradicted(ctx);
   if (contradicted) return { pick: null, result: contradicted };
-  const tokens = asTokens(tokenOrTokens);
-  if (!tokens.length) return { pick: null, result: needsConfirm('outside_admin') };
+  const spokenTokens = asTokens(tokenOrTokens);
+  if (!spokenTokens.length) return { pick: null, result: needsConfirm('outside_admin') };
+  // «محطة مترو X» → also look up «X» and «محطة X» (station names are stored both ways).
+  const tokens = ctx.station ? asTokens([...spokenTokens, ...spokenTokens.flatMap(stationNameForms)]) : spokenTokens;
   const preferCountry = ctx.preferCountry || DEFAULT_GEO_COUNTRY;
   const candidates = (await findElementsFor(tokens, ctx))
     .filter(elementUsable)
     .filter((e) => (e.country_code || DEFAULT_GEO_COUNTRY) === preferCountry)
     .filter((e) => e.geom_kind !== 'linestring'); // a road is never a venue
-  const wanted = new Set(tokens.map(placeKey).filter(Boolean));
-  const hit = (n: string): boolean => wanted.has(placeKey(n));
-  const exact = candidates.filter((e) => hit(e.name_ar) || hit(e.name_en) || e.aliases.some(hit));
-  const spoken = tokens.map(placeWords);
+  const hitIn = (keys: ReadonlySet<string>) => (e: ElementCandidate): boolean =>
+    [e.name_ar, e.name_en, ...e.aliases].some((n) => keys.has(placeKey(n)));
+  const keysOf = (ts: readonly string[]): Set<string> => new Set(ts.map(placeKey).filter(Boolean));
+  const isHit = hitIn(keysOf(tokens));
+  if (ctx.station) {
+    // The customer said it is a station: a metro station of that exact name wins.
+    const stations = candidates.filter((e) => e.category === METRO_STATION_CATEGORY && isHit(e));
+    if (stations.length > 0) {
+      if (venueClusters(stations) !== 1) return { pick: null, result: needsConfirm('ambiguous_entity') };
+      return { pick: [...stations].sort((a, b) => a.external_id.localeCompare(b.external_id))[0]! };
+    }
+  }
+  // The station-stripped forms only ever pick a station (above) — never «X» the
+  // district / hospital / business area.
+  const exact = candidates.filter(hitIn(keysOf(spokenTokens)));
+  const spoken = spokenTokens.map(placeWords);
   const prefix = enabled(ctx, 'venue_prefix')
     ? candidates.filter((e) => !exact.includes(e) && isPrefixNamesake(e, spoken))
     : [];
