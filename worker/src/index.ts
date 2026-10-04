@@ -49,6 +49,7 @@ import { runEnrichmentJob, type EnrichmentJob } from './runEnrichmentJob.js';
 import { ensureFileThumb } from './lib/fileThumb.js';
 import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
 import { runPortalRegistrationJob, type PortalRegistrationJob } from './runPortalRegistrationJob.js';
+import { runProjectUpdateJob, type ProjectUpdateRun } from './runProjectUpdateJob.js';
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
 import { runUnitPdfJob, type UnitPdfJob } from './runUnitPdfJob.js';
 import { runInboundMediaJob, type InboundMediaJob } from './runInboundMediaJob.js';
@@ -173,6 +174,11 @@ let regaWakeRequested = false;
 // OTP mid-run. Same Browserbase gate as the rega loop.
 let portalBusy = false;
 let portalWakeRequested = false;
+// Automated project updates (project_update_runs): the weekly portal reconcile
+// that used to be done by hand from each unit_updates recipe. Always registered;
+// project_update_settings.is_enabled + scheduled_sources gate what runs.
+let projectUpdateBusy = false;
+let projectUpdateWakeRequested = false;
 // Scheduled WhatsApp sends (scheduled_whatsapp_jobs, TENTH loop). Time-gated:
 // claim rows whose deliver_at has passed and send them via WAHA (WAHA has no
 // native deliverAt). Plus a WAHA session watchdog that restarts a session that
@@ -2696,6 +2702,86 @@ async function portalPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Automated project updates — project_update_runs queue.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Claim ONE run and execute it. The run owns its own per-project error
+ *  handling; anything that escapes (login refused, portal blocked) fails the
+ *  run, and project_update_enqueue_due caps those retries per day. */
+async function claimAndRunOneProjectUpdate(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('project_update_claim_next', { p_worker: env.WORKER_ID });
+  if (error) {
+    console.error(`[worker] project-update claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<ProjectUpdateRun>;
+  if (rows.length === 0) return false;
+  const run = rows[0]!;
+  console.log(`[worker] claimed project-update run=${run.id} source=${run.source_type} dry=${run.dry_run} attempts=${run.attempts}`);
+  try {
+    const result = await runProjectUpdateJob({ supabase, run: { ...run, params: run.params ?? {} } });
+    const { error: finErr } = await supabase.rpc('project_update_finish', {
+      p_id: run.id, p_status: 'done', p_outcome: result.outcome, p_summary: result.summary, p_error: null,
+    });
+    if (finErr) console.error(`[worker] project_update_finish failed run=${run.id}: ${finErr.message}`);
+    else console.log(`[worker] project-update run=${run.id} → ${result.outcome}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] project-update run=${run.id} FAILED: ${msg}`);
+    const { error: finErr } = await supabase.rpc('project_update_finish', {
+      p_id: run.id, p_status: 'failed', p_outcome: null, p_summary: null, p_error: msg.slice(0, 2000),
+    });
+    if (finErr) console.error(`[worker] project_update_finish(failed) failed run=${run.id}: ${finErr.message}`);
+  }
+  return true;
+}
+
+/** Scheduler + watchdog tick. Every machine runs it; the open-run unique index
+ *  makes the enqueue idempotent. */
+async function projectUpdateTick(): Promise<void> {
+  const { data, error } = await supabase.rpc('project_update_enqueue_due');
+  if (error) console.error(`[worker] project_update_enqueue_due failed: ${error.message}`);
+  else if (typeof data === 'number' && data > 0) console.log(`[worker] project-update scheduler enqueued ${data} run(s)`);
+  const { data: swept, error: wErr } = await supabase.rpc('project_update_watchdog');
+  if (wErr) console.error(`[worker] project_update_watchdog failed: ${wErr.message}`);
+  else if (typeof swept === 'number' && swept > 0) console.warn(`[worker] project-update watchdog swept ${swept} run(s)`);
+}
+
+const PROJECT_UPDATE_TICK_MS = 10 * 60_000;
+
+async function projectUpdatePollLoop(): Promise<void> {
+  // Stagger the first tick so five machines booting together don't all hit
+  // the scheduler in the same second (harmless, just noisy).
+  let lastTick = Date.now() - PROJECT_UPDATE_TICK_MS + Math.floor(Math.random() * 60_000);
+  while (!shuttingDown) {
+    if (Date.now() - lastTick > PROJECT_UPDATE_TICK_MS) {
+      lastTick = Date.now();
+      try {
+        await projectUpdateTick();
+      } catch (err) {
+        console.error('[worker] project-update tick error:', err);
+      }
+    }
+    projectUpdateBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneProjectUpdate();
+    } catch (err) {
+      console.error('[worker] project-update poll iteration error:', err);
+    }
+    projectUpdateBusy = false;
+    if (didClaim || projectUpdateWakeRequested) {
+      projectUpdateWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS * 5 && !projectUpdateWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Server-authoritative workflow runner — workflow_jobs queue.
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -3274,6 +3360,7 @@ const server = http.createServer((req, res) => {
         rega_enabled: !!(env.BROWSERBASE_API_KEY && env.BROWSERBASE_PROJECT_ID),
         portal_busy: portalBusy,
         portal_enabled: !!(env.BROWSERBASE_API_KEY && env.BROWSERBASE_PROJECT_ID),
+        project_update_busy: projectUpdateBusy,
         marketing_busy: marketingBusy,
         marketing_enabled: env.MARKETING_COLLECTION_ENABLED,
         marketing_ops_busy: marketingOpsBusy,
@@ -3315,6 +3402,7 @@ const server = http.createServer((req, res) => {
     workflowWakeRequested = true;
     regaWakeRequested = true;
     portalWakeRequested = true;
+    projectUpdateWakeRequested = true;
     pushWakeRequested = true;
     notificationWakeRequested = true;
     scheduledWaWakeRequested = true;
@@ -3344,7 +3432,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || chatOutcomeBusy || previewBusy || enrichmentBusy || compressBusy || documentBusy || migrationBusy || workflowBusy || regaBusy || portalBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || callAnalysisBusy || chatOutcomeBusy || previewBusy || enrichmentBusy || compressBusy || documentBusy || migrationBusy || workflowBusy || regaBusy || portalBusy || projectUpdateBusy || scheduledWaBusy || marketingBusy || notificationBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -3937,6 +4025,7 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     marketingOpsPollLoop(), // always-on: ops monitoring runs even when collection is disabled
     inboundMediaPollLoop(), // durable save + voice transcription of inbound WhatsApp media
     waAgentPollLoop(),      // WhatsApp sales agent turns (debounced) → /api/whatsapp/agent-turn
+    projectUpdatePollLoop(), // automated project updates (portals; DB settings gate runs)
   ];
   // AI call-result analysis only runs when the DeepSeek key is set, so the
   // worker boots cleanly before the feature is switched on.
