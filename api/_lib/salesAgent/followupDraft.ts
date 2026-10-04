@@ -4,8 +4,11 @@
  * approve every follow-up"). Nothing here sends anything.
  *
  * It reads the client's whole file — the WhatsApp thread with real speaker
- * labels (client / rep / our assistant), the last calls, earlier follow-up
- * outcomes, the projects we sent and how much the client looked at them — and
+ * labels (client / rep / our assistant), the last three calls in full (who
+ * said what, when Hatif diarized them), visits and appointments, the client's
+ * saved preferences, every project in the client's options with its status,
+ * the AI's latest reading of the chat, earlier follow-up outcomes, and the
+ * projects we sent with how much the client looked at them — and
  * writes ONE short message in the reps' voice (the wassel-whatsapp-voice
  * skill's measured rules). The same numbers guard as the live agent checks it;
  * one rewrite, and any problem left is shown to the operator as a warning
@@ -18,6 +21,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { trackedAnthropic } from '../aiUsage.js';
 import { checkReply, groundedNumbers } from './guard.js';
 import { resolveProjectDelivery } from '../../../src/lib/projectMessage/delivery.js';
+import { hatifWordsToTurns } from '../geoPreference/hatifDialogue.js';
 
 const CALL_SITE = 'api/_lib/salesAgent/followupDraft';
 const MESSAGE_WINDOW = 60;
@@ -67,6 +71,7 @@ RE-ENTRY (never skip)
 - The client went quiet after we answered → a light check-in on the last real topic: «ناسبك المشروع؟», «وش رأيك في صفا 82؟», «لازلت مهتم؟».
 - The thread is stale (a week or more) and continuing would need real work → a check-in first («مساك الله بالخير، لازلت مهتم بشراء وحدة سكنية؟»), not a delivery.
 - You may ask which day suits them to visit; never confirm a time.
+- Use the file: the client's saved preferences, their visits, and each project's status in their options. Ask about the MAIN project or one they showed interest in; never bring up a project marked not_interested / eliminated / closed. After a visit, ask how it went before offering anything new.
 
 VOICE (the reps' measured style)
 - Najdi colloquial, warm, brief. One idea, ONE closing question. 1–2 short lines, ideally under 80 characters, never over 200.
@@ -113,18 +118,88 @@ export async function draftFollowupMessage(
   const rows = ((msgsRes.data ?? []) as MsgRow[]).slice().reverse();
   if (!rows.length) throw new Error('the chat has no messages');
 
-  // Earlier follow-ups (outcome + note) and the last calls.
-  const { data: fModel } = await svc.from('models').select('id').eq('name', 'followups').maybeSingle();
-  const { data: cModel } = await svc.from('models').select('id').eq('name', 'phone_calls').maybeSingle();
-  const [pastRes, callsRes] = await Promise.all([
-    fModel ? svc.from('records').select('data, updated_at').eq('model_id', (fModel as { id: string }).id)
+  // Model ids for everything else in the file.
+  const { data: modelRows, error: mErr } = await svc.from('models').select('id, name')
+    .in('name', ['followups', 'phone_calls', 'appointments', 'visits', 'client_property_options']);
+  if (mErr) throw new Error(`models read failed: ${mErr.message}`);
+  const mid = (n: string): string | null => ((modelRows ?? []) as { id: string; name: string }[]).find((m) => m.name === n)?.id ?? null;
+  const none = Promise.resolve({ data: [] as unknown[], error: null });
+  const [pastRes, callsRes, apptRes, visitRes, optRes, readingRes] = await Promise.all([
+    mid('followups') ? svc.from('records').select('data, updated_at').eq('model_id', mid('followups')!)
       .eq('data->>client_id', args.clientId).eq('data->>followup_status', 'completed')
-      .order('updated_at', { ascending: false }).limit(4) : Promise.resolve({ data: [], error: null }),
-    cModel ? svc.from('records').select('data').eq('model_id', (cModel as { id: string }).id)
-      .eq('data->>client_link', args.clientId).order('created_at', { ascending: false }).limit(2) : Promise.resolve({ data: [], error: null }),
+      .order('updated_at', { ascending: false }).limit(4) : none,
+    mid('phone_calls') ? svc.from('records').select('id, data').eq('model_id', mid('phone_calls')!)
+      .eq('data->>client_link', args.clientId).order('created_at', { ascending: false }).limit(3) : none,
+    mid('appointments') ? svc.from('records').select('data').eq('model_id', mid('appointments')!)
+      .eq('data->>client_id', args.clientId).order('created_at', { ascending: false }).limit(5) : none,
+    mid('visits') ? svc.from('records').select('data').eq('model_id', mid('visits')!)
+      .eq('data->>client_id', args.clientId).order('created_at', { ascending: false }).limit(5) : none,
+    mid('client_property_options') ? svc.from('records').select('data').eq('model_id', mid('client_property_options')!)
+      .eq('data->>client_id', args.clientId).eq('data->>source_type', 'project').limit(40) : none,
+    svc.from('chat_outcome_suggestions').select('suggested_outcome, summary, suggested_main_project_name, status, created_at')
+      .eq('client_id', args.clientId).in('status', ['ready', 'confirmed']).order('created_at', { ascending: false }).limit(1),
   ]);
-  if (pastRes.error) throw new Error(`past follow-ups read failed: ${pastRes.error.message}`);
-  if (callsRes.error) throw new Error(`calls read failed: ${callsRes.error.message}`);
+  for (const [name, r] of [['past follow-ups', pastRes], ['calls', callsRes], ['appointments', apptRes], ['visits', visitRes], ['client options', optRes], ['AI reading', readingRes]] as const) {
+    if (r.error) throw new Error(`${name} read failed: ${r.error.message}`);
+  }
+
+  // Calls: the whole conversation, who said what, when Hatif diarized it;
+  // otherwise the AI summary / the flat transcript.
+  const callRows = (callsRes.data ?? []) as { id: string; data: Record<string, unknown> }[];
+  const logsById = new Map<string, { direction: string | null; transcription: unknown }>();
+  if (callRows.length) {
+    const { data: logs, error: lErr } = await svc.from('call_logs').select('id, direction, transcription').in('id', callRows.map((c) => c.id));
+    if (lErr) throw new Error(`call logs read failed: ${lErr.message}`);
+    for (const l of (logs ?? []) as { id: string; direction: string | null; transcription: unknown }[]) logsById.set(l.id, l);
+  }
+  const callTexts = callRows.map((c) => {
+    const log = logsById.get(c.id);
+    const dialogue = log ? hatifWordsToTurns(log.transcription, { direction: log.direction, ref: c.id }) : null;
+    const when = riyadh(s(c.data.call_time));
+    if (dialogue && dialogue.labelSource !== 'none') {
+      const lines = dialogue.turns
+        .map((t) => `${t.speaker === 'client' ? 'العميل' : t.speaker === 'agent' ? 'المندوب' : '؟'}: ${t.text}`)
+        .join('\n');
+      return `- مكالمة ${when}:\n${clip(lines, 2500)}`;
+    }
+    const summary = s(c.data.ai_summary) || s(c.data.transcription_text);
+    return summary ? `- مكالمة ${when} (ملخص): ${clip(summary, 1200)}` : '';
+  }).filter(Boolean);
+
+  // Visits and booked appointments, with project names.
+  const appts = (apptRes.data ?? []) as { data: Record<string, unknown> }[];
+  const visits = (visitRes.data ?? []) as { data: Record<string, unknown> }[];
+  const refIds = [...new Set([...appts.map((x) => s(x.data.project_id)), ...visits.map((x) => s(x.data.project_id))].filter(Boolean))];
+  const nameOf = new Map<string, string>();
+  if (refIds.length) {
+    const { data: refRows, error: rErr } = await svc.from('records').select('id, data').in('id', refIds);
+    if (rErr) throw new Error(`visit projects read failed: ${rErr.message}`);
+    for (const r of (refRows ?? []) as { id: string; data: Record<string, unknown> }[]) {
+      nameOf.set(r.id, s(r.data.project_name) || s(r.data.name) || s(r.data.title));
+    }
+  }
+  const visitLines = [
+    ...appts.map((x) => `- موعد زيارة ${riyadh(s(x.data.appointment_date) || s(x.data.scheduled_datetime))} لمشروع ${nameOf.get(s(x.data.project_id)) || '—'} — الحالة: ${s(x.data.appointment_status) || '—'}`),
+    ...visits.map((x) => `- زيارة ${riyadh(s(x.data.scheduled_datetime))} لمشروع ${nameOf.get(s(x.data.project_id)) || '—'}${s(x.data.visit_result) ? ` — النتيجة: ${s(x.data.visit_result)}` : ''}`),
+  ];
+
+  // What the client asked for (saved preferences).
+  const listText = (v: unknown): string => (Array.isArray(v) ? v.map((x) => s(x)).filter(Boolean).join('، ') : s(v));
+  const prefLines = [
+    rangeText(client.budget) && `الميزانية: ${rangeText(client.budget)}`,
+    listText(client.preferred_unit_type) && `نوع الوحدة: ${listText(client.preferred_unit_type)}`,
+    rangeText(client.preferred_bedrooms) && `غرف النوم: ${rangeText(client.preferred_bedrooms)}`,
+    rangeText(client.preferred_area) && `المساحة: ${rangeText(client.preferred_area)}`,
+    listText(client.purchase_objective) && `هدف الشراء: ${listText(client.purchase_objective)}`,
+    listText(client.preferred_amenities) && `مرافق: ${listText(client.preferred_amenities)}`,
+    s(client.preference_notes) && `ملاحظات: ${clip(s(client.preference_notes), 300)}`,
+  ].filter((x): x is string => !!x);
+
+  // The AI's own reading: the latest outcome reading + every project in the
+  // client's options with its status.
+  const reading = ((readingRes.data ?? []) as { suggested_outcome: string | null; summary: string | null; suggested_main_project_name: string | null }[])[0];
+  const optionLines = ((optRes.data ?? []) as { data: Record<string, unknown> }[])
+    .map((o) => `- ${s(o.data.source_name) || '—'}: ${s(o.data.status) || 'suitable'}${o.data.is_main === true ? ' (المشروع الرئيسي)' : ''}`);
 
   // Projects sent, with the facts the message may quote.
   const sentIds = [...new Set(((sentRes.data ?? []) as { project_id: string | null }[]).map((r) => r.project_id).filter((x): x is string => !!x))].slice(0, 8);
@@ -157,10 +232,6 @@ export async function draftFollowupMessage(
     const type = Array.isArray(r.data.followup_type) ? s((r.data.followup_type as unknown[])[0]) : s(r.data.followup_type);
     return `- ${riyadh(s(r.data.actual_datetime) || r.updated_at)} ${type}: ${s(r.data.call_result) || '—'}${s(r.data.outcome_notes) ? ` — ${clip(s(r.data.outcome_notes), 200)}` : ''}`;
   });
-  const calls = ((callsRes.data ?? []) as { data: Record<string, unknown> }[]).map((r) => {
-    const summary = s(r.data.ai_summary) || clip(s(r.data.transcription_text), 600);
-    return summary ? `- ${riyadh(s(r.data.call_time))}: ${clip(summary, 600)}` : '';
-  }).filter(Boolean);
 
   const lastIn = [...rows].reverse().find((m) => m.flow === 'in');
   const lastAny = rows[rows.length - 1]!;
@@ -180,14 +251,28 @@ export async function draftFollowupMessage(
     'نتائج متابعات سابقة:',
     ...(past.length ? past : ['- لا يوجد']),
     '',
-    'ملخص آخر المكالمات (للفهم فقط — لا تقتبس منها ولا تأخذ منها أرقاماً):',
-    ...(calls.length ? calls : ['- لا يوجد']),
+    'تفضيلات العميل المحفوظة:',
+    ...(prefLines.length ? prefLines.map((l) => `- ${l}`) : ['- لا يوجد']),
+    '',
+    'الزيارات والمواعيد:',
+    ...(visitLines.length ? visitLines : ['- لا يوجد']),
+    '',
+    'خيارات العميل (المشاريع وحالة اهتمامه بكل مشروع):',
+    ...(optionLines.length ? optionLines : ['- لا يوجد']),
+    ...(reading
+      ? ['', `قراءة المساعد لآخر محادثة: ${reading.suggested_outcome ?? '—'}${reading.suggested_main_project_name ? ` — المشروع الرئيسي: ${reading.suggested_main_project_name}` : ''}${reading.summary ? ` — ${clip(reading.summary, 300)}` : ''}`]
+      : []),
+    '',
+    'آخر المكالمات (للفهم فقط — لا تقتبس منها ولا تأخذ منها أرقاماً):',
+    ...(callTexts.length ? callTexts : ['- لا يوجد']),
   ].join('\n');
 
   const brief = [
     `Attempt ${args.attempt}${escalation ? ` (${escalation})` : ''} · last message ${hoursSilent ?? '?'} h ago${lastIn?.date ? ` · client last wrote ${riyadh(lastIn.date)}` : ''}`,
     ...(projectFacts.length ? [`Projects sent: ${projectFacts.length}`] : []),
     ...(past[0] ? [`Last outcome: ${past[0].slice(2)}`] : []),
+    ...(callTexts.length ? [`Calls read: ${callTexts.length}`] : []),
+    ...(visitLines.length ? [`Visits/appointments: ${visitLines.length}`] : []),
   ];
 
   // ── Write ─────────────────────────────────────────────────────────────────

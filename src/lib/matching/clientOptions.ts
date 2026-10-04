@@ -33,7 +33,8 @@ export type ClientOptionStatus =
   | 'eliminated'
   | 'reserved'
   | 'closed';
-export type ClientOptionAddedFrom = 'project_finder' | 'manual' | 'follow_up';
+/** 'ai' = the AI sent the project on WhatsApp (DB trigger on chat_message_projects). */
+export type ClientOptionAddedFrom = 'project_finder' | 'manual' | 'follow_up' | 'ai';
 
 /** The shape we read off a `client_property_options` record's `data` JSONB. */
 export interface ClientOptionData {

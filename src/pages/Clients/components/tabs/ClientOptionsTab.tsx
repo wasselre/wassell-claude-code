@@ -2,7 +2,7 @@ import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 import TrackedInterestList from '@/components/interest/TrackedInterestList';
 import { buildGeoNameMap } from '@/lib/geo/geoNameMap';
 import { pickLocalized } from '@/lib/geo/localizedName';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
@@ -214,6 +214,27 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
     }
     return map;
   }, [options, records, marketModelId]);
+
+  // How much the client engaged with each project's tracked links (0–100,
+  // v_project_interest — the same score the AI uses for "high interest").
+  // Highest across the client's chats.
+  const loadTrackedInterest = useAppStore((s) => s.loadTrackedInterest);
+  const [interestByProject, setInterestByProject] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    loadTrackedInterest({ clientId: client.id })
+      .then((rows) => {
+        if (!alive) return;
+        const m = new Map<string, number>();
+        for (const r of rows) m.set(r.project_id, Math.max(m.get(r.project_id) ?? 0, r.score));
+        setInterestByProject(m);
+      })
+      .catch((e: unknown) => {
+        // The chip is extra information; the cards still render without it.
+        console.error('[ClientOptionsTab] link interest read failed:', e instanceof Error ? e.message : e);
+      });
+    return () => { alive = false; };
+  }, [client.id, loadTrackedInterest]);
 
   const [statusFilter, setStatusFilter] = useState<ClientOptionStatus | 'all'>('all');
   const [showEliminated, setShowEliminated] = useState(false);
@@ -740,6 +761,26 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
           </span>
           {typeof d.match_score === 'number' && (
             <span className="inline-flex shrink-0 items-center rounded-full bg-charcoal/5 px-2 py-0.5 text-[11px] font-bold text-charcoal/70">{d.match_score}%</span>
+          )}
+          {d.source_type === 'project' && interestByProject.has(String(d.source_id ?? '')) && (() => {
+            const score = interestByProject.get(String(d.source_id ?? '')) ?? 0;
+            const tone = score >= 40 ? 'border-copper/50 bg-copper/10 text-copper' : 'border-sand/60 bg-cream/50 text-charcoal/70';
+            return (
+              <span
+                className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${tone}`}
+                title={L('تفاعل العميل مع روابط المشروع (من 100)', "Client's engagement with the project links (out of 100)")}
+              >
+                {L('الاهتمام', 'Interest')} {score}/100
+              </span>
+            );
+          })()}
+          {(d as { added_from?: string }).added_from === 'ai' && (
+            <span
+              className="inline-flex shrink-0 items-center rounded-full border border-gold/50 bg-gold/10 px-2 py-0.5 text-[11px] font-bold text-chocolate"
+              title={L('أضافه المساعد الذكي لأنه أرسل المشروع للعميل', 'Added by the AI assistant because it sent this project')}
+            >
+              {L('المساعد', 'AI')}
+            </span>
           )}
           {/* Listing quality — snapshotted into facts at save time; for
               options saved before the quality feature (2026-07-02) the

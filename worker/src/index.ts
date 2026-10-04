@@ -1305,6 +1305,16 @@ async function claimAndRunOneChatOutcome(): Promise<boolean> {
     });
     if (doneErr) console.error(`[worker] chat_outcome_suggestion_ready RPC failed: ${doneErr.message}`);
     else console.log(`[worker] chat-outcome job=${job.id} → ${r.outcome ?? 'none'}`);
+    // What the customer said about each project goes straight onto their
+    // options (operator, 2026-10-04). client_option_mark never overrides a
+    // rep's eliminated / reserved / closed.
+    for (const rx of r.reactions) {
+      const { data: marked, error: markErr } = await supabase.rpc('client_option_mark', {
+        p_client: job.clientId, p_project: rx.projectId, p_status: rx.status, p_source: `ai_outcome:${job.id}`,
+      });
+      if (markErr) console.error(`[worker] client_option_mark failed client=${job.clientId} project=${rx.projectId}: ${markErr.message}`);
+      else console.log(`[worker] chat-outcome job=${job.id} option ${rx.projectName} → ${String(marked)}`);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[worker] chat-outcome job=${job.id} FAILED:`, msg);
