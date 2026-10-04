@@ -60,7 +60,7 @@ export const VIDEO_WORKFLOW: WorkflowSpec = {
     s('idea_review', 'marketing_manager', true, 1, 'مراجعة الفكرة', 'Idea review'),
     s('script', 'writer', false, 2, 'النص', 'Script'),
     s('script_review', 'marketing_manager', true, 1, 'مراجعة النص', 'Script review'),
-    s('assets', 'ops_supervisor', false, 2, 'جمع المواد', 'Asset collection'),
+    s('assets', 'montage', false, 2, 'جمع المواد', 'Asset collection'),
     s('editing', 'montage', false, 3, 'المونتاج والتعليق', 'Editing + VO'),
     s('first_version', 'montage', false, 1, 'النسخة الأولى', 'First version'),
     s('writer_review', 'writer', true, 1, 'مراجعة الكاتب', 'Writer review'),

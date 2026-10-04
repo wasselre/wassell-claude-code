@@ -31,7 +31,7 @@ import { IconBack, IconForward, IconPlus } from './icons';
 import { num } from '../lib/format';
 import { roleAvatarClass, initial } from '../lib/format';
 
-const PATH_ROLES: MosPathRole[] = ['writer', 'montage', 'ops_supervisor', 'marketing_manager', 'ceo'];
+const PATH_ROLES: MosPathRole[] = ['writer', 'montage', 'marketing_manager'];
 
 const APPROVAL_KINDS: Array<{ key: NonNullable<StepDef['approval_kind']>; ar: string; en: string }> = [
   { key: 'creative', ar: 'اعتماد إبداعي', en: 'Creative approval' },
@@ -743,9 +743,7 @@ export default function SettingsWorkflows({
               </div>
               <div className="card-b" style={{ display: 'grid', gap: 8, fontSize: 12 }}>
                 {([
-                  ['ceo', 'لا يعتمد محتوى', 'approves no content'],
-                  ['marketing_manager', 'يعتمد الإبداع', 'approves creative'],
-                  ['ops_supervisor', 'يعتمد الإجراءات', 'approves process'],
+                  ['marketing_manager', 'يعتمد', 'approves'],
                   ['writer', 'ينتج', 'produces'],
                   ['montage', 'ينتج', 'produces'],
                 ] as Array<[MosPathRole, string, string]>).map(([r, ar, en]) => (

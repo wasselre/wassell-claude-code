@@ -847,18 +847,20 @@ const PROJECT_INFO_KEYS = [
 /* tasks + roles 'mos_*' + surface_access)                             */
 /* ------------------------------------------------------------------ */
 
-/** The five marketing roles a role-path step can point at (keys, mos_ stripped). */
-const MOS_ROLE_KEYS = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage'] as const;
+/** The marketing roles a role-path step can point at (keys, mos_ stripped).
+ *  CEO and Operations supervisor were retired on 2026-10-04 (roles deleted). */
+const MOS_ROLE_KEYS = ['marketing_manager', 'writer', 'montage'] as const;
 
 /** Every surface the shell can route to, in the matrix's stable order. */
 const SURFACES = [
-  'overview', 'mywork', 'team', 'content', 'calendar', 'library',
-  'shoots', 'goals', 'campaigns', 'numbers',
+  // calendar / goals / campaigns / numbers / roles were removed on 2026-10-04 —
+  // their screens no longer exist, so the switches controlled nothing.
+  'overview', 'mywork', 'team', 'content', 'library', 'shoots',
   // Organic cockpit: Platform Pulse ('organic') + Publishing Board ('publishing').
   'organic', 'publishing',
   // Performance & load system: own profile ('myperf') + the manager desk.
   'myperf', 'performance',
-  'settings', 'roles',
+  'settings',
 ] as const;
 type SurfaceKey = (typeof SURFACES)[number];
 type SurfaceLevel = 'full' | 'read' | 'hidden';
@@ -1371,8 +1373,8 @@ async function listManualTasks(
  * "Mine" is a PERSON, with one deliberate widening: a task nobody holds yet is
  * still reachable by the role that owns it. That is not a second definition,
  * it is the same queue including unclaimed work — and it is load-bearing,
- * because `mos_role_load.daily_new_tasks` is 0 for `ceo` and `ops_supervisor`,
- * so those roles' tasks open with NO assignee. (`mos_perf_place_open_task` now
+ * because a role with `mos_role_load.daily_new_tasks` = 0 opens its tasks with
+ * NO assignee. (`mos_perf_place_open_task` now
  * logs exactly which of those reasons applied, instead of swallowing it.)
  */
 interface QueueSelector {
@@ -1713,7 +1715,7 @@ async function callerSurfaces(
  * and every queue read so the preview is one consistent interface, not just a
  * different header.
  */
-const PREVIEWABLE_ROLES = new Set(['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage', 'viewer']);
+const PREVIEWABLE_ROLES = new Set(['marketing_manager', 'writer', 'montage', 'viewer']);
 
 /**
  * The role the QUEUE screens should treat as "mine". Normally the caller's own
@@ -6779,11 +6781,11 @@ export default async function handler(req: Request): Promise<Response> {
           if (f) return f;
           if (!upd.data) return jsonError(404, 'campaign not found');
 
-          // The CEO's «ميزانية تنتظر توقيعك» card fires on the false→true flip.
+          // «ميزانية تنتظر توقيعك» (to the Manager) fires on the false→true flip.
           if (!prevRow.requires_signature && requires) {
             await emitNotify(sb, {
               event: 'budget_signature',
-              roles: ['ceo'],
+              roles: ['marketing_manager'],
               titleAr: 'ميزانية تنتظر توقيعك',
               titleEn: 'A budget awaits your signature',
               bodyAr: `حملة تجاوزت ميزانيتها حد التوقيع (${threshold} ر.س).`,
@@ -6860,11 +6862,11 @@ export default async function handler(req: Request): Promise<Response> {
         }
 
         // A brand-new campaign already over threshold is the false→true flip
-        // from the CEO's perspective — they had nothing to sign before.
+        // from the signer's perspective — they had nothing to sign before.
         if (created?.id && requires) {
           await emitNotify(sb, {
             event: 'budget_signature',
-            roles: ['ceo'],
+            roles: ['marketing_manager'],
             titleAr: 'ميزانية تنتظر توقيعك',
             titleEn: 'A budget awaits your signature',
             bodyAr: `حملة جديدة تجاوزت ميزانيتها حد التوقيع (${threshold} ر.س).`,
@@ -7871,7 +7873,8 @@ export default async function handler(req: Request): Promise<Response> {
         if (!campaignId) return jsonError(400, 'campaign_id is required');
 
         // approve_budget is the capability; the role check narrows it to the
-        // people the design hands the pen to (CEO card on s43, manager/admin).
+        // people who hold the pen (the Manager or an admin; the CEO role was
+        // retired on 2026-10-04).
         const [canRes, rolesRes] = await Promise.all([
           sb.rpc('wassell_mos_can', { p_capability: 'approve_budget' }),
           sb.rpc('wassell_mos_roles'),
@@ -7880,12 +7883,12 @@ export default async function handler(req: Request): Promise<Response> {
         if (gateFail) return gateFail;
         const held = (rolesRes.data as string[] | null) ?? [];
         const maySign = canRes.data === true
-          && held.some((r) => ['ceo', 'marketing_manager', 'administrator'].includes(r));
+          && held.some((r) => ['marketing_manager', 'administrator'].includes(r));
         if (!maySign) {
           return new Response(
             JSON.stringify({
-              error: 'Only the CEO can sign a campaign budget.',
-              error_ar: 'التوقيع على ميزانية الحملة للرئيس التنفيذي فقط.',
+              error: 'Only the Marketing Manager can sign a campaign budget.',
+              error_ar: 'التوقيع على ميزانية الحملة لمدير التسويق فقط.',
             }),
             { status: 403, headers: { 'Content-Type': 'application/json' } },
           );
@@ -9610,7 +9613,9 @@ export default async function handler(req: Request): Promise<Response> {
         // Type → the surface that governs its visibility.
         const TYPE_SURFACE = {
           content: 'content',
-          campaign: 'campaigns',
+          // The campaigns screen is gone (hits open the month page); the
+          // overview switch carries the same who-sees-campaigns answer.
+          campaign: 'overview',
           asset: 'library',
           shoot: 'shoots',
         } as const;

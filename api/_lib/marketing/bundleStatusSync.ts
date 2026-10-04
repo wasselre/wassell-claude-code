@@ -73,7 +73,7 @@ async function notifyPublishFailed(
     const { error } = await sb.rpc('notify_emit', {
       p_workspace: 'marketing',
       p_event: 'publish_failed',
-      p_role_keys: ['mos_ops_supervisor', 'mos_marketing_manager'],
+      p_role_keys: ['mos_marketing_manager'],
       p_user_ids: [],
       p_title_ar: 'فشل النشر التلقائي',
       p_title_en: 'Auto-publish failed',

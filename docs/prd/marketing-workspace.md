@@ -1,6 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
+**Last updated:** 2026-10-04 (**Three marketing roles; one permissions table.** The CEO and Operations-supervisor roles are retired — see «Three roles, one permissions table» under Key behaviors.)
 **Last updated:** 2026-10-04 (**The Month report's numbers take a date range.** The report's «الأرقام» card used the month's posting weeks only (October 2026 = Sunday 4th → 31st), so on the 4th it showed one day and nothing earlier was reachable. `month_report` now accepts optional inclusive `from`/`to` (YYYY-MM-DD; 400 when only one is given or from > to) and returns `window.default_from`/`default_to`. The card has a picker: «أسابيع الخطة» (default, posting weeks), «الشهر كاملًا» (calendar month) and two date inputs. Only the numbers move — the plan, releases and weeks grid stay the month's. The chosen range resets when the month changes.)
 **Last updated:** 2026-10-04 (**Analytics shows the selected period, not lifetime.** «التحليلات» showed the same lifetime totals (8,714 SAR · 329 leads · 116,932 impressions) for every week, month, quarter and year, with "0% vs previous" on every card: `mos_paid_analytics` read its dated figures from `mos_execution_daily` (0 rows, the hand-entry table) and fell back to the undated lifetime totals on `mos_campaign_executions`. It now reads the Meta daily sync `mos_ad_metrics_daily` inside the window (spend, impressions, clicks, Meta leads — a real daily series), counts hand-entered days only for an execution the sync doesn't cover, returns `exec_spend`/`exec_leads` as true lifetime and `undated_spend`/`undated_leads` (money with no daily breakdown — one early «مينا 52» run, 481.84 SAR) which the page reports in a note beside the period, never inside it. CPM/CPC/CTR/CPL are the period's spend over the period's volume and all four cards get daily sparklines. The «أسبوع» segment was silently fetched as the whole month — it now fetches the week. The Overview's paid card reads the same RPC, so its period spend is now real too. Qualified stays 0 here (still from hand entry only). Migration `2026-10-04_09_paid_analytics_reads_ad_daily.sql`.)
 **Last updated:** 2026-10-04 (**Marketing is a tabbed workspace inside the main app.** The workspace no longer runs outside `AppLayout` with its own brown rail and a Sales ⇄ Marketing switcher: the main sidebar has an «التسويق» row (page id `marketing_management`, unchanged), and `MarketingWorkspace.tsx` renders a header (role, Search, Library → `/files?view=marketing`, Settings → `/m/settings`, the admin «معاينة كـ» select, the notification bell) and six tabs with sub-tabs: **الشهر** (`/m/month`, نظرة عامة `/m/overview`) · **المهام** (مهامي `/m/my-work`, مكتب الأداء, ملفي) · **المحتوى** (المحتوى, جرد المحتوى, جاهزية المحتوى, طلبات التصوير; owns `/m/library/*`) · **النشر** (لوحة النشر, نبض المنصات; owns `/m/releases/*`) · **التحليلات** · **المنافسون** (Competitor Watch at `/m/competitors`, gated by page id `competitor_watch`; `/competitor-watch` redirects there). Sub-tabs are filtered by `surface_access` exactly as the rail items were. `/m` now opens `/m/month` (Overview moved to `/m/overview`). The pages keep mos.css, pinned to the light token set re-pointed at the app's palette (`styles/mosInApp.css`); the OS dark mode no longer applies, and the phone tab bar is gone (the app's own mobile menu is used). «ذكاء التسويق» is hidden from the sidebar (to be retired). A «إعدادات التسويق» card on the main Settings page opens `/m/settings`.)
@@ -1403,14 +1404,60 @@ listed assignees themselves, so someone without a marketing role is still named.
 Hand-assigned tasks on the team board sit under «مهام مُسندة يدويًا» and read
 «مُسندة إلى <name>».
 
+### Three roles, one permissions table (2026-10-04)
+
+Marketing now runs on **three roles: Marketing Manager, Writer, Montage.**
+
+- **CEO retired.** It was held only by an app admin, who keeps full access as
+  admin (admins bypass every capability check, see every screen, and may sign a
+  budget). Keeping the role meant the task planner could hand him work. Its one
+  unique capability, `rate_creative`, moved to the Manager. The CEO overview
+  (screen 34) was removed; `/m/overview` is the manager view for everyone.
+- **Operations supervisor retired.** Nobody had held it since 2026-09-12, so the
+  one step it owned — «جمع المواد» in the Standard video path — opened tasks
+  nobody received. That step now belongs to **Montage** (who edits next).
+- **Budget signature → Manager.** «ميزانية تنتظر توقيعك» now goes to the Manager
+  (in-app + WhatsApp), and `campaign_sign` accepts the Manager or an admin. No
+  campaign has ever crossed the signature threshold; the sign button lived on
+  the removed CEO overview, so there is currently **no sign button** in the
+  workspace (known limitation below).
+- **«Roles and permissions» is one table** (`SettingsAccess`). Columns are the
+  three roles. «ما يظهر له» rows are the workspace tabs that can actually be
+  hidden — a ✓ is shown, — is hidden (the old «read only» level was never
+  honoured by any page, so it is gone); the Manager sees everything by design.
+  «ما يستطيع فعله» rows are eight **bundles** of capabilities (work on content,
+  manage files, schedule and publish, approve, assign work, campaigns and ads,
+  performance, settings and team); a tick grants or revokes the whole bundle and
+  a partly-held bundle shows ◐. View-and-comment is fixed on for every role, and
+  the Manager's settings-and-team bundle is fixed on (lockout guard). Any
+  capability no bundle lists still gets its own row.
+- **Dead screen switches removed**: calendar, goals, campaigns, numbers and roles
+  (their screens are gone). Search's campaign results now follow the overview
+  switch.
+- **«الأدوار ومن يشغلها»** keeps the role table (holder, backup, what each role
+  approves, open tasks, per-role Edit) and open-task transfer; the duplicate
+  per-person grid and the «one person, two roles» card were removed. It now
+  loads the workflows, so the approves column is real (it showed every role
+  approving nothing before). One person's Marketing + Sales roles together are
+  edited in Team & Access › People.
+- **Load & SLA merged into Capacity & calendar.** The per-role daily defaults
+  (what a person takes when no capacity of their own is set), SLA hours and
+  content-type buckets are the lower half of `/m/settings/capacity`;
+  `/m/settings/load` redirects there.
+- Notifications settings: tabs are the three roles; the dead
+  `monthly_report_ready` event (nothing ever sent it) is not listed.
+
+Migrations: `2026-10-04_mos_retire_ceo_ops_roles.sql` (everything removed is in
+`_backup_mos_retired_roles_20261004`), `2026-10-04_mos_drop_dead_surfaces.sql`.
+
 ### Settings home — four groups, and Team & Access (2026-09-29)
 
 `/m/settings` used to be one unsorted grid of 16 cards. It is now four labelled
 groups, each card still declaring its current state:
 
 - **الفريق / Team** — Roles and people («الأدوار ومن يشغلها»), Roles and
-  permissions (the Surfaces / Capabilities matrix), Load & SLA, Capacity &
-  calendar, Notifications — plus, **for app admins only**, a «الفريق والصلاحيات
+  permissions (one table since 2026-10-04), Capacity & calendar (Load & SLA
+  merged in on 2026-10-04), Notifications — plus, **for app admins only**, a «الفريق والصلاحيات
   (كل النظام) / Team & Access (whole app)» card that opens the Sales app's
   Settings → Team & Access on its People tab. It is admin-only because that page
   is.
@@ -1582,7 +1629,7 @@ editor.
 | `src/pages/Marketing/components/PlanLoadTable.tsx` | Per person × bucket × day: existing + proposed / capacity, red when over |
 | `src/pages/Marketing/components/RefreshForecastCard.tsx` | Every refresh cycle and the creative totals, calculated from the campaign's real dates |
 | `src/pages/Marketing/components/CampaignRequirementsStep.tsx` | Step 1 of the wizard: per-project quantities, platforms, range, frequency, refresh policy |
-| `src/pages/Marketing/components/SettingsCapacity.tsx` | `/m/settings/capacity` — per-person daily slots, weekend days, holidays, step effort (`manage_capacity`) |
+| `src/pages/Marketing/components/SettingsCapacity.tsx` | `/m/settings/capacity` — per-person daily slots, weekend days, holidays, step effort; embeds `SettingsLoad` (`embedded`) for per-role defaults, SLA hours and content-type buckets (`manage_capacity`) |
 | `src/pages/Marketing/components/AdReadinessPanel.tsx` | The Meta preflight checklist, shown BEFORE the final approval |
 | `src/pages/Marketing/lib/planPresentation.ts` | Pure presentation logic for the preview — feasibility wording, grid mapping, load flags, forecast rows |
 | `src/pages/Marketing/lib/contentRoute.ts` | The ONE client route resolver: step key → section → tab, plus the task/content href builders (a `publication` task → `/m/releases/:id`) |
@@ -1656,7 +1703,7 @@ editor.
 | `api/_lib/marketing/bundleAccountMetrics.ts` | The account-analytics engine (twin of `bundleMetrics.ts`): `pullAccountMetrics` (UPSERT one snapshot per account/day) + `runBundleAccountMetricsSync`; used by the daily cron AND the `account_metrics_pull_all` action. Account-analytics helpers (`getSocialAccountAnalytics` / `accountAnalyticsToSnapshot`) live in `bundleSocial.ts` |
 | `supabase/migrations/2026-08-20_mos_account_metrics.sql` | `mos_account_metric_snapshots` (daily follower/reach history bundle deletes after 30d) + `mos_account_pulse_v` (card rollup) + RLS mirroring `mos_metric_snapshots` + seeds the `organic`/`publishing` surfaces from the `numbers` surface's per-role levels |
 | `src/pages/Marketing/SettingsPage.tsx` | Settings home (16 state-declaring cards in four `SettingsGroup`s: Team / Content and workflow / Campaigns / Publishing, + an admin-only Team & Access link card) and the section pages (workflows, content types, platforms, people, roles, notifications, …) |
-| `src/pages/Marketing/components/SettingsAccess.tsx` | Roles & permissions screen — a segmented **Surfaces** (rail visibility) / **Capabilities** (what a role can DO) matrix; capability cells write `role_capabilities` via the `capability_set` action. `embedded` prop = rendered as the Marketing roles tab of the Sales app's Team & Access page (drops the back crumb) |
+| `src/pages/Marketing/components/SettingsAccess.tsx` | Roles & permissions screen — ONE table (2026-10-04): three role columns; tab-visibility ticks (`surface_set`, full ↔ hidden) and capability BUNDLE ticks (`capability_set` per capability in the bundle). `embedded` prop = rendered as the Marketing roles tab of the Sales app's Team & Access page (drops the back crumb) |
 | `src/pages/Settings/TeamAccessPage.tsx` + `src/pages/Settings/components/mosEmbedLight.css` | Hosts `SettingsAccess` inside `.mos-root.mos-embed-light` in the Sales app; the CSS pins the Marketing tokens to their light values there |
 | `src/pages/Settings/UsersPage.tsx` | Sales-app People tab — ticks a person's Marketing roles via `grantRole` → `role_grant` → `mos_role_grant` (same path as «الأدوار ومن يشغلها») |
 | `supabase/migrations/2026-08-06_01_role_capabilities.sql` | `role_capabilities` table + `roles.domain`; seeds the table from the old `wassell_mos_can` CASE with an in-migration parity assertion |
@@ -1697,6 +1744,8 @@ editor.
 | `src/lib/salesProcess/qualifiedStages.ts` | The qualified-lead set, DERIVED from the sales-process config: "a stage no follow-up can be scheduled on, and not «مغلق ناجح»". Never an ordinal range (`stageOrderOf(c) >= 7` reads all three terminal-lost stages as complete funnels) and never a literal, so a fourth terminal stage changes this set by itself |
 
 ## Open questions / known limitations
+
+- **No budget-sign button (2026-10-04).** It lived on the removed CEO overview. The Manager still gets «ميزانية تنتظر توقيعك» when a campaign crosses the threshold, and `campaign_sign` still works, but nothing in the workspace calls it. No campaign has ever needed a signature.
 
 - **The grid rule cannot see what happens on Instagram itself.** The publisher
   only ever adds whole rows (2026-10-01), but a post deleted by hand in the

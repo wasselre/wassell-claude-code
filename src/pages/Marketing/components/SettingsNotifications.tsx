@@ -29,10 +29,14 @@ import { NotificationRow, useMosNotifications } from './NotificationBell';
 /* the vocabulary — role tabs and event rows, in the mockup's order    */
 /* ------------------------------------------------------------------ */
 
-const TAB_ORDER: MosPathRole[] = ['writer', 'montage', 'ops_supervisor', 'marketing_manager', 'ceo'];
+const TAB_ORDER: MosPathRole[] = ['writer', 'montage', 'marketing_manager'];
 
 /** Roles whose pipeline includes publishing — for them «حان وقت النشر» is live. */
-const PUBLISHER_ROLES: readonly MosPathRole[] = ['ops_supervisor', 'marketing_manager'];
+const PUBLISHER_ROLES: readonly MosPathRole[] = ['marketing_manager', 'writer'];
+
+/** Events nothing emits any more — their leftover rule rows are not listed.
+ *  monthly_report_ready never had a sender; it was a CEO-only row. */
+const RETIRED_EVENTS: ReadonlySet<string> = new Set(['monthly_report_ready']);
 
 interface EventRow {
   key: string;
@@ -42,8 +46,9 @@ interface EventRow {
   sub_en?: string;
   /** «للدور الذي ينشر فقط» — dimmed for roles that never publish. */
   publisherOnly?: boolean;
-  /** The CEO comparison card's two events — rendered only on the CEO tab. */
-  ceoOnly?: boolean;
+  /** Rendered only on the Manager tab (the budget signature — the CEO role
+   *  that used to receive it was retired on 2026-10-04). */
+  managerOnly?: boolean;
 }
 
 const EVENTS: EventRow[] = [
@@ -88,8 +93,7 @@ const EVENTS: EventRow[] = [
   },
   { key: 'ad_created', ar: 'أُنشئ الإعلان في ميتا', en: 'The Meta ad was created' },
   { key: 'ad_failed', ar: 'تعذّر إنشاء الإعلان في ميتا', en: 'The Meta ad could not be created' },
-  { key: 'budget_signature', ar: 'ميزانية تنتظر توقيعك', en: 'A budget awaits your signature', ceoOnly: true },
-  { key: 'monthly_report_ready', ar: 'التقرير الشهري جاهز', en: 'The monthly report is ready', ceoOnly: true },
+  { key: 'budget_signature', ar: 'ميزانية تنتظر توقيعك', en: 'A budget awaits your signature', managerOnly: true },
 ];
 
 interface CellState { enabled: boolean; timing: NotificationTiming }
@@ -191,8 +195,8 @@ export default function SettingsNotifications({ canManage, isAr }: { canManage: 
   /* rows for the active tab — plus any event the DB knows that this file
      doesn't, appended so a new event key can never silently vanish. */
   const visibleRows = useMemo(() => {
-    const base = EVENTS.filter((e) => (tab === 'ceo' ? true : !e.ceoOnly));
-    const known = new Set(EVENTS.map((e) => e.key));
+    const base = EVENTS.filter((e) => (tab === 'marketing_manager' ? true : !e.managerOnly));
+    const known = new Set([...EVENTS.map((e) => e.key), ...RETIRED_EVENTS]);
     const extras = [...new Set(rules.filter((r) => !known.has(r.event)).map((r) => r.event))]
       .sort()
       .map((k): EventRow => ({ key: k, ar: k, en: k }));

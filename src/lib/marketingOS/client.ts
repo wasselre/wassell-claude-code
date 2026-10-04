@@ -23,13 +23,17 @@ export type MosRole =
   | 'viewer'
   | 'none';
 
-/** The five roles a role-path step can point at (mos_ prefix stripped). */
+/** The five roles a role-path step can point at (mos_ prefix stripped).
+ *  'ceo' and 'ops_supervisor' were RETIRED on 2026-10-04 (roles deleted); they
+ *  stay in the type only because historic tasks still carry those keys. */
 export type MosPathRole = 'ceo' | 'marketing_manager' | 'ops_supervisor' | 'writer' | 'montage';
+
+/** The marketing roles that exist — every role picker, column and tab lists these. */
+export const ACTIVE_PATH_ROLES: readonly MosPathRole[] = ['marketing_manager', 'writer', 'montage'];
 
 /** Every surface the shell can route to. Absence from surface_access = hidden. */
 export type SurfaceKey =
-  | 'overview' | 'mywork' | 'team' | 'content' | 'calendar' | 'library'
-  | 'shoots' | 'goals' | 'campaigns' | 'numbers' | 'settings' | 'roles'
+  | 'overview' | 'mywork' | 'team' | 'content' | 'library' | 'shoots' | 'settings'
   // Organic cockpit: 'organic' = Platform Pulse dashboard, 'publishing' = the
   // cross-platform Publishing Board.
   | 'organic' | 'publishing'

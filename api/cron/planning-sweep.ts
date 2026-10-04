@@ -214,7 +214,7 @@ async function nextMonthReminder(
     const emit = await sb.rpc('notify_emit', {
       p_workspace: 'marketing',
       p_event: 'month_selection_due',
-      p_role_keys: ['mos_marketing_manager', 'mos_ceo'],
+      p_role_keys: ['mos_marketing_manager'],
       p_user_ids: [],
       p_title_ar: `اختيار مشاريع ${monthName(month, true)} مطلوب ${whenAr}`,
       p_title_en: `${monthName(month, false)}’s projects are due ${whenEn}`,

@@ -42,7 +42,7 @@ import { daysAgo, initial, num, roleAvatarClass, shortDate } from './lib/format'
 /** content_list decorates each row with the campaign name + target platforms. */
 type ListRow = MosContentRow & { campaign_name?: string | null; platforms?: string[] };
 
-const ROLES: MosRole[] = ['writer', 'montage', 'ops_supervisor', 'marketing_manager', 'ceo'];
+const ROLES: MosRole[] = ['writer', 'montage', 'marketing_manager'];
 
 const platformLabel = (key: string, isAr: boolean): string =>
   PLATFORM_LABELS[key] ? (isAr ? PLATFORM_LABELS[key].ar : PLATFORM_LABELS[key].en) : key;

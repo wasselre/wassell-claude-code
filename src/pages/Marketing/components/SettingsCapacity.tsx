@@ -28,6 +28,7 @@ import {
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from '../MarketingWorkspace';
 import { LoadError, PageHead, Skeleton } from './kit';
+import SettingsLoad from './SettingsLoad';
 import { IconBack, IconForward } from './icons';
 import {
   bucketLabel, personName, pickText, resolveStepEffort, resolveUserCap, stepLabel,
@@ -509,6 +510,8 @@ export default function SettingsCapacity() {
             )}
           </>
         )}
+        {/* The per-role defaults + SLA hours (was its own «Load & SLA» page). */}
+        <SettingsLoad embedded canManage={can('manage_roles')} isAr={isAr} />
       </div>
     </>
   );

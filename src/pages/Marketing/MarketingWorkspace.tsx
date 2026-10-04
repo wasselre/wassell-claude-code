@@ -510,7 +510,7 @@ export default function MarketingWorkspace() {
                 className={`px-2 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${previewRole ? 'bg-copper text-white border-copper' : 'bg-white text-charcoal/70 border-sand/50'}`}
               >
                 <option value="">{isAr ? '👁 حسابي (مدير النظام)' : '👁 My account (Admin)'}</option>
-                {(['marketing_manager', 'ops_supervisor', 'writer', 'montage', 'ceo', 'viewer'] as MosRole[]).map((r) => (
+                {(['marketing_manager', 'writer', 'montage', 'viewer'] as MosRole[]).map((r) => (
                   <option key={r} value={r}>{isAr ? `👁 معاينة كـ ${ROLE_LABELS[r].ar}` : `👁 View as ${ROLE_LABELS[r].en}`}</option>
                 ))}
               </select>

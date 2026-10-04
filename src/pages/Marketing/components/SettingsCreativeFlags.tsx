@@ -51,7 +51,7 @@ const FLAG_META: Array<{ key: keyof CreativeFlags; ar: string; en: string; ar_d:
   },
 ];
 
-const PATH_ROLES: MosPathRole[] = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage'];
+const PATH_ROLES: MosPathRole[] = ['marketing_manager', 'writer', 'montage'];
 
 export default function SettingsCreativeFlags({
   canManage, isAr,

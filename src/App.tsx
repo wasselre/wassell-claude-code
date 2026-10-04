@@ -590,6 +590,8 @@ export default function App() {
             <Route path="/m/settings/ai-roles" element={<AiRolesSettingsRoute />} />
             <Route path="/m/settings/creative-flags" element={<CreativeFlagsSettingsRoute />} />
             <Route path="/m/settings/capacity" element={<MarketingCapacitySettingsPage />} />
+            {/* «Load & SLA» is now the lower half of the capacity page (2026-10-04). */}
+            <Route path="/m/settings/load" element={<Navigate to="/m/settings/capacity" replace />} />
             <Route path="/m/settings/:section" element={<SettingsSectionPage />} />
             {/* A wrong /m/* path lands on the workspace's own front door rather
                 than on a blank screen inside a shell that already rendered. */}

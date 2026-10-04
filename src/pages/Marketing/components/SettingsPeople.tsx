@@ -15,16 +15,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import {
-  MosContentRow, MosPathRole, MosTask, ROLE_LABELS, RolePerson, StepDef, WorkflowDef,
+  ACTIVE_PATH_ROLES, MosContentRow, MosPathRole, MosTask, ROLE_LABELS, RolePerson, StepDef, WorkflowDef,
   fetchWork, grantRole, transferTask,
 } from '@/lib/marketingOS/client';
 import { useWorkspace } from '../MarketingWorkspace';
-import { Empty, Modal, PageHead, Pill } from './kit';
+import { Modal, PageHead, Pill } from './kit';
 import { IconBack, IconForward } from './icons';
 import { initial, money, num, roleAvatarClass } from '../lib/format';
 
-/** The five grantable roles, in the mockup's row order. */
-const ROLE_ROWS: MosPathRole[] = ['ceo', 'marketing_manager', 'ops_supervisor', 'writer', 'montage'];
+/** The grantable roles (CEO and Operations supervisor retired 2026-10-04). */
+const ROLE_ROWS = ACTIVE_PATH_ROLES;
 
 const KIND_LABELS: Record<'creative' | 'process' | 'budget', { ar: string; en: string }> = {
   creative: { ar: 'الاعتماد الإبداعي', en: 'Creative approval' },
@@ -89,10 +89,11 @@ export default function SettingsPeople({
         m.set(s.role_key, set);
       }
     }
-    // The budget signature is settings-driven (campaign_sign), not a path step.
-    const ceo = m.get('ceo') ?? new Set();
-    ceo.add('budget');
-    m.set('ceo', ceo);
+    // The budget signature is settings-driven (campaign_sign), not a path step;
+    // it is the Manager's since the CEO role was retired.
+    const mgr = m.get('marketing_manager') ?? new Set();
+    mgr.add('budget');
+    m.set('marketing_manager', mgr);
     return m;
   }, [workflows]);
 
@@ -106,15 +107,12 @@ export default function SettingsPeople({
     [tasks],
   );
 
-  /** Approval roles (CEO aside) that a single absence would stall. */
+  /** Approval roles that a single absence would stall. */
   const noBackupRoles = useMemo(
-    () => ROLE_ROWS.filter((r) => r !== 'ceo'
-      && (approvalKinds.get(r)?.size ?? 0) > 0
+    () => ROLE_ROWS.filter((r) => (approvalKinds.get(r)?.size ?? 0) > 0
       && holdersOf(r).length <= 1),
     [approvalKinds, holdersOf],
   );
-
-  const multiRolePerson = useMemo(() => people.find((p) => p.roles.length >= 2) ?? null, [people]);
 
   /* ── modals ── */
   const [editingRole, setEditingRole] = useState<MosPathRole | null>(null);
@@ -188,7 +186,7 @@ export default function SettingsPeople({
                   const holders = holdersOf(r);
                   const kinds = [...(approvalKinds.get(r) ?? [])];
                   const approves = kinds.length > 0;
-                  const warn = r !== 'ceo' && approves && holders.length <= 1;
+                  const warn = approves && holders.length <= 1;
                   return (
                     <tr key={r} style={warn ? { background: 'color-mix(in srgb, var(--late) 5%, transparent)' } : undefined}>
                       <td>
@@ -203,9 +201,7 @@ export default function SettingsPeople({
                           : <span style={{ color: 'var(--late)', fontWeight: 700 }}>{isAr ? 'بلا شاغل' : 'Unfilled'}</span>}
                       </td>
                       <td>
-                        {r === 'ceo' ? (
-                          <span style={{ color: 'var(--mute)' }}>{isAr ? 'لا يحتاج' : 'Not needed'}</span>
-                        ) : !approves ? (
+                        {!approves ? (
                           <span style={{ color: 'var(--mute)' }}>{isAr ? 'لا يعتمد — لا حاجة' : 'Approves nothing — not needed'}</span>
                         ) : holders.length >= 2 ? (
                           holders.slice(1).map((p) => personName(p, isAr)).join(isAr ? '، ' : ', ')
@@ -245,7 +241,7 @@ export default function SettingsPeople({
         </div>
 
         {/* ── the three cards under the table ── */}
-        <div className="grid g3" style={{ marginBottom: 16 }}>
+        <div className="grid g2" style={{ marginBottom: 16 }}>
           {noBackupRoles.length > 0 ? (
             <div className="card" style={{ borderColor: 'color-mix(in srgb, var(--late) 38%, transparent)' }}>
               <div className="card-h" style={{ background: 'color-mix(in srgb, var(--late) 6%, transparent)' }}>
@@ -261,8 +257,8 @@ export default function SettingsPeople({
                   : <>Every approval passes through one person. Three days of travel stops <b>every</b> item sitting in review.</>}
                 <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line-soft)' }}>
                   {isAr
-                    ? 'خياران: تعيين بديل يرث الاعتمادات أثناء الغياب فقط، أو تفويض دائم لبعض الأنواع — مثل اعتماد الستوري لمشرف العمليات.'
-                    : 'Two options: a backup who inherits approvals only while they are away, or a standing delegation of some types — story approval to the Operations Supervisor, say.'}
+                    ? 'الحل: امنح الدور لشخص ثانٍ ليصبح بديلًا يرث الاعتمادات أثناء الغياب.'
+                    : 'The fix: grant the role to a second person, who becomes the backup and inherits approvals while they are away.'}
                 </div>
                 {canManage && (
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
@@ -311,88 +307,12 @@ export default function SettingsPeople({
             </div>
           </div>
 
-          <div className="card">
-            <div className="card-h"><h4>{isAr ? 'شخص واحد، دوران' : 'One person, two roles'}</h4></div>
-            <div className="card-b" style={{ fontSize: 12, lineHeight: 1.9, color: 'var(--ink-2)' }}>
-              {multiRolePerson ? (
-                <>
-                  {isAr
-                    ? <>{personName(multiRolePerson, true)} يشغل {multiRolePerson.roles.map((r) => roleLabel(r, true)).join(' و')} معًا اليوم. النظام يتعامل معهما كأدوار منفصلة، ويعرض له مبدّلًا في الأعلى.</>
-                    : <>{personName(multiRolePerson, false)} holds {multiRolePerson.roles.map((r) => roleLabel(r, false)).join(' and ')} at once today. The system treats them as separate roles and shows a switcher at the top.</>}
-                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line-soft)', color: 'var(--mute)' }}>
-                    {isAr
-                      ? 'هذا مقصود: يوم يُشغَل الدور بشخص جديد، لا يتغير شيء في الإعداد سوى سطر في هذا الجدول.'
-                      : 'This is deliberate: the day a new person takes the role, nothing in the setup changes except one line in this table.'}
-                  </div>
-                  <div style={{ marginTop: 11, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {multiRolePerson.roles.map((r, i) => (
-                      <span key={r} className={`fbtn${i === 0 ? ' on' : ''}`} style={{ fontSize: 11.5 }}>
-                        {roleLabel(r, isAr)}
-                      </span>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                isAr
-                  ? 'يمكن لشخص واحد أن يشغل دورين معًا — النظام يتعامل بهما كدورين منفصلين ويعرض له مبدّلًا في الأعلى. يوم يُوظَّف شاغل جديد، التغيير سطر واحد في هذا الجدول.'
-                  : 'One person may hold two roles at once — the system treats them as two and shows a switcher at the top. The day a new hire takes one over, the change is a single line in this table.'
-              )}
-            </div>
-          </div>
         </div>
 
-        {/* ── the people list — canonical multi-role grants ── */}
-        <div className="card">
-          <div className="card-h">
-            <h4>{isAr ? 'الأشخاص وأدوارهم' : 'People and their roles'}</h4>
-            <span className="r">
-              {isAr
-                ? 'الخطوات تشير إلى أدوار لا أشخاص'
-                : 'steps point at roles, not people'}
-            </span>
-          </div>
-          {people.length === 0 ? (
-            <Empty title={isAr ? 'لا مستخدمين' : 'No users'} />
-          ) : (
-            <div className="tbl-wrap">
-              <table className="tbl">
-                <thead>
-                  <tr>
-                    <th style={{ width: 240 }}>{isAr ? 'الشخص' : 'Person'}</th>
-                    <th>{isAr ? 'الأدوار في التسويق' : 'Marketing roles'}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {people.map((u) => (
-                    <tr key={u.user_id}>
-                      <td>
-                        <div className="ttl">{personName(u, isAr)}</div>
-                        <div className="ltr" style={{ fontSize: 11, color: 'var(--mute)' }}>{u.email ?? ''}</div>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {ROLE_ROWS.map((r) => {
-                            const held = u.roles.includes(r);
-                            return (
-                              <button
-                                key={r}
-                                type="button"
-                                className={`fbtn${held ? ' on' : ''}`}
-                                disabled={!canManage || busy === `${u.user_id}:${r}`}
-                                onClick={() => void toggleGrant(u.user_id, r, !held)}
-                              >
-                                {roleLabel(r, isAr)}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div style={{ fontSize: 12, color: 'var(--mute)', lineHeight: 1.8 }}>
+          {isAr
+            ? 'لتعديل أدوار شخص واحد في التسويق والمبيعات معًا: الإعدادات › الفريق والصلاحيات › الأشخاص.'
+            : 'To edit one person’s Marketing and Sales roles together: Settings › Team & Access › People.'}
         </div>
       </div>
 

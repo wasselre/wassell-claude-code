@@ -17,7 +17,7 @@ import { chatAccessLevel, CHAT_ACCESS_LABELS } from '@/lib/whatsappAccessLevel';
 import { normalizeStaffPhone } from '@/lib/users/staffPhone';
 
 /** Marketing roles in the Marketing workspace's own order (senior → hands-on). */
-const MARKETING_ROLE_ORDER = ['mos_ceo', 'mos_marketing_manager', 'mos_ops_supervisor', 'mos_writer', 'mos_montage'];
+const MARKETING_ROLE_ORDER = ['mos_marketing_manager', 'mos_writer', 'mos_montage'];
 
 function reasonToKey(reason: StoreMutationReason): string {
   switch (reason) {

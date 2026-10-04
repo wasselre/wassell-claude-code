@@ -35,7 +35,6 @@ import SettingsWorkflows from './components/SettingsWorkflows';
 import SettingsAccess from './components/SettingsAccess';
 import SettingsPeople from './components/SettingsPeople';
 import SettingsNotifications from './components/SettingsNotifications';
-import SettingsLoad from './components/SettingsLoad';
 import SettingsCadence from './components/SettingsCadence';
 import { num } from './lib/format';
 import './styles/settings-engine.css';
@@ -84,14 +83,8 @@ const SECTIONS = [
   {
     slug: 'roles',
     ar: 'الأدوار والصلاحيات', en: 'Roles and permissions',
-    ar_d: 'من يرى ماذا ومن يفعل ماذا — مصفوفة الشاشات الثلاثية لكل دور.',
-    en_d: 'Who sees what and who does what — the three-state screen matrix per role.',
-  },
-  {
-    slug: 'load',
-    ar: 'طاقة العمل والمُهَل', en: 'Load & SLA',
-    ar_d: 'كم مهمة جديدة يوميًا لكل دور، وكم ساعة تُمهَل كل مهمة قبل التأخير.',
-    en_d: 'How many new tasks per role per day, and the hours each task gets before it counts late.',
+    ar_d: 'ما يظهر لكل دور وما يستطيع فعله — جدول واحد بعلامات ✓.',
+    en_d: 'What each role sees and can do — one table of ticks.',
   },
   {
     slug: 'cadence',
@@ -456,11 +449,11 @@ export default function SettingsPage() {
                 icon={IC.matrix}
                 title={isAr ? 'الأدوار والصلاحيات' : 'Roles and permissions'}
                 desc={isAr
-                  ? 'من يرى ماذا ومن يفعل ماذا — مصفوفة الشاشات الثلاثية لكل دور.'
-                  : 'Who sees what and who does what — the three-state screen matrix per role.'}
+                  ? 'ما يظهر لكل دور وما يستطيع فعله — جدول واحد بعلامات ✓.'
+                  : 'What each role sees and can do — one table of ticks.'}
                 tags={
                   <span className="tag">
-                    {isAr ? `${num(view.rolesCount, true)} أدوار · ثلاث حالات لكل شاشة` : `${view.rolesCount} roles · three states per surface`}
+                    {isAr ? `${num(view.rolesCount, true)} أدوار` : `${view.rolesCount} roles`}
                   </span>
                 }
                 action={isAr ? 'فتح' : 'Open'}
@@ -468,26 +461,10 @@ export default function SettingsPage() {
               />
               <IndexCard
                 icon={IC.matrix}
-                title={isAr ? 'طاقة العمل والمُهَل' : 'Load & SLA'}
-                desc={isAr
-                  ? 'كم مهمة جديدة تصل لكل دور يوميًا، وكم ساعة تُمهَل كل مهمة قبل اعتبارها متأخرة.'
-                  : 'How many new tasks land per role per day, and the hours each task gets before it counts late.'}
-                tags={
-                  <>
-                    <span className="tag">{isAr ? 'الكاتب ١٠ + ٣ يوميًا' : 'Writer 10 + 3 /day'}</span>
-                    <span className="tag">{isAr ? 'المونتير ٤ + ٢ يوميًا' : 'Montage 4 + 2 /day'}</span>
-                    <span className="tag">{isAr ? 'مُهَل ٤–٢٤ ساعة' : 'SLAs 4–24h'}</span>
-                  </>
-                }
-                action={isAr ? 'فتح' : 'Open'}
-                onOpen={() => navigate('/m/settings/load')}
-              />
-              <IndexCard
-                icon={IC.matrix}
                 title={isAr ? 'الطاقة والتقويم' : 'Capacity & calendar'}
                 desc={isAr
-                  ? 'كم يستوعب كل شخص يوميًا (بما فيها الاعتمادات)، وأيام العطلة والإجازات، وكم يستغرق كل عمل فعلًا.'
-                  : 'What each person can take per day (approvals included), the weekend and holidays, and how much work each stage actually is.'}
+                  ? 'كم يستوعب كل شخص يوميًا (بما فيها الاعتمادات)، والحد الافتراضي لكل دور، وأيام العطلة، وكم يستغرق كل عمل، وكم ساعة قبل أن تتأخر المهمة.'
+                  : 'What each person can take per day (approvals included), the per-role defaults, the weekend and holidays, how much work each stage is, and the hours before a task counts late.'}
                 tags={
                   <>
                     <span className="tag">{isAr ? 'منشور · فيديو · اعتمادات' : 'Post · Video · Approvals'}</span>
@@ -747,15 +724,18 @@ export function SettingsSectionPage() {
   const [workflows, setWorkflows] = useState<WorkflowDef[]>([]);
   const [types, setTypes] = useState<MosContentType[]>([]);
   const [accounts, setAccounts] = useState<MosAccount[]>([]);
+  const [settingsMap, setSettingsMap] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     // These three fetch their own data (people/roles) or none at all
     // (notifications loads its rules itself) — settings_data would be waste.
-    if (section === 'roles' || section === 'people' || section === 'notifications'
+    // (people DOES need settings_data: its «يعتمد» column is read from the
+    // workflows, and it showed every role approving nothing without them.)
+    if (section === 'roles' || section === 'notifications'
         || section === 'measures' || section === 'audiences'
-        || section === 'load' || section === 'cadence') {
+        || section === 'cadence') {
       // These fetch their own data (or none) — settings_data would be waste.
       setLoading(false);
       return;
@@ -767,6 +747,7 @@ export function SettingsSectionPage() {
       setWorkflows(res.workflows);
       setTypes(res.content_types);
       setAccounts(res.accounts);
+      setSettingsMap(res.settings);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -780,7 +761,10 @@ export function SettingsSectionPage() {
   const Back = isAr ? IconForward : IconBack;
   const canManage = can('manage_settings' as Capability);
   // Screens 26/27/43 render their own header (sub + actions depend on live data).
-  const ownHead = section === 'platforms' || section === 'content-types' || section === 'notifications' || section === 'measures' || section === 'audiences' || section === 'load' || section === 'cadence';
+  const ownHead = section === 'platforms' || section === 'content-types' || section === 'notifications' || section === 'measures' || section === 'audiences' || section === 'cadence'
+    // These two draw their own PageHead too — rendering them under the generic
+    // head below showed the title twice.
+    || section === 'roles' || section === 'people';
 
   if (!meta) {
     return (
@@ -816,11 +800,12 @@ export function SettingsSectionPage() {
         {!loading && section === 'audiences' && (
           <SettingsAudiences canManage={canManage} isAr={isAr} />
         )}
-        {!loading && section === 'load' && (
-          <SettingsLoad canManage={can('manage_roles')} isAr={isAr} />
-        )}
         {!loading && section === 'cadence' && (
           <SettingsCadence canManage={can('manage_roles')} isAr={isAr} />
+        )}
+        {section === 'roles' && <SettingsAccess canManage={can('manage_roles')} isAr={isAr} />}
+        {!loading && section === 'people' && (
+          <SettingsPeople workflows={workflows} settings={settingsMap} canManage={can('manage_roles')} isAr={isAr} />
         )}
       </>
     );
@@ -849,10 +834,6 @@ export function SettingsSectionPage() {
             onWorkflow={(saved) =>
               setWorkflows((ws) => ws.map((w) => (w.id === saved.id ? saved : w)))}
           />
-        )}
-        {section === 'roles' && <SettingsAccess canManage={can('manage_roles')} isAr={isAr} />}
-        {section === 'people' && (
-          <SettingsPeople workflows={workflows} settings={{}} canManage={can('manage_roles')} isAr={isAr} />
         )}
       </div>
     </>

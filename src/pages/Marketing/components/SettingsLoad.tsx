@@ -10,6 +10,11 @@
  *
  * Placement runs in the database (mos_perf_place_open_task); this screen only
  * edits the numbers it reads. Writes are RLS-gated on manage_roles.
+ *
+ * Since 2026-10-04 it has no page of its own: it renders as the lower half of
+ * Settings › Capacity & calendar (`embedded`), because the daily load here is
+ * the per-role DEFAULT the planner uses when a person has no capacity of their
+ * own — the same question as the per-person table above it.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -24,10 +29,12 @@ import { IconBack, IconForward } from './icons';
 const BUCKETS: readonly PerfBucket[] = ['post', 'video'];
 
 export default function SettingsLoad({
-  canManage, isAr,
+  canManage, isAr, embedded = false,
 }: {
   canManage: boolean;
   isAr: boolean;
+  /** Rendered inside the Capacity page: a section head instead of a page head. */
+  embedded?: boolean;
 }) {
   const addToast = useAppStore((s) => s.addToast);
   const { contentTypes } = useWorkspace();
@@ -107,6 +114,39 @@ export default function SettingsLoad({
 
   const roleLabel = (key: string, ar: string, en: string): string => (isAr ? ar : en) || key;
 
+  const saveButton = canManage && (
+    <button type="button" className="btn btn-p" onClick={() => void save()} disabled={busy || loading}>
+      {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ' : 'Save'}
+    </button>
+  );
+
+  const grids = (
+    <>
+      {error && <LoadError message={error} onRetry={() => void reload()} isAr={isAr} />}
+      {loading && <Skeleton rows={6} />}
+      {!loading && config && renderGrids(config)}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <section style={{ marginTop: 28 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 style={{ margin: 0, fontSize: 15 }}>{isAr ? 'الحد الافتراضي لكل دور والمُهَل' : 'Per-role defaults and SLAs'}</h3>
+            <div style={{ fontSize: 12, color: 'var(--mute)' }}>
+              {isAr
+                ? 'ما يأخذه الشخص يوميًا إن لم تُحدَّد له طاقة بنفسه أعلاه، وكم ساعة تُمهَل المهمة قبل أن تُعدّ متأخرة.'
+                : 'What a person takes per day when no capacity of their own is set above, and how many hours a task gets before it counts late.'}
+            </div>
+          </div>
+          {saveButton}
+        </div>
+        {grids}
+      </section>
+    );
+  }
+
   return (
     <>
       <PageHead
@@ -120,18 +160,14 @@ export default function SettingsLoad({
           </button>
         }
       >
-        {canManage && (
-          <button type="button" className="btn btn-p" onClick={() => void save()} disabled={busy || loading}>
-            {busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : isAr ? 'حفظ' : 'Save'}
-          </button>
-        )}
+        {saveButton}
       </PageHead>
+      <div className="body">{grids}</div>
+    </>
+  );
 
-      <div className="body">
-        {error && <LoadError message={error} onRetry={() => void reload()} isAr={isAr} />}
-        {loading && <Skeleton rows={6} />}
-
-        {!loading && config && (
+  function renderGrids(config: PerfConfig) {
+    return (
           <>
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-h">
@@ -258,8 +294,6 @@ export default function SettingsLoad({
               </div>
             </div>
           </>
-        )}
-      </div>
-    </>
-  );
+    );
+  }
 }
