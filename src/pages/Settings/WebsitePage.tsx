@@ -26,7 +26,8 @@ import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import Button from '@/components/ui/Button';
 import { resolveProjectView, modelByName, type ProjectView } from '@/lib/projects/projectView';
 import { getEntityFieldText, useRecordTranslationVersion } from '@/lib/recordTranslation/store';
-import { useSignedImage } from '@/lib/projects/useSignedImage';
+import { useSignedThumb } from '@/lib/files/signedViewUrlBatch';
+import ThumbImg from '@/pages/Files/components/ThumbImg';
 import { projectImagesToDetailFields } from '@/lib/projectDetailsAi';
 import { normalizeForSearch } from '@/lib/recordSearch';
 import type { AppRecord } from '@/types';
@@ -69,14 +70,16 @@ function ProjectCard({
   isAr: boolean;
   onEdit: () => void;
 }) {
-  const url = useSignedImage(hero);
+  // Small batched thumbnail: 96 cards used to sign one by one and download
+  // every full-size original.
+  const signed = useSignedThumb(hero);
   const name = view.name ?? (isAr ? 'بدون اسم' : 'Untitled');
   const place = [view.district, view.city].filter(Boolean).join(isAr ? '، ' : ', ');
   return (
     <div className="card overflow-hidden flex flex-col">
       <button type="button" onClick={onEdit} className="relative h-36 bg-cream/40 overflow-hidden group text-start">
-        {url ? (
-          <img src={url} alt={name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+        {signed ? (
+          <ThumbImg src={signed.thumb} fallbackSrc={signed.full} alt={name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
         ) : hero ? (
           // The project HAS a photo; its signed link is still on its way. Saying
           // "no photo" here was wrong for every card during the first seconds.

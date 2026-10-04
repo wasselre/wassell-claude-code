@@ -17,7 +17,7 @@
  * existing `signViewUrls`.
  */
 import { useEffect, useState } from 'react';
-import { signViewUrls } from './client';
+import { signThumbUrls, signViewUrls } from './client';
 
 /** Matches MAX_BATCH in api/files/sign-view-urls.ts (larger batches truncate there). */
 const SIGN_BATCH = 200;
@@ -109,4 +109,96 @@ export function useSignedViewUrl(fileId: string | null | undefined): string | nu
   }, [fileId, isRaw]);
 
   return url;
+}
+
+/* ── Thumbnails ───────────────────────────────────────────────────────────
+ * Same batching + caching, but each id resolves to a SMALL transformed image
+ * (320 px, from the `thumb: true` mode of the same endpoint) plus the full-size
+ * URL. Form photo previews are ~100 px boxes; signing the original made each
+ * one download a multi-megabyte, 2,500 px file and sign it with its own
+ * request — a project page dialog with nine photos took ~20 s to paint.
+ * Render `thumb`, and swap to `full` on an image error (ThumbImg does this):
+ * the transformer refuses very large sources.
+ */
+
+export interface SignedThumb { thumb: string; full: string }
+
+const thumbCache = new Map<string, { value: SignedThumb; expires: number }>();
+const thumbPending = new Map<string, (value: SignedThumb | null) => void>();
+const thumbPendingPromises = new Map<string, Promise<SignedThumb | null>>();
+let thumbFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function flushThumbs(): Promise<void> {
+  thumbFlushTimer = null;
+  const ids = Array.from(thumbPending.keys());
+  const resolvers = new Map(thumbPending);
+  thumbPending.clear();
+  for (const id of ids) thumbPendingPromises.delete(id);
+
+  const thumbs: Record<string, string> = {};
+  const fulls: Record<string, string> = {};
+  try {
+    for (let i = 0; i < ids.length; i += SIGN_BATCH) {
+      const { thumb, full } = await signThumbUrls(ids.slice(i, i + SIGN_BATCH));
+      Object.assign(thumbs, thumb);
+      Object.assign(fulls, full);
+    }
+  } catch (e) {
+    // signThumbUrls already surfaced the failure; every waiter resolves null and
+    // the caller renders its placeholder.
+    console.error('[files] batch sign thumb urls failed', e);
+  }
+
+  const now = Date.now();
+  for (const id of ids) {
+    const thumb = thumbs[id];
+    const value = thumb ? { thumb, full: fulls[id] ?? thumb } : null;
+    if (value) thumbCache.set(id, { value, expires: now + TTL_MS });
+    resolvers.get(id)?.(value);
+  }
+}
+
+function resolveSignedThumb(fileId: string): Promise<SignedThumb | null> {
+  const hit = thumbCache.get(fileId);
+  if (hit && hit.expires > Date.now()) return Promise.resolve(hit.value);
+  const existing = thumbPendingPromises.get(fileId);
+  if (existing) return existing;
+  const p = new Promise<SignedThumb | null>((resolve) => {
+    thumbPending.set(fileId, resolve);
+  });
+  thumbPendingPromises.set(fileId, p);
+  if (!thumbFlushTimer) thumbFlushTimer = setTimeout(() => void flushThumbs(), FLUSH_MS);
+  return p;
+}
+
+function cachedThumb(fileId: string): SignedThumb | null {
+  const hit = thumbCache.get(fileId);
+  return hit && hit.expires > Date.now() ? hit.value : null;
+}
+
+/**
+ * Hook: a small signed thumbnail (+ full-size fallback) for a files.id, batched
+ * and cached. A legacy raw URL comes back as both thumb and full (it has no
+ * transformed copy). `null` while loading or when the id can't be signed.
+ */
+export function useSignedThumb(fileId: string | null | undefined): SignedThumb | null {
+  const isRaw = !!fileId && /^https?:\/\//i.test(fileId);
+  const [value, setValue] = useState<SignedThumb | null>(() => {
+    if (!fileId) return null;
+    if (isRaw) return { thumb: fileId, full: fileId };
+    return cachedThumb(fileId);
+  });
+
+  useEffect(() => {
+    if (!fileId) { setValue(null); return; }
+    if (isRaw) { setValue({ thumb: fileId, full: fileId }); return; }
+    const cached = cachedThumb(fileId);
+    if (cached) { setValue(cached); return; }
+    setValue(null);
+    let cancelled = false;
+    void resolveSignedThumb(fileId).then((v) => { if (!cancelled) setValue(v); });
+    return () => { cancelled = true; };
+  }, [fileId, isRaw]);
+
+  return value;
 }

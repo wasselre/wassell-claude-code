@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   FileIcon,
@@ -9,7 +9,8 @@ import {
   Upload as UploadIcon,
   X,
 } from 'lucide-react';
-import { signViewUrl } from '@/lib/files/client';
+import { useSignedThumb } from '@/lib/files/signedViewUrlBatch';
+import ThumbImg from '@/pages/Files/components/ThumbImg';
 import { kindAccent, kindIcon } from '@/lib/files/format';
 import FilePreviewModal from '@/pages/Files/components/FilePreviewModal';
 import DriveBrowserModal, {
@@ -26,50 +27,23 @@ function isLegacyUrlValue(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
 
-/** Tiny thumbnail loader for image files. Hits /api/files/sign-view-url so
- *  the URL is bound to the caller's identity (RLS-gated) and short-lived. */
-function useSignedImageUrl(fileId: string | null): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!fileId) {
-      setUrl(null);
-      return;
-    }
-    // Legacy public URL — already a fetchable src; the sign endpoint would
-    // reject it (expects a files.id UUID).
-    if (isLegacyUrlValue(fileId)) {
-      setUrl(fileId);
-      return;
-    }
-    let cancelled = false;
-    void signViewUrl(fileId)
-      .then((res) => {
-        if (!cancelled) setUrl(res.url);
-      })
-      .catch(() => {
-        if (!cancelled) setUrl(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fileId]);
-  return url;
-}
-
 /* ────────────────────────────────────────────────────────────────────────
  * Common UI bits
  * ──────────────────────────────────────────────────────────────────────── */
 
+/** Photo preview in a form. Uses a small batched + cached thumbnail (with the
+ *  original as fallback) instead of signing and downloading the full-size
+ *  original one request at a time. Clicking opens the full preview. */
 function ImageThumb({ fileId, onClick }: { fileId: string; onClick: () => void }) {
-  const url = useSignedImageUrl(fileId);
+  const signed = useSignedThumb(fileId);
   return (
     <button
       type="button"
       onClick={onClick}
       className="block w-24 h-24 rounded-xl overflow-hidden border border-sand/40 bg-cream/40 hover:opacity-80 transition-opacity cursor-zoom-in"
     >
-      {url ? (
-        <img src={url} alt="" className="w-full h-full object-cover" loading="lazy" />
+      {signed ? (
+        <ThumbImg src={signed.thumb} fallbackSrc={signed.full} className="w-full h-full object-cover" />
       ) : (
         <div className="w-full h-full flex items-center justify-center text-charcoal/30">
           <Loader2 size={16} className="animate-spin" />
