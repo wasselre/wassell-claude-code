@@ -79,6 +79,17 @@ export function shortDate(iso: string | null | undefined, isAr: boolean): string
   return isAr ? `${day} ${month}` : `${month} ${day}`;
 }
 
+/**
+ * A year for display — «٢٠٢٦» / "2026". A year is a label, not a quantity, so it
+ * never takes a thousands separator: through `num()` it printed «٢,٠٢٦», which
+ * the month page showed on every month title until 2026-10-04.
+ */
+export function yearLabel(y: number, isAr: boolean): string {
+  if (!Number.isFinite(y)) return '—';
+  const s = String(Math.trunc(y));
+  return isAr ? toArabicDigits(s) : s;
+}
+
 /** «١ يوليو ٢٠٢٦» / "1 Jul 2026" — a full calendar date WITH the year. */
 export function fullDate(iso: string | null | undefined, isAr: boolean): string {
   if (!iso) return '—';
@@ -86,7 +97,7 @@ export function fullDate(iso: string | null | undefined, isAr: boolean): string 
   if (Number.isNaN(d.getTime())) return '—';
   const day = num(d.getDate(), isAr);
   const month = (isAr ? AR_MONTHS : EN_MONTHS)[d.getMonth()] ?? '';
-  const year = num(d.getFullYear(), isAr);
+  const year = yearLabel(d.getFullYear(), isAr);
   return isAr ? `${day} ${month} ${year}` : `${month} ${day}, ${year}`;
 }
 

@@ -47,7 +47,7 @@ import MonthNumbers from './components/MonthNumbers';
 import MonthNoteModal, { type NoteCoord } from './components/MonthNoteModal';
 import MonthWeeksGrid, { type DayReleaseState } from './components/MonthWeeksGrid';
 import { MonthProjectSlots, MonthProjectResults } from './components/MonthProjectSlots';
-import { num, money, pct, dayLabel, monthName } from './lib/format';
+import { num, money, pct, dayLabel, monthName, yearLabel } from './lib/format';
 import {
   MonthFactCards, demandFact, unscheduledFact, budgetFact, batchSizeFact,
   type MonthFact,
@@ -71,7 +71,7 @@ function shiftMonth(month: string, delta: number): string {
 
 function monthLabel(month: string, isAr: boolean): string {
   const [y, m] = month.split('-').map(Number);
-  return `${monthName((m ?? 1) - 1, isAr)} ${num(y ?? 0, isAr)}`;
+  return `${monthName((m ?? 1) - 1, isAr)} ${yearLabel(y ?? 0, isAr)}`;
 }
 
 /**
@@ -653,8 +653,15 @@ export default function MonthPage() {
    * confirming it would book every designer day twice, with neither plan
    * seeing the other. The API refuses it; the page must not offer it, and it
    * names the owner so the next click is obvious rather than blocked.
+   *
+   * The REPORT tense needs the same answer (2026-10-04). It used to fall
+   * through to `month_report`, which finds a month's numbers by campaigns
+   * named after that month — a covered month has none, because its work
+   * belongs to the owner's campaigns — so October said «هذا الشهر لم يُعتمد
+   * بعد، فلا أرقام له» while its approved posts were going out every posting
+   * day. Its numbers are in the owner's report, which spans both months.
    */
-  if (tense === 'plan' && data.covered_by) {
+  if (data.covered_by) {
     const owner = data.covered_by;
     return (
       <div className="body">
@@ -662,13 +669,19 @@ export default function MonthPage() {
         {monthNav}
         <div className="notice" style={{ marginBlockEnd: 14 }}>
           <div>
-            {isAr
-              ? `${monthLabel(month, true)} مُخطَّط ضمن خطة ${monthLabel(owner, true)} الممتدة — خطة واحدة تغطي الشهرين. لا يوجد اختيار مشاريع هنا، ولا تُخطَّط هذه الأسابيع مرتين.`
-              : `${monthLabel(month, false)} is planned inside ${monthLabel(owner, false)}'s stretched plan — one plan covering both months. There is no project selection here, and these weeks are not planned twice.`}
+            {tense === 'plan'
+              ? (isAr
+                ? `${monthLabel(month, true)} مُخطَّط ضمن خطة ${monthLabel(owner, true)} الممتدة — خطة واحدة تغطي الشهرين. لا يوجد اختيار مشاريع هنا، ولا تُخطَّط هذه الأسابيع مرتين.`
+                : `${monthLabel(month, false)} is planned inside ${monthLabel(owner, false)}'s stretched plan — one plan covering both months. There is no project selection here, and these weeks are not planned twice.`)
+              : (isAr
+                ? `${monthLabel(month, true)} جزء من خطة ${monthLabel(owner, true)} الممتدة، وهي معتمدة وتعمل حتى نهاية ${monthLabel(month, true)}. أرقامه في تقرير ${monthLabel(owner, true)}، الذي يغطي الشهرين معًا.`
+                : `${monthLabel(month, false)} is part of ${monthLabel(owner, false)}'s stretched plan, which is confirmed and runs to the end of ${monthLabel(month, false)}. Its numbers are in ${monthLabel(owner, false)}'s report, which covers both months.`)}
           </div>
           <div style={{ marginBlockStart: 8 }}>
             <button type="button" className="btn btn-sm" onClick={() => go({ month: owner })}>
-              {isAr ? `افتح ${monthLabel(owner, true)}` : `Open ${monthLabel(owner, false)}`}
+              {tense === 'plan'
+                ? (isAr ? `افتح ${monthLabel(owner, true)}` : `Open ${monthLabel(owner, false)}`)
+                : (isAr ? `افتح تقرير ${monthLabel(owner, true)}` : `Open ${monthLabel(owner, false)}'s report`)}
             </button>
           </div>
         </div>
