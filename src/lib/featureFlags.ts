@@ -150,6 +150,11 @@ export const WORKSPACE_HIDDEN_MODEL_NAMES = [
   'countries', 'regions', 'cities', 'districts',
   // D46 — hidden now; activated later with the unanswered-requests feature (D38).
   'real_estate_offices',
+  // 2026-10-04 (operator request) — the last three rows under «لوحة المعلومات».
+  // lead_portals is reached from Settings (its card), unanswered_requests from
+  // the Sales Workspace «الطلبات غير المجابة» tab (hiding it also empties the
+  // «طلبات غير مجابة» folder), and contacts from a chat's contact card.
+  'lead_portals', 'unanswered_requests', 'contacts',
   // D47 — advertisers moved to ARCHIVED_MODULE_MODELS (2026-09-27).
 ] as const;
 

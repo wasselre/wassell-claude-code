@@ -311,8 +311,8 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
             );
           })}
 
-          {/* Divider label */}
-          {!railCollapsed && (
+          {/* Divider label — only when there is something under it. */}
+          {!railCollapsed && (ungroupedModels.length > 0 || groupedModels.length > 0) && (
             <div className="pt-5 pb-2 px-3">
               <span className="text-[0.6875rem] font-bold text-charcoal/30 uppercase tracking-widest">
                 {isAr ? 'لوحة المعلومات' : 'Dashboard'}
