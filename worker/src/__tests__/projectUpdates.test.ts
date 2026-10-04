@@ -160,3 +160,48 @@ describe('Riva portal parsing', () => {
     expect(list[0]!.name).toContain('أكنان 25');
   });
 });
+
+describe('reconcile — status_only scope (secondary source)', () => {
+  const policy: ReconcilePolicy = { absentAvailable: 'leave', createMissing: false, updatePrices: false, forwardOnly: true };
+  it('moves status forward only and never touches the price', () => {
+    const r = reconcile(
+      [crm('u1', { unit_model: 'A1', total_price: 1_261_068 }), crm('u2', { unit_model: 'A2', unit_status: 'sold' })],
+      [src('A1', { status: 'reserved', price: 1_201_017 }), src('A2', { status: 'available' })], policy, CTX);
+    expect(r.updates).toHaveLength(1);
+    expect(r.updates[0]!.patch).toEqual({ unit_status: 'reserved' });
+  });
+  it('creates nothing', () => {
+    const r = reconcile([], [src('Z1', { status: 'available', price: 1 })], policy, CTX);
+    expect(r.creates).toHaveLength(0);
+  });
+});
+
+describe('reconcile — Al-Ramz style ids (unit_model is a layout, not an id)', () => {
+  const units = [
+    crm('a', { unit_model: 'D', block: '53', building_number: '17', floor: 'اول', unit_number: 67 }),
+    crm('b', { unit_model: 'D', block: '53', building_number: '17', floor: 'ارضي', unit_number: 60 }),
+    crm('c', { unit_model: 'D', block: '56', building_number: '3', floor: 'اول', unit_number: 4 }),
+  ];
+  it('matches «بلك 53 عمارة 17 الدور الأول» to the one unit, not to every «D»', () => {
+    const r = reconcile(units, [{ sourceId: null, unitModel: null, block: '53', buildingNumber: '17', floor: 'الدور الأول', status: 'reserved' }], RIVA, CTX);
+    expect(r.updates.map((u) => u.unitId)).toEqual(['a']);
+    expect(r.ambiguous).toEqual([]);
+  });
+  it('matches a booking post «فيلا 31 / بلك 494» by block + number', () => {
+    const r = reconcile([crm('v', { unit_model: 'V2', block: '494', unit_number: 31 }), crm('w', { unit_model: 'V2', block: '494', unit_number: 32 })],
+      [{ sourceId: null, unitModel: null, block: '494', unitNumber: 31, status: 'reserved' }], RIVA, CTX);
+    expect(r.updates.map((u) => u.unitId)).toEqual(['v']);
+  });
+  it('reports a code shared by several units as ambiguous instead of guessing', () => {
+    const r = reconcile(units, [src('D', { status: 'sold' })], RIVA, CTX);
+    expect(r.ambiguous).toEqual(['D']);
+    expect(r.updates).toHaveLength(0);
+  });
+});
+
+describe('visibleText', () => {
+  it('drops scripts and tags', async () => {
+    const { visibleText } = await import('../projectUpdates/riva');
+    expect(visibleText('<head><title>x</title></head><h1>أكنان 24</h1><script>var a=1</script><p>حي الرمال</p>')).toBe('أكنان 24 حي الرمال');
+  });
+});

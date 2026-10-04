@@ -125,6 +125,9 @@ function logLine(today: string, label: string, r: ReconcileResult, extra: string
 }
 
 const RIVA_POLICY: ReconcilePolicy = { absentAvailable: 'leave', createMissing: true, updatePrices: true };
+/** auto_scope = status_only: the portal is a secondary source for this
+ *  project (e.g. ستون الندى — the developer's own price files lead). */
+const STATUS_ONLY_POLICY: ReconcilePolicy = { absentAvailable: 'leave', createMissing: false, updatePrices: false, forwardOnly: true };
 
 async function runRiva(
   supabase: SupabaseClient,
@@ -161,10 +164,17 @@ async function runRiva(
         entry.status = 'missing_from_portal';
         continue; // reported; retirement stays a human decision
       }
+      const scope = typeof row.data.auto_scope === 'string' ? row.data.auto_scope : 'full';
+      entry.scope = scope;
+      if (scope === 'off') {
+        entry.status = 'skipped_off';
+        continue;
+      }
+      const policy: ReconcilePolicy = scope === 'status_only' ? STATUS_ONLY_POLICY : RIVA_POLICY;
       const src = await portal.scrapeProject(portalId);
       const crm = (await loadAll(supabase, UNITS_MODEL_ID, { key: 'project_id', value: projectId })) as CrmUnit[];
       const developerId = typeof project.data.developer === 'string' ? project.data.developer : null;
-      const result = reconcile(crm, src.units, RIVA_POLICY, {
+      const result = reconcile(crm, src.units, policy, {
         projectId, developerId, projectName, sourceLabel: 'بوابة وسطاء ريفا', today,
       });
       const brake = brakeReason(result, { share: settings.brake_share, minUnits: settings.brake_min_units });
@@ -219,9 +229,36 @@ async function runRiva(
     const k = normUnitKey(p.data.project_name);
     if (k) byName.set(k, p.id);
   }
-  const newProjects = listed
-    .filter((p) => !knownIds.has(p.id))
-    .map((p) => ({ portal_id: p.id, name: p.name, crm_match: byName.get(normUnitKey(p.name)) ?? null }));
+  // Read each unregistered project's own page: its name (the card text runs
+  // the name, city, brand and commission together) and its units.
+  const newProjects: Array<Record<string, unknown>> = [];
+  for (const p of listed.filter((x) => !knownIds.has(x.id))) {
+    const item: Record<string, unknown> = { portal_id: p.id, card_text: p.name };
+    try {
+      const src = await portal.scrapeProject(p.id);
+      const name = src.name || p.name;
+      const key = normUnitKey(name);
+      const exact = byName.get(key) ?? null;
+      // «جديل الرمال» on the portal is «أدوار جديل الرمال» in the CRM: a
+      // containment hit is reported as a likely match, never auto-linked.
+      const likely = exact ? [] : crmProjects
+        .filter((c) => {
+          const k = normUnitKey(c.data.project_name);
+          return k && key && k !== key && (k.includes(key) || key.includes(k));
+        })
+        .map((c) => ({ id: c.id, name: c.data.project_name }));
+      Object.assign(item, {
+        name, units: src.units.length, declared_total: src.declaredTotal,
+        available: src.units.filter((u) => u.status === 'available').length,
+        crm_match: exact, likely_matches: likely.slice(0, 5),
+        page_excerpt: portal.lastPageExcerpt,
+      });
+    } catch (err) {
+      item.error = (err as Error).message;
+    }
+    newProjects.push(item);
+    await heartbeat();
+  }
 
   const summary = {
     source: 'riva_broker',

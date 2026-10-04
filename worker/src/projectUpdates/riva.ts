@@ -132,6 +132,15 @@ export function extractProjectName(html: string): string | null {
   return t || null;
 }
 
+/** Visible text of a page: scripts, styles, nav and footer removed. */
+export function visibleText(html: string): string {
+  return htmlUnescape(
+    html
+      .replace(/<(script|style|svg|nav|footer|head)\b[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<[^>]+>/g, ' '),
+  ).replace(/\s+/g, ' ').trim();
+}
+
 export interface RivaCredentials {
   email: string;
   password: string;
@@ -143,6 +152,9 @@ export class RivaPortal {
   /** Every page fetch, for the run summary. */
   pagesFetched = 0;
   parseErrors = 0;
+  /** Visible text of the first page of the last scraped project (a NEW
+   *  project's details are read from it). */
+  lastPageExcerpt = '';
 
   constructor(private readonly creds: RivaCredentials, private readonly onProgress?: () => Promise<void>) {}
 
@@ -206,7 +218,10 @@ export class RivaPortal {
       for (let page = 1; page <= maxPage; page++) {
         const html = await this.get(`/broker/projects/${id}?page=${page}`);
         if (total == null) total = declaredTotal(html);
-        if (name == null) name = extractProjectName(html);
+        if (name == null) {
+          name = extractProjectName(html);
+          this.lastPageExcerpt = visibleText(html).slice(0, 2500);
+        }
         const jsons = extractUnitJsons(html);
         if (jsons.length === 0) break;
         for (const j of jsons) {

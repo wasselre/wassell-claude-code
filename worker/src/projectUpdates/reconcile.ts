@@ -60,15 +60,61 @@ export function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+const STATUS_RANK: Record<string, number> = { under_construction: 0, available: 1, reserved: 2, sold: 3 };
+
 function crmStatus(d: Record<string, unknown>): string {
   return typeof d.unit_status === 'string' ? d.unit_status : '';
 }
 
-function bnKey(building: unknown, unit: unknown): string | null {
-  const b = building == null ? '' : normUnitKey(building);
-  const u = num(unit);
-  if (!b || u == null) return null;
-  return `${b}#${u}`;
+function part(v: unknown): string {
+  return v == null ? '' : normUnitKey(v);
+}
+
+/**
+ * The identifiers a unit can be matched on, most specific first. Developers
+ * name units differently: Riva quotes a unique code («32 - B»), Al-Ramz a block
+ * + building + floor («بلك 53 عمارة 17 الدور الأول»), and a booking post a
+ * building + flat number («مبنى 6 | شقة 2»). `unit_model` is NOT always an id —
+ * on Al-Ramz projects it is the layout type (D, C1…) shared by dozens of units —
+ * so every key is used only when it points at exactly ONE unit on each side.
+ */
+type KeyFn = (x: {
+  code: unknown; model: unknown; block: unknown; building: unknown; unit: unknown; floor: unknown;
+}) => string | null;
+
+const MATCH_KEYS: Array<[string, KeyFn]> = [
+  ['code', (x) => (part(x.code) ? `c:${part(x.code)}` : null)],
+  ['model', (x) => (part(x.model) ? `m:${part(x.model)}` : null)],
+  ['block_unit', (x) => (part(x.block) && num(x.unit) != null ? `bu:${part(x.block)}#${num(x.unit)}` : null)],
+  ['building_unit', (x) => (part(x.building) && num(x.unit) != null ? `gu:${part(x.building)}#${num(x.unit)}` : null)],
+  ['block_building_floor', (x) => {
+    const f = mapFloor(x.floor);
+    return part(x.block) && part(x.building) && f ? `bgf:${part(x.block)}#${part(x.building)}#${f}` : null;
+  }],
+  ['building_floor', (x) => {
+    const f = mapFloor(x.floor);
+    return part(x.building) && f ? `gf:${part(x.building)}#${f}` : null;
+  }],
+];
+
+/** How a source unit is named in logs: its code, else block/building/floor. */
+export function sourceLabel(s: SourceUnit): string {
+  if (s.unitModel) return s.unitModel;
+  if (s.unitCode) return s.unitCode;
+  const bits = [
+    s.block ? `بلك ${s.block}` : '',
+    s.buildingNumber ? `عمارة ${s.buildingNumber}` : '',
+    s.unitNumber != null ? `وحدة ${s.unitNumber}` : '',
+    s.floor ? `دور ${s.floor}` : '',
+  ].filter(Boolean);
+  return bits.length ? bits.join(' ') : s.sourceId ?? '?';
+}
+
+function crmKeyInput(d: Record<string, unknown>) {
+  return { code: d.developer_unit_code ?? null, model: d.unit_model, block: d.block, building: d.building_number, unit: d.unit_number, floor: d.floor };
+}
+function srcKeyInput(s: SourceUnit) {
+  return { code: s.unitCode ?? null, model: s.unitModel, block: s.block, building: s.buildingNumber, unit: s.unitNumber, floor: s.floor };
 }
 
 /** Map a source's free-text unit type to the units.unit_type option value. */
@@ -132,19 +178,46 @@ export function reconcile(
   policy: ReconcilePolicy,
   ctx: { projectId: string; developerId: string | null; projectName: string; sourceLabel: string; today: string },
 ): ReconcileResult {
-  const byModel = new Map<string, CrmUnit[]>();
-  const byBn = new Map<string, CrmUnit[]>();
+  // A unit code on our side is U-n; a source quoting one matches it too.
+  const byCrmCode = new Map<string, CrmUnit>();
   for (const u of crm) {
-    const k = normUnitKey(u.data.unit_model);
-    if (k) byModel.set(k, [...(byModel.get(k) ?? []), u]);
-    const b = bnKey(u.data.building_number, u.data.unit_number);
-    if (b) byBn.set(b, [...(byBn.get(b) ?? []), u]);
+    const c = part(u.data.unit_code);
+    if (c) byCrmCode.set(c, u);
   }
-  const srcBnCount = new Map<string, number>();
+  const crmIndex = new Map<string, CrmUnit[]>();
+  for (const u of crm) {
+    for (const [, fn] of MATCH_KEYS) {
+      const k = fn(crmKeyInput(u.data));
+      if (k) crmIndex.set(k, [...(crmIndex.get(k) ?? []), u]);
+    }
+  }
+  // Count source keys over DISTINCT source units — the same unit repeated by
+  // unstable pagination must not look like two units sharing a key.
+  const distinct = new Map<string, SourceUnit>();
   for (const s of source) {
-    const b = bnKey(s.buildingNumber, s.unitNumber);
-    if (b) srcBnCount.set(b, (srcBnCount.get(b) ?? 0) + 1);
+    const dk = s.sourceId ? `id:${s.sourceId}` : `l:${normUnitKey(sourceLabel(s))}`;
+    if (!distinct.has(dk)) distinct.set(dk, s);
   }
+  const srcCount = new Map<string, number>();
+  for (const s of distinct.values()) {
+    for (const [, fn] of MATCH_KEYS) {
+      const k = fn(srcKeyInput(s));
+      if (k) srcCount.set(k, (srcCount.get(k) ?? 0) + 1);
+    }
+  }
+  const findMatch = (s: SourceUnit): { unit: CrmUnit | null; ambiguous: boolean } => {
+    const code = part(s.unitCode);
+    if (code && byCrmCode.has(code)) return { unit: byCrmCode.get(code)!, ambiguous: false };
+    let sawAmbiguity = false;
+    for (const [, fn] of MATCH_KEYS) {
+      const k = fn(srcKeyInput(s));
+      if (!k) continue;
+      const hits = crmIndex.get(k) ?? [];
+      if (hits.length === 1 && (srcCount.get(k) ?? 0) <= 1) return { unit: hits[0]!, ambiguous: false };
+      if (hits.length > 1 || (srcCount.get(k) ?? 0) > 1) sawAmbiguity = true;
+    }
+    return { unit: null, ambiguous: sawAmbiguity };
+  };
 
   const updates: UnitPatch[] = [];
   const creates: UnitCreate[] = [];
@@ -154,28 +227,25 @@ export function reconcile(
   let statusChanges = 0, toSoldOrReserved = 0, priceChanges = 0, matched = 0;
 
   for (const s of source) {
-    const mk = normUnitKey(s.unitModel);
-    const label = s.unitModel ?? s.sourceId ?? '?';
+    const label = sourceLabel(s);
     // The same unit listed twice by the source (unstable pagination) → once.
-    const dedupeKey = mk || `id:${s.sourceId}`;
+    const dedupeKey = s.sourceId ? `id:${s.sourceId}` : `l:${normUnitKey(label)}`;
     if (seenSrc.has(dedupeKey)) continue;
     seenSrc.add(dedupeKey);
 
-    let hits = mk ? byModel.get(mk) ?? [] : [];
-    if (hits.length === 0) {
-      const b = bnKey(s.buildingNumber, s.unitNumber);
-      if (b && srcBnCount.get(b) === 1) hits = byBn.get(b) ?? [];
-    }
-    if (hits.length > 1) { ambiguous.push(label); continue; }
+    const m = findMatch(s);
+    if (!m.unit && m.ambiguous) { ambiguous.push(label); continue; }
+    if (m.unit && matchedIds.has(m.unit.id)) { ambiguous.push(label); continue; }
 
-    if (hits.length === 1) {
-      const u = hits[0]!;
+    if (m.unit) {
+      const u = m.unit;
       matched++;
       matchedIds.add(u.id);
       const patch: Record<string, unknown> = {};
       const reasons: string[] = [];
       const cur = crmStatus(u.data);
-      if (s.status && s.status !== cur) {
+      const forwardOk = !policy.forwardOnly || (STATUS_RANK[s.status ?? ''] ?? -1) > (STATUS_RANK[cur] ?? -1);
+      if (s.status && s.status !== cur && forwardOk) {
         patch.unit_status = s.status;
         reasons.push(`status ${cur || '∅'} → ${s.status}`);
         statusChanges++;

@@ -18,7 +18,12 @@ export interface SourceUnit {
   /** Join key against CRM `unit_model` (normalised by `normUnitKey`). */
   unitModel: string | null;
   buildingNumber?: string | null;
+  /** Block / plot («بلك 494»). */
+  block?: string | null;
   unitNumber?: number | null;
+  /** A CRM unit code (U-123) or the developer's own unit code, when the
+   *  source quotes one. */
+  unitCode?: string | null;
   unitType?: string | null;
   status?: UnitStatus | null;
   /** SAR. null/0 = the source shows no price («عند الطلب») → never overwrite. */
@@ -62,6 +67,9 @@ export interface ReconcilePolicy {
   /** Overwrite prices from the source (false for sources whose prices are
    *  marketing "starting from" headlines). */
   updatePrices: boolean;
+  /** Status may only move FORWARD (available → reserved → sold), never back.
+   *  For a project whose source here is secondary (auto_scope = status_only). */
+  forwardOnly?: boolean;
 }
 
 export interface UnitPatch {
