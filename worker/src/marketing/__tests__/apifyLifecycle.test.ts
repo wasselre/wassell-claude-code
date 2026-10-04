@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   collectViaApify, classifyApifyError, buildInput, incrementalWindow,
-  ProviderPausedError, INCREMENTAL_CEILING, CATCH_UP_CEILING, decideBudgetAction,
+  ProviderPausedError, INCREMENTAL_CEILING, HISTORY_CEILING, decideBudgetAction,
 } from '../apifyLifecycle';
 import { apifyRunIdsToSweep, mayHoldMedia } from '../apifyStorageSweep';
 import { browserbaseFallbackEligible } from '../pipeline';
@@ -172,21 +172,39 @@ describe('classifyApifyError — a spent budget is not an outage', () => {
   });
 });
 
-describe('incrementalWindow — only what can have changed', () => {
-  const now = new Date('2026-09-23T07:00:00Z');
-  it('active account: the last 14 days, normal ceiling', () => {
-    expect(incrementalWindow('2026-09-20T10:00:00Z', now)).toEqual({ newerThan: '2026-09-09T07:00:00.000Z', limit: INCREMENTAL_CEILING, mode: 'window' });
+describe('incrementalWindow — 12 months once, then only new posts', () => {
+  const now = new Date('2026-10-04T07:00:00Z');
+  it('history never collected: the last 12 months, history ceiling', () => {
+    expect(incrementalWindow(null, null, now)).toEqual({ newerThan: '2025-10-04T07:00:00.000Z', limit: HISTORY_CEILING, mode: 'history' });
+    // posts stored by the old collector do not count as a collected history
+    expect(incrementalWindow('2026-09-20T10:00:00Z', null, now).mode).toBe('history');
   });
-  it('after a gap: everything since the last stored post, catch-up ceiling', () => {
-    // the Sept 2026 blackout: last post stored 09-04, collection resumes 09-23
-    expect(incrementalWindow('2026-09-04T11:41:42Z', now)).toEqual({ newerThan: '2026-09-04T11:41:42.000Z', limit: CATCH_UP_CEILING, mode: 'catch_up' });
+  it('active account: only posts since our newest one, minus a one-day overlap', () => {
+    expect(incrementalWindow('2026-10-03T10:00:00Z', '2026-09-30T00:00:00Z', now))
+      .toEqual({ newerThan: '2026-10-02T10:00:00.000Z', limit: INCREMENTAL_CEILING, mode: 'new_only' });
   });
-  it('no posts stored yet: no cutoff', () => {
-    expect(incrementalWindow(null, now)).toEqual({ limit: INCREMENTAL_CEILING, mode: 'no_history' });
+  it('quiet account: anchored on the history run, not on an old post (nothing re-bought)', () => {
+    expect(incrementalWindow('2026-01-01T00:00:00Z', '2026-10-01T00:00:00Z', now).newerThan).toBe('2026-09-30T00:00:00.000Z');
+  });
+  it('after a long pause: still only new posts, but with the larger ceiling', () => {
+    const w = incrementalWindow('2026-08-01T00:00:00Z', '2026-07-01T00:00:00Z', now);
+    expect(w).toEqual({ newerThan: '2026-07-31T00:00:00.000Z', limit: HISTORY_CEILING, mode: 'new_only' });
+  });
+  it('never reaches further back than 12 months', () => {
+    expect(incrementalWindow('2024-01-01T00:00:00Z', '2024-01-02T00:00:00Z', now).newerThan).toBe('2025-10-04T07:00:00.000Z');
   });
 });
 
 describe('buildInput', () => {
+  it('Instagram post links: exactly those posts', () => {
+    expect(buildInput('instagram_profile', 'h', 30, { postUrls: ['https://www.instagram.com/p/A/', 'https://www.instagram.com/p/B/'] }))
+      .toEqual({ directUrls: ['https://www.instagram.com/p/A/', 'https://www.instagram.com/p/B/'], resultsType: 'posts', resultsLimit: 2 });
+  });
+  it('TikTok post links: the views check does not pay for a video download', () => {
+    expect(buildInput('tiktok_profile', 'h', 30, { postUrls: ['u'], download: false })).toMatchObject({ postURLs: ['u'], shouldDownloadVideos: false, shouldDownloadCovers: false });
+    // the download pass and the redownload keep downloading by default
+    expect(buildInput('tiktok_profile', 'h', 30, { postUrls: ['u'] })).toMatchObject({ shouldDownloadVideos: true });
+  });
   it('TikTok without a cutoff still never downloads on the profile pass', () => {
     expect(buildInput('tiktok_profile', 'h', 30)).toMatchObject({ profiles: ['h'], shouldDownloadVideos: false, shouldDownloadCovers: false });
     expect(buildInput('tiktok_profile', 'h', 30)).not.toHaveProperty('oldestPostDateUnified');

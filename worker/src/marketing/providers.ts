@@ -121,6 +121,18 @@ export const YouTube = {
     const vids = await yt<YtVideos>('videos', { part: 'snippet,contentDetails,statistics', id: ids.join(',') });
     return { provider: 'youtube', posts: (vids.items ?? []).map(normYouTubeVideo), nextCursor: pl.nextPageToken ?? null, hasMore: Boolean(pl.nextPageToken), cost: { units_estimate: 1 + 1 } };
   },
+  /** Current numbers for specific videos (the 7- and 30-day views/likes
+   *  re-check). Free: one quota unit per 50 videos. A video that is gone is
+   *  simply absent from the answer. */
+  async videosByIds(ids: string[]): Promise<NormalizedContentPost[]> {
+    const out: NormalizedContentPost[] = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      const chunk = ids.slice(i, i + 50);
+      const vids = await yt<YtVideos>('videos', { part: 'snippet,contentDetails,statistics', id: chunk.join(',') });
+      out.push(...(vids.items ?? []).map(normYouTubeVideo));
+    }
+    return out;
+  },
 };
 
 // ── TikTok/IG/FB parsers (copy of providers/apify.ts parsers) ───────────────

@@ -196,8 +196,12 @@ function sourceTypeFor(platform: Platform): string {
 export interface InputOptions {
   /** ISO instant; only posts published on/after it are returned (and billed). */
   newerThan?: string;
-  /** TikTok only: fetch exactly these videos, WITH the video file downloaded. */
+  /** Fetch exactly these posts (Instagram post links / TikTok video links). */
   postUrls?: string[];
+  /** TikTok + postUrls: re-host the video file too (charged add-on). Defaults to
+   *  true, which is what the download pass and the redownload need; the views
+   *  and likes re-check passes false (it only wants the numbers). */
+  download?: boolean;
 }
 
 /**
@@ -209,6 +213,11 @@ export interface InputOptions {
 export function buildInput(sourceType: string, handle: string, limit: number, opts: InputOptions = {}): Record<string, unknown> {
   switch (sourceType) {
     case 'instagram_profile':
+      // Post links in directUrls return exactly those posts (verified live
+      // 2026-10-04: two post links in, two posts with likes/comments out).
+      if (opts.postUrls && opts.postUrls.length > 0) {
+        return { directUrls: opts.postUrls, resultsType: 'posts', resultsLimit: opts.postUrls.length };
+      }
       return {
         directUrls: [`https://www.instagram.com/${handle}/`], resultsType: 'posts', resultsLimit: limit,
         ...(opts.newerThan ? { onlyPostsNewerThan: opts.newerThan } : {}),
@@ -219,7 +228,8 @@ export function buildInput(sourceType: string, handle: string, limit: number, op
         // in the run's key-value store (TikTok's own links need cookies and
         // expire), which is the only way we can store TikTok videos. It is a
         // charged add-on, so it runs for new videos only.
-        return { postURLs: opts.postUrls, resultsPerPage: opts.postUrls.length, shouldDownloadVideos: true, shouldDownloadCovers: true };
+        const download = opts.download !== false;
+        return { postURLs: opts.postUrls, resultsPerPage: opts.postUrls.length, shouldDownloadVideos: download, shouldDownloadCovers: download };
       }
       // Metadata pass: engagement + ids, no files.
       return {
@@ -233,30 +243,49 @@ export function buildInput(sourceType: string, handle: string, limit: number, op
 }
 
 // ── the incremental window ──────────────────────────────────────────────────
+//
+// Operator decision 2026-10-04: collect each account's last 12 months ONCE,
+// then only posts newer than the newest one we hold. Views and likes are NOT
+// refreshed by re-reading recent posts any more — that re-bought every post of
+// the last 14 days on every run (about 14 paid reads per post for a daily
+// account). They are re-checked twice per post instead, at 7 and 30 days old
+// (the post_metrics job), so every post is measured at the same ages.
 
-/** Recent posts keep collecting likes/views; refreshing them is the one useful
- *  thing re-reading does. Past two weeks the numbers barely move. */
-export const ENGAGEMENT_WINDOW_DAYS = 14;
-/** Ceiling for a normal daily run. The busiest tracked account posts ~0.9/day,
- *  so a 14-day window holds ~13 posts. */
-export const INCREMENTAL_CEILING = 30;
-/** Ceiling when catching up after a gap (e.g. a paused month). Hitting it is
- *  reported as a warning on the run, never silently accepted. */
-export const CATCH_UP_CEILING = 100;
+/** How far back the first collection of an account reaches. */
+export const HISTORY_DAYS = 365;
+/** Ceiling for the one-time history run. The busiest tracked account posted
+ *  ~260 times in 12 months; hitting this is reported on the run, never silent. */
+export const HISTORY_CEILING = 1500;
+/** Ceiling for a normal run: the new posts since the last one. */
+export const INCREMENTAL_CEILING = 100;
+/** Ask again for the day before our newest post, so a post the platform lists
+ *  late is not skipped. Posts are de-duplicated by id: the overlap costs at most
+ *  a post or two, never a duplicate row. */
+export const OVERLAP_HOURS = 24;
+/** A gap longer than this (collection paused) is caught up with the history
+ *  ceiling instead of the normal one. */
+export const LONG_GAP_DAYS = 30;
 
-export interface IncrementalWindow { newerThan?: string; limit: number; mode: 'window' | 'catch_up' | 'no_history' }
+export interface IncrementalWindow { newerThan: string; limit: number; mode: 'history' | 'new_only' }
 
 /**
- * What an incremental run should ask for: everything newer than the last post
- * we stored (so a gap is always filled), and at least the last 14 days (so
- * engagement on recent posts stays current). No stored posts → no cutoff.
+ * What an incremental run should ask for.
+ *   - history not collected yet → the last 12 months, once (mode 'history').
+ *   - otherwise → everything since our newest post (or since the history run,
+ *     whichever is later) minus a one-day overlap, never older than 12 months.
  */
-export function incrementalWindow(newestStoredIso: string | null, now: Date = new Date()): IncrementalWindow {
-  const windowStart = new Date(now.getTime() - ENGAGEMENT_WINDOW_DAYS * 86_400_000);
+export function incrementalWindow(newestStoredIso: string | null, historyDoneAtIso: string | null, now: Date = new Date()): IncrementalWindow {
+  const historyStart = new Date(now.getTime() - HISTORY_DAYS * 86_400_000);
+  const historyDone = historyDoneAtIso ? new Date(historyDoneAtIso) : null;
+  if (!historyDone || Number.isNaN(historyDone.getTime())) {
+    return { newerThan: historyStart.toISOString(), limit: HISTORY_CEILING, mode: 'history' };
+  }
   const newest = newestStoredIso ? new Date(newestStoredIso) : null;
-  if (!newest || Number.isNaN(newest.getTime())) return { limit: INCREMENTAL_CEILING, mode: 'no_history' };
-  if (newest < windowStart) return { newerThan: newest.toISOString(), limit: CATCH_UP_CEILING, mode: 'catch_up' };
-  return { newerThan: windowStart.toISOString(), limit: INCREMENTAL_CEILING, mode: 'window' };
+  const anchor = newest && !Number.isNaN(newest.getTime()) && newest > historyDone ? newest : historyDone;
+  let from = new Date(anchor.getTime() - OVERLAP_HOURS * 3_600_000);
+  if (from < historyStart) from = historyStart;
+  const longGap = now.getTime() - anchor.getTime() > LONG_GAP_DAYS * 86_400_000;
+  return { newerThan: from.toISOString(), limit: longGap ? HISTORY_CEILING : INCREMENTAL_CEILING, mode: 'new_only' };
 }
 
 // ── one run ─────────────────────────────────────────────────────────────────
@@ -492,4 +521,49 @@ export async function redownloadTikTokVideos(sb: SupabaseClient, input: Redownlo
     pending_storage_runs: [dl.runId],
   };
   return { posts, runId: dl.runId, rawItems: dl.rawItems, cost, warnings };
+}
+
+export interface FetchByUrlInput {
+  platform: 'instagram' | 'tiktok';
+  handle: string;
+  /** The posts to re-read (their own links). */
+  postUrls: string[];
+  timeoutMs?: number;
+}
+
+/**
+ * Re-read specific posts for their current views/likes (the 7- and 30-day
+ * checks). No files, no date window: exactly these links, billed per post
+ * returned. The run holds nothing we need once read, so its storage is
+ * deleted straight away, like the metadata pass.
+ */
+export async function fetchPostsByUrl(sb: SupabaseClient, input: FetchByUrlInput): Promise<ApifyCollectResult> {
+  const sourceType = sourceTypeFor(input.platform);
+  const cfg = await readActorConfig(sb, sourceType);
+  if (!cfg) throw new ProviderError(`No actor configured for ${sourceType}`, 'config_invalid');
+  if (!cfg.isEnabled) throw new ProviderError(`Actor for ${sourceType} is disabled (vet + enable in mkt_actor_configs)`, 'config_invalid');
+  const parser = PARSERS[cfg.resultParser];
+  if (!parser) throw new ProviderError(`No parser named "${cfg.resultParser}"`, 'config_invalid');
+  await assertProviderNotPaused(sb);
+  if (input.postUrls.length === 0) return { posts: [], runId: '', rawItems: [], cost: {}, warnings: [] };
+
+  const r = await runApifyActor(cfg.actorId, buildInput(sourceType, input.handle, input.postUrls.length, { postUrls: input.postUrls, download: false }), input.postUrls.length, input.timeoutMs);
+  const posts = r.rawItems.map((it) => parser(it, input.handle)).filter((p): p is NormalizedContentPost => p !== null);
+  const warnings: string[] = [];
+  const storageDeleted: string[] = [];
+  try {
+    await deleteApifyRunStorage(r.runId);
+    storageDeleted.push(r.runId);
+  } catch (e) {
+    const msg = `storage cleanup of run ${r.runId} failed (the sweep retries it): ${e instanceof Error ? e.message : String(e)}`;
+    console.error(`[apify] ${msg}`);
+    warnings.push(msg);
+  }
+  const cost: Record<string, unknown> = {
+    ...r.cost,
+    runs: [{ run_id: r.runId, pass: 'metrics', items: r.rawItems.length, usage_total_usd: r.cost.usage_total_usd ?? null }],
+    storage_deleted_runs: storageDeleted,
+    pending_storage_runs: storageDeleted.length ? [] : [r.runId],
+  };
+  return { posts, runId: r.runId, rawItems: r.rawItems, cost, warnings };
 }

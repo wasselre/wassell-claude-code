@@ -11,7 +11,8 @@ import {
   type NormalizedContentPost, type NormalizedMetrics, type ProviderKey,
 } from './providers.js';
 import {
-  collectViaApify, incrementalWindow, apifyBudgetState, decideBudgetAction, ProviderPausedError, redownloadTikTokVideos } from './apifyLifecycle.js';
+  collectViaApify, incrementalWindow, apifyBudgetState, decideBudgetAction, ProviderPausedError, redownloadTikTokVideos,
+  fetchPostsByUrl, HISTORY_DAYS, INCREMENTAL_CEILING } from './apifyLifecycle.js';
 import { collectMetaAdsByPage, discoverAdvertiser } from './metaAdsLifecycle.js';
 import { storeCreative } from './creativeStore.js';
 import { normalizeLandingUrl, campaignSignature, urlKey, insightKey } from './adIntel.js';
@@ -54,6 +55,21 @@ function knownExternalIdsFor(sb: SupabaseClient, platform: string) {
     if (error) throw new ProviderError(`could not check stored posts: ${error.message}`, 'unavailable');
     return new Set((data ?? []).map((r) => r.external_id as string));
   };
+}
+
+/** A long paid run (the one-time 12-month history) can outlast the 10-minute
+ *  claim lease. If the lease ran out mid-run, the watchdog would hand the job to
+ *  another machine and the same account would be bought TWICE. So before any
+ *  long run the lease is pushed past the run's own timeouts; if that write fails
+ *  or the job is no longer ours, the run does not start. */
+const LONG_RUN_LEASE_MS = 100 * 60_000;
+const LONG_RUN_TIMEOUT_MS = 40 * 60_000;
+async function extendJobLease(sb: SupabaseClient, jobId: string, ms: number): Promise<void> {
+  const { data, error } = await sb.from('mkt_collection_jobs')
+    .update({ lease_expires_at: new Date(Date.now() + ms).toISOString() })
+    .eq('id', jobId).eq('status', 'running').select('id');
+  if (error) throw new ProviderError(`could not extend the job lease before a long run: ${error.message}`, 'unavailable');
+  if (!Array.isArray(data) || data.length === 0) throw new ProviderError('job is no longer running (lease lost) — a long paid run was not started', 'unavailable');
 }
 
 /** The monthly budget is spent: pause the provider until Apify's cycle renews.
@@ -362,23 +378,48 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       // engagement). An explicit params.limit is a bounded validation run and
       // keeps the old "latest N" behaviour.
       let newerThan: string | undefined;
+      // 'history' = this account's one-time 12-month collection (operator
+      // decision 2026-10-04); marked done on the account when it succeeds.
+      let windowMode: 'history' | 'new_only' | null = null;
+      let timeoutMs: number | undefined;
       if (job.provider === 'apify' && job.kind === 'incremental' && paramLimit == null) {
-        const w = incrementalWindow(await newestStoredPost(sb, acct!.id as string));
+        const w = incrementalWindow(await newestStoredPost(sb, acct!.id as string), (acct!.history_done_at as string | null) ?? null);
         newerThan = w.newerThan;
         limit = w.limit;
+        windowMode = w.mode;
+        if (w.mode === 'history' || w.limit > INCREMENTAL_CEILING) {
+          await extendJobLease(sb, job.id, LONG_RUN_LEASE_MS);
+          timeoutMs = LONG_RUN_TIMEOUT_MS;
+        }
       }
+      if (job.provider === 'youtube' && job.kind === 'incremental' && paramLimit == null && !acct!.history_done_at) windowMode = 'history';
 
       // INCREMENTAL always fetches the newest page (cursor null) so repeat runs
       // re-see recent posts and dedup UPDATES them — idempotent. Only BACKFILL
       // walks pages via the stored cursor.
       const useCursor = job.kind === 'backfill' ? ((acct!.sync_cursor as string) ?? null) : null;
       let batch: { posts: NormalizedContentPost[]; nextCursor?: string | null };
-      if (job.provider === 'youtube') {
+      if (job.provider === 'youtube' && windowMode === 'history') {
+        // YouTube is free: walk the uploads list page by page back to 12 months.
+        const cutoff = Date.now() - HISTORY_DAYS * 86_400_000;
+        const all: NormalizedContentPost[] = [];
+        let cursor: string | null = null;
+        for (let page = 0; page < 40; page++) {
+          const b = await YouTube.collect({ platform: 'youtube', handle: acct!.handle as string, externalAccountId: acct!.external_account_id as string | undefined, cursor, mode: 'backfill', limit: 50 });
+          const inRange = b.posts.filter((p) => !p.publishedAt || new Date(p.publishedAt).getTime() >= cutoff);
+          all.push(...inRange);
+          // uploads are newest-first: once a page reaches past the cutoff, stop
+          if (inRange.length < b.posts.length || !b.nextCursor) break;
+          cursor = b.nextCursor;
+          if (page === 39) stats.errors.push('youtube history: stopped after 40 pages (2,000 videos); older videos inside 12 months were not fetched');
+        }
+        batch = { posts: all, nextCursor: null };
+      } else if (job.provider === 'youtube') {
         batch = await YouTube.collect({ platform: 'youtube', handle: acct!.handle as string, externalAccountId: acct!.external_account_id as string | undefined, cursor: useCursor, mode: job.kind as 'incremental' | 'backfill', limit });
       } else if (job.provider === 'apify') {
         // Full Apify lifecycle (start run → poll → dataset) — the ONE implementation.
         const result = await collectViaApify(sb, {
-          platform, handle: acct!.handle as string, limit, newerThan,
+          platform, handle: acct!.handle as string, limit, newerThan, timeoutMs,
           knownExternalIds: knownExternalIdsFor(sb, platform),
         });
         apifyCost = result.cost;
@@ -420,21 +461,62 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       }
       // Only backfill advances the page cursor; incremental leaves it untouched.
       const cursorUpdate = job.kind === 'backfill' ? { sync_cursor: batch.nextCursor ?? null } : {};
-      await sb.from('mkt_social_accounts').update({ ...cursorUpdate, last_incremental_at: new Date().toISOString(), scrape_status: 'ok', last_synced_at: new Date().toISOString() }).eq('id', acct!.id);
+      // The history run is done once, even when it hit its ceiling (that is
+      // reported on the run): repeating it would re-buy the same 12 months.
+      const historyUpdate = windowMode === 'history' ? { history_done_at: new Date().toISOString() } : {};
+      const { error: acctErr } = await sb.from('mkt_social_accounts').update({ ...cursorUpdate, ...historyUpdate, last_incremental_at: new Date().toISOString(), scrape_status: 'ok', last_synced_at: new Date().toISOString() }).eq('id', acct!.id);
+      // Unrecorded, the next run would think the 12 months were never collected
+      // and buy them again — fail loudly instead.
+      if (acctErr) throw new ProviderError(`collected, but could not record it on the account: ${acctErr.message}`, 'unavailable');
     } else if (job.kind === 'post_metrics') {
-      // refresh metrics for this account's known posts (YouTube batch stats).
-      const { data: posts } = await sb.from('mkt_content_posts').select('id, external_id').eq('social_account_id', acct!.id).eq('availability', 'available').limit(200);
-      stats.received = posts?.length ?? 0;
-      if (job.provider === 'youtube' && posts?.length) {
-        // videos.list in batches of 50
-        const ids = posts.map((p) => p.external_id as string);
-        // metric collection uses the same normVideo path via a videos.list call
-        // (kept minimal here; full impl mirrors YouTube.collect).
-        stats.skipped = ids.length; // marker: implemented via YouTube.collect on next incremental
-      } else {
-        stats.skipped = stats.received;
+      // Views/likes re-check: each post is read twice, at 7 and 30 days old
+      // (operator decision 2026-10-04), instead of re-buying every post of the
+      // last 14 days on every run. mkt_posts_due_for_metrics picks the posts.
+      // This branch used to be a placeholder that only counted posts.
+      const { data: due, error: dueErr } = await sb.rpc('mkt_posts_due_for_metrics', { p_account: acct!.id, p_limit: 50 });
+      if (dueErr) throw new ProviderError(`could not list posts due for a views check: ${dueErr.message}`, 'unavailable');
+      const rows = (due ?? []) as Array<{ post_id: string; external_id: string; post_url: string | null; stage: '7d' | '30d' }>;
+      stats.received = rows.length;
+      if (rows.length > 0) {
+        let fetched: NormalizedContentPost[] = [];
+        const platform = acct!.platform as string;
+        if (job.provider === 'youtube') {
+          fetched = await YouTube.videosByIds(rows.map((r) => r.external_id));
+        } else if (job.provider === 'apify' && (platform === 'instagram' || platform === 'tiktok')) {
+          const urls = rows.map((r) => r.post_url).filter((u): u is string => !!u);
+          const res = await fetchPostsByUrl(sb, { platform, handle: acct!.handle as string, postUrls: urls });
+          apifyCost = res.cost;
+          for (const w of res.warnings) stats.errors.push(`apify: ${w}`);
+          fetched = res.posts;
+        } else {
+          throw new ProviderError(`views check not supported for ${job.provider}/${platform}`, 'config_invalid');
+        }
+        const byExt = new Map(fetched.map((p) => [p.externalId, p]));
+        const done: Record<'7d' | '30d', string[]> = { '7d': [], '30d': [] };
+        let missing = 0;
+        for (const r of rows) {
+          const p = byExt.get(r.external_id);
+          const m = toMetricsJson(p?.metrics);
+          if (p && Object.values(m).some((v) => v !== undefined)) {
+            const { error: snapErr } = await sb.rpc('mkt_metric_snapshot_insert', { p_subject_type: 'post', p_subject_id: r.post_id, p_metrics: m, p_provider: job.provider, p_raw_ref: null });
+            if (snapErr) { stats.errors.push(`snapshot ${r.external_id}: ${snapErr.message}`); continue; }
+            stats.updated++;
+          } else {
+            // Deleted, made private, or not returned. Mark it checked anyway:
+            // asking again would only pay for the same empty answer.
+            missing++;
+          }
+          done[r.stage].push(r.post_id);
+        }
+        for (const stage of ['7d', '30d'] as const) {
+          if (done[stage].length === 0) continue;
+          const { error: markErr } = await sb.rpc('mkt_post_metrics_mark', { p_post_ids: done[stage], p_stage: stage });
+          if (markErr) throw new ProviderError(`views were read but not recorded as checked (${stage}): ${markErr.message}`, 'unavailable');
+        }
+        if (missing > 0) stats.errors.push(`views check: ${missing} of ${rows.length} post(s) came back empty (deleted or private?)`);
       }
-      await sb.from('mkt_social_accounts').update({ last_metrics_at: new Date().toISOString() }).eq('id', acct!.id);
+      const { error: metErr } = await sb.from('mkt_social_accounts').update({ last_metrics_at: new Date().toISOString() }).eq('id', acct!.id);
+      if (metErr) console.error(`[collect] could not stamp last_metrics_at on ${acct!.id}: ${metErr.message}`);
     } else if (job.kind === 'discover_advertiser') {
       // Keyword search is the DISCOVERY tool only. Candidates are scored against
       // the org's real identity (names, official domain, known FB URL, aliases)
