@@ -118,9 +118,6 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
           </h1>
         </div>
         <div className="flex items-center gap-2 md:gap-3 shrink-0">
-          {/* The Sales ⇄ Marketing switch lives at the top of the sidebar now
-              (WorkspaceSwitcher) — a real segmented switch, not a header pill. */}
-
           {/* ── Profile preview switcher (explicit per-user grant only) ── */}
           {canPreview && previewOptions.length > 0 && (
             <div
