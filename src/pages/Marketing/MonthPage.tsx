@@ -249,6 +249,11 @@ export default function MonthPage() {
   const [data, setData] = useState<MosMonthGet | null>(null);
   const [compiled, setCompiled] = useState<MosMonthCompile | null>(null);
   const [report, setReport] = useState<MosMonthReport | null>(null);
+  // The report numbers' date range, tagged with its month so switching months
+  // falls back to that month's default window instead of carrying the range.
+  const [rangeSel, setRangeSel] = useState<{ month: string; from: string; to: string } | null>(null);
+  const reportRange = rangeSel && rangeSel.month === month ? { from: rangeSel.from, to: rangeSel.to } : null;
+  const rangeKey = reportRange ? `${reportRange.from}|${reportRange.to}` : '';
   const [selection, setSelection] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [compiling, setCompiling] = useState(false);
@@ -314,19 +319,21 @@ export default function MonthPage() {
   useEffect(() => {
     if (tense !== 'report') return;
     let cancelled = false;
-    fetchMonthReport(month)
+    const [rf, rt] = rangeKey ? rangeKey.split('|') : [];
+    fetchMonthReport(month, rf && rt ? { from: rf, to: rt } : null)
       .then((r) => { if (!cancelled) setReport(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
     return () => { cancelled = true; };
-  }, [tense, month]);
+  }, [tense, month, rangeKey]);
 
   // After a decision on a held release (publish / reschedule / cancel), re-read
   // the report so its line disappears or changes.
   const reloadReport = useCallback(() => {
-    fetchMonthReport(month)
+    const [rf, rt] = rangeKey ? rangeKey.split('|') : [];
+    fetchMonthReport(month, rf && rt ? { from: rf, to: rt } : null)
       .then((r) => setReport(r))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-  }, [month]);
+  }, [month, rangeKey]);
 
   const saveNote = useCallback(async (coord: NoteCoord, body: string) => {
     setSavingNote(true);
@@ -1197,7 +1204,10 @@ export default function MonthPage() {
           </div>
 
           <div style={{ marginBlockEnd: 14 }}>
-            <MonthNumbers report={report} isAr={isAr} />
+            <MonthNumbers
+              report={report} isAr={isAr}
+              onRange={(r) => setRangeSel(r ? { month, ...r } : null)}
+            />
           </div>
 
           {reportGrid && reportGrid.weeks.length > 0 && (

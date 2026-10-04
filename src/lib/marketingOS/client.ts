@@ -4237,7 +4237,8 @@ export interface MosMonthReportProject {
 export interface MosMonthReport {
   month: string;
   today: string;
-  window: { from: string; to: string };
+  /** The numbers' inclusive window; `default_*` = the month's posting weeks. */
+  window: { from: string; to: string; default_from: string; default_to: string };
   state: 'draft' | 'confirmed';
   template: MosMonthTemplate;
   geometry: MosMonthGeometry;
@@ -4344,9 +4345,15 @@ export const confirmMonth = (
     month, project_ids: projectIds, ...(startFrom ? { start_from: startFrom } : {}),
   });
 
-/** The same page with live numbers. */
-export const fetchMonthReport = (month?: string): Promise<MosMonthReport> =>
-  call('month_report', month ? { month } : {});
+/** The same page with live numbers. `range` (inclusive YYYY-MM-DD) moves the
+ *  numbers' window only; omitted = the month's posting weeks. */
+export const fetchMonthReport = (
+  month?: string, range?: { from: string; to: string } | null,
+): Promise<MosMonthReport> =>
+  call('month_report', {
+    ...(month ? { month } : {}),
+    ...(range ? { from: range.from, to: range.to } : {}),
+  });
 
 /**
  * Write or clear one note. An empty body CLEARS it — the same pencil.

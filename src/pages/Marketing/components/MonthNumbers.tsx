@@ -18,15 +18,82 @@
  * NEW spend can be unattributed — so a non-zero row inside the month means
  * something is wired wrong, not that a bucket exists.
  */
+import { useEffect, useState } from 'react';
 import type { MosMonthReport } from '@/lib/marketingOS/client';
 import { num, money, pct } from '../lib/format';
 import { monthDate, sar1 } from './MonthDates';
 
-export default function MonthNumbers({
-  report, isAr,
+type Range = { from: string; to: string };
+
+/** The calendar month of `month` (YYYY-MM): the 1st to its last day. */
+function calendarMonth(month: string): Range {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
+}
+
+/**
+ * Which dates the numbers cover. «أسابيع الخطة» is the month's posting weeks
+ * (the default — for October 2026, Sunday the 4th to the 31st); «الشهر كاملًا»
+ * is the calendar month; the two dates pick anything else.
+ */
+function RangePicker({
+  report, isAr, onRange,
 }: {
   report: MosMonthReport;
   isAr: boolean;
+  onRange: (r: Range | null) => void;
+}) {
+  const w = report.window;
+  const cal = calendarMonth(report.month);
+  const isDefault = w.from === w.default_from && w.to === w.default_to;
+  const isCal = !isDefault && w.from === cal.from && w.to === cal.to;
+  const [from, setFrom] = useState(w.from);
+  const [to, setTo] = useState(w.to);
+  useEffect(() => { setFrom(w.from); setTo(w.to); }, [w.from, w.to]);
+  const apply = (f: string, t: string): void => {
+    if (f && t && f <= t && (f !== w.from || t !== w.to)) onRange({ from: f, to: t });
+  };
+  const inputStyle = {
+    font: 'inherit', fontSize: 12, padding: '3px 6px', borderRadius: 8,
+    border: '1px solid var(--line, #D4B896)', background: 'transparent', color: 'inherit',
+  } as const;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <div className="seg" role="group" aria-label={isAr ? 'الفترة' : 'Period'}>
+        <button type="button" className={isDefault ? 'on' : ''} onClick={() => onRange(null)}>
+          {isAr ? 'أسابيع الخطة' : 'Plan weeks'}
+        </button>
+        <button type="button" className={isCal ? 'on' : ''} onClick={() => onRange(cal)}>
+          {isAr ? 'الشهر كاملًا' : 'Whole month'}
+        </button>
+      </div>
+      <label style={{ fontSize: 12, color: 'var(--mute)' }}>
+        {isAr ? 'من' : 'From'}{' '}
+        <input
+          type="date" value={from} max={to} style={inputStyle}
+          onChange={(e) => { setFrom(e.target.value); apply(e.target.value, to); }}
+        />
+      </label>
+      <label style={{ fontSize: 12, color: 'var(--mute)' }}>
+        {isAr ? 'إلى' : 'To'}{' '}
+        <input
+          type="date" value={to} min={from} style={inputStyle}
+          onChange={(e) => { setTo(e.target.value); apply(from, e.target.value); }}
+        />
+      </label>
+    </div>
+  );
+}
+
+export default function MonthNumbers({
+  report, isAr, onRange,
+}: {
+  report: MosMonthReport;
+  isAr: boolean;
+  /** Pick the numbers' window; `null` = back to the month's posting weeks. */
+  onRange?: (r: Range | null) => void;
 }) {
   const t = report.totals;
   const spend = t.spend ?? 0;
@@ -54,6 +121,11 @@ export default function MonthNumbers({
             : `${monthDate(report.window.from, false)} → ${monthDate(report.window.to, false)}`}
         </span>
       </div>
+      {onRange && (
+        <div style={{ padding: '10px 16px 0' }}>
+          <RangePicker report={report} isAr={isAr} onRange={onRange} />
+        </div>
+      )}
       <div className="card-b">
         <div className="grid g4" style={{ marginBlockEnd: 14 }}>
           <div className="stat">

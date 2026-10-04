@@ -1270,8 +1270,22 @@ export async function monthReport(ctx: PlanCtx): Promise<Response> {
   if (tpl.error) return fail('mos_month_template', { message: tpl.error });
   const template = tpl.row;
   const geometry = monthGeometry(month, template);
-  const from = geometry.firstPostingDay;
-  const to = geometry.weeks[geometry.weeks.length - 1]?.end ?? geometry.lastPostingDay;
+  const defaultFrom = geometry.firstPostingDay;
+  const defaultTo = geometry.weeks[geometry.weeks.length - 1]?.end ?? geometry.lastPostingDay;
+  // The NUMBERS window. Default = the month's posting weeks (for October 2026
+  // that starts Sunday the 4th). The operator can pick any inclusive range —
+  // without it, the first days of a month show "only today" and nothing earlier
+  // is reachable. Only the numbers move; the plan, releases and grid stay the
+  // month's.
+  const reqFrom = str(ctx.body.from);
+  const reqTo = str(ctx.body.to);
+  if (reqFrom || reqTo) {
+    if (!reqFrom || !reqTo || !DAY_RE.test(reqFrom) || !DAY_RE.test(reqTo) || reqFrom > reqTo) {
+      return jsonError(400, 'from and to must both be YYYY-MM-DD, with from <= to');
+    }
+  }
+  const from = reqFrom ?? defaultFrom;
+  const to = reqTo ?? defaultTo;
 
   const camps = await loadMonthCampaigns(svc, month);
   if (camps.error) return fail('mos_campaigns', { message: camps.error });
@@ -1422,7 +1436,7 @@ export async function monthReport(ctx: PlanCtx): Promise<Response> {
   return jsonOk({
     month,
     today: riyadhToday(),
-    window: { from, to },
+    window: { from, to, default_from: defaultFrom, default_to: defaultTo },
     state: camps.campaigns.length > 0 ? 'confirmed' : 'draft',
     template,
     geometry,
