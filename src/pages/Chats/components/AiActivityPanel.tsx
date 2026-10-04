@@ -35,7 +35,7 @@ const TONE: Record<NonNullable<AiEvent['tone']>, string> = {
 
 function Card({ icon, title, children, wide }: { icon: ReactNode; title: string; children: ReactNode; wide?: boolean }) {
   return (
-    <section className={`flex max-h-[190px] shrink-0 snap-start flex-col rounded-xl border border-sand/50 bg-white ${wide ? 'w-[300px]' : 'w-[230px]'}`}>
+    <section className={`flex max-h-[150px] shrink-0 snap-start flex-col rounded-xl border border-sand/50 bg-white ${wide ? 'w-[300px]' : 'w-[230px]'}`}>
       <h4 className="flex items-center gap-1.5 border-b border-sand/30 px-2.5 py-1.5 text-[11px] font-bold text-chocolate">
         <span className="text-copper">{icon}</span>{title}
       </h4>
@@ -88,8 +88,29 @@ function RunRow({ run, isAr }: { run: AgentRun; isAr: boolean }) {
   );
 }
 
+const OPEN_KEY = 'wassel.chat.aiCardsOpen';
+
+/** Open by default only on tall screens, so the thread keeps its room on a laptop; the choice is remembered per browser. */
+function initialOpen(): boolean {
+  try {
+    const v = localStorage.getItem(OPEN_KEY);
+    if (v === '1' || v === '0') return v === '1';
+  } catch (err) {
+    // Blocked storage (private window) only loses the remembered choice.
+    console.error('[AiActivityPanel] reading the open state failed:', err);
+  }
+  return window.innerHeight >= 900;
+}
+
 export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, onReply }: Props) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(initialOpen);
+  const toggle = () => {
+    setOpen((v) => {
+      try { localStorage.setItem(OPEN_KEY, v ? '0' : '1'); } catch (err) { console.error('[AiActivityPanel] saving the open state failed:', err); }
+      return !v;
+    });
+  };
   const { fieldLabel, formatValue } = usePrefFieldFormat();
   const { data, error, loading, reload } = useAiActivity(clientId, chatWid, refreshKey);
 
@@ -114,10 +135,17 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, o
   return (
     <div className="border-t border-sand/30 bg-cream/40 md:mt-3 md:rounded-2xl md:border" dir={isAr ? 'rtl' : 'ltr'}>
       <div className="flex items-center justify-between gap-2 px-3 pt-2">
-        <p className="flex items-center gap-1.5 text-xs font-bold text-chocolate">
-          <Bot size={14} className="text-copper" aria-hidden /> {t('chats.ai_act.title')}
-        </p>
-        <div className="flex items-center gap-1">
+        <button type="button" onClick={toggle} className="flex min-w-0 items-center gap-1.5 text-start text-xs font-bold text-chocolate" aria-expanded={open}>
+          <Bot size={14} className="shrink-0 text-copper" aria-hidden />
+          <span className="truncate">{t('chats.ai_act.title')}</span>
+          {!open && data && (
+            <span className="truncate font-normal text-charcoal/55">
+              {' · '}{t('chats.ai_act.collapsed_line', { replies: num(s?.ai ?? 0, isAr), runs: num(data.runs.length, isAr), sent: num(sent.size, isAr) })}
+            </span>
+          )}
+          {open ? <ChevronDown size={13} className="shrink-0" /> : <ChevronUp size={13} className="shrink-0" />}
+        </button>
+        <div className="flex shrink-0 items-center gap-1">
           <button type="button" onClick={() => void reload()} className="rounded p-1 text-charcoal/50 hover:bg-cream" aria-label={t('chats.ai_act.refresh')} title={t('chats.ai_act.refresh')}>
             {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
           </button>
@@ -127,10 +155,11 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, o
         </div>
       </div>
 
-      {error && !data && <p className="px-3 py-2 text-[11px] text-red-600">{t('chats.ai_act.load_failed', { msg: error })}</p>}
-      {!data && !error && <div className="flex justify-center p-4"><Loader2 size={16} className="animate-spin text-charcoal/40" /></div>}
+      {open && error && !data && <p className="px-3 py-2 text-[11px] text-red-600">{t('chats.ai_act.load_failed', { msg: error })}</p>}
+      {open && !data && !error && <div className="flex justify-center p-4"><Loader2 size={16} className="animate-spin text-charcoal/40" /></div>}
 
-      {data && (
+      {!open && <div className="pb-2" />}
+      {open && data && (
         <div className="flex snap-x gap-2 overflow-x-auto px-3 pb-3 pt-2">
           <Card icon={<Bot size={12} />} title={t('chats.ai_act.card_summary')}>
             <ul className="space-y-0.5">
