@@ -2056,6 +2056,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const deferredRecordsP   = (async () => {
       const includeModelIds = await deferredModelIdsForBoot;
       if (includeModelIds.length === 0) return [] as AppRecord[];
+      // Start the second wave only once the first has landed. Run side by side,
+      // its ~28k rows (units + the office directory) competed with the main
+      // payload for the same connection and database, and delayed the moment
+      // the app becomes usable — which is the only number a user waits on.
+      // A failed first wave must not stop the second, hence the catch.
+      await unifiedRecordsP.catch(() => null);
       return supabaseLoad<AppRecord>('unified_records', { includeModelIds });
     })();
     const workflowsP         = supabaseLoad<Workflow>('workflows');
@@ -2609,6 +2615,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Variables were declared earlier so they remain in scope for
     // the migrations and final set below.
     const supabaseRecords = await unifiedRecordsP;
+    markEvent('init:records-landed');
     if (supabaseRecords) {
       records = {};
       for (const rec of supabaseRecords) {
@@ -2621,10 +2628,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     saveLocalRecordsMap(records);
 
     const loadedWorkflowRuns = await workflowRunsP;
+    markEvent('init:runs-landed');
     workflowRuns = loadedWorkflowRuns ?? loadLocal<WorkflowRun[]>('wassell_workflow_runs') ?? [];
     saveLocal('wassell_workflow_runs', workflowRuns);
 
     const activityLogData = await activityLogP;
+    markEvent('init:activity-landed');
     if (activityLogData && activityLogData.length > 0) activityLog = activityLogData;
     if (activityLog.length === 0) {
       activityLog = loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [];
@@ -2846,6 +2855,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       // loading skeleton instead of an empty state during the brief gap.
       bootPendingModelIds: bootDeferredModelIds(models),
     });
+    // The moment pages behind the `initialized` gate can render — the number a
+    // user actually waits for. (init:end comes later and includes background work.)
+    markEvent('init:ready');
+    try { performance.measure('wassell:init:ready', 'wassell:init:start', 'wassell:init:ready'); }
+    catch { /* perf API quirk — never block init on telemetry */ }
 
     // ─── SECOND BOOT WAVE: merge the deferred models (units) ──────────
     // Kicked off in parallel at the top of init(); awaiting here runs AFTER the

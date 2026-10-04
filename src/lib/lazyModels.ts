@@ -47,7 +47,14 @@ export const LAZY_MODEL_NAMES = new Set<string>([]);
  *  shifts WHEN it lands — the same rows arrive, just after the small models
  *  instead of gating them. `units` is ~7.9k heavy rows (~60% of the boot record
  *  count), so it dominates the "blank then everything appears" boot window. */
-export const BOOT_DEFERRED_MODEL_NAMES = new Set<string>(['units']);
+export const BOOT_DEFERRED_MODEL_NAMES = new Set<string>([
+  'units',
+  // The office directory (19,291 rows, imported 2026-06-24) was 60% of the
+  // main boot payload — every start-up waited for it although only the
+  // Sourcing view reads it from the store (office outreach queries the server).
+  // Deferred 2026-10-04.
+  'real_estate_offices',
+]);
 
 /** True if a model NAME loads as a full set in the second boot wave. Null-safe. */
 export function isBootDeferredModelName(name?: string | null): boolean {
