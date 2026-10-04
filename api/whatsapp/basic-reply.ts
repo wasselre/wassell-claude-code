@@ -653,7 +653,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   if (handoff) {
     const { error: notifyErr } = await supa.from('ai_notifications').insert({
       source: 'whatsapp', severity, title: null, body: summary,
-      chat_wid: chatWid, chat_record_id: body.chat_record_id ?? null,
+      chat_wid: chatWid, chat_record_id: chatRecordId,
     });
     if (notifyErr) console.error('[basic-reply] notify insert failed:', notifyErr.message);
   }
