@@ -114,9 +114,17 @@ export default async function handler(req: Request): Promise<Response> {
           return jsonError(409, 'ai_paused');
         }
 
-        // The line the client last wrote from (enqueueAiReply falls back to the default line).
-        const { data: lastIn } = await svc.from('chat_messages').select('device_id')
-          .eq('chat_wid', a.chat_wid).eq('flow', 'in').order('date', { ascending: false }).limit(1).maybeSingle();
+        // The line the client last wrote from (enqueueAiReply falls back to the default line)
+        // — but never an INTERNAL line. The operations and office-outreach lines are
+        // kept out of the sales funnel; a client follow-up sent from the office line
+        // is exactly the unsolicited traffic that gets that line restricted. On
+        // 2026-10-04 a test message from the operations number into the (not yet
+        // office) bridge line made the approved follow-up go out from it.
+        const internal = await internalDeviceIds(svc);
+        let lastInQ = svc.from('chat_messages').select('device_id')
+          .eq('chat_wid', a.chat_wid).eq('flow', 'in');
+        if (internal.length > 0) lastInQ = lastInQ.not('device_id', 'in', `(${internal.join(',')})`);
+        const { data: lastIn } = await lastInQ.order('date', { ascending: false }).limit(1).maybeSingle();
         const r = await enqueueAiReply(svc, {
           chatWid: a.chat_wid, text: a.body, deviceId: (lastIn as { device_id?: string | null } | null)?.device_id ?? null,
           jobId: 'followup', force: true, reference: a.reference,
@@ -158,4 +166,24 @@ export default async function handler(req: Request): Promise<Response> {
       return jsonError(500, msg);
     }
   });
+}
+
+/**
+ * Device ids of the lines that must never carry a client follow-up: every
+ * operations line and the office-outreach line. A failed lookup returns what it
+ * could read and logs — the caller then falls back to the default (sales) line
+ * only if the client's last line was internal, never the other way round.
+ */
+async function internalDeviceIds(svc: ReturnType<typeof getServiceSupabase>): Promise<string[]> {
+  const ids = new Set<string>();
+  const [ops, office] = await Promise.all([
+    svc.from('whatsapp_numbers').select('device_id').eq('is_operations', true),
+    svc.from('office_outreach_settings').select('device_id').eq('id', 1).maybeSingle(),
+  ]);
+  if (ops.error) console.error('[ai-actions] could not read operations lines', ops.error);
+  if (office.error) console.error('[ai-actions] could not read the office-outreach line', office.error);
+  for (const r of (ops.data ?? []) as { device_id?: string | null }[]) if (r.device_id) ids.add(r.device_id);
+  const officeId = (office.data as { device_id?: string | null } | null)?.device_id;
+  if (officeId) ids.add(officeId);
+  return [...ids];
 }
