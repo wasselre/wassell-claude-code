@@ -39,13 +39,17 @@ export function useDeepLinkRecordPending(modelName?: string, recordId?: string):
   const modelId = useAppStore((s) =>
     modelName ? s.models.find((m) => m.name === modelName)?.id : undefined,
   );
+  // A record of a second-wave model (units, …) is still missing for a moment
+  // AFTER `initialized`; treat its link as loading until its wave lands, or
+  // the page shows "not found" for a record that exists.
+  const modelPending = useAppStore((s) => !!modelId && s.bootPendingModelIds.includes(modelId));
   const inStore = useAppStore((s) => {
     if (!modelId || !recordId) return false;
     return (s.records[modelId] ?? []).some((r) => r.id === recordId);
   });
 
   const isRealId = !!recordId && recordId !== 'new';
-  const pending = isRealId && !initialized && !inStore;
+  const pending = isRealId && (!initialized || modelPending) && !inStore;
 
   const firedFor = useRef<string | null>(null);
   useEffect(() => {

@@ -54,6 +54,15 @@ export const BOOT_DEFERRED_MODEL_NAMES = new Set<string>([
   // Sourcing view reads it from the store (office outreach queries the server).
   // Deferred 2026-10-04.
   'real_estate_offices',
+  // Archived modules (ARCHIVED_MODULE_MODELS) that no screen reads from the
+  // store — 3.7 MB of the main boot payload between them. Deferred 2026-10-04
+  // after an audit of every store reader. NOT deferred, because a briefly
+  // empty list would cause wrong writes: client_property_options (duplicate
+  // options), phone_calls (follow-up time saved as now), chat_templates
+  // (duplicate project templates), districts/cities (names, search filters).
+  'image_chats',
+  'data_migration',
+  'competitors',
 ]);
 
 /** True if a model NAME loads as a full set in the second boot wave. Null-safe. */
