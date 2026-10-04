@@ -13,6 +13,9 @@ primary_region = 'sin'
   POLL_INTERVAL_MS = '3000'
   PORT = '8080'
   WATCHDOG_INTERVAL_MS = '300000'
+  # Shot jobs at a time per dedicated `cv` machine (read only there). The Gemini
+  # call is most of each ~30 s job, so 4 fit on 2 dedicated cores (2026-10-05).
+  CV_PROCESS_LOOPS = '4'
 
 # Two process groups, same image/command:
 #   app    — the general worker: all lanes EXCEPT the unit-pdf renderer. 512MB × 5.
