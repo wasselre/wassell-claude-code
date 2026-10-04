@@ -654,14 +654,11 @@ export default function MonthPage() {
    * seeing the other. The API refuses it; the page must not offer it, and it
    * names the owner so the next click is obvious rather than blocked.
    *
-   * The REPORT tense needs the same answer (2026-10-04). It used to fall
-   * through to `month_report`, which finds a month's numbers by campaigns
-   * named after that month — a covered month has none, because its work
-   * belongs to the owner's campaigns — so October said «هذا الشهر لم يُعتمد
-   * بعد، فلا أرقام له» while its approved posts were going out every posting
-   * day. Its numbers are in the owner's report, which spans both months.
+   * (The REPORT tense of a covered month still renders — its numbers, by the
+   * date range picked, are real — and only replaces the «not confirmed»
+   * banner; see the report below.)
    */
-  if (data.covered_by) {
+  if (tense === 'plan' && data.covered_by) {
     const owner = data.covered_by;
     return (
       <div className="body">
@@ -669,19 +666,13 @@ export default function MonthPage() {
         {monthNav}
         <div className="notice" style={{ marginBlockEnd: 14 }}>
           <div>
-            {tense === 'plan'
-              ? (isAr
-                ? `${monthLabel(month, true)} مُخطَّط ضمن خطة ${monthLabel(owner, true)} الممتدة — خطة واحدة تغطي الشهرين. لا يوجد اختيار مشاريع هنا، ولا تُخطَّط هذه الأسابيع مرتين.`
-                : `${monthLabel(month, false)} is planned inside ${monthLabel(owner, false)}'s stretched plan — one plan covering both months. There is no project selection here, and these weeks are not planned twice.`)
-              : (isAr
-                ? `${monthLabel(month, true)} جزء من خطة ${monthLabel(owner, true)} الممتدة، وهي معتمدة وتعمل حتى نهاية ${monthLabel(month, true)}. أرقامه في تقرير ${monthLabel(owner, true)}، الذي يغطي الشهرين معًا.`
-                : `${monthLabel(month, false)} is part of ${monthLabel(owner, false)}'s stretched plan, which is confirmed and runs to the end of ${monthLabel(month, false)}. Its numbers are in ${monthLabel(owner, false)}'s report, which covers both months.`)}
+            {isAr
+              ? `${monthLabel(month, true)} مُخطَّط ضمن خطة ${monthLabel(owner, true)} الممتدة — خطة واحدة تغطي الشهرين. لا يوجد اختيار مشاريع هنا، ولا تُخطَّط هذه الأسابيع مرتين.`
+              : `${monthLabel(month, false)} is planned inside ${monthLabel(owner, false)}'s stretched plan — one plan covering both months. There is no project selection here, and these weeks are not planned twice.`}
           </div>
           <div style={{ marginBlockStart: 8 }}>
             <button type="button" className="btn btn-sm" onClick={() => go({ month: owner })}>
-              {tense === 'plan'
-                ? (isAr ? `افتح ${monthLabel(owner, true)}` : `Open ${monthLabel(owner, false)}`)
-                : (isAr ? `افتح تقرير ${monthLabel(owner, true)}` : `Open ${monthLabel(owner, false)}'s report`)}
+              {isAr ? `افتح ${monthLabel(owner, true)}` : `Open ${monthLabel(owner, false)}`}
             </button>
           </div>
         </div>
@@ -1164,6 +1155,7 @@ export default function MonthPage() {
   }
 
   /* ================= REPORT ================= */
+  const coveredBy = data.covered_by ?? null;
   return (
     <div className="body">
       {head}
@@ -1177,7 +1169,30 @@ export default function MonthPage() {
 
       {!report && <Skeleton rows={8} />}
 
-      {report && report.state === 'draft' && (
+      {/*
+        * A month inside another month's stretched plan (2026-10-04). It has no
+        * campaigns of its own — its posts and ads belong to the owner's — so
+        * `month_report` answers `draft`, and this used to say «هذا الشهر لم
+        * يُعتمد بعد، فلا أرقام له» on October while its approved posts were going
+        * out. Its numbers below are real (every ad in the dates picked); the
+        * plan's posting grid is on the owner's report.
+        */}
+      {report && coveredBy && (
+        <div className="notice" style={{ marginBlockEnd: 14 }}>
+          <div>
+            {isAr
+              ? `${monthLabel(month, true)} جزء من خطة ${monthLabel(coveredBy, true)} الممتدة، وهي معتمدة وتعمل حتى نهاية ${monthLabel(month, true)}. الأرقام أدناه لكل الإعلانات العاملة في الفترة المختارة، وجدول منشورات الخطة في تقرير ${monthLabel(coveredBy, true)}.`
+              : `${monthLabel(month, false)} is part of ${monthLabel(coveredBy, false)}'s stretched plan, which is confirmed and runs to the end of ${monthLabel(month, false)}. The numbers below cover every running ad in the dates picked; the plan's posting grid is on ${monthLabel(coveredBy, false)}'s report.`}
+          </div>
+          <div style={{ marginBlockStart: 8 }}>
+            <button type="button" className="btn btn-sm" onClick={() => go({ month: coveredBy })}>
+              {isAr ? `افتح تقرير ${monthLabel(coveredBy, true)}` : `Open ${monthLabel(coveredBy, false)}'s report`}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {report && report.state === 'draft' && !coveredBy && (
         <div className="notice" style={{ marginBlockEnd: 14 }}>
           {isAr
             ? 'هذا الشهر لم يُعتمد بعد، فلا أرقام له. الأرقام أدناه — إن ظهرت — تخص إنفاقًا قديمًا ما زال يعمل.'
