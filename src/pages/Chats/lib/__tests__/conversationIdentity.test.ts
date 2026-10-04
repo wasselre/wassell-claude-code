@@ -96,6 +96,41 @@ describe('resolveConversationIdentity', () => {
     const legacy = [chatRecord({ wid: 'w@c.us', phone: '+966555000111', kind: 'user', device_id: { id: 'DEV_OBJ' } })];
     expect(resolve({ chatRecords: legacy })).toMatchObject({ deviceId: 'DEV_OBJ' });
   });
+
+  describe('number switcher (preferredDeviceId)', () => {
+    const twoLines = [chatRecord({
+      wid: '966555000111@c.us', phone: '+966555000111', kind: 'user', device_id: 'sales', lines: ['sales', 'bridge'],
+    })];
+    const numbers = [
+      device({ device_id: 'sales', is_default: true }),
+      device({ device_id: 'bridge', is_default: false }),
+      device({ device_id: 'retired', is_default: false, is_active: false }),
+    ];
+
+    it('replies from the selected number when the conversation has messages on it', () => {
+      expect(resolve({ chatRecords: twoLines, waDevices: numbers, preferredDeviceId: 'bridge' }))
+        .toMatchObject({ status: 'ready', deviceId: 'bridge' });
+    });
+
+    it('keeps the conversation number when the selected number is not one of its lines', () => {
+      const salesOnly = [chatRecord({ wid: 'w@c.us', phone: '+966555000111', kind: 'user', device_id: 'sales' })];
+      expect(resolve({ chatRecords: salesOnly, waDevices: numbers, preferredDeviceId: 'bridge' }))
+        .toMatchObject({ deviceId: 'sales' });
+    });
+
+    it('never sends from an inactive number, even if selected', () => {
+      const withRetired = [chatRecord({
+        wid: 'w@c.us', phone: '+966555000111', kind: 'user', device_id: 'sales', lines: ['sales', 'retired'],
+      })];
+      expect(resolve({ chatRecords: withRetired, waDevices: numbers, preferredDeviceId: 'retired' }))
+        .toMatchObject({ deviceId: 'sales' });
+    });
+
+    it('"All numbers" (null) behaves exactly as before', () => {
+      expect(resolve({ chatRecords: twoLines, waDevices: numbers, preferredDeviceId: null }))
+        .toMatchObject({ deviceId: 'sales' });
+    });
+  });
 });
 
 describe('conversationIdentityMessage', () => {

@@ -7,6 +7,8 @@ import { buildClientPrefChips, buildGeoNameMap, isClosedChat, type ClientPrefChi
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
 import { isRetiredModel } from '@/lib/featureFlags';
+import { chatLines, lineLabel, switcherLines } from '../lib/chatLines';
+import { useChatLineFilter } from '../lib/lineFilter';
 import type { AppRecord } from '@/types';
 
 /**
@@ -44,6 +46,10 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [showStartModal, setShowStartModal] = useState(false);
+  // Number switcher (All / Sales / Operations / …). Kept in a shared store so
+  // the open conversation replies from the same number.
+  const selectedLine = useChatLineFilter((s) => s.line);
+  const setSelectedLine = useChatLineFilter((s) => s.setLine);
   const [tab, setTabState] = useState<ChatTab>(lastTab);
   const [clientFilter, setClientFilterState] = useState<ClientFilter>(lastClientFilter);
   const setTab = (t: ChatTab) => { lastTab = t; setTabState(t); };
@@ -63,6 +69,25 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const advertiserRecords = advertisersModel ? (records[advertisersModel.id] ?? []) : [];
   const contactRecords = contactsModel ? (records[contactsModel.id] ?? []) : [];
   const officerRecords = officersModel ? (records[officersModel.id] ?? []) : [];
+
+  // Numbers the switcher offers, and which chats belong to each. A chat belongs
+  // to EVERY number it has messages on (data.lines), not only its first one.
+  const lines = useMemo(() => switcherLines(waDevices), [waDevices]);
+  // A number hidden or removed since it was picked falls back to "all numbers".
+  const activeLine = selectedLine && lines.some((d) => d.device_id === selectedLine) ? selectedLine : null;
+  const lineCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of chatRecords) {
+      for (const l of chatLines(r.data as Record<string, unknown>)) counts.set(l, (counts.get(l) ?? 0) + 1);
+    }
+    return counts;
+  }, [chatRecords]);
+  const lineChats = useMemo(
+    () => (activeLine
+      ? chatRecords.filter((r) => chatLines(r.data as Record<string, unknown>).includes(activeLine))
+      : chatRecords),
+    [chatRecords, activeLine],
+  );
 
   useEffect(() => {
     void (async () => {
@@ -195,7 +220,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const searched = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = q
-      ? chatRecords.filter((r) => {
+      ? lineChats.filter((r) => {
           const d = r.data as Record<string, unknown>;
           const name = (d.name as string | null) ?? '';
           const phone = (d.phone as string | null) ?? '';
@@ -218,7 +243,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
             officerName.toLowerCase().includes(q)
           );
         })
-      : chatRecords;
+      : lineChats;
     return [...filtered].sort((a, b) => {
       const aAt = ((a.data as Record<string, unknown>).last_message_at as string | null) ?? '';
       const bAt = ((b.data as Record<string, unknown>).last_message_at as string | null) ?? '';
@@ -227,7 +252,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
       if (!bAt) return -1;
       return bAt.localeCompare(aAt);
     });
-  }, [chatRecords, search, clientOf, advertiserOf, contactOf, officerOf]);
+  }, [lineChats, search, clientOf, advertiserOf, contactOf, officerOf]);
 
   const clientChats = useMemo(() => searched.filter((r) => clientOf(r) !== null), [searched, clientOf]);
 
@@ -318,9 +343,9 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
         <MessageCircle size={18} className="text-copper" />
         <h2 className="font-bold text-chocolate flex-1">
           {isAr ? 'المحادثات' : 'Chats'}
-          {chatRecords.length > 0 && (
+          {lineChats.length > 0 && (
             <span className="ms-2 text-xs font-normal text-charcoal/50">
-              {chatRecords.length}
+              {lineChats.length}
             </span>
           )}
         </h2>
@@ -342,6 +367,46 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
           <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
         </button>
       </div>
+
+      {/* Number switcher — all numbers, or one (Sales / Operations / Client
+          requests…). Only shown when more than one number is active. */}
+      {lines.length > 1 && (
+        <div
+          className="flex items-center gap-1.5 px-3 pt-2 pb-1 shrink-0 overflow-x-auto"
+          role="tablist"
+          aria-label={isAr ? 'رقم الواتساب' : 'WhatsApp number'}
+        >
+          {[
+            { id: null as string | null, label: isAr ? 'كل الأرقام' : 'All numbers', count: chatRecords.length },
+            ...lines.map((d) => ({
+              id: d.device_id as string | null,
+              label: lineLabel(d, isAr),
+              count: lineCounts.get(d.device_id) ?? 0,
+            })),
+          ].map((opt) => {
+            const on = activeLine === opt.id;
+            return (
+              <button
+                key={opt.id ?? 'all'}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => setSelectedLine(opt.id)}
+                className={`shrink-0 whitespace-nowrap text-xs font-semibold rounded-full py-1 px-3 border transition-colors ${
+                  on
+                    ? 'bg-chocolate text-white border-chocolate'
+                    : 'bg-white text-charcoal/70 border-sand/40 hover:border-copper hover:text-copper'
+                }`}
+              >
+                {opt.label}
+                <span className={`ms-1 text-[10px] font-normal ${on ? 'text-white/80' : 'text-charcoal/40'}`}>
+                  {opt.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Search */}
       <div className="px-3 py-2 shrink-0 border-b border-sand/10">

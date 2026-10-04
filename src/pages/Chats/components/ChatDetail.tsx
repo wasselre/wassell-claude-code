@@ -49,6 +49,7 @@ import { clientActiveOptionRefs } from '@/lib/matching/clientOptionIndex';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
 import { isRetiredModel } from '@/lib/featureFlags';
 import { resolveConversationIdentity, conversationIdentityMessage } from '../lib/conversationIdentity';
+import { useChatLineFilter } from '../lib/lineFilter';
 
 /** Full-screen spinner shown while a lazy overlay chunk loads. */
 function OverlayFallback() {
@@ -98,6 +99,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const waDevices = useAppStore((s) => s.waDevices);
   const waDevicesLive = useAppStore((s) => s.waDevicesLive);
   const waDevicesLoaded = useAppStore((s) => s.waDevicesLoaded);
+  // The number picked in the list's switcher: replies go out from it when this
+  // conversation has messages on it (see conversationIdentity).
+  const selectedLine = useChatLineFilter((s) => s.line);
   const identity = useMemo(
     () =>
       resolveConversationIdentity({
@@ -107,8 +111,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         waDevices,
         waDevicesLive,
         devicesLoaded: waDevicesLoaded,
+        preferredDeviceId: selectedLine,
       }),
-    [recordId, chatsModel, records, waDevices, waDevicesLive, waDevicesLoaded],
+    [recordId, chatsModel, records, waDevices, waDevicesLive, waDevicesLoaded, selectedLine],
   );
 
   const data = record?.data as Record<string, unknown> | undefined;

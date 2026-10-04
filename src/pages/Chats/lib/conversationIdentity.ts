@@ -19,6 +19,7 @@
 
 import type { AppModel, AppRecord, WhatsAppNumber, HaberchatDevice } from '@/types';
 import { resolveSendDeviceId } from '@/lib/haberchat/normalize';
+import { chatLines } from './chatLines';
 
 /** A conversation with every piece a send needs. Carried by value into each
  *  dispatch, so an in-flight send is bound to the chat it was typed in. */
@@ -55,6 +56,10 @@ export function resolveConversationIdentity(input: {
   /** False until the device overlay load has settled. Distinguishes "the
    *  devices haven't arrived yet" (wait) from "there is no device" (error). */
   devicesLoaded: boolean;
+  /** The number picked in the Chats switcher (null = all numbers). Replies go
+   *  out from it when it is active AND this conversation has messages on it;
+   *  otherwise the conversation's own number is used, as before. */
+  preferredDeviceId?: string | null;
 }): ConversationIdentity {
   const { recordId, chatsModel, chatRecords, waDevices, waDevicesLive, devicesLoaded } = input;
 
@@ -73,7 +78,11 @@ export function resolveConversationIdentity(input: {
   const phone = typeof data.phone === 'string' && data.phone ? data.phone : null;
   if (!phone) return { status: 'incomplete', reason: 'missing-phone' };
 
-  const deviceId = resolveSendDeviceId(data.device_id, waDevices, waDevicesLive);
+  const preferred = input.preferredDeviceId ?? null;
+  const usePreferred = preferred !== null
+    && (waDevices ?? []).some((d) => d.device_id === preferred && d.is_active)
+    && chatLines(data).includes(preferred);
+  const deviceId = usePreferred ? preferred : resolveSendDeviceId(data.device_id, waDevices, waDevicesLive);
   if (!deviceId) return devicesLoaded ? { status: 'incomplete', reason: 'no-device' } : { status: 'loading' };
 
   return { status: 'ready', recordId, chatWid, phone, deviceId };

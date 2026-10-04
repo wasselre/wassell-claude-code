@@ -330,6 +330,10 @@ export async function bumpConversationRecord(args: {
       ? { kind: 'group', name: (typeof prevData.name === 'string' && prevData.name.trim()) ? prevData.name : await args.group.name() }
       : {}),
     device_id: prevData.device_id ?? args.deviceId,
+    // EVERY number this conversation has messages on. `device_id` above keeps
+    // only the first one ever seen, so the Chats number switcher filters on
+    // this instead (src/pages/Chats/lib/chatLines.ts).
+    lines: withLine(prevData, args.deviceId),
     last_message_at: args.lastAt,
     last_message_preview: truncate(args.lastBody, 120),
     last_message_flow: args.lastFlow,
@@ -493,6 +497,18 @@ export async function applyAck(wid: string, ack: string): Promise<void> {
 }
 
 // ─── shared utilities ────────────────────────────────────────────────
+
+/**
+ * The conversation's numbers with `deviceId` added. A record that predates the
+ * `lines` field starts from its first number (`device_id`), so adding a second
+ * number never forgets the first.
+ */
+export function withLine(prevData: Record<string, unknown>, deviceId: string): string[] {
+  const prev = Array.isArray(prevData.lines)
+    ? prevData.lines.filter((x): x is string => typeof x === 'string' && x.length > 0)
+    : (typeof prevData.device_id === 'string' && prevData.device_id ? [prevData.device_id] : []);
+  return deviceId && !prev.includes(deviceId) ? [...prev, deviceId] : prev;
+}
 
 export function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
