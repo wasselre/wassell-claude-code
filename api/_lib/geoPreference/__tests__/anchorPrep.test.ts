@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   prepareMention, prepareEvidence, bareRoyalName, venueTailAfter, proximityTargets, tokenize, locatePhrase,
-  anchorOccurrences, mentionStrings,
+  anchorOccurrences, mentionStrings, offeredAsAlternative,
 } from '../anchorPrep.js';
 import { sanitizeDistanceM, type AnchorToken, type Evidence } from '../ontology.js';
 import { parseExtractorOutput, EXTRACT_SYSTEM_PROMPT, EXTRACTOR_VERSION, type Conversation } from '../extractor.js';
@@ -1008,5 +1008,31 @@ describe('outputs — disjunctive, named_places', () => {
     ])).named_places).toEqual([{ kind: 'region', token: 'المنطقة الشرقية' }]);
     expect(prepareMention(ev('شمال جدة وجدة', [a('direction', 'شمال جدة'), a('city', 'جدة')])).named_places)
       .toEqual([{ kind: 'city', token: 'جدة' }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('V8 — a road side offered as an alternative («او …»)', () => {
+  const side = 'شمال طريق الملك سلمان';
+  const said = (text: string) => offeredAsAlternative(ev(side, []), { channel: 'chat', turns: [{ speaker: 'client', text, ref: 'm1' }] });
+
+  it('«او» right before the road side', () => {
+    expect(said('ابي فيلا بالنرجس او شمال طريق الملك سلمان')).toBe(true);
+    expect(said('النرجس أو شمال طريق الملك سلمان')).toBe(true);
+  });
+
+  it('«او» a few filler words back («او اي مكان …», «او في …») — 2026-10-04', () => {
+    expect(said('ابي في النرجس، أو أي مكان شمال طريق الملك سلمان')).toBe(true);
+    expect(said('النرجس او في شمال طريق الملك سلمان')).toBe(true);
+  });
+
+  it('a qualifier, not an alternative: no «او», or the «او» joins districts', () => {
+    expect(said('ابي فيلا بالنرجس شمال طريق الملك سلمان')).toBe(false);
+    expect(said('النرجس او الياسمين شمال طريق الملك سلمان')).toBe(false);
+  });
+
+  it('without the conversation only the span is read (the bug the sales agent hit)', () => {
+    expect(offeredAsAlternative(ev(side, []))).toBe(false);
   });
 });

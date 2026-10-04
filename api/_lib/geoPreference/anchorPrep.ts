@@ -332,12 +332,24 @@ export function offeredAsAlternative(e: Pick<Evidence, 'mention_span' | 'source'
   if (!span) return false;
   for (const tokens of mentionTexts(e, conversation)) {
     for (const o of locatePhrase(tokens, span)) {
-      const prev = tokens[o.start - 1];
+      // The disjunction may sit a few FILLER words back — «او اي مكان شمال
+      // طريق الملك سلمان», «او في شمال …» (2026-10-04: that phrasing was read
+      // as "Narjis north of the road"). Only filler words are skipped; a place
+      // name between (the «او» joins districts) still stops the walk.
+      let k = o.start - 1;
+      for (let skipped = 0; k >= 0 && skipped < ALT_FILLER_MAX && ALT_FILLER.has(tokens[k]!.f); skipped++) k -= 1;
+      const prev = tokens[k];
       if (prev && DISJUNCTIONS.has(prev.f)) return true;
     }
   }
   return false;
 }
+
+/** Words that may stand between «او» and the alternative it offers («او اي مكان …», «او في …»). */
+const ALT_FILLER: ReadonlySet<string> = new Set(
+  ['اي', 'أي', 'مكان', 'حي', 'منطقة', 'جهة', 'في', 'بس', 'حتى', 'ولو', 'any', 'anywhere', 'in'].map(foldWord),
+);
+const ALT_FILLER_MAX = 3;
 
 /** Words that put a city IN front of what it scopes («في جدة», «in Jeddah»). */
 const IN_WORDS: ReadonlySet<string> = new Set(['في', 'فى', 'وفي', 'وفى', 'in', 'داخل', 'بداخل'].map(foldWord));

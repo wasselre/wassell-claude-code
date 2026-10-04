@@ -66,6 +66,12 @@ async function run(svc: SupabaseClient, conv: Conversation, clientId: string | n
   deps ??= makeSupabaseBackfillDeps(svc, 'sales-agent');
   const extracted = await deps.extract(conv);
   const ctx = await deps.buildRunContext(clientId ?? NIL_CLIENT, extracted.evidence.length);
+  // The customer's own turns join each mention's texts, exactly as the places
+  // card does (chatCard.ts). Without them the «او» before a road side is
+  // invisible (offeredAsAlternative reads the turn), so «النرجس او شمال طريق
+  // الملك سلمان» was distributed into "Narjis north of the road" and the
+  // alternative was lost (found 2026-10-04).
+  ctx.conversation = conv;
   const result = await deps.runReviewFirst(extracted.evidence, extracted.relations, ctx, { proposals: memoryStore() });
   const compiled = result.compiled;
   await hydrateClipGeometry(svc, compiled);
