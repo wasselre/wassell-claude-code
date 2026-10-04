@@ -242,7 +242,7 @@ export default function GeoPrefCard({ clientId, chatWid, task, outcome, onRecord
   const save = () => {
     const p = card?.proposal;
     if (!p || tickedRows.length === 0) return;
-    const drop = rows.filter((r) => !ticked(r)).map((r) => r.evidenceId);
+    const drop = rows.filter((r) => !ticked(r)).flatMap((r) => r.evidenceIds);
     if (drop.length === 0) void review('confirm');
     else void review('edit', pruneGeoExpression(p.expression, drop));
   };

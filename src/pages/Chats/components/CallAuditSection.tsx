@@ -204,7 +204,7 @@ export function CallPlacesSlide({ geo, onReload, onDone }: {
 
   const save = () => {
     if (tickedCount === 0 || hasPlaces) return;
-    const drop = rows.filter((r) => !ticked(r)).map((r) => r.evidenceId);
+    const drop = rows.filter((r) => !ticked(r)).flatMap((r) => r.evidenceIds);
     if (drop.length === 0) void review('confirm');
     else void review('edit', pruneGeoExpression(p.expression, drop));
   };

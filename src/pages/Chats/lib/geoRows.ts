@@ -42,7 +42,14 @@ export interface GeoCardDTO {
 }
 
 export interface GeoRow {
+  /** The row's key — the FIRST mention that put this place on the map. */
   evidenceId: string;
+  /**
+   * Every mention that put the SAME place on the map (the customer named it
+   * twice). One row is shown; un-ticking it must drop all of them, or the
+   * hidden twin keeps the place in the saved expression.
+   */
+  evidenceIds: string[];
   span: string;
   placement: Placement;
   line: { text: string; tone: 'ok' | 'none' | 'warn' };
@@ -74,26 +81,48 @@ export function blockedReason(p: Placement): GeoRow['blocked'] {
 export const GEO_OPEN = new Set(['pending', 'must_confirm']);
 export const GEO_SAVED = new Set(['confirmed', 'edited', 'applied']);
 
-/** One row per mention the proposal put on the map, in mention order, with the verifier's doubt when it has one. */
+/** Same place, same side, same rule — two mentions that would read as the same line. */
+export function placementSignature(p: Placement): string {
+  return [p.polarity, p.operation, [...p.element_ids].sort().join(','), p.side ?? '', p.radius_m ?? '', p.resolved ? '' : p.label].join('|');
+}
+
+/**
+ * One row per PLACE the proposal put on the map, in mention order, with the
+ * verifier's doubt when it has one. A place the customer named twice is ONE
+ * row (card audit 2026-10-04: 25 of 82 places cards repeated a line —
+ * «النرجس» twice, «شمال الرياض» twice); the row carries every mention's id.
+ */
 export function buildGeoRows(card: GeoCardDTO | null, isAr: boolean): GeoRow[] {
   const p = card?.proposal;
   if (!card || !p) return [];
   const doubts = new Map((p.verifier?.mentions ?? []).map((m) => [m.evidence_id, m]));
   const out: GeoRow[] = [];
+  const bySig = new Map<string, GeoRow>();
   for (const m of card.mentions) {
     const placement = p.by_evidence[m.evidence_id];
     if (!placement) continue; // nothing on the map for this mention — nothing to save
+    const sig = placementSignature(placement);
     const v = doubts.get(m.evidence_id);
+    const twin = bySig.get(sig);
+    if (twin) {
+      twin.evidenceIds.push(m.evidence_id);
+      const vt = v ? verifierMentionLine(v, isAr) : null;
+      if (!twin.doubt && vt && vt.tone === 'warn') twin.doubt = vt.text;
+      continue;
+    }
     const vl = v ? verifierMentionLine(v, isAr) : null;
-    out.push({
+    const row: GeoRow = {
       evidenceId: m.evidence_id,
+      evidenceIds: [m.evidence_id],
       span: m.mention_span,
       placement,
       line: placementLine(placement, m.preference_role, card.names, isAr),
       savable: placementSavable(placement),
       blocked: blockedReason(placement),
       doubt: vl && vl.tone === 'warn' ? vl.text : null,
-    });
+    };
+    bySig.set(sig, row);
+    out.push(row);
   }
   return out;
 }

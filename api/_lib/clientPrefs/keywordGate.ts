@@ -133,17 +133,30 @@ const DIGIT_RE = /[0-9٠-٩۰-۹]/;
  * The prefilled click-to-WhatsApp ad reply «مهتم بمشروع يمام 17» — the ad
  * already tells us the project, and the line says nothing about budget, type
  * or place. Measured 2026-09-27: 9 of the 16 chats due for a first read held
- * ONLY this line, and the project number made it pass as "digits". The PLURAL
- * variant «مهتم بمشاريع سكنية اخرى في شمال الرياض» is NOT matched — it names
- * a direction, so it must still be read.
+ * ONLY this line, and the project number made it pass as "digits".
+ *
+ * The ad's SECOND button «مهتم بمشاريع سكنية اخرى في شمال الرياض» (68 inbound
+ * as of 2026-10-04; north / east / centre) is the same thing: the customer
+ * tapped it, the region is the AD's targeting, not a stated preference. Read as
+ * one it put "north Riyadh" on the places card and into the preference
+ * suggestions of customers who never said it (card audit 2026-10-04). The
+ * sales agent still sees it (isOtherProjectsAsk) — only the preference and
+ * places readers drop it (gatherChatConversation).
  */
 const AD_REPLY_RE = /^مهتم بمشروع(?: [^ ]+){1,4}$/;
+const AD_OTHER_PROJECTS_RE = /^مهتم بمشاريع سكنيه اخري في (?:شمال|شرق|غرب|جنوب|وسط) الرياض$/;
+
+/** Is this message one of the ad's prefilled opener buttons (not the customer's own words)? */
+export function isAdOpenerTemplate(body: string): boolean {
+  const normalized = normalizeGateText(body);
+  return AD_REPLY_RE.test(normalized) || AD_OTHER_PROJECTS_RE.test(normalized);
+}
 
 /** One message's verdict. */
 export function gateMessage(body: string): GateResult {
   const normalized = normalizeGateText(body);
   if (isPureNoise(normalized)) return { pass: false, reason: 'none' };
-  if (AD_REPLY_RE.test(normalized)) return { pass: false, reason: 'none' };
+  if (AD_REPLY_RE.test(normalized) || AD_OTHER_PROJECTS_RE.test(normalized)) return { pass: false, reason: 'none' };
   if (DIGIT_RE.test(body)) return { pass: true, reason: 'digits' };
   if (hasStem(normalized)) return { pass: true, reason: 'keyword' };
   if (normalized.length >= LONG_MESSAGE_CHARS) return { pass: true, reason: 'long' };

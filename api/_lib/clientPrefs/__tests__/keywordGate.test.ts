@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { passesKeywordGate, gateMessage, normalizeGateText, isPureNoise, GATE_STEMS } from '../keywordGate.js';
+import { passesKeywordGate, isAdOpenerTemplate, gateMessage, normalizeGateText, isPureNoise, GATE_STEMS } from '../keywordGate.js';
 
 describe('keyword gate — noise never passes', () => {
   it.each([
@@ -59,8 +59,16 @@ describe('keyword gate — the click-to-WhatsApp ad reply', () => {
     expect(passesKeywordGate(['\u0645\u0647\u062a\u0645 \u0628\u0645\u0634\u0631\u0648\u0639 \u064a\u0645\u0627\u0645 17']).pass).toBe(false);
     expect(passesKeywordGate(['\u0645\u0647\u062a\u0645 \u0628\u0645\u0634\u0631\u0648\u0639 \u064a\u0645\u0627\u0645 \u0628\u0627\u0631\u0643 14']).pass).toBe(false);
   });
-  it('the plural variant names a direction and still passes', () => {
-    expect(passesKeywordGate(['\u0645\u0647\u062a\u0645 \u0628\u0645\u0634\u0627\u0631\u064a\u0639 \u0633\u0643\u0646\u064a\u0629 \u0627\u062e\u0631\u0649 \u0641\u064a \u0634\u0645\u0627\u0644 \u0627\u0644\u0631\u064a\u0627\u0636']).pass).toBe(true);
+  it('the plural other-projects-in-region button is the ad words, not the customer — noise', () => {
+    expect(passesKeywordGate(['مهتم بمشاريع سكنية اخرى في شمال الرياض']).pass).toBe(false);
+    expect(passesKeywordGate(['مهتم بمشاريع سكنية اخرى في شرق الرياض']).pass).toBe(false);
+  });
+  it('isAdOpenerTemplate matches both buttons and nothing the customer typed', () => {
+    expect(isAdOpenerTemplate('مهتم بمشروع يمام 17')).toBe(true);
+    expect(isAdOpenerTemplate('مهتم بمشاريع سكنية اخرى في وسط الرياض')).toBe(true);
+    expect(isAdOpenerTemplate('مهتم بمشاريع في شمال الرياض')).toBe(false);
+    expect(isAdOpenerTemplate('مهتم بمشاريع سكنية اخرى في شمال الرياض بس ميزانيتي مليون')).toBe(false);
+    expect(isAdOpenerTemplate('ابي شقة في النرجس')).toBe(false);
   });
   it('the ad line plus a real question passes', () => {
     expect(passesKeywordGate(['\u0645\u0647\u062a\u0645 \u0628\u0645\u0634\u0631\u0648\u0639 \u064a\u0645\u0627\u0645 \u0628\u0627\u0631\u0643 14', '\u0647\u0644 \u064a\u0648\u062c\u062f \u0648\u062d\u062f\u0627\u062a \u0644\u0644\u0625\u064a\u062c\u0627\u0631']).pass).toBe(true);

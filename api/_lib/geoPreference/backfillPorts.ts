@@ -30,6 +30,7 @@ import type { Speaker, Evidence, EvidenceRelation, RelationMemberRef, GeoPrefere
 import type { BackfillDeps, BackfillJob } from './backfillRunner.js';
 import { placementsByEvidence, placementElementIds, verifierMentionsFor, type PlaceName } from './placementText.js';
 import { verifyConversationMap, VERIFIER_VERSION, type VerifierResult } from './verifier.js';
+import { isAdOpenerTemplate } from '../clientPrefs/keywordGate.js';
 
 const randomUuid = (): string => globalThis.crypto.randomUUID();
 
@@ -219,6 +220,10 @@ export const VOICE_NOTE_PREFIX = '(رسالة صوتية)';
  *
  * An inbound voice note with a transcript (chat_messages.transcript, filled by
  * the inbound-media worker) is a customer text line «(رسالة صوتية) <text>».
+ * The ad's prefilled opener buttons («مهتم بمشروع يمام 17», «مهتم بمشاريع سكنية
+ * اخرى في شمال الرياض») are dropped: the customer tapped them, the words — and
+ * the region — are the ad's (isAdOpenerTemplate). Both card readers (places
+ * and preferences) take their conversation from here.
  * A read error THROWS — never "this chat is empty".
  */
 export async function gatherChatConversation(supabase: SupabaseClient, wid: string): Promise<Conversation | null> {
@@ -237,6 +242,7 @@ export async function gatherChatConversation(supabase: SupabaseClient, wid: stri
     const speaker: Speaker = m.flow === 'in' ? 'client' : 'agent';
     const body = asStr(m.body);
     if (body) {
+      if (speaker === 'client' && isAdOpenerTemplate(body)) continue;
       turns.push({ speaker, text: body, timestamp: asStr(m.date), ref: m.id });
       continue;
     }

@@ -102,7 +102,12 @@ export default async function handler(req: Request): Promise<Response> {
       .order('created_at', { ascending: false })
       .limit(MAX_PROPOSALS);
     if (error) return jsonError(500, `proposals read failed: ${error.message}`);
-    const proposals = (rows ?? []) as RawProposal[];
+    // A proposal with no place in it has nothing to review (the reader found no
+    // geography — 18 of 82 open places cards, audit 2026-10-04). The chat card
+    // already hides it; the queue must too.
+    const proposals = ((rows ?? []) as RawProposal[]).filter(
+      (p) => summarizeGeometry(p.final_expression ?? p.proposed_expression).length > 0,
+    );
 
     // Resolve client display names (RLS-scoped — unknowns stay null).
     const clientIds = [...new Set(proposals.map((p) => p.client_id).filter(Boolean))];

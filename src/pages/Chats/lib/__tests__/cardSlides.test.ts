@@ -8,7 +8,7 @@ const sug = (value: unknown): PrefSuggestionDTO => ({ value, quote: 'q', confide
 const geoProposal = (id: string, status: string, evidence: string[]): GeoCardProposalDTO => ({
   id, version: 1, status, proposed_action: 'propose',
   expression: { groups: [] } as unknown as GeoCardProposalDTO['expression'],
-  by_evidence: Object.fromEntries(evidence.map((e) => [e, { polarity: 'include', operation: 'district_polygon', element_ids: ['d1'], resolved: true, label: '' }])),
+  by_evidence: Object.fromEntries(evidence.map((e) => [e, { polarity: 'include', operation: 'district_polygon', element_ids: [`d-${e}`], resolved: true, label: '' }])),
   items: [], items_by_evidence: {}, verifier: null,
 });
 

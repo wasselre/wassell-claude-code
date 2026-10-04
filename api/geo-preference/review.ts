@@ -298,6 +298,7 @@ export interface GeometrySummaryEntry {
 /** Flatten a GeoPreference's resolved geometry into a display-ready list. */
 export function summarizeGeometry(pref: GeoPreference | null | undefined): GeometrySummaryEntry[] {
   const out: GeometrySummaryEntry[] = [];
+  const seen = new Set<string>();
   if (!pref || !Array.isArray(pref.groups)) return out;
   for (const group of pref.groups) {
     if (!group || !Array.isArray(group.clauses)) continue;
@@ -310,7 +311,7 @@ export function summarizeGeometry(pref: GeoPreference | null | undefined): Geome
         const anchors = (Array.isArray(recipe.source_anchors) ? recipe.source_anchors : []) as {
           span?: string; normalized_token?: string;
         }[];
-        out.push({
+        const entry: GeometrySummaryEntry = {
           operation: recipe.operation ?? 'unknown',
           polarity,
           element_ids: recipeIds(recipe.resolved_element_ids),
@@ -318,7 +319,12 @@ export function summarizeGeometry(pref: GeoPreference | null | undefined): Geome
           label: anchorLabel(anchors),
           group_role: group.role ?? 'primary',
           group_strength: group.strength ?? 'soft',
-        });
+        };
+        // The same place named twice is one entry (card audit 2026-10-04).
+        const key = [entry.operation, entry.polarity, [...entry.element_ids].sort().join(','), entry.radius_m ?? '', entry.label].join('|');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(entry);
       }
     }
   }
