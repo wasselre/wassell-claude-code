@@ -149,6 +149,9 @@ export default function ChatDetail({ recordId, line = null }: {
   const kind = (data?.kind as string | null | undefined) ?? 'user';
   const status = (data?.status as string | null | undefined) ?? 'active';
   const lastMessageAt = (data?.last_message_at as string | null | undefined) ?? null;
+  // The header shows the OPEN per-number chat's last message, not the
+  // contact's latest on any number (that may belong to the other chat).
+  const headerLastAt = openLine ? openLine.last_message_at : lastMessageAt;
   const storedClientLinkId = (data?.client_link as string | null | undefined) ?? null;
   // AI takeover for THIS conversation (set from the header toggle). While on,
   // the agent answers every inbound message regardless of global policy.
@@ -647,10 +650,10 @@ export default function ChatDetail({ recordId, line = null }: {
                 <Hash size={10} />
                 {kindLabel(kind, isAr)}
               </span>
-              {lastMessageAt && (
+              {headerLastAt && (
                 <span>
                   {isAr ? 'آخر رسالة: ' : 'Last: '}
-                  {formatDateTime(lastMessageAt, isAr)}
+                  {formatDateTime(headerLastAt, isAr)}
                 </span>
               )}
             </div>
