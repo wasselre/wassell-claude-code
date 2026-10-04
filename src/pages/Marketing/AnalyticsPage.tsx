@@ -98,9 +98,14 @@ export default function AnalyticsPage() {
   const undatedSpend = t?.undated_spend ?? 0;
 
   const cplSeries: Point[] = bk ? bk.items.map((b) => ({ label: b.label, value: b.leads > 0 ? b.spend / b.leads : 0 })) : [];
-  const spark = (pick: (x: Media) => number): number[] | undefined => (
-    hasDaily && bk ? bk.items.map((b) => pick(media(b))) : undefined
-  );
+  // Stop at the last day with activity: the days still ahead in this period
+  // have no data, and plotting them as 0 reads as "cost fell to zero".
+  const spark = (pick: (x: Media) => number): number[] | undefined => {
+    if (!hasDaily || !bk) return undefined;
+    let last = -1;
+    bk.items.forEach((b, i) => { if (b.spend > 0 || b.impressions > 0) last = i; });
+    return bk.items.slice(0, last + 1).map((b) => pick(media(b)));
+  };
 
   return (
     <>
