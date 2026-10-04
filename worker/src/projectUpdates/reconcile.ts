@@ -214,7 +214,10 @@ export function reconcile(
       if (!k) continue;
       const hits = crmIndex.get(k) ?? [];
       if (hits.length === 1 && (srcCount.get(k) ?? 0) <= 1) return { unit: hits[0]!, ambiguous: false };
-      if (hits.length > 1 || (srcCount.get(k) ?? 0) > 1) sawAmbiguity = true;
+      // Ambiguous only when a CRM unit is actually in play: ten source units all
+      // titled «شقة» in a project the CRM has no units for are ten NEW units,
+      // not ten unresolvable matches (found on أكنان 24, 2026-10-04).
+      if (hits.length > 1 || (hits.length === 1 && (srcCount.get(k) ?? 0) > 1)) sawAmbiguity = true;
     }
     return { unit: null, ambiguous: sawAmbiguity };
   };
@@ -259,6 +262,12 @@ export function reconcile(
           priceChanges++;
         }
       }
+      // Record the source's own unit id the first time we match by something
+      // weaker, so later runs match on it directly.
+      if (s.unitCode && !/^U-\d+$/i.test(s.unitCode) && !part(u.data.developer_unit_code)) {
+        patch.developer_unit_code = s.unitCode;
+        reasons.push('source unit id recorded');
+      }
       if (Object.keys(patch).length) {
         updates.push({ kind: 'update', unitId: u.id, label: String(u.data.unit_model ?? u.data.unit_code ?? u.id), patch, reasons });
       }
@@ -277,6 +286,8 @@ export function reconcile(
       unit_status: s.status ?? 'available',
     };
     if (ctx.developerId) data.developer_id = ctx.developerId;
+    if (s.unitCode && !/^U-\d+$/i.test(s.unitCode)) data.developer_unit_code = s.unitCode;
+    if (s.block) data.block = s.block;
     if (s.buildingNumber) data.building_number = s.buildingNumber;
     if (s.unitNumber != null) data.unit_number = s.unitNumber;
     const t = mapUnitType(s.unitType ?? null) ?? (sib?.data.unit_type as string | undefined) ?? null;

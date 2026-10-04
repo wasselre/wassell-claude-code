@@ -226,3 +226,32 @@ describe('arKey — Arabic name comparison for developer / district lookup', () 
     expect(arKey('شركة أكنان للتطوير العقاري')).toBe(arKey('اكنان'));
   });
 });
+
+describe('reconcile — a new project whose units share one title', () => {
+  it('creates every unit (nothing in the CRM to confuse them with)', () => {
+    const units = Array.from({ length: 10 }, (_, i) => ({ sourceId: `p${i}`, unitModel: 'شقة', status: 'available' as const, price: 692200 + i }));
+    const r = reconcile([], units, RIVA, CTX);
+    expect(r.creates).toHaveLength(10);
+    expect(r.ambiguous).toEqual([]);
+  });
+  it('but still refuses to guess when the CRM has one of them', () => {
+    const units = [{ sourceId: 'p1', unitModel: 'شقة', status: 'sold' as const }, { sourceId: 'p2', unitModel: 'شقة', status: 'available' as const }];
+    const r = reconcile([crm('u1', { unit_model: 'شقة' })], units, RIVA, CTX);
+    expect(r.updates).toHaveLength(0);
+    expect(r.ambiguous.length).toBe(2);
+  });
+});
+
+describe('reconcile — the source unit id', () => {
+  it('records it on a unit matched by title, and matches on it next time', () => {
+    const first = reconcile([crm('u1', { unit_model: '10-B' })], [src('10-B', { unitCode: 'RIVA-901' })], RIVA, CTX);
+    expect(first.updates[0]!.patch).toEqual({ developer_unit_code: 'RIVA-901' });
+    const later = reconcile([crm('u1', { unit_model: 'شقة', developer_unit_code: 'RIVA-901' }), crm('u2', { unit_model: 'شقة', developer_unit_code: 'RIVA-902' })],
+      [{ sourceId: '901', unitCode: 'RIVA-901', unitModel: 'شقة', status: 'sold' }], RIVA, CTX);
+    expect(later.updates.map((u) => [u.unitId, u.patch.unit_status])).toEqual([['u1', 'sold']]);
+  });
+  it('never stores one of OUR codes (U-123) as the developer code', () => {
+    const r = reconcile([], [{ sourceId: null, unitCode: 'U-123', unitModel: 'A1', status: 'available' }], RIVA, CTX);
+    expect(r.creates[0]!.data.developer_unit_code).toBeUndefined();
+  });
+});

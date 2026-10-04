@@ -85,6 +85,9 @@ export function rivaUnit(j: Record<string, unknown>): SourceUnit {
   const price = num(j.raw_price) ?? num(j.unit_price);
   return {
     sourceId: j.id != null ? String(j.id) : null,
+    // The portal's own unit id, stored on our unit as developer_unit_code — the
+    // one identifier that stays unique when every card is titled «شقة».
+    unitCode: j.id != null ? `RIVA-${String(j.id)}` : null,
     unitModel: text(j.title),
     buildingNumber: text(j.building_number),
     unitNumber: num(j.unit_number),
