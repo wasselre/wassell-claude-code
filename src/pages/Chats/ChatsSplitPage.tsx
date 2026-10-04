@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import ChatList from './components/ChatList';
 import ChatDetail, { ChatDetailEmptyPane } from './components/ChatDetail';
@@ -19,6 +19,10 @@ import ChatDetail, { ChatDetailEmptyPane } from './components/ChatDetail';
  */
 export default function ChatsSplitPage() {
   const { recordId } = useParams();
+  // `?line=<number>`: which of the contact's per-number chats is open (a
+  // contact who talked to two of our numbers is two chats).
+  const [searchParams] = useSearchParams();
+  const line = searchParams.get('line');
   const isAr = useAppStore((s) => s.language === 'ar');
   const subscribeToAllChats = useAppStore((s) => s.subscribeToAllChats);
   const unsubscribeFromAllChats = useAppStore((s) => s.unsubscribeFromAllChats);
@@ -50,7 +54,7 @@ export default function ChatsSplitPage() {
       {/* Right: detail or placeholder. Hidden on mobile when no chat selected. */}
       <div className={`flex-1 min-w-0 flex-col ${!recordId ? 'hidden md:flex' : 'flex'}`}>
         {recordId ? (
-          <ChatDetail key={recordId} recordId={recordId} />
+          <ChatDetail key={`${recordId}:${line ?? ''}`} recordId={recordId} line={line} />
         ) : (
           <ChatDetailEmptyPane isAr={isAr} />
         )}

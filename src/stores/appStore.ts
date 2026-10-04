@@ -88,6 +88,7 @@ import type {
   SaveResult,
 } from '@/types';
 import { activityLogger } from '@/lib/activityLogger';
+import { openChatLine } from '@/lib/chat/openLine';
 import {
   buildProcessOverlayResolver,
   activeAssignmentsByClient,
@@ -1451,6 +1452,7 @@ function dbRowToChatMessage(row: DbChatMessageRow): ChatMessage {
   return {
     id: row.id,
     chat_wid: row.chat_wid,
+    device_id: row.device_id ?? null,
     flow: row.flow,
     kind: row.kind,
     subtype: row.subtype ?? null,
@@ -1483,13 +1485,32 @@ function dbRowToChatMessage(row: DbChatMessageRow): ChatMessage {
  * API returns messages, not reactions — so a thread rebuilt from the live fetch
  * would lose every 👍 on reload. Load them separately and merge.
  */
-async function loadReactionsFromMirror(chatWid: string): Promise<ChatMessage[]> {
+/** Which numbers' messages a per-number chat shows: one number (`include`), or
+ *  the sales chat = every number except the other switcher numbers (`exclude`). */
+export interface ChatLineFilter { include?: string[]; exclude?: string[] }
+
+// Device ids are session names ([A-Za-z0-9_-]); quote them for PostgREST's in().
+const pgList = (ids: string[]) => `(${ids.map((id) => `"${id.replace(/"/g, '')}"`).join(',')})`;
+
+function applyLineFilter<Q extends { in: (c: string, v: string[]) => Q; not: (c: string, op: string, v: string) => Q }>(
+  q: Q,
+  line: ChatLineFilter | null | undefined,
+): Q {
+  if (line?.include && line.include.length > 0) return q.in('device_id', line.include);
+  if (line?.exclude && line.exclude.length > 0) return q.not('device_id', 'in', pgList(line.exclude));
+  return q;
+}
+
+async function loadReactionsFromMirror(chatWid: string, line?: ChatLineFilter | null): Promise<ChatMessage[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase
-    .from('chat_messages')
-    .select('*')
-    .eq('chat_wid', chatWid)
-    .eq('kind', 'reaction')
+  const { data, error } = await applyLineFilter(
+    supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('chat_wid', chatWid)
+      .eq('kind', 'reaction'),
+    line,
+  )
     .order('date', { ascending: true })
     .limit(500);
   if (error) {
@@ -1501,18 +1522,23 @@ async function loadReactionsFromMirror(chatWid: string): Promise<ChatMessage[]> 
 
 async function loadMessagesFromMirror(
   chatWid: string,
-  opts: { before?: string; size?: number },
+  opts: { before?: string; size?: number; line?: ChatLineFilter | null },
 ): Promise<{ messages: ChatMessage[]; hasMore: boolean } | null> {
   if (!supabase) return null;
   const size = opts.size ?? 50;
-  let q = supabase
-    .from('chat_messages')
-    .select('*')
-    .eq('chat_wid', chatWid)
-    // Reactions are loaded separately (loadReactionsFromMirror) and are not
-    // thread entries — leaving them in would let a burst of 👍 consume the
-    // page window and push real messages out of the first screen.
-    .neq('kind', 'reaction')
+  let q = applyLineFilter(
+    supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('chat_wid', chatWid)
+      // Reactions are loaded separately (loadReactionsFromMirror) and are not
+      // thread entries — leaving them in would let a burst of 👍 consume the
+      // page window and push real messages out of the first screen.
+      .neq('kind', 'reaction'),
+    // A per-number chat pages through ITS messages only, so another number's
+    // messages can never fill the window.
+    opts.line,
+  )
     .order('date', { ascending: false })
     .limit(size);
   if (opts.before) q = q.lt('date', opts.before);
@@ -1644,8 +1670,39 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
     }
 
     if (!isNewer && nextUnread === curUnread && !clientLinkPatch && !reopen) return s;
+    // Per-number bookkeeping, the browser twin of the webhook's withLine /
+    // withLineMeta (api/_lib/chatIngest.ts): a contact who talks to two of our
+    // numbers is two chats in the list, each with its own preview and unread.
+    const dev = row.device_id || null;
+    const prevMeta = data.line_meta && typeof data.line_meta === 'object' && !Array.isArray(data.line_meta)
+      ? (data.line_meta as Record<string, { last_message_at?: string; unread_count?: number }>)
+      : {};
+    const devMeta = dev ? prevMeta[dev] : undefined;
+    const devNewer = !devMeta?.last_message_at || row.date > devMeta.last_message_at;
+    const linePatch = dev
+      ? {
+          lines: Array.isArray(data.lines)
+            ? ((data.lines as unknown[]).includes(dev) ? data.lines : [...(data.lines as unknown[]), dev])
+            : [dev],
+          line_meta: {
+            ...prevMeta,
+            [dev]: {
+              ...devMeta,
+              ...(devNewer
+                ? {
+                    last_message_at: row.date,
+                    last_message_preview: row.body ? row.body.slice(0, 120) : (devMeta as { last_message_preview?: string } | undefined)?.last_message_preview ?? null,
+                    last_message_flow: row.flow,
+                  }
+                : {}),
+              unread_count: (devMeta?.unread_count ?? 0) + (row.flow === 'in' && !wasKnown ? 1 : 0),
+            },
+          },
+        }
+      : {};
     const nextData = {
       ...data,
+      ...linePatch,
       last_message_at: isNewer ? row.date : curAt,
       last_message_preview: isNewer ? (row.body ? row.body.slice(0, 120) : curPreview) : curPreview,
       // Direction of the newest message — the Chats list's "needs reply"
@@ -5035,7 +5092,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  loadMessagesForChat: async (chatWid: string, opts: { before?: string; size?: number } = {}) => {
+  loadMessagesForChat: async (
+    chatWid: string,
+    opts: { before?: string; size?: number; line?: ChatLineFilter | null } = {},
+  ) => {
     if (!chatWid) return { hasMore: false };
     const isInitial = !opts.before;
 
@@ -5069,7 +5129,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       loadMessagesFromMirror(chatWid, opts),
       // Reactions live only in our mirror and cover the whole thread; one
       // fetch on the initial load is enough (paging reuses what's merged).
-      isInitial ? loadReactionsFromMirror(chatWid) : Promise.resolve([] as ChatMessage[]),
+      isInitial ? loadReactionsFromMirror(chatWid, opts.line) : Promise.resolve([] as ChatMessage[]),
     ]);
     if (!mirror) {
       // Offline / query failed (already logged). The cached/in-memory view
@@ -5113,6 +5173,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       /** all_projects id when this is a PROJECT message — persists a
        *  message→project link so the bubble gets action buttons. */
       projectId?: string;
+      /** Number to send from — the conversation's per-number chat (Chats
+       *  number switcher). Used only when it is an ACTIVE number; otherwise
+       *  the conversation's own number, as before. */
+      deviceId?: string | null;
     },
   ) => {
     const body = input.body?.trim() || undefined;
@@ -5180,7 +5244,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       // deviceIdString (inside resolveSendDeviceId): legacy webhook-created
       // chats can carry the whole device OBJECT in data.device_id — sending
       // with it 400s at Haberchat.
-      const deviceId = resolveSendDeviceId(data.device_id, state.waDevices, state.waDevicesLive);
+      const requested = input.deviceId ?? openChatLine(chatWid);
+      const requestedActive = requested !== null
+        && state.waDevices.some((d) => d.device_id === requested && d.is_active);
+      const deviceId = requestedActive
+        ? requested
+        : resolveSendDeviceId(data.device_id, state.waDevices, state.waDevicesLive);
       if (!deviceId) {
         return {
           ok: false,
@@ -5269,6 +5338,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Project messages carry their all_projects id so the bubble's action
       // buttons appear the instant the rep sends (before the server wid is known).
       project_id: input.projectId ?? null,
+      // The number it goes out from, so a per-number thread shows the bubble.
+      device_id: identity.ok ? identity.deviceId : null,
       pending: true,
       client_id: clientId,
     };
@@ -5653,7 +5724,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     globalChatsChannel = null;
   },
 
-  markChatAsRead: (chatWid: string) => {
+  markChatAsRead: (chatWid: string, devices?: string[]) => {
     if (!chatWid) return;
     // Track what we changed so the zero can be PERSISTED after the local
     // update. The old local-only version was the "unread badge comes back
@@ -5672,11 +5743,47 @@ export const useAppStore = create<AppState>((set, get) => ({
       const rec = list[idx];
       if (!rec) return s;
       const data = rec.data as Record<string, unknown>;
-      if ((data.unread_count ?? 0) === 0) return s;
+      // A per-number chat (Chats number switcher) clears only ITS numbers'
+      // unread; the conversation total becomes what the other numbers still
+      // have. Without `devices`, or without per-number counts, clear it all.
+      const meta = data.line_meta && typeof data.line_meta === 'object' && !Array.isArray(data.line_meta)
+        ? (data.line_meta as Record<string, { unread_count?: number }>)
+        : null;
+      let nextMeta: Record<string, { unread_count?: number }> | null = null;
+      let remaining = 0;
+      if (devices && devices.length > 0 && meta) {
+        nextMeta = {};
+        for (const [dev, m] of Object.entries(meta)) {
+          const unread = typeof m?.unread_count === 'number' ? m.unread_count : 0;
+          if (devices.includes(dev)) {
+            nextMeta[dev] = { ...m, unread_count: 0 };
+          } else {
+            nextMeta[dev] = m;
+            remaining += unread;
+          }
+        }
+        const clearedSomething = Object.entries(meta).some(
+          ([dev, m]) => devices.includes(dev) && (m?.unread_count ?? 0) > 0,
+        );
+        if (!clearedSomething && (data.unread_count ?? 0) === remaining) return s;
+      } else {
+        if ((data.unread_count ?? 0) === 0) return s;
+        // Clearing the whole conversation clears every number's count too, or
+        // the per-number rows would keep showing what was just read.
+        if (meta) {
+          nextMeta = {};
+          for (const [dev, m] of Object.entries(meta)) nextMeta[dev] = { ...m, unread_count: 0 };
+        }
+      }
       const nextList = [...list];
       nextList[idx] = {
         ...rec,
-        data: { ...data, unread_count: 0, last_read_at: new Date().toISOString() },
+        data: {
+          ...data,
+          ...(nextMeta ? { line_meta: nextMeta } : {}),
+          unread_count: nextMeta ? remaining : 0,
+          last_read_at: new Date().toISOString(),
+        },
         updated_at: new Date().toISOString(),
       };
       updatedRec = nextList[idx];

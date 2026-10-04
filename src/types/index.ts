@@ -2258,6 +2258,10 @@ export interface HaberchatChat {
 export interface ChatMessage {
   id: string;                 // = Haberchat message wid
   chat_wid: string;
+  /** WhatsApp number (session) the message went through. Splits one contact
+   *  into one chat per number (src/pages/Chats/lib/chatLines.ts). Absent on
+   *  old cached copies. */
+  device_id?: string | null;
   flow: 'in' | 'out';
   kind: 'text' | 'image' | 'video' | 'audio' | 'document' | 'sticker' | 'location' | 'template' | 'contact' | 'poll' | 'interactive' | string;
   /** Haberchat message subtype — discriminates system events (e.g.
@@ -2779,7 +2783,12 @@ export interface AppState {
    * `{ hasMore }` so the page knows whether to keep offering a "load older"
    * action.
    */
-  loadMessagesForChat: (chatWid: string, opts?: { before?: string; size?: number }) => Promise<{ hasMore: boolean }>;
+  loadMessagesForChat: (
+    chatWid: string,
+    /** `line`: a per-number chat — only that number's messages (`include`), or
+     *  the sales chat = all but the other switcher numbers (`exclude`). */
+    opts?: { before?: string; size?: number; line?: { include?: string[]; exclude?: string[] } | null },
+  ) => Promise<{ hasMore: boolean }>;
   /**
    * Send an outbound text message on a conversation. Optimistic UI: inserts
    * a `pending: true` placeholder immediately; when the proxy returns the
@@ -2806,6 +2815,9 @@ export interface AppState {
        *  renders something reasonable before the proxy upload echoes). */
       mediaMime?: string | null;
       mediaSize?: number | null;
+      /** Send from this number (per-number chat). Ignored unless it is an
+       *  active number; otherwise the conversation's own number. */
+      deviceId?: string | null;
       /** Future ISO datetime — schedule instead of sending now. The message
        *  waits in Haberchat's delivery queue; no optimistic bubble (the
        *  webhook echoes it into the thread when it actually sends). */
@@ -2889,7 +2901,8 @@ export interface AppState {
    * Zero out unread_count on the local chat record. Called when the user
    * opens a chat. Local-only write; Haberchat tracks unread separately.
    */
-  markChatAsRead: (chatWid: string) => void;
+  /** `devices`: clear only that per-number chat's unread (its numbers). */
+  markChatAsRead: (chatWid: string, devices?: string[]) => void;
   /**
    * Patch a chat's status and / or labels. Optimistic: updates the local
    * record immediately, then calls the proxy. On failure, reverts the

@@ -334,6 +334,14 @@ export async function bumpConversationRecord(args: {
     // only the first one ever seen, so the Chats number switcher filters on
     // this instead (src/pages/Chats/lib/chatLines.ts).
     lines: withLine(prevData, args.deviceId),
+    // Per number: its own preview, time and unread — one chat row per number.
+    line_meta: withLineMeta(prevData, {
+      deviceId: args.deviceId,
+      lastAt: args.lastAt,
+      lastBody: args.lastBody,
+      lastFlow: args.lastFlow,
+      incrementUnread: args.incrementUnread,
+    }),
     last_message_at: args.lastAt,
     last_message_preview: truncate(args.lastBody, 120),
     last_message_flow: args.lastFlow,
@@ -508,6 +516,42 @@ export function withLine(prevData: Record<string, unknown>, deviceId: string): s
     ? prevData.lines.filter((x): x is string => typeof x === 'string' && x.length > 0)
     : (typeof prevData.device_id === 'string' && prevData.device_id ? [prevData.device_id] : []);
   return deviceId && !prev.includes(deviceId) ? [...prev, deviceId] : prev;
+}
+
+/** One number's slice of a conversation: what its own chat row shows. */
+export interface LineMeta {
+  last_message_at: string | null;
+  last_message_preview: string | null;
+  last_message_flow: 'in' | 'out' | null;
+  unread_count: number;
+}
+
+/**
+ * The conversation's per-number chat state with this message applied to its
+ * number. A contact who talked to two of our numbers is two chats in the Chats
+ * list, each with its own preview and unread count
+ * (src/pages/Chats/lib/chatLines.ts). Other numbers are left untouched; an
+ * older message than the number's newest only adds to the unread count.
+ */
+export function withLineMeta(
+  prevData: Record<string, unknown>,
+  msg: { deviceId: string; lastAt: string; lastBody: string; lastFlow: 'in' | 'out'; incrementUnread: boolean },
+): Record<string, LineMeta> {
+  const raw = prevData.line_meta;
+  const prev = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, Partial<LineMeta>>) : {};
+  const cur = prev[msg.deviceId] ?? {};
+  const curAt = typeof cur.last_message_at === 'string' ? cur.last_message_at : null;
+  const newer = !curAt || msg.lastAt >= curAt;
+  const curUnread = typeof cur.unread_count === 'number' ? cur.unread_count : 0;
+  return {
+    ...(prev as Record<string, LineMeta>),
+    [msg.deviceId]: {
+      last_message_at: newer ? msg.lastAt : curAt,
+      last_message_preview: newer ? truncate(msg.lastBody, 120) : (cur.last_message_preview ?? null),
+      last_message_flow: newer ? msg.lastFlow : (cur.last_message_flow ?? null),
+      unread_count: msg.incrementUnread ? curUnread + 1 : curUnread,
+    },
+  };
 }
 
 export function truncate(s: string, max: number): string {

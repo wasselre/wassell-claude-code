@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { MessageCircle, Loader2, ChevronUp } from 'lucide-react';
-import { useAppStore } from '@/stores/appStore';
+import { useAppStore, type ChatLineFilter } from '@/stores/appStore';
+import { messageInLine } from '../lib/chatLines';
 import MessageBubble, { type MessageProjectActions } from './MessageBubble';
 import type { ChatMessage } from '@/types';
 import { trackedTokenIn } from '@/lib/trackedLinks/text';
@@ -23,16 +24,28 @@ function projectIdFromBody(body: string | null | undefined): string | null {
  */
 export default function MessageThread({
   chatWid,
+  line = null,
   renderProjectActions,
 }: {
   chatWid: string;
+  /** A per-number chat: show only that number's messages (or, for the sales
+   *  chat, all but the other numbers'). Null = the whole conversation. */
+  line?: ChatLineFilter | null;
   /** Given a project message's all_projects id, return the finder-style actions
    *  to show on that bubble (ChatDetail owns this — it knows the linked client).
    *  Omitted → no project buttons. */
   renderProjectActions?: (projectId: string) => MessageProjectActions | null;
 }) {
   const isAr = useAppStore((s) => s.language === 'ar');
-  const messages = useAppStore((s) => s.chatMessages[chatWid] ?? EMPTY);
+  const allMessages = useAppStore((s) => s.chatMessages[chatWid] ?? EMPTY);
+  const lineKey = line ? JSON.stringify(line) : '';
+  // The store holds the contact's messages from every number; a per-number
+  // chat renders its own only.
+  const messages = useMemo(
+    () => (line ? allMessages.filter((m) => messageInLine(m.device_id, line)) : allMessages),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `line` is tracked through lineKey
+    [allMessages, lineKey],
+  );
   const loadMessagesForChat = useAppStore((s) => s.loadMessagesForChat);
   const loadMessageProjects = useAppStore((s) => s.loadMessageProjects);
   const messageProjects = useAppStore((s) => s.messageProjects);
@@ -95,7 +108,7 @@ export default function MessageThread({
     // Load message→project links so project messages get their action buttons.
     void loadMessageProjects(chatWid);
     void loadLinkEngagement(chatWid);
-    const p = loadMessagesForChat(chatWid, { size: 50 });
+    const p = loadMessagesForChat(chatWid, { size: 50, line });
     // The synchronous hydration inside the call above has already run.
     setLoading((useAppStore.getState().chatMessages[chatWid] ?? []).length === 0);
     void (async () => {
@@ -108,7 +121,8 @@ export default function MessageThread({
         setLoading(false);
       }
     })();
-  }, [chatWid, loadMessagesForChat, loadMessageProjects, loadLinkEngagement]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `line` is tracked through lineKey
+  }, [chatWid, lineKey, loadMessagesForChat, loadMessageProjects, loadLinkEngagement]);
 
   // Tracked links: the engagement numbers move while the thread is open (the
   // customer is looking at the page right now), and a message sent a moment
@@ -204,7 +218,7 @@ export default function MessageThread({
     const el = scrollRef.current;
     if (el) prevScrollHeightRef.current = el.scrollHeight;
     try {
-      const res = await loadMessagesForChat(chatWid, { before: oldest.date, size: 50 });
+      const res = await loadMessagesForChat(chatWid, { before: oldest.date, size: 50, line });
       setHasMore(res.hasMore);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

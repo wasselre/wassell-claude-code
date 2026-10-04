@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, UserCheck, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, Bot, Contact, MoreVertical, LayoutGrid, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { setOpenChatLine } from '@/lib/chat/openLine';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
@@ -49,7 +50,7 @@ import { clientActiveOptionRefs } from '@/lib/matching/clientOptionIndex';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
 import { isRetiredModel } from '@/lib/featureFlags';
 import { resolveConversationIdentity, conversationIdentityMessage } from '../lib/conversationIdentity';
-import { useChatLineFilter } from '../lib/lineFilter';
+import { chatLineRows, lineMessageFilter, switcherLines } from '../lib/chatLines';
 
 /** Full-screen spinner shown while a lazy overlay chunk loads. */
 function OverlayFallback() {
@@ -71,7 +72,12 @@ function firstId(v: unknown): string | null {
  * Renders the conversation header, scrolling thread, and composer in a
  * full-height flex column so the thread scrolls independently.
  */
-export default function ChatDetail({ recordId }: { recordId: string }) {
+export default function ChatDetail({ recordId, line = null }: {
+  recordId: string;
+  /** Which per-number chat of this contact is open (`?line=`). Null = the
+   *  whole conversation, as before (old links, single-number setups). */
+  line?: string | null;
+}) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   // On a wide screen the client-options / Project-Finder panel DOCKS beside the
@@ -99,9 +105,20 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const waDevices = useAppStore((s) => s.waDevices);
   const waDevicesLive = useAppStore((s) => s.waDevicesLive);
   const waDevicesLoaded = useAppStore((s) => s.waDevicesLoaded);
-  // The number picked in the list's switcher: replies go out from it when this
-  // conversation has messages on it (see conversationIdentity).
-  const selectedLine = useChatLineFilter((s) => s.line);
+  // The open per-number chat: its number sends the replies and decides which
+  // messages the thread shows. Only meaningful with more than one active
+  // number and when this contact actually has a chat on that number.
+  const switcher = useMemo(() => switcherLines(waDevices), [waDevices]);
+  const openLine = useMemo(() => {
+    if (!line || switcher.length < 2) return null;
+    const rec = chatsModel ? (records[chatsModel.id] ?? []).find((r) => r.id === recordId) : undefined;
+    const row = rec ? chatLineRows(rec.data as Record<string, unknown>, switcher).find((x) => x.group === line) : undefined;
+    return row ?? null;
+  }, [line, switcher, chatsModel, records, recordId]);
+  const threadLine = useMemo(
+    () => (openLine ? lineMessageFilter(openLine.group, switcher) : null),
+    [openLine, switcher],
+  );
   const identity = useMemo(
     () =>
       resolveConversationIdentity({
@@ -111,13 +128,21 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         waDevices,
         waDevicesLive,
         devicesLoaded: waDevicesLoaded,
-        preferredDeviceId: selectedLine,
+        preferredDeviceId: openLine?.group ?? null,
       }),
-    [recordId, chatsModel, records, waDevices, waDevicesLive, waDevicesLoaded, selectedLine],
+    [recordId, chatsModel, records, waDevices, waDevicesLive, waDevicesLoaded, openLine],
   );
 
   const data = record?.data as Record<string, unknown> | undefined;
   const chatWid = (data?.wid as string | undefined) ?? null;
+  // Everything sent while this per-number chat is open leaves from its number
+  // (text, attachments, project photos, PDFs) — see @/lib/chat/openLine.
+  const openLineGroup = openLine?.group ?? null;
+  useEffect(() => {
+    if (!chatWid || !openLineGroup) return;
+    setOpenChatLine(chatWid, openLineGroup);
+    return () => setOpenChatLine(chatWid, null);
+  }, [chatWid, openLineGroup]);
   // `name` is resolved AFTER matchedContact below — a saved contact's name wins
   // over the WhatsApp push name. Declared here only for reading convenience.
   const phone = (data?.phone as string | null | undefined) ?? null;
@@ -458,9 +483,12 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     const msgs = s.chatMessages[chatWid];
     return msgs && msgs.length > 0 ? msgs[msgs.length - 1]?.id ?? null : null;
   });
+  // A per-number chat clears only its own numbers' unread. Joined into a key so
+  // a fresh array per render does not re-fire the effect.
+  const openLineDevices = openLine?.devices.join(',') ?? '';
   useEffect(() => {
-    if (chatWid) markChatAsRead(chatWid);
-  }, [chatWid, newestMessageId, markChatAsRead]);
+    if (chatWid) markChatAsRead(chatWid, openLineDevices ? openLineDevices.split(',') : undefined);
+  }, [chatWid, newestMessageId, markChatAsRead, openLineDevices]);
 
   if (!record) {
     return (
@@ -768,7 +796,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
       {/* Thread — full-bleed scroll area on mobile, framed card on desktop
           (MessageThread drops its own card chrome below md). */}
       <div className="flex-1 min-h-0 overflow-hidden px-0 pt-0 md:px-3 md:pt-3">
-        <MessageThread chatWid={chatWid ?? ''} renderProjectActions={renderProjectActions} />
+        <MessageThread chatWid={chatWid ?? ''} line={threadLine} renderProjectActions={renderProjectActions} />
       </div>
 
       {/* Composer — mounted ONLY once the conversation identity is resolved.

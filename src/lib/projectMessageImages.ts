@@ -25,6 +25,7 @@
  * out). Do not reintroduce a browser-side send loop here.
  */
 
+import { openChatLine } from '@/lib/chat/openLine';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
 import { startJob, completeJob, failJob, updateJob } from '@/lib/jobs/jobCenter';
@@ -54,7 +55,12 @@ function resolveChatTarget(chatWid: string): { phone: string; deviceId: string |
     // Direct-chat wid is "<digits>@c.us" — recover the phone from it when the
     // record hasn't loaded (defensive; callers normally have the record).
     : chatWid.endsWith('@c.us') ? `+${chatWid.slice(0, -'@c.us'.length).replace(/\D/g, '')}` : '';
+  // The open per-number chat's number first (Chats number switcher), when it
+  // is still an active number.
+  const open = openChatLine(chatWid);
+  const openActive = open && (state.waDevices ?? []).some((d) => d.device_id === open && d.is_active) ? open : null;
   const deviceId =
+    openActive ??
     deviceIdString(data.device_id) ??
     (state.waDevices ?? []).find((d) => d.is_default && d.is_active)?.device_id ??
     (state.waDevices ?? []).find((d) => d.is_active)?.device_id ??

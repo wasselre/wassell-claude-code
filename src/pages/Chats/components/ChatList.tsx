@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MessageCircle, RefreshCw, Search, Plus, Bot } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import StartChatModal from './StartChatModal';
@@ -7,7 +7,7 @@ import { buildClientPrefChips, buildGeoNameMap, isClosedChat, type ClientPrefChi
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import { resolveChatDisplayName } from '../lib/chatDisplayName';
 import { isRetiredModel } from '@/lib/featureFlags';
-import { chatLines, lineLabel, switcherLines } from '../lib/chatLines';
+import { chatLineRows, lineLabel, switcherLines, type ChatLineRow } from '../lib/chatLines';
 import { useChatLineFilter } from '../lib/lineFilter';
 import type { AppRecord } from '@/types';
 
@@ -70,24 +70,40 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const contactRecords = contactsModel ? (records[contactsModel.id] ?? []) : [];
   const officerRecords = officersModel ? (records[officersModel.id] ?? []) : [];
 
-  // Numbers the switcher offers, and which chats belong to each. A chat belongs
-  // to EVERY number it has messages on (data.lines), not only its first one.
+  // One chat PER NUMBER: a contact who talked to two of our numbers is two
+  // rows, each with its own preview, unread and thread (chatLineRows). Only
+  // when more than one number is active; with one number the list is as before.
   const lines = useMemo(() => switcherLines(waDevices), [waDevices]);
+  const splitByLine = lines.length > 1;
   // A number hidden or removed since it was picked falls back to "all numbers".
   const activeLine = selectedLine && lines.some((d) => d.device_id === selectedLine) ? selectedLine : null;
+  const [searchParams] = useSearchParams();
+  const urlLine = searchParams.get('line');
+  const rowsOf = useCallback(
+    (r: AppRecord): (ChatLineRow | null)[] => {
+      if (!splitByLine) return [null];
+      const all = chatLineRows(r.data as Record<string, unknown>, lines);
+      return activeLine ? all.filter((x) => x.group === activeLine) : all;
+    },
+    [splitByLine, lines, activeLine],
+  );
+  const countRows = useCallback((recs: AppRecord[]) => recs.reduce((n, r) => n + rowsOf(r).length, 0), [rowsOf]);
   const lineCounts = useMemo(() => {
     const counts = new Map<string, number>();
+    if (!splitByLine) return counts;
     for (const r of chatRecords) {
-      for (const l of chatLines(r.data as Record<string, unknown>)) counts.set(l, (counts.get(l) ?? 0) + 1);
+      for (const row of chatLineRows(r.data as Record<string, unknown>, lines)) {
+        counts.set(row.group, (counts.get(row.group) ?? 0) + 1);
+      }
     }
     return counts;
-  }, [chatRecords]);
+  }, [chatRecords, lines, splitByLine]);
+  const totalRows = splitByLine ? [...lineCounts.values()].reduce((a, b) => a + b, 0) : chatRecords.length;
   const lineChats = useMemo(
-    () => (activeLine
-      ? chatRecords.filter((r) => chatLines(r.data as Record<string, unknown>).includes(activeLine))
-      : chatRecords),
-    [chatRecords, activeLine],
+    () => (activeLine ? chatRecords.filter((r) => rowsOf(r).length > 0) : chatRecords),
+    [chatRecords, activeLine, rowsOf],
   );
+  const lineLabels = useMemo(() => new Map(lines.map((d) => [d.device_id, lineLabel(d, isAr)])), [lines, isAr]);
 
   useEffect(() => {
     void (async () => {
@@ -303,6 +319,16 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     return clientChats.filter((r) => !isClosedChat(r.data as Record<string, unknown>) && !isWaitingChat(r));
   }, [searched, clientChats, advertiserChats, otherChats, tab, clientFilter, isWaitingChat]);
 
+  // The rows actually shown: each conversation once per number, newest first.
+  const visibleRows = useMemo(() => {
+    const out: { record: AppRecord; line: ChatLineRow | null }[] = [];
+    for (const record of visible) for (const line of rowsOf(record)) out.push({ record, line });
+    if (!splitByLine) return out;
+    const at = (x: { record: AppRecord; line: ChatLineRow | null }) =>
+      x.line?.last_message_at ?? ((x.record.data as Record<string, unknown>).last_message_at as string | null) ?? '';
+    return out.sort((a, b) => at(b).localeCompare(at(a)) || a.record.id.localeCompare(b.record.id));
+  }, [visible, rowsOf, splitByLine]);
+
   const deviceLabels = useMemo(() => {
     const map = new Map<string, string>();
     for (const d of waDevices) {
@@ -313,22 +339,22 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const showDeviceBadges = waDevices.filter((d) => d.is_active).length > 1;
 
   const tabs: { id: ChatTab; label: string; count: number }[] = [
-    { id: 'all', label: isAr ? 'الكل' : 'All', count: searched.length },
-    { id: 'clients', label: isAr ? 'العملاء' : 'Clients', count: clientChats.length },
-    ...(advertisersModel ? [{ id: 'advertisers' as const, label: isAr ? 'المعلنون' : 'Advertisers', count: advertiserChats.length }] : []),
-    { id: 'other', label: isAr ? 'أخرى' : 'Other', count: otherChats.length },
+    { id: 'all', label: isAr ? 'الكل' : 'All', count: countRows(searched) },
+    { id: 'clients', label: isAr ? 'العملاء' : 'Clients', count: countRows(clientChats) },
+    ...(advertisersModel ? [{ id: 'advertisers' as const, label: isAr ? 'المعلنون' : 'Advertisers', count: countRows(advertiserChats) }] : []),
+    { id: 'other', label: isAr ? 'أخرى' : 'Other', count: countRows(otherChats) },
   ];
 
   const closedCount = useMemo(
-    () => clientChats.filter((r) => isClosedChat(r.data as Record<string, unknown>)).length,
-    [clientChats],
+    () => countRows(clientChats.filter((r) => isClosedChat(r.data as Record<string, unknown>))),
+    [clientChats, countRows],
   );
   const waitingCount = useMemo(
-    () => clientChats.filter((r) => isWaitingChat(r)).length,
-    [clientChats, isWaitingChat],
+    () => countRows(clientChats.filter((r) => isWaitingChat(r))),
+    [clientChats, isWaitingChat, countRows],
   );
   const clientFilters: { id: ClientFilter; label: string; count: number }[] = [
-    { id: 'open', label: isAr ? 'مفتوحة' : 'Open', count: clientChats.length - closedCount - waitingCount },
+    { id: 'open', label: isAr ? 'مفتوحة' : 'Open', count: countRows(clientChats) - closedCount - waitingCount },
     { id: 'waiting', label: isAr ? 'بانتظار الرد' : 'Waiting for reply', count: waitingCount },
     { id: 'closed', label: isAr ? 'مغلقة' : 'Closed', count: closedCount },
   ];
@@ -345,7 +371,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
           {isAr ? 'المحادثات' : 'Chats'}
           {lineChats.length > 0 && (
             <span className="ms-2 text-xs font-normal text-charcoal/50">
-              {lineChats.length}
+              {countRows(lineChats)}
             </span>
           )}
         </h2>
@@ -377,7 +403,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
           aria-label={isAr ? 'رقم الواتساب' : 'WhatsApp number'}
         >
           {[
-            { id: null as string | null, label: isAr ? 'كل الأرقام' : 'All numbers', count: chatRecords.length },
+            { id: null as string | null, label: isAr ? 'كل الأرقام' : 'All numbers', count: totalRows },
             ...lines.map((d) => ({
               id: d.device_id as string | null,
               label: lineLabel(d, isAr),
@@ -467,23 +493,28 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
 
       {/* List (scrollable) */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        {visible.length === 0 && (
+        {visibleRows.length === 0 && (
           <div className="p-8 text-center text-xs text-charcoal/40">
             {search || tab !== 'all'
               ? (isAr ? 'لا توجد نتائج' : 'No matches')
               : (isAr ? 'لا توجد محادثات بعد' : 'No conversations yet')}
           </div>
         )}
-        {visible.map((record) => {
+        {visibleRows.map(({ record, line }) => {
           const client = clientOf(record);
           const advertiser = advertiserOf(record);
           const officer = officerOf(record);
+          // A link without ?line= (a notification, an old bookmark) highlights
+          // the contact's newest per-number chat.
+          const selected = record.id === selectedRecordId
+            && (!line || (urlLine ? line.group === urlLine : rowsOf(record)[0]?.group === line.group));
           return (
             <ChatRow
-              key={record.id}
+              key={line ? `${record.id}:${line.group}` : record.id}
               record={record}
+              line={line}
               isAr={isAr}
-              selected={record.id === selectedRecordId}
+              selected={selected}
               advertiserName={
                 advertiser
                   ? ((advertiser.data as Record<string, unknown>).name as string | null) ?? null
@@ -502,11 +533,15 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
                   : []
               }
               deviceLabel={
-                showDeviceBadges
-                  ? deviceLabels.get((record.data as Record<string, unknown>).device_id as string) ?? null
-                  : null
+                !showDeviceBadges
+                  ? null
+                  : line
+                    ? lineLabels.get(line.group) ?? null
+                    : deviceLabels.get((record.data as Record<string, unknown>).device_id as string) ?? null
               }
-              onClick={() => navigate(`/model/chats/${record.id}`)}
+              onClick={() => navigate(
+                line ? `/model/chats/${record.id}?line=${encodeURIComponent(line.group)}` : `/model/chats/${record.id}`,
+              )}
             />
           );
         })}
@@ -526,6 +561,7 @@ const CHIP_STYLES: Record<ClientPrefChip['kind'], string> = {
 
 function ChatRow({
   record,
+  line,
   isAr,
   selected,
   deviceLabel,
@@ -537,6 +573,8 @@ function ChatRow({
   onClick,
 }: {
   record: AppRecord;
+  /** This row's number when the list shows one chat per number. */
+  line: ChatLineRow | null;
   isAr: boolean;
   selected: boolean;
   deviceLabel: string | null;
@@ -551,9 +589,10 @@ function ChatRow({
   // A saved contact's name is the label — the push name is only the fallback.
   const name = displayName;
   const phone = (data.phone as string | null) ?? null;
-  const preview = (data.last_message_preview as string | null) ?? null;
-  const lastAt = (data.last_message_at as string | null) ?? null;
-  const unread = typeof data.unread_count === 'number' ? data.unread_count : 0;
+  // A per-number chat shows that number's last message and unread only.
+  const preview = line ? line.last_message_preview : ((data.last_message_preview as string | null) ?? null);
+  const lastAt = line ? line.last_message_at : ((data.last_message_at as string | null) ?? null);
+  const unread = line ? line.unread_count : (typeof data.unread_count === 'number' ? data.unread_count : 0);
   const status = (data.status as string | null) ?? 'active';
 
   const avatarLetter = (name.trim().charAt(0) || '#').toUpperCase();
