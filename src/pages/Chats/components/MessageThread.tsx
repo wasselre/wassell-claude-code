@@ -26,6 +26,7 @@ export default function MessageThread({
   chatWid,
   line = null,
   renderProjectActions,
+  review,
 }: {
   chatWid: string;
   /** A per-number chat: show only that number's messages (or, for the sales
@@ -35,6 +36,10 @@ export default function MessageThread({
    *  to show on that bubble (ChatDetail owns this — it knows the linked client).
    *  Omitted → no project buttons. */
   renderProjectActions?: (projectId: string) => MessageProjectActions | null;
+  /** The AI chat review pop-up: click a bubble to select it, highlight the
+   *  messages a card or note rests on (the first one scrolls into view), and
+   *  show how many review notes each message has. Omitted → a plain thread. */
+  review?: MessageThreadReview;
 }) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const allMessages = useAppStore((s) => s.chatMessages[chatWid] ?? EMPTY);
@@ -81,6 +86,14 @@ export default function MessageThread({
   const [error, setError] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Bring the first highlighted message into view when the highlight changes.
+  const highlightKey = review?.highlighted ? [...review.highlighted].sort().join(',') : '';
+  useEffect(() => {
+    if (!highlightKey) return;
+    const first = highlightKey.split(',')[0] ?? '';
+    const el = scrollRef.current?.querySelector(`[data-mid="${CSS.escape(first)}"]`);
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [highlightKey]);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const prevScrollHeightRef = useRef<number | null>(null);
   // Whether the user is anchored at the newest message. While pinned, any
@@ -333,7 +346,7 @@ export default function MessageThread({
                 : null;
               const projectActions =
                 projectId && renderProjectActions ? renderProjectActions(projectId) : null;
-              return (
+              const bubble = (
                 <MessageBubble
                   key={m.id}
                   message={m}
@@ -347,6 +360,29 @@ export default function MessageThread({
                   senderLabel={senderOf(m)}
                 />
               );
+              if (!review) return bubble;
+              const selected = review.selected?.has(m.id) ?? false;
+              const lit = review.highlighted?.has(m.id) ?? false;
+              const notes = review.noteCounts?.get(m.id) ?? 0;
+              return (
+                <div
+                  key={m.id}
+                  data-mid={m.id}
+                  role={review.onToggle ? 'button' : undefined}
+                  tabIndex={review.onToggle ? 0 : undefined}
+                  onClick={review.onToggle ? () => review.onToggle?.(m.id) : undefined}
+                  onKeyDown={review.onToggle ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); review.onToggle?.(m.id); } } : undefined}
+                  className={`relative rounded-xl transition-colors ${review.onToggle ? 'cursor-pointer' : ''} ${
+                    selected ? 'bg-copper/15 ring-2 ring-copper' : lit ? 'bg-gold/25 ring-2 ring-gold' : ''}`}
+                >
+                  {bubble}
+                  {notes > 0 && (
+                    <span className="absolute -top-1.5 end-1 rounded-full bg-terracotta px-1.5 text-[10px] font-bold text-white">
+                      {isAr ? `${notes} ملاحظة` : `${notes} note${notes > 1 ? 's' : ''}`}
+                    </span>
+                  )}
+                </div>
+              );
             })}
           </div>
         ))}
@@ -354,6 +390,14 @@ export default function MessageThread({
       </div>
     </div>
   );
+}
+
+export interface MessageThreadReview {
+  /** Click toggles a message in/out of the selection. */
+  onToggle?: (messageId: string) => void;
+  selected?: ReadonlySet<string>;
+  highlighted?: ReadonlySet<string>;
+  noteCounts?: ReadonlyMap<string, number>;
 }
 
 function DaySeparator({ label }: { label: string }) {
