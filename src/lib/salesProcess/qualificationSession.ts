@@ -93,6 +93,30 @@ export function applyExtractionEvent(extraction: ExtractionInput): void {
   emit();
 }
 
+/**
+ * The REP's own free-text note (2026-10-05): the same AI-fill path as call
+ * capture (values land marked «AI-filled — review»), but the rep is the author,
+ * so a field they edited by hand is NOT locked against it — their newest words
+ * win — and the reading is applied at full confidence.
+ */
+export function applyRepTextEvent(extraction: ExtractionInput): void {
+  const slugs = new Set(Object.keys(extraction.suggestions ?? {}));
+  const meta = { ...state.qual.meta };
+  for (const slug of slugs) if (meta[slug]?.provenance === 'rep_edited') delete meta[slug];
+  const suggestions: ExtractionInput['suggestions'] = {};
+  for (const [slug, sug] of Object.entries(extraction.suggestions ?? {})) {
+    suggestions[slug] = { ...sug, confidence: Math.max(sug.confidence ?? 0, 90) };
+  }
+  state = {
+    ...state,
+    qual: reduceExtraction({ ...state.qual, meta }, { ...extraction, suggestions }, {
+      savedData: state.ctx.savedData,
+      resolveDistrict: state.ctx.resolveDistrict,
+    }),
+  };
+  emit();
+}
+
 /** Re-seed from a freshly-saved client (after the full-edit modal persists). Resets
  *  the baseline to the new saved values. */
 export function reseedFromSaved(savedData: Record<string, unknown> | null): void {

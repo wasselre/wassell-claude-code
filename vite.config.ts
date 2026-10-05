@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
@@ -14,6 +14,43 @@ const buildVersion =
     ? rawSha.slice(0, 12)
     : `dev-${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`;
 
+/**
+ * Dev-only: run SELECTED `/api/*` functions from THIS checkout inside the vite
+ * dev server, so a new endpoint can be tested locally before it is deployed.
+ * Opt-in: `WASSEL_DEV_LOCAL_API=client-prefs/from-text,other` (paths under
+ * api/, without .ts). Every other `/api` path still falls through to
+ * `WASSEL_DEV_API_PROXY`. The handler gets the raw Node req/res, exactly like
+ * a Vercel nodejs function; server env (.env.local) is copied into
+ * process.env for it. Never active in a build.
+ */
+function localApiPlugin(names: string[], env: Record<string, string>): Plugin {
+  return {
+    name: 'wassel-local-api',
+    apply: 'serve',
+    configureServer(server) {
+      for (const [k, v] of Object.entries(env)) if (process.env[k] === undefined) process.env[k] = v;
+      server.middlewares.use(async (req, res, next) => {
+        const path = (req.url ?? '').split('?')[0] ?? '';
+        const name = names.find((n) => path === `/api/${n}`);
+        if (!name) return next();
+        try {
+          const mod = (await server.ssrLoadModule(`/api/${name}.ts`)) as {
+            default: (q: typeof req, s: typeof res) => Promise<void>;
+          };
+          await mod.default(req, res);
+        } catch (err) {
+          console.error(`[local-api] /api/${name} failed:`, err);
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+          }
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   // `vite dev` serves the SPA only — the `/api/*` Vercel functions do not run
   // here, so every API-driven surface (the Marketing workspace, chats, decks…)
@@ -23,9 +60,11 @@ export default defineConfig(({ mode }) => {
   // point of view, so the user's Supabase JWT rides along and CORS never
   // enters). Unset = unchanged behaviour. Never a default: it points a dev
   // tab at PRODUCTION data.
-  const apiProxy = (loadEnv(mode, process.cwd(), '').WASSEL_DEV_API_PROXY ?? '').trim().replace(/\/$/, '');
+  const devEnv = loadEnv(mode, process.cwd(), '');
+  const apiProxy = (devEnv.WASSEL_DEV_API_PROXY ?? '').trim().replace(/\/$/, '');
+  const localApis = (devEnv.WASSEL_DEV_LOCAL_API ?? '').split(',').map((s) => s.trim()).filter((s) => /^[a-z0-9/-]+$/i.test(s));
   return {
-  plugins: [react()],
+  plugins: [react(), ...(localApis.length ? [localApiPlugin(localApis, devEnv)] : [])],
   // Honor an assigned PORT (Claude preview tooling / parallel worktree dev
   // servers all sharing one machine) — falls back to the historical fixed
   // port. Explicit `--port` CLI flags still win over this.

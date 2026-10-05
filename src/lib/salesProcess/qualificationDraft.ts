@@ -37,6 +37,8 @@ export const QUALIFICATION_FIELD_KINDS: Record<string, FieldKind> = {
   preferred_unit_type: 'multi',
   preferred_amenities: 'multi',
   purchase_objective: 'multi',
+  // Ready / off-plan (2026-10-05) — the extractor reads it; now it can land too.
+  preferred_readiness: 'multi',
   budget: 'range',
   preferred_area: 'range',
   preferred_bedrooms: 'range',

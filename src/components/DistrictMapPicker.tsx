@@ -266,6 +266,9 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   const [drawPolarity, setDrawPolarity] = useState<GeoPolarity>('include');
   const drawPolarityRef = useRef<GeoPolarity>('include');
   useEffect(() => { drawPolarityRef.current = drawPolarity; }, [drawPolarity]);
+  // Every drawing session starts as a WANTED area; «not wanted» is an explicit
+  // choice per session (operator, 2026-10-05), never carried over silently.
+  useEffect(() => { if (drawMode) setDrawPolarity('include'); }, [drawMode]);
 
   // Load the city's district shapes (one RPC, ~145 kB for Riyadh).
   useEffect(() => {
@@ -1375,27 +1378,21 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
             </p>
           </div>
           {drawMode && (
-            <div className="flex shrink-0 items-center gap-1">
-              {(['include', 'exclude'] as GeoPolarity[]).map((p) => {
-                const active = drawPolarity === p;
-                const isInc = p === 'include';
-                const c = isInc ? GOLD : RED;
-                return (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setDrawPolarity(p)}
-                    className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-2 text-xs font-bold transition"
-                    style={active
-                      ? { backgroundColor: c, borderColor: c, color: '#fff' }
-                      : { backgroundColor: '#fff', borderColor: `${c}66`, color: isInc ? '#8a6a38' : c }}
-                  >
-                    {isInc ? <Check size={13} /> : <Ban size={13} />}
-                    {isInc ? L('أريدها', 'Include') : L('استثناء', 'Exclude')}
-                  </button>
-                );
-              })}
-            </div>
+            // One labelled dropdown (was two side-by-side toggle buttons — read as
+            // confusing). Defaults to «wanted» every time drawing starts.
+            <label className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-charcoal/70">
+              {drawPolarity === 'exclude' ? <Ban size={14} style={{ color: RED }} /> : <Check size={14} style={{ color: GOLD }} />}
+              {L('هذه المنطقة:', 'This area is:')}
+              <select
+                value={drawPolarity}
+                onChange={(e) => setDrawPolarity(e.target.value as GeoPolarity)}
+                className="rounded-lg border bg-white px-2 py-1.5 text-xs font-bold focus:outline-none"
+                style={{ borderColor: drawPolarity === 'exclude' ? RED : GOLD, color: drawPolarity === 'exclude' ? RED : '#8a6a38' }}
+              >
+                <option value="include">{L('مرغوبة', 'Wanted')}</option>
+                <option value="exclude">{L('غير مرغوبة (استثناء)', 'Not wanted (exclude)')}</option>
+              </select>
+            </label>
           )}
           {drawMode && draftCount > 0 && (
             <button

@@ -61,8 +61,25 @@ export async function readLocation(
   return value;
 }
 
-async function run(svc: SupabaseClient, conv: Conversation, clientId: string | null): Promise<GeoReading> {
-  if (!conv.turns.some((t) => t.speaker === 'client')) return { ids: null, understood: [], needs_review: 0 };
+/** What the geography agent understood, as location_items + plain labels. */
+export interface PlaceItemsReading {
+  items: import('../../../src/lib/geo/locationItems.js').LocationItem[];
+  understood: GeoReading['understood'];
+}
+
+/**
+ * Text → the client's places as location_items, through the SAME geography
+ * pipeline as {@link readLocation} (extract → company rules → resolve → compile),
+ * without matching projects. Used by the rep's free-text preference box
+ * (api/client-prefs/from-text.ts): the rep's note is read as the client's words.
+ * Writes nothing.
+ */
+export async function readPlaceItems(svc: SupabaseClient, text: string, clientId: string | null): Promise<PlaceItemsReading> {
+  const conv: Conversation = { channel: 'chat', id: 'rep-note', turns: [{ speaker: 'client', text }] };
+  return compilePlaces(svc, conv, clientId);
+}
+
+async function compilePlaces(svc: SupabaseClient, conv: Conversation, clientId: string | null): Promise<PlaceItemsReading> {
   deps ??= makeSupabaseBackfillDeps(svc, 'sales-agent');
   const extracted = await deps.extract(conv);
   const ctx = await deps.buildRunContext(clientId ?? NIL_CLIENT, extracted.evidence.length);
@@ -83,7 +100,12 @@ async function run(svc: SupabaseClient, conv: Conversation, clientId: string | n
   const understood = summarizeGeometry(compiled).map((e) => ({
     place: e.label, wanted: e.polarity === 'include', kind: String(e.operation), radius_m: e.radius_m,
   }));
-  const items = geoPreferenceToLocationItems(compiled);
+  return { items: geoPreferenceToLocationItems(compiled), understood };
+}
+
+async function run(svc: SupabaseClient, conv: Conversation, clientId: string | null): Promise<GeoReading> {
+  if (!conv.turns.some((t) => t.speaker === 'client')) return { ids: null, understood: [], needs_review: 0 };
+  const { items, understood } = await compilePlaces(svc, conv, clientId);
   if (!items.some((i) => i.polarity !== 'exclude')) return { ids: null, understood, needs_review: 0 };
   const { data, error } = await svc.rpc('sales_agent_geo_match', { p_items: items });
   if (error) throw new Error(`geo match failed: ${error.message}`);

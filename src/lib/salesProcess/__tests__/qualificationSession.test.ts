@@ -81,3 +81,33 @@ describe('subscription', () => {
     unsub();
   });
 });
+
+describe("the rep's free-text note (applyRepTextEvent)", () => {
+  it('fills a field the rep edited by hand — the newest words win — and marks it for review', () => {
+    session.ensureSession({ followupId: 'A', clientId: 'c1', ctx: ctx({}) });
+    session.setRepEdit('budget', { max: 1_000_000 });
+    // Call capture cannot override a hand edit…
+    session.applyExtractionEvent(extraction('budget', { max: 2_000_000 }, 95));
+    expect(session.getSnapshot().qual.draft.budget).toEqual({ max: 1_000_000 });
+    // …the rep's own note can.
+    session.applyRepTextEvent(extraction('budget', { max: 3_000_000 }, 95));
+    const s = session.getSnapshot().qual;
+    expect(s.draft.budget).toEqual({ max: 3_000_000 });
+    expect(s.meta.budget?.provenance).toBe('ai_filled');
+  });
+
+  it('applies a low-confidence reading (the rep wrote it) and lands ready / off-plan', () => {
+    session.ensureSession({ followupId: 'A', clientId: 'c1', ctx: ctx({}) });
+    session.applyRepTextEvent(extraction('preferred_readiness', ['ready'], 40));
+    expect(session.getSnapshot().qual.draft.preferred_readiness).toEqual(['ready']);
+  });
+
+  it('adds places to the existing ones (union by district)', () => {
+    const saved = { location_items: [{ kind: 'district', district_id: 'd1', polarity: 'include' }] };
+    session.ensureSession({ followupId: 'A', clientId: 'c1', ctx: ctx(saved) });
+    session.applyRepTextEvent(extraction('location_items', [{ kind: 'district', district_id: 'd2', polarity: 'include' }], 90));
+    const items = session.getSnapshot().qual.draft.location_items as Array<{ district_id: string }>;
+    expect(items.map((i) => i.district_id)).toEqual(['d1', 'd2']);
+    expect(session.getSnapshot().qual.meta.location_items?.provenance).toBe('ai_changed');
+  });
+});

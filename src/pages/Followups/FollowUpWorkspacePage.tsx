@@ -348,6 +348,7 @@ export default function FollowUpWorkspacePage() {
                 draft={prefDraft}
                 onFieldChange={setPrefField}
                 meta={qual.meta}
+                onApplyRepText={qual.applyRepText}
               />
             </div>
             {/* Left rail: the Suggested Projects launcher (full "Present" stage

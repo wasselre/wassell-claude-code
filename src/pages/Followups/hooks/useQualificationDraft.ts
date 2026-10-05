@@ -32,6 +32,9 @@ export interface UseQualificationDraft {
   setPrefField: (slug: string, value: unknown) => void;
   /** AI evidence — runs the auto-apply reducer (called by captureController in Phase 4). */
   applyExtraction: (extraction: ExtractionInput) => void;
+  /** The rep's own free-text note, read by AI — fills fields even over the rep's
+   *  earlier hand edits, marked «AI-filled — review». */
+  applyRepText: (extraction: ExtractionInput) => void;
   /** Draft-vs-saved diff for the Phase 6 reconciliation screen. */
   diff: DiffEntry[];
   /** Re-seed from the freshly-saved client after the full-edit modal persists. */
@@ -94,6 +97,7 @@ export function useQualificationDraft(input: {
 
   const setPrefField = useCallback((slug: string, value: unknown) => session.setRepEdit(slug, value), []);
   const applyExtraction = useCallback((extraction: ExtractionInput) => session.applyExtractionEvent(extraction), []);
+  const applyRepText = useCallback((extraction: ExtractionInput) => session.applyRepTextEvent(extraction), []);
 
   const resetSeed = useCallback(() => {
     // Read the freshest client straight from the store — the modal's onSaved fires
@@ -106,5 +110,5 @@ export function useQualificationDraft(input: {
 
   const diff = useMemo(() => computeDiff(qual, savedClientData), [qual, savedClientData]);
 
-  return { draft: qual.draft, meta: qual.meta, exceptions: qual.exceptions, setPrefField, applyExtraction, diff, resetSeed };
+  return { draft: qual.draft, meta: qual.meta, exceptions: qual.exceptions, setPrefField, applyExtraction, applyRepText, diff, resetSeed };
 }
