@@ -50,6 +50,8 @@ export function geminiApiKey(explicit?: string): string {
 }
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+/** Up to ~10 one-minute waits for the account's spend-rate limit before the call fails. */
+const MAX_SPEND_WAITS = 10;
 
 /**
  * Several keys, one per Google Cloud project (2026-10-05). The per-day request
@@ -112,6 +114,7 @@ export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHtt
   }
   let key = keys[keyIndex]!;
   const payload = JSON.stringify(body);
+  let spendWaits = 0;
 
   for (let attempt = 1; ; attempt++) {
     const ctrl = new AbortController();
@@ -160,6 +163,19 @@ export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHtt
         // A per-DAY quota does not refill in seconds — retrying here only burns
         // the job. Callers recognise DAILY_QUOTA_MARK and defer the work.
         throw providerError('gemini', `${DAILY_QUOTA_MARK} ${daily.quota} — retry after ${daily.retryAfterSec}s`);
+      }
+      if (res.status === 429 && /spend-based rate limit/i.test(snippet) && spendWaits < MAX_SPEND_WAITS) {
+        // Tier 1 allows $10 of spend per rolling 10 minutes per billing account
+        // (ai.google.dev/gemini-api/docs/rate-limits#spend-rate-limits). Hitting
+        // it is pacing, not failure: wait ~a minute (jittered so 40 parallel
+        // jobs do not all come back together) and try again without spending
+        // one of the call's attempts. Seen 2026-10-05 at ~$56/hour.
+        spendWaits++;
+        const wait = 45_000 + Math.floor(Math.random() * 45_000);
+        console.warn(`[ai/gemini] spend-rate limit on ${path} — waiting ${Math.round(wait / 1000)}s (${spendWaits}/${MAX_SPEND_WAITS})`);
+        await sleep(wait);
+        attempt--;
+        continue;
       }
       if (RETRYABLE.has(res.status) && attempt < maxAttempts) {
         // A 429 names the quota and how long to wait (RetryInfo.retryDelay "37s").

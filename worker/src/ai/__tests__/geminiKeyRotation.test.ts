@@ -54,4 +54,17 @@ describe('geminiPost — key rotation on a per-day quota', () => {
     expect(seen).toEqual(['k1']); // never retried on k2: k2 cannot read k1's file
     expect(geminiKeyFor('gemini-3.8-flash')).toEqual({ key: 'k2', index: 1 });
   });
+
+  it('waits on the account spend-rate limit without using up attempts', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'k1');
+    let n = 0;
+    const waits: number[] = [];
+    const spend = () => new Response(JSON.stringify({ error: { code: 429, message: 'You exceeded your spend-based rate limit. Your spending rate has exceeded the allowed limit', status: 'RESOURCE_EXHAUSTED' } }), { status: 429 });
+    const fetchMock = vi.fn(async () => (++n <= 3 ? spend() : ok()));
+    const r = await geminiPost('/v1beta/models/gemini-3.8-flash:generateContent', {}, { fetch: fetchMock as unknown as typeof fetch, maxAttempts: 1, sleep: async (ms) => { waits.push(ms); } });
+    expect(r).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(waits.length).toBe(3);
+    expect(waits.every((w) => w >= 45_000 && w < 90_000)).toBe(true);
+  });
 });
