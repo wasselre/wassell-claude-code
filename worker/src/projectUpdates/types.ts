@@ -102,6 +102,9 @@ export interface ReconcileResult {
   /** Prices the source shows that differ from ours but were NOT written
    *  (policy.updatePrices = false) — reported for a person to judge. */
   priceDiffsNotApplied: Array<{ unit: string; crm: number | null; source: number }>;
+  /** New units NOT created because the source lacks one of the four
+   *  essentials (area, price, bedrooms, unit type) — reported to the operator. */
+  incomplete: Array<{ unit: string; missing: Array<'area' | 'price' | 'bedrooms' | 'unit_type'> }>;
   /** Source units that matched more than one CRM unit — skipped, never guessed. */
   ambiguous: string[];
   stats: {

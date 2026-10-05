@@ -617,6 +617,11 @@ PRD: `docs/prd/project-updates.md`.
    is reported, never duplicated.
 7. **Opus 5.5 rejects a forced `tool_choice`** — the reader uses `auto` and fails
    the run when no tool call comes back (never treats it as "no updates").
+8. **Never create a unit without area, price, bedrooms AND unit type** (operator
+   rule 2026-10-05). Missing any → skip it and TELL the operator (WhatsApp via
+   `project_update_notify_incomplete`). Never fill a gap by guessing — no type
+   borrowed from a "similar" unit, no area from a layout name. Enforced twice:
+   `reconcile` (`result.incomplete`) and `hasEssentials` before the write.
 
 ## Office outreach (unanswered requests → WhatsApp to offices) (added 2026-09-28)
 

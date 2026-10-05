@@ -67,6 +67,7 @@ export interface ExtractedUnit {
   unit_number?: number | string | null;
   unit_code?: string | null;
   unit_type?: string | null;
+  bedrooms?: number | string | null;
   area?: number | string | null;
   price?: number | string | null;
   status?: 'available' | 'reserved' | 'sold' | null;
@@ -123,6 +124,7 @@ const TOOL: Anthropic.Tool = {
                   unit_number: { type: ['string', 'number', 'null'] },
                   unit_code: { type: ['string', 'null'] },
                   unit_type: { type: ['string', 'null'] },
+                  bedrooms: { type: ['number', 'string', 'null'], description: 'Bedrooms of THIS unit as the source states it (0 = studio); null when not stated — never inferred from the area.' },
                   area: { type: ['number', 'string', 'null'] },
                   price: { type: ['number', 'string', 'null'], description: 'Price of THIS unit (after discount when both are shown). Never a "starting from" figure.' },
                   status: { type: ['string', 'null'], enum: ['available', 'reserved', 'sold', null] },
@@ -209,6 +211,7 @@ function toSourceUnits(units: ExtractedUnit[] | undefined, statusOverride?: Unit
   return (units ?? []).map((u) => {
     const price = num(u.price);
     const area = num(u.area);
+    const beds = num(u.bedrooms);
     return {
       sourceId: null,
       unitModel: null,
@@ -221,6 +224,7 @@ function toSourceUnits(units: ExtractedUnit[] | undefined, statusOverride?: Unit
       status: statusOverride ?? u.status ?? null,
       price: price != null && price > 0 ? price : null,
       area: area != null && area > 0 ? area : null,
+      bedrooms: beds != null && beds >= 0 ? beds : null,
     };
   });
 }
@@ -566,28 +570,29 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
         crm = crm.filter((u) => inCoverage(scope, u.data));
         r.buildings_covered = [...scope];
       }
-      // A list row needs a price AND an area to count as a released unit.
+      // A list row becomes a NEW unit only with all four essentials (area,
+      // price, bedrooms, type) — reconcile skips the rest into result.incomplete.
       const policy = policyFor(it);
       const result = reconcile(crm, src, policy, {
         projectId, developerId: project.developerId, projectName: project.name,
         sourceLabel: `واتساب ${group.label}`, today,
       });
-      result.creates = result.creates.filter((c) => c.data.total_price != null && c.data.unit_area != null);
       const brake = brakeReason(result, a.brake);
       Object.assign(r, {
         matched: result.stats.matched, unmatched: src.length - result.stats.matched - result.ambiguous.length,
         ambiguous: result.ambiguous, changes: result.updates.map((u) => ({ unit: u.label, why: u.reasons })),
         creates: result.creates.map((c) => c.label),
+        incomplete: result.incomplete,
       });
       if (brake) { r.held = brake; held++; if (!a.dryRun) await appendLog(supabase, projectId, `${today} — ⛔ تحديث واتساب موقوف: ${brake}`, today); continue; }
       if (a.dryRun) continue;
-      const out = await applyResult(supabase, { runId: a.runId, projectId, projectName: project.name, result, heartbeat: a.heartbeat });
+      const out = await applyResult(supabase, { runId: a.runId, projectId, projectName: project.name, result, heartbeat: a.heartbeat, sourceLabel: `واتساب ${group.label}` });
       r.written = out;
       written += out.updated + out.created;
       if (out.updated + out.created > 0) applied++;
       const unm = Number(r.unmatched ?? 0);
       await appendLog(supabase, projectId,
-        `${today} — تحديث تلقائي (واتساب ${group.label}): ${out.updated} تعديل، ${out.created} جديد${unm ? `؛ ${unm} وحدة لم تُطابَق` : ''}${result.ambiguous.length ? `؛ ${result.ambiguous.length} غير محسومة` : ''}`,
+        `${today} — تحديث تلقائي (واتساب ${group.label}): ${out.updated} تعديل، ${out.created} جديد${unm ? `؛ ${unm} وحدة لم تُطابَق` : ''}${result.ambiguous.length ? `؛ ${result.ambiguous.length} غير محسومة` : ''}${result.incomplete.length ? `؛ ⚠ ${result.incomplete.length} وحدة لم تُضَف لنقص معلومة أساسية (أُبلغ المشغّل)` : ''}`,
         today);
     } catch (err) {
       r.error = (err as Error).message;

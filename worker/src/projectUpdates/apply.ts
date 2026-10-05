@@ -13,6 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordSaveWithRetry } from '../lib/recordSaveRetry.js';
 import { BROWSER_UA } from './http.js';
 import type { ReconcileResult, UnitCreate } from './types.js';
+import { incompleteNotice, incompleteSignature } from './reconcile.js';
 
 export const UNITS_MODEL_ID = '7ca3014d-f658-418e-9c53-2d279c97f009';
 export const PROJECTS_MODEL_ID = '220c49b9-de57-492d-9eca-c0d9f54fd40f';
@@ -26,6 +27,38 @@ export interface ApplyOutcome {
   created: number;
   plans: number;
   failures: string[];
+  /** New units the source lists but that lack an essential — not created. */
+  incomplete: number;
+  /** The WhatsApp notice about them: job id, 'unchanged' (already told about
+   *  this exact list), or the error that stopped it. */
+  incomplete_notice?: string;
+}
+
+/** True when a unit about to be created carries all four essentials. The
+ *  reconciler already filters; this is the last check before the write, so
+ *  no future path can add an incomplete unit by building creates itself. */
+export function hasEssentials(d: Record<string, unknown>): boolean {
+  const pos = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v > 0;
+  return pos(d.total_price) && pos(d.unit_area)
+    && typeof d.bedrooms === 'number' && Number.isFinite(d.bedrooms) && d.bedrooms >= 0
+    && typeof d.unit_type === 'string' && d.unit_type.length > 0;
+}
+
+/** Tell the operator (WhatsApp, operations line) which units were not added.
+ *  The same list is sent once per project — a weekly run that finds it again
+ *  stays quiet (project_update_notify_incomplete compares a signature). */
+async function notifyIncomplete(
+  supabase: SupabaseClient,
+  args: { projectId: string; projectName: string; sourceLabel: string; result: ReconcileResult },
+): Promise<string> {
+  const items = args.result.incomplete;
+  const { data, error } = await supabase.rpc('project_update_notify_incomplete', {
+    p_project_id: args.projectId,
+    p_signature: incompleteSignature(items),
+    p_body: incompleteNotice(args.projectName, args.sourceLabel, items),
+  });
+  if (error) throw new Error(error.message);
+  return typeof data === 'string' ? data : 'unchanged';
 }
 
 async function logChange(
@@ -113,12 +146,27 @@ export async function applyResult(
   supabase: SupabaseClient,
   args: {
     runId: string; projectId: string; projectName: string; result: ReconcileResult;
+    /** Named in the operator's notice («بوابة وسطاء ريفا», «واتساب الرمز»…). */
+    sourceLabel: string;
     /** Called between writes — a big project must keep the run's heartbeat
      *  fresh or the watchdog hands the run to a second machine mid-way. */
     heartbeat?: () => Promise<void>;
   },
 ): Promise<ApplyOutcome> {
-  const out: ApplyOutcome = { updated: 0, created: 0, plans: 0, failures: [] };
+  const out: ApplyOutcome = { updated: 0, created: 0, plans: 0, failures: [], incomplete: args.result.incomplete.length };
+
+  if (args.result.incomplete.length) {
+    try {
+      out.incomplete_notice = await notifyIncomplete(supabase, args);
+    } catch (err) {
+      // The notice failing must not undo or block the run's real writes — but
+      // it is reported on the run (failures) and logged, never dropped.
+      const msg = `incomplete-units notice: ${(err as Error).message}`;
+      console.error(`[project-update] ${args.projectName}: ${msg}`);
+      out.failures.push(msg);
+      out.incomplete_notice = `error: ${(err as Error).message}`;
+    }
+  }
 
   for (const u of args.result.updates) {
     if (args.heartbeat) await args.heartbeat();
@@ -148,6 +196,10 @@ export async function applyResult(
       const c = args.result.creates[i]!;
       const id = randomUUID();
       const data = { ...c.data, unit_code: codes[i] as string };
+      if (!hasEssentials(data)) {
+        out.failures.push(`create ${c.label}: refused — missing area/price/bedrooms/type`);
+        continue;
+      }
       try {
         const { error: saveErr } = await supabase.rpc('record_save', {
           p_model_id: UNITS_MODEL_ID, p_id: id, p_data: data,

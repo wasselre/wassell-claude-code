@@ -128,7 +128,8 @@ function logLine(today: string, label: string, r: ReconcileResult, extra: string
   const s = r.stats;
   const created = r.creates.length;
   const changes = r.updates.length + created;
-  return `${today} — تحديث تلقائي (${label}): ${changes} تغيير (حالة ${s.statusChanges}، سعر ${s.priceChanges}، جديد ${created})${extra}`;
+  const inc = r.incomplete.length ? `؛ ⚠ ${r.incomplete.length} وحدة جديدة لم تُضَف لنقص معلومة أساسية (أُبلغ المشغّل)` : '';
+  return `${today} — تحديث تلقائي (${label}): ${changes} تغيير (حالة ${s.statusChanges}، سعر ${s.priceChanges}، جديد ${created})${inc}${extra}`;
 }
 
 const RIVA_POLICY: ReconcilePolicy = { absentAvailable: 'leave', createMissing: true, updatePrices: true };
@@ -195,6 +196,7 @@ async function runRiva(
         missing_from_portal_units: result.missingFromSource.length,
         missing_sample: result.missingFromSource.slice(0, 15),
         ambiguous: result.ambiguous,
+        incomplete: result.incomplete,
       });
       const gap = src.declaredTotal != null && src.units.length < src.declaredTotal
         ? `؛ البوابة ${src.units.length}/${src.declaredTotal} وحدة` : `؛ البوابة ${src.units.length} وحدة`;
@@ -214,7 +216,7 @@ async function runRiva(
         totalChanges += result.updates.length + result.creates.length;
         continue;
       }
-      const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result, heartbeat });
+      const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result, heartbeat, sourceLabel: 'بوابة وسطاء ريفا' });
       Object.assign(entry, { status: out.failures.length ? 'partial' : 'applied', written: out });
       totalChanges += out.updated + out.created;
       if (out.updated + out.created > 0) applied++;
@@ -368,6 +370,7 @@ async function runPerProject(
         price_diffs_sample: result.priceDiffsNotApplied.slice(0, 20),
         missing_sample: result.missingFromSource.slice(0, 15),
         ambiguous: result.ambiguous,
+        incomplete: result.incomplete,
       });
       // The operator can confirm a held project ("they are sold") — the run's
       // params.override_brake lists the registry rows let through. Scoped to
@@ -387,7 +390,7 @@ async function runPerProject(
       }
       if (overridden) entry.brake_overridden = brake;
       if (run.dry_run) { entry.status = 'dry_run'; totalChanges += result.updates.length + result.creates.length; continue; }
-      const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result, heartbeat });
+      const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result, heartbeat, sourceLabel: adapter.label });
       if (overridden) {
         const prev = typeof row.data.migration_log === 'string' ? row.data.migration_log : '';
         row.data.migration_log = `${prev ? `${prev}\n` : ''}${today} — ✅ أكّد المشغّل التغيير رغم إيقاف الأمان (${brake}).`;

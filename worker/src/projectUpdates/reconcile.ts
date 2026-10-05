@@ -165,6 +165,49 @@ export function mapFloor(raw: unknown): string | null {
 
 const SIBLING_COPY_KEYS = ['unit_components', 'facade', 'parking_space', 'elevator_status'] as const;
 
+export type Essential = 'area' | 'price' | 'bedrooms' | 'unit_type';
+
+/** Which of the four essentials a NEW unit lacks. Bedrooms 0 (a studio) is a
+ *  real value; area and price must be positive. */
+export function missingEssentials(s: SourceUnit, mappedType: string | null): Essential[] {
+  const out: Essential[] = [];
+  if (!(s.area != null && s.area > 0)) out.push('area');
+  if (!(s.price != null && s.price > 0)) out.push('price');
+  if (s.bedrooms == null || !Number.isFinite(s.bedrooms) || s.bedrooms < 0) out.push('bedrooms');
+  if (!mappedType) out.push('unit_type');
+  return out;
+}
+
+const ESSENTIAL_AR: Record<Essential, string> = {
+  area: 'المساحة', price: 'السعر', bedrooms: 'عدد الغرف', unit_type: 'نوع الوحدة',
+};
+
+/** One WhatsApp message to the operator listing the units a run did NOT add
+ *  and what each lacks. Grouped by what is missing, so 130 units missing only
+ *  the type read as one line, not 130. */
+export function incompleteNotice(projectName: string, sourceLabel: string, items: ReconcileResult['incomplete']): string {
+  const groups = new Map<string, string[]>();
+  for (const it of items) {
+    const k = it.missing.map((m) => ESSENTIAL_AR[m]).join(' + ');
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(it.unit);
+  }
+  const lines = [
+    `⚠️ تحديث المشاريع — ${projectName}`,
+    `لم تُضَف ${items.length} وحدة من «${sourceLabel}» لأن معلومة أساسية ناقصة:`,
+  ];
+  for (const [k, units] of groups) {
+    const shown = units.slice(0, 12).join('، ');
+    lines.push('', `• ينقصها ${k} (${units.length}): ${shown}${units.length > 12 ? ` … و${units.length - 12} غيرها` : ''}`);
+  }
+  lines.push('', 'ستُضاف تلقائياً حين يذكر المصدر المعلومة الناقصة، أو أدخلها يدوياً.');
+  return lines.join('\n');
+}
+
+/** Stable signature of an incomplete list — the same list is reported once. */
+export function incompleteSignature(items: ReconcileResult['incomplete']): string {
+  return items.map((i) => `${normUnitKey(i.unit)}:${i.missing.join(',')}`).sort().join('|');
+}
+
 /** The CRM unit a NEW unit should borrow its layout fields from: same type,
  *  same bedrooms, closest area. Returns null when nothing is close enough. */
 export function pickSibling(crm: CrmUnit[], src: SourceUnit): CrmUnit | null {
@@ -239,6 +282,7 @@ export function reconcile(
   const seenSrc = new Set<string>();
   let statusChanges = 0, toSoldOrReserved = 0, priceChanges = 0, matched = 0;
   const priceDiffsNotApplied: ReconcileResult['priceDiffsNotApplied'] = [];
+  const incomplete: ReconcileResult['incomplete'] = [];
 
   for (const s of source) {
     const label = sourceLabel(s);
@@ -306,7 +350,14 @@ export function reconcile(
     if (s.block) data.block = s.block;
     if (s.buildingNumber) data.building_number = s.buildingNumber;
     if (s.unitNumber != null) data.unit_number = s.unitNumber;
-    const t = mapUnitType(s.unitType ?? null) ?? (sib?.data.unit_type as string | undefined) ?? null;
+    // The type comes from the SOURCE only. A sibling is picked by closest area,
+    // so borrowing its type would be a guess dressed up as data.
+    const t = mapUnitType(s.unitType ?? null);
+    // The four essentials (operator rule, 2026-10-05): a unit is NEVER created
+    // without area, price, bedrooms and unit type. Missing any → skipped and
+    // reported, so the operator is told what to ask the developer for.
+    const missing = missingEssentials(s, t);
+    if (missing.length) { incomplete.push({ unit: label, missing }); continue; }
     if (t) data.unit_type = t;
     if (s.price != null && s.price > 0) data.total_price = s.price;
     if (s.area != null && s.area > 0) data.unit_area = s.area;
@@ -344,6 +395,7 @@ export function reconcile(
     creates,
     missingFromSource,
     priceDiffsNotApplied,
+    incomplete,
     ambiguous,
     stats: {
       sourceUnits: seenSrc.size,

@@ -163,7 +163,7 @@ export async function createProjectFromSource(
   const result = reconcile([], src.units, { absentAvailable: 'leave', createMissing: true, updatePrices: true }, {
     projectId, developerId, projectName: src.name, sourceLabel: args.sourceLabel, today,
   });
-  const units = await applyResult(supabase, { runId: args.runId, projectId, projectName: src.name, result });
+  const units = await applyResult(supabase, { runId: args.runId, projectId, projectName: src.name, result, sourceLabel: args.sourceLabel });
 
   const registry: Record<string, unknown> = {
     project: projectId,
@@ -178,7 +178,7 @@ export async function createProjectFromSource(
       (`أُضيف تلقائياً (${today}) من ${args.sourceLabel}. يُحدَّث آلياً كل أسبوع عبر project_update_runs: ` +
       `مفتاح الربط = معرّف الوحدة في البوابة (developer_unit_code) ثم عنوان البطاقة؛ الحالة من حقل case، السعر من unit_price؛ ` +
       `الوحدات الغائبة عن البوابة لا تُلمس؛ الوحدات الجديدة تُضاف مع مخططها.`),
-    migration_log: `${today} — أُنشئ المشروع تلقائياً من ${args.sourceLabel}: ${units.created} وحدة${units.plans ? `، ${units.plans} مخطط` : ''}${notes.length ? `؛ ⚠ ${notes.join('؛ ')}` : ''}`,
+    migration_log: `${today} — أُنشئ المشروع تلقائياً من ${args.sourceLabel}: ${units.created} وحدة${units.plans ? `، ${units.plans} مخطط` : ''}${units.incomplete ? `، ${units.incomplete} وحدة لم تُضَف لنقص معلومة أساسية (أُبلغ المشغّل)` : ''}${notes.length ? `؛ ⚠ ${notes.join('؛ ')}` : ''}`,
   };
   const registryId = randomUUID();
   const { error: rErr } = await supabase.rpc('record_save', {

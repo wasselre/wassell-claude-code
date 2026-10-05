@@ -229,7 +229,7 @@ describe('arKey — Arabic name comparison for developer / district lookup', () 
 
 describe('reconcile — a new project whose units share one title', () => {
   it('creates every unit (nothing in the CRM to confuse them with)', () => {
-    const units = Array.from({ length: 10 }, (_, i) => ({ sourceId: `p${i}`, unitModel: 'شقة', status: 'available' as const, price: 692200 + i }));
+    const units = Array.from({ length: 10 }, (_, i) => ({ sourceId: `p${i}`, unitModel: 'شقة', status: 'available' as const, price: 692200 + i, area: 120, bedrooms: 3, unitType: 'شقة' }));
     const r = reconcile([], units, RIVA, CTX);
     expect(r.creates).toHaveLength(10);
     expect(r.ambiguous).toEqual([]);
@@ -251,7 +251,7 @@ describe('reconcile — the source unit id', () => {
     expect(later.updates.map((u) => [u.unitId, u.patch.unit_status])).toEqual([['u1', 'sold']]);
   });
   it('never stores one of OUR codes (U-123) as the developer code', () => {
-    const r = reconcile([], [{ sourceId: null, unitCode: 'U-123', unitModel: 'A1', status: 'available' }], RIVA, CTX);
+    const r = reconcile([], [{ sourceId: null, unitCode: 'U-123', unitModel: 'A1', status: 'available', price: 1, area: 1, bedrooms: 1, unitType: 'شقة' }], RIVA, CTX);
     expect(r.creates[0]!.data.developer_unit_code).toBeUndefined();
   });
 });
@@ -393,5 +393,59 @@ describe('Safa broker cards — the real layout (saved 2026-10-05)', () => {
       { absentAvailable: 'leave', createMissing: true, updatePrices: false }, CTX);
     expect(r.updates).toHaveLength(0);
     expect(r.priceDiffsNotApplied).toEqual([{ unit: 'A', crm: 1_521_879, source: 1_598_000 }]);
+  });
+});
+
+describe('the four essentials — a unit is never created without area, price, bedrooms and type', () => {
+  const full = { status: 'available' as const, price: 900_000, area: 120, bedrooms: 3, unitType: 'شقة' };
+  it('a complete unit is created', () => {
+    const r = reconcile([], [src('N1', full)], RIVA, CTX);
+    expect(r.creates).toHaveLength(1);
+    expect(r.incomplete).toEqual([]);
+  });
+  it('each missing essential is named, and the unit is not created', () => {
+    const r = reconcile([], [
+      src('N1', { ...full, price: null }),
+      src('N2', { ...full, area: 0 }),
+      src('N3', { ...full, bedrooms: null }),
+      src('N4', { ...full, unitType: null }),
+      src('N5', { status: 'available' }),
+    ], RIVA, CTX);
+    expect(r.creates).toHaveLength(0);
+    expect(r.incomplete).toEqual([
+      { unit: 'N1', missing: ['price'] },
+      { unit: 'N2', missing: ['area'] },
+      { unit: 'N3', missing: ['bedrooms'] },
+      { unit: 'N4', missing: ['unit_type'] },
+      { unit: 'N5', missing: ['area', 'price', 'bedrooms', 'unit_type'] },
+    ]);
+  });
+  it('a studio (0 bedrooms) is complete', () => {
+    expect(reconcile([], [src('S', { ...full, bedrooms: 0 })], RIVA, CTX).creates).toHaveLength(1);
+  });
+  it('the type is never borrowed from a similar unit', () => {
+    const r = reconcile([crm('u1', { unit_model: 'X', unit_type: 'apartment', unit_area: 120, bedrooms: 3 })],
+      [src('N1', { ...full, unitType: null })], RIVA, CTX);
+    expect(r.creates).toHaveLength(0);
+    expect(r.incomplete[0]!.missing).toEqual(['unit_type']);
+  });
+  it('the update side is unaffected — a matched unit still gets its status', () => {
+    const r = reconcile([crm('u1', { unit_model: 'A1' })], [src('A1', { status: 'sold' })], RIVA, CTX);
+    expect(r.updates[0]!.patch).toEqual({ unit_status: 'sold' });
+    expect(r.incomplete).toEqual([]);
+  });
+  it('the last check before the write refuses an incomplete unit', async () => {
+    const { hasEssentials } = await import('../projectUpdates/apply');
+    expect(hasEssentials({ total_price: 1, unit_area: 1, bedrooms: 0, unit_type: 'studio' })).toBe(true);
+    expect(hasEssentials({ total_price: 1, unit_area: 1, bedrooms: 2 })).toBe(false);
+    expect(hasEssentials({ total_price: 0, unit_area: 1, bedrooms: 2, unit_type: 'villa' })).toBe(false);
+  });
+  it('the notice groups units by what they lack, and the signature is order-free', async () => {
+    const { incompleteNotice, incompleteSignature } = await import('../projectUpdates/reconcile');
+    const items = [{ unit: 'A', missing: ['unit_type' as const] }, { unit: 'B', missing: ['unit_type' as const] }, { unit: 'C', missing: ['price' as const] }];
+    const body = incompleteNotice('صفا 101', 'بوابة صفا', items);
+    expect(body).toContain('ينقصها نوع الوحدة (2): A، B');
+    expect(body).toContain('ينقصها السعر (1): C');
+    expect(incompleteSignature(items)).toBe(incompleteSignature([...items].reverse()));
   });
 });
