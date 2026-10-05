@@ -44,6 +44,12 @@ function firstId(v: unknown): string | null {
   return typeof v === 'string' ? v : null;
 }
 
+/** Booked by the WhatsApp sales agent (escalation.ts bookVisit) — the flag, or
+ *  its note on bookings made before the flag existed. */
+function isAgentBooked(d: Record<string, unknown>): boolean {
+  return d.booked_by === 'ai_agent' || (typeof d.notes === 'string' && d.notes.startsWith('حجزه المساعد الآلي'));
+}
+
 function startOfDay(ms: number): number {
   const d = new Date(ms);
   d.setHours(0, 0, 0, 0);
@@ -150,6 +156,9 @@ export default function MyTasksPage() {
     const rows = (records[appointmentsModel.id] ?? [])
       .filter((r) => {
         if (isManager && showAll) return true;
+        // Managers always see what the AI agent booked (operator, 2026-10-05):
+        // it lands on the client's rep, and was invisible here without «كل المندوبين».
+        if (isManager && isAgentBooked(r.data as Record<string, unknown>)) return true;
         const rep = firstId((r.data as Record<string, unknown>).sales_rep);
         return !rep || rep === currentUserId;
       });
@@ -393,6 +402,11 @@ export default function MyTasksPage() {
                         <CalendarDays size={15} className="shrink-0 text-copper" />
                         <span className="truncate font-bold text-chocolate">{name}</span>
                         <span dir="ltr" className="text-sm text-terracotta">{phone}</span>
+                        {isAgentBooked(d) && (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-copper/10 px-2 py-0.5 text-[11px] font-semibold text-copper">
+                            <Bot size={11} aria-hidden /> {isAr ? 'حجزه المساعد' : 'Booked by the assistant'}
+                          </span>
+                        )}
                       </span>
                       <span className="mt-1 block text-xs text-charcoal/60">
                         {at && !Number.isNaN(at.getTime())

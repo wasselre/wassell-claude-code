@@ -259,6 +259,8 @@ export async function bookVisit(
       ...(typeof appId === 'string' && appId ? { app_id: appId } : {}),
       client_id: clientId, phone_number: ctx.phone, client_name: ctx.clientName ?? ctx.name ?? ctx.phone,
       appointment_date: when, ...(ourProjectId ? { project_id: ourProjectId } : {}), sales_rep: ctx.repUserId, appointment_status: 'scheduled',
+      // The work queue shows agent bookings to managers with a label (MyTasksPage.isAgentBooked).
+      booked_by: 'ai_agent',
       notes: `حجزه المساعد الآلي من محادثة واتساب — الوقت: ${approx}. لم تُرسل للعميل رسالة تأكيد آلية.`,
     },
     p_expected_version: null,
