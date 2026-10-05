@@ -291,6 +291,8 @@ export function reconcile(
       if (k) crmIndex.set(k, [...(crmIndex.get(k) ?? []), u]);
     }
   }
+  // Which key kinds the CRM side actually has (bu:, gu:, …).
+  const crmKeyKinds = new Set([...crmIndex.keys()].map((k) => k.slice(0, k.indexOf(':'))));
   // Count source keys over DISTINCT source units — the same unit repeated by
   // unstable pagination must not look like two units sharing a key.
   const distinct = new Map<string, SourceUnit>();
@@ -310,10 +312,23 @@ export function reconcile(
     if (!policy.matchByUnitNumber && code && byCrmCode.has(code)) return { unit: byCrmCode.get(code)!, ambiguous: false, candidates: [] };
     let sawAmbiguity = false;
     const candidates: CrmUnit[] = [];
-    for (const [, fn] of matchKeys) {
+    // A unit NUMBER is the unit's identity. When the source gives one and the
+    // CRM's units carry the same kind of key, a miss means a NEW unit — never
+    // fall back to the floor-level keys (they match several units and turned
+    // 13 new ستون الملقا units into "ambiguous", 2026-10-05).
+    let numberKeyTried = false;
+    let numberKeyHit = false;
+    for (const [name, fn] of matchKeys) {
       const k = fn(srcKeyInput(s));
       if (!k) continue;
+      if ((name === 'block_building_floor' || name === 'building_floor') && numberKeyTried && !numberKeyHit) {
+        return { unit: null, ambiguous: false, candidates: [] };
+      }
       const hits = crmIndex.get(k) ?? [];
+      if ((name === 'block_unit' || name === 'building_unit') && crmKeyKinds.has(k.slice(0, k.indexOf(':')))) {
+        numberKeyTried = true;
+        if (hits.length) numberKeyHit = true;
+      }
       if (hits.length === 1 && (srcCount.get(k) ?? 0) <= 1) return { unit: hits[0]!, ambiguous: false, candidates: [] };
       // Ambiguous only when a CRM unit is actually in play: ten source units all
       // titled «شقة» in a project the CRM has no units for are ten NEW units,

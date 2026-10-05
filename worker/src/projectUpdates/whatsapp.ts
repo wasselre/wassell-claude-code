@@ -126,7 +126,7 @@ const TOOL: Anthropic.Tool = {
                   floor: { type: ['string', 'null'] },
                   unit_number: { type: ['string', 'number', 'null'] },
                   unit_code: { type: ['string', 'null'] },
-                  unit_type: { type: ['string', 'null'] },
+                  unit_type: { type: ['string', 'null'], description: 'The unit type as the SOURCE states it: in the row, in the sheet\'s title or column headers (a sheet whose rows are «رقم الفلة» lists villas → فيلا; rows of floors «الدور / الملحق» in a building → دور), or in the sender\'s own words for that sheet. null when nothing states it — never guessed from the area or the price.' },
                   bedrooms: { type: ['number', 'string', 'null'], description: 'Bedrooms of THIS unit as the source states it (0 = studio); null when not stated — never inferred from the area.' },
                   area: { type: ['number', 'string', 'null'] },
                   price: { type: ['number', 'string', 'null'], description: 'Price of THIS unit (after discount when both are shown). Never a "starting from" figure.' },

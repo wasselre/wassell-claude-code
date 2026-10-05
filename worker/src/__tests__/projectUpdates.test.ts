@@ -542,3 +542,22 @@ describe('a source whose availability sheets are always complete', () => {
     expect(forcedListScope({ kind: 'available_list', message_ids: [], units: [{ unit_number: 2, status: 'reserved' }] })).toBe('partial');
   });
 });
+
+describe('a unit number that misses is a NEW unit, not ambiguous', () => {
+  it('ستون الملقا 2026-10-05: building 1 unit 2 is new even though building 1 ground floor has a CRM unit', () => {
+    const crmUnits = [crm('u7', { building_number: '1', unit_number: '7', floor: 'ارضي' })];
+    const r = reconcile(crmUnits, [
+      { sourceId: null, unitModel: null, buildingNumber: '1', unitNumber: 2, floor: 'الأرضي', status: 'available', price: 1_175_323, area: 85.79, bedrooms: 2, unitType: 'شقة' },
+      { sourceId: null, unitModel: null, buildingNumber: '1', unitNumber: 7, floor: 'الأرضي', status: 'available', price: 1_273_938 },
+      { sourceId: null, unitModel: null, buildingNumber: '1', unitNumber: 8, floor: 'الأرضي', status: 'available', price: 1_491_108, area: 108.84, bedrooms: 2, unitType: 'شقة' },
+    ], RIVA, CTX);
+    expect(r.ambiguous).toEqual([]);
+    expect(r.creates.map((c) => c.data.unit_number)).toEqual([2, 8]);
+    expect(r.stats.matched).toBe(1);
+  });
+  it('without unit numbers on the CRM side the floor keys still work', () => {
+    const r = reconcile([crm('u1', { building_number: '3', floor: 'اول' })],
+      [{ sourceId: null, unitModel: null, buildingNumber: '3', floor: 'الأول', status: 'sold' }], RIVA, CTX);
+    expect(r.updates[0]!.patch).toEqual({ unit_status: 'sold' });
+  });
+});
