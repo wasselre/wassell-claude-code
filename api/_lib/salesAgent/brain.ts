@@ -91,6 +91,8 @@ export interface AgentSearchLog {
   area_understood: Array<{ place: string; wanted: boolean }> | null;
   overrides: string[];
   top: Array<{ id: string; name: string; district: string | null; price_from: number | null }>;
+  /** Nothing fit: the closest options, each missing one condition (see CatalogSearch.alternatives). */
+  alternatives?: Array<{ without: string; top: Array<{ id: string; name: string; district: string | null; price_from: number | null }> }>;
 }
 
 export interface BrainOutcome {
@@ -149,6 +151,7 @@ HOW YOU WORK
 8b. Hand off (handoff_to_rep, then one short line that a colleague will contact them): they want a call or a person, price negotiation or discounts, a complaint, renting, selling their own property, anything that is not buying one of our homes. If you already told them a colleague will contact them, don't say it again — answer briefly or send nothing.
 9. Not interested / stop → end_conversation and close warmly in a few words.
 10. If a search came back relaxed (relaxed ≠ null), say plainly what we don't have and that this is the closest. relaxed="budget" means nothing fits their budget: say so, give the lowest real starting price we have, and ask if they can stretch or consider another type/area — do not send a project as if it fit.
+10b. ALTERNATIVES — total 0 but the result has alternatives: nothing meets ALL their conditions, but these come closest, each missing exactly one thing (without="near" → it is NOT within their distance of the place: quote its real distances_km; without="readiness" → it is NOT ready / NOT off-plan as they asked; its own relaxed says what else was widened). Say plainly we don't have it with everything, then offer the best ONE alternative naming what differs, and ask if that works — e.g. «ما عندنا جاهز جنب المترو بهالميزانية، أقرب شي مينا 51 بالتعاون جاهزة وتبعد 2.5 كيلو عن المحطة، تناسبك؟». Never present an alternative as a fit. Offer the specialized search (10a) only if they turn the alternatives down.
 10a. SPECIALIZED SEARCH (بحث خاص) — when we truly don't have it. If nothing fits (total 0, or relaxed and they turn down the closest / won't change type, area or budget), don't leave them empty-handed: tell them we don't have it right now and that we'll do a specialized search for them («نسوي لك بحث خاص») — our team looks for it outside our projects and comes back to them. Our team can only start that search with three things: the unit type, at least one district (a district name — a region like «شمال الرياض» is not enough, ask which districts there), and ONE of budget, bedrooms or size. Read the SPECIALIZED-SEARCH CHECKLIST in the state plus what they said in this conversation, and ask in ONE short message for exactly what is still missing — this is the one time you may ask for two or three things together, e.g. «ما عندنا شي بهالمواصفات حالياً، بنسوي لك بحث خاص ونرجع لك — بس عطني الأحياء اللي تفضلها والميزانية تقريباً». For the third item ask for the budget first («الميزانية تقريباً أو عدد الغرف»). Never ask for something known. Once all three are known (or the checklist says complete), confirm in one warm line that the search is on and we'll get back to them («أبشر، بدأنا نبحث لك ونبشرك أول ما نلقى»): no timeframe, no promise that we'll find it, and don't send a project that doesn't fit. Say the specialized-search offer once; if they already agreed, don't repeat it.
 
 VOICE (the reps' measured style — never break it)
@@ -416,6 +419,7 @@ function searchView(r: CatalogSearch): Record<string, unknown> {
     ...(r.criteria.near?.length ? { near_searched: r.criteria.near } : {}),
     ...(r.unknown_features ? { unknown_features: r.unknown_features } : {}),
     ...(r.unresolved_places ? { unresolved_places: r.unresolved_places } : {}),
+    ...(r.alternatives ? { alternatives: r.alternatives } : {}),
   };
 }
 
@@ -496,6 +500,7 @@ export async function runBrain(
           out.lastCriteria = r.criteria;
           out.lastTotal = r.total;
           for (const p of r.projects) known.add(p.project_id);
+          for (const a of r.alternatives ?? []) for (const p of a.projects) known.add(p.project_id);
           const view = areaUnderstood ? { ...searchView(r), area_understood: areaUnderstood } : searchView(r);
           grounding.push(view);
           const shown = criteria.area_ids ? { ...criteria, area_ids: `${criteria.area_ids.length} projects in the described area` } : criteria;
@@ -505,8 +510,14 @@ export async function runBrain(
             area_understood: areaUnderstood ? areaUnderstood.map((u) => ({ place: u.place, wanted: u.wanted })) : null,
             overrides: applied.overrides,
             top: r.projects.slice(0, 5).map((p) => ({ id: p.project_id, name: p.name, district: p.district, price_from: p.fit?.price_from ?? p.price_from })),
+            ...(r.alternatives ? {
+              alternatives: r.alternatives.map((a) => ({
+                without: a.without,
+                top: a.projects.map((p) => ({ id: p.project_id, name: p.name, district: p.district, price_from: p.fit?.price_from ?? p.price_from })),
+              })),
+            } : {}),
           });
-          toolTrace.push(`search ${JSON.stringify(shown)} → ${r.total}${r.relaxed ? ` (${r.relaxed})` : ''}`);
+          toolTrace.push(`search ${JSON.stringify(shown)} → ${r.total}${r.relaxed ? ` (${r.relaxed})` : ''}${r.alternatives ? ` · alternatives ${r.alternatives.map((a) => `without ${a.without}: ${a.projects.map((p) => p.name).join(', ')}`).join(' / ')}` : ''}`);
           return { content: JSON.stringify(view) };
         }
         case 'find_project': {

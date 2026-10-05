@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { dateTimeShort, money, num } from '@/pages/Marketing/lib/format';
-import { useAiActivity, type AgentRun } from '../lib/aiActivity';
+import { useAiActivity, type AgentFoundProject, type AgentRun } from '../lib/aiActivity';
 import { buildAiEvents, criteriaChips, readingChips, relaxedLabel, type AiEvent } from '../lib/aiActivityText';
 import { usePrefFieldFormat } from '../lib/usePrefFieldFormat';
 import AiChangesSection from './AiChangesSection';
@@ -57,6 +57,26 @@ function Chips({ items }: { items: string[] }) {
 
 function Empty({ text }: { text: string }) {
   return <p className="text-[10.5px] text-charcoal/45">{text}</p>;
+}
+
+function FoundList({ items, sent, isAr }: { items: AgentFoundProject[]; sent: ReadonlyMap<string, string>; isAr: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <ul className="space-y-1">
+      {items.map((p) => (
+        <li key={p.id} className="flex items-baseline justify-between gap-1">
+          <span className="min-w-0 truncate">
+            {p.name}{p.district && <span className="text-charcoal/50"> · {p.district}</span>}
+          </span>
+          <span className="shrink-0 text-[10px]">
+            {sent.has(p.id)
+              ? <span className="text-emerald-700">{t('chats.ai_act.sent_badge')}</span>
+              : p.price_from != null && <span className="text-charcoal/50">{t('chats.ai_act.from_price', { v: money(p.price_from, isAr) })}</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function RunRow({ run, isAr }: { run: AgentRun; isAr: boolean }) {
@@ -211,20 +231,16 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, p
 
           <Card icon={<Building2 size={12} />} title={t('chats.ai_act.card_found')}>
             {searches[0]?.s.top.length ? (
-              <ul className="space-y-1">
-                {searches[0].s.top.map((p) => (
-                  <li key={p.id} className="flex items-baseline justify-between gap-1">
-                    <span className="min-w-0 truncate">
-                      {p.name}{p.district && <span className="text-charcoal/50"> · {p.district}</span>}
-                    </span>
-                    <span className="shrink-0 text-[10px]">
-                      {sent.has(p.id)
-                        ? <span className="text-emerald-700">{t('chats.ai_act.sent_badge')}</span>
-                        : p.price_from != null && <span className="text-charcoal/50">{t('chats.ai_act.from_price', { v: money(p.price_from, isAr) })}</span>}
-                    </span>
-                  </li>
+              <FoundList items={searches[0].s.top} sent={sent} isAr={isAr} />
+            ) : searches[0]?.s.alternatives?.length ? (
+              <div className="space-y-1.5">
+                {searches[0].s.alternatives.map((a) => (
+                  <div key={a.without}>
+                    <p className="text-[10px] text-amber-700">{t(`chats.ai_act.alt_without_${a.without}`)}</p>
+                    <FoundList items={a.top} sent={sent} isAr={isAr} />
+                  </div>
                 ))}
-              </ul>
+              </div>
             ) : <Empty text={t('chats.ai_act.nothing_found')} />}
           </Card>
 

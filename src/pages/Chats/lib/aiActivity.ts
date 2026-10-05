@@ -12,8 +12,12 @@ export interface AgentRunSearch {
   relaxed: string | null;
   area_understood: Array<{ place: string; wanted: boolean }> | null;
   overrides: string[];
-  top: Array<{ id: string; name: string; district: string | null; price_from: number | null }>;
+  top: AgentFoundProject[];
+  /** Nothing fit: the closest options, each missing one condition. */
+  alternatives?: Array<{ without: 'near' | 'readiness' | 'near_and_readiness'; top: AgentFoundProject[] }>;
 }
+
+export interface AgentFoundProject { id: string; name: string; district: string | null; price_from: number | null }
 
 export interface AgentRunReading {
   unit_types?: string[] | null;

@@ -111,6 +111,13 @@ export interface CatalogSearch {
   };
   /** Projects already sent in this chat that also fit (not repeated in `projects`). */
   already_sent: string[];
+  /** Only when NOTHING fits (total 0): the same search inside the same area once
+   *  without each condition the ladder never widens — the place («قريب من
+   *  المترو», nearest first, real distances kept) and ready / off-plan. Live test
+   *  2026-10-05: «شقة جاهزة 3 غرف شمال الرياض قريبة من مترو بمليون و200» got
+   *  "nothing" while مينا 51 (ready, 2.5 km from a station) and مكانة (0.5 km,
+   *  off-plan) were there. Never a fit — the reply says what differs. */
+  alternatives?: Array<{ without: 'near' | 'readiness' | 'near_and_readiness'; relaxed: CatalogSearch['relaxed']; total: number; projects: CatalogProject[] }>;
 }
 
 const TOP = 6;
@@ -436,12 +443,13 @@ export async function searchProjects(
   // road, a distance from a place…) replaces the zone test when present.
   const areaIds = criteria.area_ids ? new Set(criteria.area_ids) : null;
   const inArea = (r: { master: Master; inArea: boolean }) => (areaIds ? areaIds.has(r.master.id) : r.inArea);
-  const pick = (check: FitCheck, areaOnly: boolean, nearFactor = 1): Array<{ master: Master; m: FinderMatch; inArea: boolean }> =>
+  interface Drop { near?: boolean; readiness?: boolean }
+  const pick = (check: FitCheck, areaOnly: boolean, nearFactor = 1, drop: Drop = {}): Array<{ master: Master; m: FinderMatch; inArea: boolean }> =>
     resolved.filter((r) => (!areaOnly || inArea(r))
-      && nearOk(r.master.id, nearFactor)
+      && (drop.near || nearOk(r.master.id, nearFactor))
       && projectFits(r.master.data, check)
       && unitsFit(r.master.id, check)
-      && (!criteria.readiness || readinessOf(r.master.data) === criteria.readiness)
+      && (drop.readiness || !criteria.readiness || readinessOf(r.master.data) === criteria.readiness)
       && (!wantDistricts.size || (typeof r.m.facts?.district === 'string' && wantDistricts.has(districtKey(r.m.facts.district)))));
 
   const beds = criteria.bedrooms_min ?? null;
@@ -452,45 +460,71 @@ export async function searchProjects(
   // Ladder: exact (type listed) → type unrecorded → twice the distance →
   // without the features → any type → widened specs → outside the requested
   // area. Each rung only if the previous found nothing.
-  const ladder: Array<{ check: FitCheck; areaOnly: boolean; relaxed: CatalogSearch['relaxed']; nearFactor?: number }> = [
-    { check: fit({ strictType: true }), areaOnly: true, relaxed: null },
-    { check: fit({}), areaOnly: true, relaxed: null },
-  ];
-  if (nearDist.length) ladder.push({ check: fit({}), areaOnly: true, relaxed: 'distance', nearFactor: 2 });
-  if (feats.known.length) ladder.push({ check: fit({ features: [] }), areaOnly: true, relaxed: 'features' });
-  if (types.length) ladder.push({ check: fit({ checkType: false }), areaOnly: true, relaxed: 'unit_type' });
-  if (beds || budget || areaMin) {
-    ladder.push({
-      check: fit({ checkType: false, bedroomsMin: null, areaMin: null, budgetMax: budget ? Math.round(budget * 1.15) : null }),
-      areaOnly: true, relaxed: 'specs_and_budget',
-    });
-  }
-  // Nothing within the budget → what we DO have, above it (said honestly —
-  // live test: a 500k villa ask got a villa of unknown price).
-  if (budget) ladder.push({ check: fit({ budgetMax: null }), areaOnly: true, relaxed: 'budget' });
-  if (zoneKnown || areaIds) ladder.push({ check: fit({}), areaOnly: false, relaxed: 'area' });
-
-  let fits: Array<{ master: Master; m: FinderMatch; inArea: boolean }> = [];
-  let relaxed: CatalogSearch['relaxed'] = null;
-  let used: FitCheck = ladder[0]!.check;
-  for (const rung of ladder) {
-    fits = pick(rung.check, rung.areaOnly, rung.nearFactor ?? 1);
-    if (fits.length) { relaxed = rung.relaxed; used = rung.check; break; }
-  }
-
-  let all = fits.map((f) => {
-    const us = universe.units.get(f.master.id);
-    const p = toProject(f.master, f.m, inArea(f), us && us.length ? fitOf(us, used) : null);
-    if (nearDist.length) {
-      p.distances_km = {};
-      for (const c of nearDist) { const km = c.km.get(f.master.id); if (km !== undefined) p.distances_km[c.label] = Math.round(km * 10) / 10; }
+  const runLadder = (drop: Drop, withAreaRung: boolean) => {
+    const ladder: Array<{ check: FitCheck; areaOnly: boolean; relaxed: CatalogSearch['relaxed']; nearFactor?: number }> = [
+      { check: fit({ strictType: true }), areaOnly: true, relaxed: null },
+      { check: fit({}), areaOnly: true, relaxed: null },
+    ];
+    if (nearDist.length && !drop.near) ladder.push({ check: fit({}), areaOnly: true, relaxed: 'distance', nearFactor: 2 });
+    if (feats.known.length) ladder.push({ check: fit({ features: [] }), areaOnly: true, relaxed: 'features' });
+    if (types.length) ladder.push({ check: fit({ checkType: false }), areaOnly: true, relaxed: 'unit_type' });
+    if (beds || budget || areaMin) {
+      ladder.push({
+        check: fit({ checkType: false, bedroomsMin: null, areaMin: null, budgetMax: budget ? Math.round(budget * 1.15) : null }),
+        areaOnly: true, relaxed: 'specs_and_budget',
+      });
     }
-    return p;
-  });
-  // Asked to be near something → nearest first.
-  if (nearDist.length) {
-    const d = (p: CatalogProject) => Math.max(...Object.values(p.distances_km ?? {}), 0);
-    all = [...all].sort((a, b) => d(a) - d(b));
+    // Nothing within the budget → what we DO have, above it (said honestly —
+    // live test: a 500k villa ask got a villa of unknown price).
+    if (budget) ladder.push({ check: fit({ budgetMax: null }), areaOnly: true, relaxed: 'budget' });
+    if (withAreaRung && (zoneKnown || areaIds)) ladder.push({ check: fit({}), areaOnly: false, relaxed: 'area' });
+
+    let fits: Array<{ master: Master; m: FinderMatch; inArea: boolean }> = [];
+    let relaxed: CatalogSearch['relaxed'] = null;
+    let used: FitCheck = ladder[0]!.check;
+    for (const rung of ladder) {
+      fits = pick(rung.check, rung.areaOnly, rung.nearFactor ?? 1, drop);
+      if (fits.length) { relaxed = rung.relaxed; used = rung.check; break; }
+    }
+    return { fits, relaxed, used };
+  };
+  const toProjects = (fits: Array<{ master: Master; m: FinderMatch; inArea: boolean }>, used: FitCheck): CatalogProject[] => {
+    let all = fits.map((f) => {
+      const us = universe.units.get(f.master.id);
+      const p = toProject(f.master, f.m, inArea(f), us && us.length ? fitOf(us, used) : null);
+      if (nearDist.length) {
+        p.distances_km = {};
+        for (const c of nearDist) { const km = c.km.get(f.master.id); if (km !== undefined) p.distances_km[c.label] = Math.round(km * 10) / 10; }
+      }
+      return p;
+    });
+    // Asked to be near something → nearest first.
+    if (nearDist.length) {
+      const d = (p: CatalogProject) => Math.max(...Object.values(p.distances_km ?? {}), 0);
+      all = [...all].sort((a, b) => d(a) - d(b));
+    }
+    return all;
+  };
+
+  const { fits, relaxed, used } = runLadder({}, true);
+  const all = toProjects(fits, used);
+  // Nothing at all → the closest real options, each labelled with what it lacks.
+  // Inside the asked area only (no area rung): "outside the area" is its own answer.
+  let alternatives: CatalogSearch['alternatives'];
+  if (!all.length && (nearDist.length || criteria.readiness)) {
+    alternatives = [];
+    const tries: Array<{ without: 'near' | 'readiness' | 'near_and_readiness'; drop: Drop }> = [];
+    if (nearDist.length) tries.push({ without: 'near', drop: { near: true } });
+    if (criteria.readiness) tries.push({ without: 'readiness', drop: { readiness: true } });
+    for (const t of tries) {
+      const r = runLadder(t.drop, false);
+      if (r.fits.length) alternatives.push({ without: t.without, relaxed: r.relaxed, total: r.fits.length, projects: toProjects(r.fits, r.used).slice(0, 3) });
+    }
+    if (!alternatives.length && nearDist.length && criteria.readiness) {
+      const r = runLadder({ near: true, readiness: true }, false);
+      if (r.fits.length) alternatives.push({ without: 'near_and_readiness', relaxed: r.relaxed, total: r.fits.length, projects: toProjects(r.fits, r.used).slice(0, 3) });
+    }
+    if (!alternatives.length) alternatives = undefined;
   }
   const fresh = all.filter((p) => !sentSet.has(p.project_id));
   const facets = facetsOf(all);
@@ -505,6 +539,7 @@ export async function searchProjects(
     already_sent: all.filter((p) => sentSet.has(p.project_id)).map((p) => p.name),
     ...(feats.unknown.length ? { unknown_features: feats.unknown } : {}),
     ...(unresolvedPlaces.length ? { unresolved_places: unresolvedPlaces } : {}),
+    ...(alternatives ? { alternatives } : {}),
   };
 }
 
