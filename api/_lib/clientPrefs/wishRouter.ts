@@ -112,8 +112,8 @@ function heardLines(heard: Heard): string {
 }
 
 const SYSTEM = `You file a Saudi real-estate customer's wishes into their CRM. A customer can hold several preference PROFILES, one per property they want (e.g. a villa to live in AND an apartment to invest). You get their profiles, the WhatsApp conversation, and what was just heard. Decide ONE:
-- "same_wish": it refines or adds to one existing profile (give its profile_id). Use this when unsure.
-- "changed_mind": the customer REPLACED something they wanted before in that profile («غيرت رأيي»، «انسى اللي قبل»، «لا خلاص ابي…»، «بدل…», or a clear switch). List in "changed" only the fields they changed.
+- "same_wish": it refines or adds to one existing profile (give its profile_id). Use this when unsure. Accepting an ALTERNATIVE next to what they wanted is same_wish — both stand: «عادي دور بعد يمشي»، «ما يفرق شقة او دور»، «او بالياسمين»، a raised budget.
+- "changed_mind": the customer DROPPED something they wanted before in that profile and put something else in its place («غيرت رأيي»، «انسى اللي قبل»، «لا خلاص ابي…»، «بدال…»، «ما عاد ابي…»). The earlier value must be given up, not just joined by another. List in "changed" only the fields they changed.
 - "second_wish": they want an ADDITIONAL, SEPARATE property besides one a profile already holds — both still stand («وكمان»، «بعد ابي»، «غير كذا ابي»، «ثاني لولدي»، «بالإضافة»، a second purpose next to the first). Give a short Arabic name for it in "new_profile_name" (e.g. «شقة استثمار - دبي»).
 A different value alone is NOT a second wish — customers change their minds; a second wish needs them to want both. "quote" = the customer's exact words that show the decision, copied from an «العميل» line. Fields: unit_type, budget, bedrooms, area, readiness, purpose, amenities, location.`;
 
