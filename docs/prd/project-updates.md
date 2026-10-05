@@ -88,7 +88,7 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 | `worker/src/__tests__/projectUpdates.test.ts` | rules above, pinned |
 
 ## Open questions / known limitations
-- Binghatti's current `/Authentication/Login` and `/Authentication/Index` reject the saved phone before the OTP request. Browserbase handles supported CAPTCHA automatically; the remaining verification needs the correct sign-in route or identifier. Daily/weekly switches remain off until that succeeds and the initial checks pass. Al-Ramz's Drive folder is private; its updates come through the WhatsApp group.
+- Binghatti's `/Authentication/Index` is the public landing page; the recipe follows its Login link. The current `/Authentication/Login` rejects the saved phone before the OTP request. Browserbase handles supported CAPTCHA automatically; the remaining verification needs the correct phone sign-in route. Daily/weekly switches remain off until that succeeds and the initial checks pass. Al-Ramz's Drive folder is private; its updates come through the WhatsApp group.
 - دروازة's update-list link points at a different phase than our units (held every week until the link is fixed).
 - A Riva project that leaves the portal is reported, not retired (retirement removes it from the website — a human decision).
 - WhatsApp videos and PowerPoint files are not read (only text, PDFs and images).
