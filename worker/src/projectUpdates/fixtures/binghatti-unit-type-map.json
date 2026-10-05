@@ -1,0 +1,92 @@
+{
+  "captured_at": "2026-08-01T05:45:04.493Z",
+  "source": "partners.binghatti.com /Properties unitTypeFilter options, original authenticated browser extraction",
+  "source_session_id": "4b6f5b7e-f960-4b4e-b78e-0b95cf1e3d35",
+  "source_tool_result_line": 403,
+  "types": [
+    {
+      "id": "14",
+      "name": "4 BEDROOM VILLA"
+    },
+    {
+      "id": "19",
+      "name": "5 BEDROOM GRAND VILLA"
+    },
+    {
+      "id": "21",
+      "name": "5 BEDROOM PREMIUM PLUS VILLA"
+    },
+    {
+      "id": "20",
+      "name": "5 BEDROOM PREMIUM VILLA"
+    },
+    {
+      "id": "15",
+      "name": "6 BEDROOM GRAND MANSION"
+    },
+    {
+      "id": "17",
+      "name": "6 BEDROOM MANSION"
+    },
+    {
+      "id": "18",
+      "name": "7 BEDROOM SEA PALACE"
+    },
+    {
+      "id": "6",
+      "name": "Five Bedrooms"
+    },
+    {
+      "id": "5",
+      "name": "Four Bedrooms"
+    },
+    {
+      "id": "11",
+      "name": "Office"
+    },
+    {
+      "id": "2",
+      "name": "One Bedroom"
+    },
+    {
+      "id": "13",
+      "name": "Parking"
+    },
+    {
+      "id": "10",
+      "name": "Penthouse"
+    },
+    {
+      "id": "12",
+      "name": "Retail"
+    },
+    {
+      "id": "8",
+      "name": "Seven Bedrooms"
+    },
+    {
+      "id": "7",
+      "name": "Six Bedrooms"
+    },
+    {
+      "id": "1",
+      "name": "Studio"
+    },
+    {
+      "id": "9",
+      "name": "Suite"
+    },
+    {
+      "id": "16",
+      "name": "THE ROYAL SEA PALACE"
+    },
+    {
+      "id": "4",
+      "name": "Three Bedrooms"
+    },
+    {
+      "id": "3",
+      "name": "Two Bedrooms"
+    }
+  ]
+}

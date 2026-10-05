@@ -15,6 +15,9 @@ One record in the **Lead portals** model (Settings → Lead portals, or
 | `developer` / `marketer` / `officers` / `projects` | Who it covers. A project P offers this portal when P is in `projects`, OR one of `officers` covers P, OR `developer` = P's developer, OR `marketer` = P's marketer (in that priority). |
 | `login_phone` | The broker (Wassel) phone the portal sends its OTP to. The rep can override it per run. |
 | `login_email`, `login_password` | For portals that sign in that way. Leave empty for OTP-only portals. |
+| `login_id` | A portal-specific user ID, available as `{{portal.login_id}}`. Credentials belong on the record. |
+| `browserbase_persist_context` | Opt-in login persistence. Existing portals keep fresh sessions unless enabled. |
+| `browserbase_context_id` | System-managed Browserbase Context ID; created once and reused with `persist: true`. |
 | `otp_channel` | `sms` / `whatsapp` / `email` / `none` — only a hint shown to the rep. |
 | `required_fields` | JSON: which customer fields the portal form needs (see below). |
 | `recipe` | JSON: the steps replayed in the browser (see below). |
@@ -92,6 +95,9 @@ an unescaped dot is parsed as a class and the step fails with a bare
 | `wait_for` | target, `state?`, `timeout_ms?` | Wait until visible (or `hidden` / `attached`). |
 | `wait_for_url` | `pattern` (glob, or `re:` regex) | Wait for navigation. |
 | `request_input` | `key`, `prompt_ar`, `prompt_en`, `kind?` (`otp`/`text`), `length?`, `timeout_s?` | **Pause and ask the rep.** The modal shows the prompt + an input; the answer lands in `{{input.<key>}}`. Default wait 300 s. |
+| `wait_captcha` | `timeout_s?`, `token_selector?`, `success_selector?`, `success_url?` | Wait for Browserbase automatic solving; verify a response token or a known page advance. Default 180 s, maximum 300 s. |
+| `auth_state` | `reused` (`true`/`false`) | Record a verified reused login or a new sign-in for an opt-in persistent portal. Put this after an authenticated-page assertion. |
+| `save_json` | `key`, `selector`, `attr`, pagination fields below | Capture a complete authenticated JSON list, with strict counts and unique IDs, into the private inventory bucket. |
 | `screenshot` | `label?`, `full?` | Save a screenshot to the run's evidence (`full: true` = the whole page, not just the viewport). |
 | `assert` | target, `error_ar?`, `error_en?`, `timeout_ms?` | Fail the run with that message unless the element appears (use it to prove success). |
 | `if_visible` | target, `timeout_ms?`, `then?: [...]`, `else?: [...]` | Branch (e.g. "already registered" dialog). Returns as soon as the target shows, so a long `timeout_ms` costs nothing when it does. **Only a timeout means "not visible"** — any other error (page closed, bad selector) fails the step (since 2026-10-05; before, every error silently took `else`). |
@@ -183,7 +189,7 @@ edited by hand on the client's tab.
    for password portals).
 3. Write the recipe; put a `request_input` step exactly where the portal asks
    for the code.
-4. **A run starts in a fresh browser — it is never already signed in.** Give the
+4. **A run starts in a fresh browser unless the portal opts into persistent contexts.** Give the
    sign-in check a generous `timeout_ms` (Riva uses 30 000): the form can appear
    seconds after the page loads (Cloudflare's script runs first). A short check
    that runs out silently skips the sign-in, and the run then fails much later
@@ -200,8 +206,9 @@ edited by hand on the client's tab.
 
 - **No secrets in recipes.** Reference `{{portal.login_password}}`; never paste a
   password into a step.
-- **Nothing runs without the rep.** Every run is started by a person, on one
-  client, and can be stopped from the modal (the browser closes within seconds).
+- **Human input remains a row handshake.** Manual registrations can be stopped
+  from the modal; automatic and scheduled runs use the configured WhatsApp OTP
+  relay when the portal requires a new code. Browserbase handles CAPTCHA solving.
 - **A broken recipe fails before a browser is paid for.** Both the API and the
   worker parse the JSON first.
 - **Evidence.** Each run keeps its screenshots (private bucket, signed URLs) and
@@ -225,3 +232,74 @@ visit, to `portal-registrations/inventory/<portal record id>/<key>.json`.
 objects carrying `id_key` under `props` is used and the path found is saved.
 A page that answers with a login component fails the step (never saved as
 data). Ceilings `max_pages` (10) and `max_details` (60) fail loudly.
+
+### Automatic CAPTCHA and persistent sign-in (added 2026-10-05)
+
+Every session explicitly enables Browserbase `solveCaptchas: true`. A
+`wait_captcha` step keeps the job running and heartbeats while Browserbase
+solves the challenge. It continues only when a response field is nonempty or
+the configured `success_selector` is visible / `success_url` matches. The URL
+is exact, or `re:<regular expression>`. Browserbase's solving events are logged
+but a finished event alone is not proof. Missing or unsupported challenges time
+out with a screenshot and a failed job; no CAPTCHA tap is requested.
+
+For invisible reCAPTCHA v3, first click the portal's button that executes the
+challenge, then wait for the portal's next step. Binghatti's current sign-in
+uses the visible OTP input after “send code”, and the inventory attribute after
+“login”, as proof. Its OTP still uses the existing WhatsApp relay. On 2026-10-05
+the current portal rejected the saved phone before sending any code; no OTP
+delivery channel has been verified in the new flow.
+
+```json
+[
+  { "do": "click", "selector": "#sendOtpBtn" },
+  { "do": "wait_captcha", "success_selector": "#password:not(.d-none)", "timeout_s": 180 }
+]
+```
+
+Set `browserbase_persist_context=true` only for the portal that needs it. Its
+context is stored atomically on the record and sessions load it with
+`browserSettings.context={id, persist:true}`. Jobs are serialized per portal
+and sign-in phone; the worker waits briefly after release for Browserbase to
+save the context. A recipe opens the authenticated page first and uses
+`if_visible` to sign in only if the login form appears. Each branch asserts the
+authenticated page, then records `auth_state` with `reused:false` for a fresh
+sign-in or `reused:true` for retained authentication. The managed timestamps
+and `browserbase_login_survived_s` show how long the login survived. Site logout
+or cookie expiry naturally returns to the sign-in branch.
+
+Browserbase's official references: [CAPTCHA solving](https://docs.browserbase.com/platform/identity/captcha-solving),
+[persistent contexts](https://docs.browserbase.com/platform/browser/core-features/contexts),
+[create a context](https://docs.browserbase.com/reference/api/create-a-context).
+
+### `save_json` (added 2026-10-05)
+
+The list URL comes from a selector's attribute on the signed-in page. The worker
+resolves relative URLs against that page and rejects other origins. Each GET
+runs inside the browser with its cookies, no caching, a bounded timeout, and
+no redirects. A login redirect, HTML response, HTTP error, incomplete page,
+changed count/page size, clamped page number, or duplicate/missing item ID
+fails the capture. Only the finished validated list is uploaded, preserving
+the previous good snapshot on failure. An older capture cannot replace a
+newer saved snapshot.
+
+```json
+{ "do": "save_json", "key": "units",
+  "selector": "[data-available-units-url]", "attr": "data-available-units-url",
+  "items_path": "data.items", "total_path": "data.totalCount",
+  "page_no_path": "data.pageNo", "page_size_path": "data.pageSize",
+  "page_param": "pageNo", "page_size_param": "pageSize", "page_size": 1000,
+  "id_key": "id", "max_pages": 50 }
+```
+
+Those pagination values are the defaults. `page_size` is capped at 1000;
+`max_pages` fails loudly if the list cannot be completed within it. Requests
+are sequential. Empty inventories fail unless `allow_empty:true` was explicitly
+chosen. `timeout_ms` defaults to 30 000 and is limited to 1 000–60 000.
+
+The private file is `portal-registrations/inventory/<portal record id>/<key>.json`:
+`{saved_at, complete:true, totalCount, items}`. `saved_at` is the capture start
+time so freshness also guards a delayed older run. A `status_recipe` containing
+only inventory capture is supported: it returns `inventory_capture` and does
+not apply an empty client-status list. Recipes that execute `collect_rows`
+still sync their client rows, including a genuinely empty collected list.

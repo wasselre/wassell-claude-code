@@ -1,0 +1,13 @@
+
+-- Configure the operator-created portal; no credentials are stored here.
+-- Daily/weekly scheduling waits for a successful first inventory validation.
+BEGIN;
+UPDATE public.records SET data = data || jsonb_build_object(
+  'status_recipe', $recipe$[{"do":"phase","ar":"التحقق من جلسة بن غاطي المحفوظة","en":"Checking the saved Binghatti login"},{"do":"goto","url":"https://partners.binghatti.com/Properties"},{"do":"if_visible","selector":"#userId","timeout_ms":5000,"then":[{"do":"goto","url":"{{portal.login_url}}"},{"do":"fill","selector":"#userId","value":"{{portal.login_id}}"},{"do":"click","selector":"#sendOtpBtn"},{"do":"phase","ar":"حل التحقق آلياً بواسطة Browserbase","en":"Browserbase is handling CAPTCHA automatically"},{"do":"wait_captcha","timeout_s":90,"success_selector":"#password:not(.d-none)"},{"do":"assert","selector":"#password:not(.d-none)","timeout_ms":30000,"error_ar":"لم يقبل بن غاطي معرّف الدخول أو لم يرسل رمزاً","error_en":"Binghatti did not accept the login ID or send an OTP"},{"do":"request_input","key":"otp","kind":"otp","length":6,"timeout_s":300,"prompt_ar":"أرسل رمز الدخول الذي وصلك من بن غاطي","prompt_en":"Send the login code you received from Binghatti"},{"do":"fill","selector":"#password","value":"{{input.otp}}"},{"do":"click","selector":"#loginBtn"},{"do":"wait_captcha","timeout_s":120,"success_selector":"[data-available-units-url]"},{"do":"assert","selector":"[data-available-units-url]","timeout_ms":30000,"error_ar":"فشل تسجيل الدخول إلى مخزون بن غاطي","error_en":"Binghatti inventory login failed"},{"do":"auth_state","reused":false}],"else":[{"do":"assert","selector":"[data-available-units-url]","timeout_ms":30000},{"do":"auth_state","reused":true}]},{"do":"phase","ar":"حفظ قائمة بن غاطي الكاملة","en":"Capturing the complete Binghatti inventory"},{"do":"save_json","key":"units","selector":"[data-available-units-url]","attr":"data-available-units-url","items_path":"data.items","total_path":"data.totalCount","page_no_path":"data.pageNo","page_size_path":"data.pageSize","page_param":"pageNo","page_size_param":"pageSize","page_size":1000,"id_key":"id","max_pages":50}]$recipe$::text,
+  'browserbase_persist_context', true,
+  'status_sync_enabled', false,
+  'inventory_capture_enabled', false)
+WHERE id='0f828ff1-c3b9-482c-8b1d-215bef4b4d43'
+  AND model_id='1ead0000-0000-4000-8000-000000000001'
+  AND data->>'developer'='759fa833-e60e-4775-86ab-292005c8d517';
+COMMIT;

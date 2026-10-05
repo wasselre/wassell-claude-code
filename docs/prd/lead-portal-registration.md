@@ -35,6 +35,8 @@ profile's acquisition panel shows. Riva is switched on: leads from the يمام 
 
 ## Key behaviors
 
+- **Optional persistent portal login and automatic CAPTCHA (2026-10-05).** Browserbase sessions explicitly enable CAPTCHA solving. `wait_captcha` waits for a real response token or verified page advancement, with heartbeat, cancellation and screenshot on failure. `browserbase_persist_context` preserves cookies per portal; the context ID and observed login lifetime are system managed. Existing portals keep fresh-session behavior unless opted in. `save_json` captures a complete paginated inventory with the session cookies and rejects partial results. Inventory-only status checks return a capture result without applying an empty client list. The daily cron also queues portals with `inventory_capture_enabled`, even when no clients are registered. Binghatti's switches remain off until its first capture and update verification pass.
+
 - **Automatic registration of ad leads.** `/api/cron/portal-auto-register` runs
   every 5 minutes. It reads `portal_auto_register_candidates(since)`: ad touches
   (`client_attributions_effective`) created in the last 3 hours, each with the

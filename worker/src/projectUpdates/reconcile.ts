@@ -97,6 +97,35 @@ const MATCH_KEYS: Array<[string, KeyFn]> = [
   }],
 ];
 
+/** Portal numbers such as OF112 / TA1106 are numeric after a Latin prefix.
+ *  Reject everything else; extracting arbitrary digits can join wrong units. */
+export function numericUnitNumber(raw: unknown): number | null {
+  if (typeof raw === 'number') return Number.isSafeInteger(raw) && raw >= 0 ? raw : null;
+  if (typeof raw !== 'string') return null;
+  const text = toAsciiDigits(raw).trim();
+  if (!/^[a-z]*\d+$/i.test(text)) return null;
+  const value = Number(text.replace(/^[a-z]+/i, ''));
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+/** Never write an FX price with only part of its evidence. Adapters that do
+ *  not state a foreign price keep the existing SAR-only behavior. */
+export function sourcePriceFields(s: SourceUnit): Record<string, unknown> | null {
+  if (s.sourcePrice == null && s.sourceCurrency == null && s.sourceFxRate == null) return null;
+  if (!(s.sourcePrice != null && Number.isFinite(s.sourcePrice) && s.sourcePrice > 0)
+    || !(s.sourceFxRate != null && Number.isFinite(s.sourceFxRate) && s.sourceFxRate > 0)
+    || typeof s.sourceCurrency !== 'string' || !/^[A-Z]{3}$/.test(s.sourceCurrency)
+    || s.price == null || !Number.isFinite(s.price) || s.price <= 0 || s.price !== Math.round(s.sourcePrice * s.sourceFxRate)) {
+    throw new Error(`invalid source price / FX provenance for ${sourceLabel(s)}`);
+  }
+  return { source_price: s.sourcePrice, source_currency: s.sourceCurrency, source_fx_rate: s.sourceFxRate };
+}
+
+const NUMBER_MATCH_KEY: [string, KeyFn] = ['unit_number', (x) => {
+  const n = numericUnitNumber(x.unit);
+  return n == null ? null : `n:${n}`;
+}];
+
 /** How a source unit is named in logs: its code, else block/building/floor. */
 export function sourceLabel(s: SourceUnit): string {
   if (s.unitModel) return s.unitModel;
@@ -121,6 +150,8 @@ function srcKeyInput(s: SourceUnit) {
 export function mapUnitType(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const s = raw.replace(/[إأآ]/g, 'ا');
+  if (/استوديو|ستوديو|studio/i.test(s)) return 'استوديو';
+  if (/مكتب|office/i.test(s)) return 'مكتب';
   if (/بنتهاوس|بنت هاوس|penthouse/i.test(s)) return 'بنتهاوس';
   if (/تاون|town/i.test(s)) return 'تاون هاوس';
   if (/دبلكس|دوبلكس|duplex/i.test(s)) return 'دبلكس';
@@ -246,6 +277,7 @@ export function reconcile(
     statedUnitType?: { type: string; source: string } | null;
   },
 ): ReconcileResult {
+  const matchKeys = policy.matchByUnitNumber ? [MATCH_KEYS[0]!, NUMBER_MATCH_KEY] : MATCH_KEYS;
   // A unit code on our side is U-n; a source quoting one matches it too.
   const byCrmCode = new Map<string, CrmUnit>();
   for (const u of crm) {
@@ -254,7 +286,7 @@ export function reconcile(
   }
   const crmIndex = new Map<string, CrmUnit[]>();
   for (const u of crm) {
-    for (const [, fn] of MATCH_KEYS) {
+    for (const [, fn] of matchKeys) {
       const k = fn(crmKeyInput(u.data));
       if (k) crmIndex.set(k, [...(crmIndex.get(k) ?? []), u]);
     }
@@ -268,32 +300,37 @@ export function reconcile(
   }
   const srcCount = new Map<string, number>();
   for (const s of distinct.values()) {
-    for (const [, fn] of MATCH_KEYS) {
+    for (const [, fn] of matchKeys) {
       const k = fn(srcKeyInput(s));
       if (k) srcCount.set(k, (srcCount.get(k) ?? 0) + 1);
     }
   }
-  const findMatch = (s: SourceUnit): { unit: CrmUnit | null; ambiguous: boolean } => {
+  const findMatch = (s: SourceUnit): { unit: CrmUnit | null; ambiguous: boolean; candidates: CrmUnit[] } => {
     const code = part(s.unitCode);
-    if (code && byCrmCode.has(code)) return { unit: byCrmCode.get(code)!, ambiguous: false };
+    if (!policy.matchByUnitNumber && code && byCrmCode.has(code)) return { unit: byCrmCode.get(code)!, ambiguous: false, candidates: [] };
     let sawAmbiguity = false;
-    for (const [, fn] of MATCH_KEYS) {
+    const candidates: CrmUnit[] = [];
+    for (const [, fn] of matchKeys) {
       const k = fn(srcKeyInput(s));
       if (!k) continue;
       const hits = crmIndex.get(k) ?? [];
-      if (hits.length === 1 && (srcCount.get(k) ?? 0) <= 1) return { unit: hits[0]!, ambiguous: false };
+      if (hits.length === 1 && (srcCount.get(k) ?? 0) <= 1) return { unit: hits[0]!, ambiguous: false, candidates: [] };
       // Ambiguous only when a CRM unit is actually in play: ten source units all
       // titled «شقة» in a project the CRM has no units for are ten NEW units,
       // not ten unresolvable matches (found on أكنان 24, 2026-10-04).
-      if (hits.length > 1 || (hits.length === 1 && (srcCount.get(k) ?? 0) > 1)) sawAmbiguity = true;
+      if (hits.length > 1 || (hits.length === 1 && (srcCount.get(k) ?? 0) > 1)) {
+        sawAmbiguity = true;
+        candidates.push(...hits);
+      }
     }
-    return { unit: null, ambiguous: sawAmbiguity };
+    return { unit: null, ambiguous: sawAmbiguity, candidates };
   };
 
   const updates: UnitPatch[] = [];
   const creates: UnitCreate[] = [];
   const ambiguous: string[] = [];
   const matchedIds = new Set<string>();
+  const ambiguousIds = new Set<string>();
   const seenSrc = new Set<string>();
   let statusChanges = 0, toSoldOrReserved = 0, priceChanges = 0, matched = 0;
   const priceDiffsNotApplied: ReconcileResult['priceDiffsNotApplied'] = [];
@@ -307,7 +344,11 @@ export function reconcile(
     seenSrc.add(dedupeKey);
 
     const m = findMatch(s);
-    if (!m.unit && m.ambiguous) { ambiguous.push(label); continue; }
+    if (!m.unit && m.ambiguous) {
+      ambiguous.push(label);
+      if (policy.matchByUnitNumber) for (const candidate of m.candidates) ambiguousIds.add(candidate.id);
+      continue;
+    }
     if (m.unit && matchedIds.has(m.unit.id)) { ambiguous.push(label); continue; }
 
     if (m.unit) {
@@ -327,12 +368,19 @@ export function reconcile(
       }
       if (s.price != null && s.price > 0) {
         const curPrice = num(u.data.total_price);
-        if (curPrice == null || Math.abs(curPrice - s.price) >= 1) {
+        const provenance = sourcePriceFields(s);
+        // Foreign prices are an exact conversion tuple (including rounding).
+        // SAR-only sources retain the lane's existing one-riyal tolerance.
+        const priceChanged = provenance ? curPrice !== s.price : curPrice == null || Math.abs(curPrice - s.price) >= 1;
+        const provenanceChanged = provenance != null && Object.entries(provenance)
+          .some(([key, value]) => u.data[key] !== value);
+        if (priceChanged || provenanceChanged) {
           if (policy.updatePrices) {
             patch.total_price = s.price;
-            reasons.push(`price ${curPrice ?? '∅'} → ${s.price}`);
-            priceChanges++;
-          } else {
+            if (provenance) Object.assign(patch, provenance);
+            reasons.push(priceChanged ? `price ${curPrice ?? '∅'} → ${s.price}` : 'source price / FX provenance updated');
+            if (priceChanged) priceChanges++;
+          } else if (priceChanged) {
             priceDiffsNotApplied.push({ unit: String(u.data.unit_model ?? u.data.unit_code ?? u.id), crm: curPrice, source: s.price });
           }
         }
@@ -375,8 +423,16 @@ export function reconcile(
     const missing = missingEssentials(s, t);
     if (missing.length) { incomplete.push({ unit: label, missing }); continue; }
     if (t) data.unit_type = t;
-    if (s.price != null && s.price > 0) data.total_price = s.price;
+    if (s.price != null && s.price > 0) {
+      data.total_price = s.price;
+      Object.assign(data, sourcePriceFields(s));
+    }
     if (s.area != null && s.area > 0) data.unit_area = s.area;
+    if (s.sourceNetArea != null && s.sourceNetArea > 0) data.source_net_area = s.sourceNetArea;
+    if (s.sourceTotalArea != null && s.sourceTotalArea > 0) data.source_total_area = s.sourceTotalArea;
+    if (s.sourceAreaUnit) data.source_area_unit = s.sourceAreaUnit;
+    if (s.sourceUnitType) data.source_unit_type = s.sourceUnitType;
+    if (s.sourceFloor != null) data.source_floor = s.sourceFloor;
     if (s.bedrooms != null) data.bedrooms = s.bedrooms;
     if (s.bathrooms != null) data.bathrooms = s.bathrooms;
     const fl = mapFloor(s.floor);
@@ -398,7 +454,7 @@ export function reconcile(
   for (const u of crm) {
     if (matchedIds.has(u.id)) continue;
     const label = String(u.data.unit_model ?? u.data.unit_code ?? u.id);
-    if (policy.absentAvailable === 'sold' && crmStatus(u.data) === 'available') {
+    if (policy.absentAvailable === 'sold' && crmStatus(u.data) === 'available' && !ambiguousIds.has(u.id)) {
       updates.push({ kind: 'update', unitId: u.id, label, patch: { unit_status: 'sold' }, reasons: ['not in the source list → sold'] });
       statusChanges++;
       toSoldOrReserved++;

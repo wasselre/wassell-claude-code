@@ -31,8 +31,10 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { chromium } from 'playwright-core';
+import { chromium, type Browser } from 'playwright-core';
 import type { WorkerEnv } from './env.js';
+import { browserbaseSessionOptions, ensurePortalContext } from './portals/browserbase.js';
+import { assertSnapshotIsNewer } from './portals/jsonInventory.js';
 import {
   parseRecipe,
   runSteps,
@@ -83,9 +85,6 @@ class OtpRelayTimeoutError extends RecipeInterrupt {
   }
 }
 
-/** Browserbase session lifetime (seconds). Generous: sign-in + OTP wait + form. */
-const SESSION_TIMEOUT_S = 20 * 60;
-
 type Rec = { id: string; data: Record<string, unknown> } | null;
 
 async function loadRecord(supabase: SupabaseClient, id: string | null): Promise<Rec> {
@@ -103,25 +102,23 @@ function str(v: unknown): string {
  *  sites, some geo-fence) and return its id + CDP connect URL + live view URL. */
 async function createSession(
   env: WorkerEnv,
+  contextId?: string | null,
 ): Promise<{ id: string; connectUrl: string; liveViewUrl: string | null }> {
   const headers = { 'X-BB-API-Key': env.BROWSERBASE_API_KEY!, 'Content-Type': 'application/json' };
   const res = await fetch('https://api.browserbase.com/v1/sessions', {
     method: 'POST',
     headers,
-    body: JSON.stringify({
-      projectId: env.BROWSERBASE_PROJECT_ID,
-      timeout: SESSION_TIMEOUT_S,
-      proxies: [{ type: 'browserbase', geolocation: { country: 'SA', city: 'RIYADH' } }],
-      browserSettings: { viewport: { width: 1280, height: 900 } },
-    }),
+    body: JSON.stringify(browserbaseSessionOptions(env.BROWSERBASE_PROJECT_ID!, contextId)),
+    signal: AbortSignal.timeout(30_000),
   });
   const session = (await res.json()) as { id?: string; connectUrl?: string; message?: string };
-  if (!session.id || !session.connectUrl) {
+  if (!res.ok || !session.id || !session.connectUrl) {
     throw new Error(`Browserbase session create failed: ${session.message ?? JSON.stringify(session).slice(0, 200)}`);
   }
   let liveViewUrl: string | null = null;
   try {
-    const dbg = await fetch(`https://api.browserbase.com/v1/sessions/${session.id}/debug`, { headers });
+    const dbg = await fetch(`https://api.browserbase.com/v1/sessions/${session.id}/debug`, { headers, signal: AbortSignal.timeout(30_000) });
+    if (!dbg.ok) throw new Error(`Browserbase debug HTTP ${dbg.status}`);
     const j = (await dbg.json()) as { debuggerFullscreenUrl?: string; debuggerUrl?: string };
     liveViewUrl = j.debuggerFullscreenUrl ?? j.debuggerUrl ?? null;
   } catch (err) {
@@ -134,11 +131,13 @@ async function createSession(
 /** Ask Browserbase to release the session now rather than at its timeout. */
 async function releaseSession(env: WorkerEnv, id: string): Promise<void> {
   try {
-    await fetch(`https://api.browserbase.com/v1/sessions/${id}`, {
+    const response = await fetch(`https://api.browserbase.com/v1/sessions/${id}`, {
       method: 'POST',
       headers: { 'X-BB-API-Key': env.BROWSERBASE_API_KEY!, 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId: env.BROWSERBASE_PROJECT_ID, status: 'REQUEST_RELEASE' }),
+      signal: AbortSignal.timeout(30_000),
     });
+    if (!response.ok) console.error(`[portal] session release failed (will expire on its own): HTTP ${response.status}`);
   } catch (err) {
     console.warn(`[portal] session release failed (will expire on its own): ${(err as Error).message}`);
   }
@@ -196,6 +195,7 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
   const portalScope = {
     name: str(pd.name),
     login_url: str(pd.login_url),
+    login_id: str(pd.login_id) || str(pd.login_email) || (job.loginPhone ?? str(pd.login_phone)),
     login_phone: job.loginPhone ?? str(pd.login_phone),
     login_email: str(pd.login_email),
     login_password: str(pd.login_password),
@@ -251,13 +251,19 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
   await progress('starting', 'جارٍ فتح المتصفح…', 'Opening the browser…');
 
   // ── Browser ──────────────────────────────────────────────────────────────
-  const session = await createSession(env);
-  await rpc('portal_registration_job_session', {
-    p_job_id: job.id, p_session_id: session.id, p_live_view_url: session.liveViewUrl,
-  });
-  log(`browserbase session=${session.id} live=${session.liveViewUrl ? 'yes' : 'no'}`);
-
-  const browser = await chromium.connectOverCDP(session.connectUrl);
+  const contextId = await ensurePortalContext(supabase, env, job.portalRecordId, pd);
+  const session = await createSession(env, contextId);
+  let browser: Browser;
+  try {
+    await rpc('portal_registration_job_session', {
+      p_job_id: job.id, p_session_id: session.id, p_live_view_url: session.liveViewUrl,
+    });
+    log(`browserbase session=${session.id} live=${session.liveViewUrl ? 'yes' : 'no'}`);
+    browser = await chromium.connectOverCDP(session.connectUrl);
+  } catch (error) {
+    await releaseSession(env, session.id);
+    throw error;
+  }
   // On SIGTERM, close the browser: the current step throws at once, and the
   // catch below hands the run back. Polled because a Playwright step cannot be
   // interrupted any other way, and Fly kills the machine kill_timeout later.
@@ -350,6 +356,15 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
       screenshot,
       requestInput,
       checkCancelled: assertLive,
+      heartbeat: async () => {
+        if (!await rpc('portal_registration_job_heartbeat', { p_job_id: job.id })) throw new RecipeCancelledError();
+      },
+      authState: async (reused) => {
+        if (!contextId) throw new RecipeError('حفظ جلسة الدخول غير مفعّل لهذه البوابة', 'Persistent context is not enabled for this portal');
+        const { data, error } = await supabase.rpc('portal_browserbase_auth_state', { p_portal_record_id: job.portalRecordId, p_reused: reused });
+        if (error) throw new Error(`portal_browserbase_auth_state failed: ${error.message}`);
+        log(`authentication ${reused ? 'reused' : 'renewed'}: ${JSON.stringify(data ?? {})}`);
+      },
       collected: isCheck ? [] : undefined,
       // `save_items` (the portal's unit cards) — read by the project-update
       // lane. One file per portal + key, overwritten each run; the private
@@ -357,6 +372,23 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
       saveItems: async (key, payload) => {
         const safeKey = key.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 40) || 'items';
         const path = `inventory/${job.portalRecordId}/${safeKey}.json`;
+        await assertLive();
+        if (payload.complete === true) {
+          // save_json cannot upload a partial list, and an older capture must
+          // not replace a newer snapshot if a delayed old run resumed.
+          if (!Array.isArray(payload.items) || payload.items.length !== payload.totalCount) throw new Error('Incomplete JSON inventory rejected');
+          const { data: previous, error: readError } = await supabase.storage.from(BUCKET).download(path);
+          if (readError) {
+            const status = 'statusCode' in readError ? String(readError.statusCode) : '';
+            if (status !== '404' && !/^(object not found|the resource was not found)$/i.test(readError.message)) {
+              throw new Error(`inventory snapshot freshness check failed: ${readError.message}`);
+            }
+          } else {
+            if (!previous) throw new Error('Inventory freshness check returned no file');
+            assertSnapshotIsNewer(payload.saved_at, JSON.parse(await previous.text()) as unknown);
+          }
+          await assertLive();
+        }
         const body = JSON.stringify(payload);
         const { error } = await supabase.storage.from(BUCKET).upload(path, new Blob([body], { type: 'application/json' }), {
           contentType: 'application/json', upsert: true,
@@ -383,6 +415,14 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
     await runSteps(steps, rt);
 
     if (isCheck) {
+      if (!rt.didCollectRows) {
+        const inventories = rt.savedInventories ?? [];
+        if (!inventories.length) throw new RecipeError('لم تُقرأ حالات العملاء أو مخزون الوحدات', 'Status check captured neither client rows nor inventory');
+        await screenshot('inventory-done');
+        const total = inventories.reduce((count, item) => count + (item.totalCount ?? 0), 0);
+        await relayNotify(`✅ حُفظ مخزون «${portalScope.name}»: ${total} وحدة، لاستخدامه في تحديث المشاريع.`);
+        return { outcome: 'inventory_capture', portal_name: portalScope.name, inventories, final_url: page.url() };
+      }
       const rows = rt.collected ?? [];
       const { data: summary, error: syncErr } = await supabase.rpc('portal_status_sync_apply', {
         p_job_id: job.id, p_rows: rows,
@@ -517,6 +557,10 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
     clearInterval(shutdownWatch);
     await browser.close().catch(() => {});
     await releaseSession(env, session.id);
+    // Browserbase documents a short synchronization delay after releasing a
+    // persistent session. Hold the claimed job during that delay, preventing
+    // the next job for this portal from loading a context before it is saved.
+    if (contextId) await new Promise((resolve) => setTimeout(resolve, 3000));
     if (cancelled) log('browser closed after cancel');
   }
 }

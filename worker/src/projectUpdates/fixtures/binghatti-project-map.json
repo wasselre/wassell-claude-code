@@ -1,0 +1,315 @@
+{
+  "captured_at": "2026-08-07T04:55:45.830Z",
+  "source": "Binghatti broker portal available-inventory capture, 2026-08-07; original verified map from _bb-load.mjs (English coverage project worktree); four portal IDs absent from the August 7 availability list recovered from August 1 projectFilter options",
+  "original_total_count": 4815,
+  "original_portal_project_count": 43,
+  "projects": [
+    {
+      "portal_project_id": "25",
+      "crm_project_id": "9cf52f14-e196-4d62-8b35-898b9f9587b2",
+      "portal_name": "BINGHATTI ONYX",
+      "captured_available_units": 1
+    },
+    {
+      "portal_project_id": "27",
+      "crm_project_id": "adeca4f5-b1e3-4c12-aed0-bb1ab7c8dc8a",
+      "portal_name": "BINGHATTI PHANTOM",
+      "captured_available_units": 2
+    },
+    {
+      "portal_project_id": "35",
+      "crm_project_id": "06bd3515-becb-410c-99e2-8ff491854a96",
+      "portal_name": "BUGATTI RESIDENCES BY BINGHATTI",
+      "captured_available_units": 54
+    },
+    {
+      "portal_project_id": "36",
+      "crm_project_id": "df536abd-1210-4297-89b4-a23005b17e45",
+      "portal_name": "BURJ BINGHATTI JACOB & CO RESIDENCES",
+      "captured_available_units": 92
+    },
+    {
+      "portal_project_id": "37",
+      "crm_project_id": "0e5e4b73-c0b9-4f80-8251-2b072624b328",
+      "portal_name": "MERCEDES-BENZ PLACES | BINGHATTI",
+      "captured_available_units": 42
+    },
+    {
+      "portal_project_id": "39",
+      "crm_project_id": "9d19a74c-27c5-43b0-8251-acf9a5bb8e96",
+      "portal_name": "TRILLIONAIRE RESIDENCES BY BINGHATTI",
+      "captured_available_units": 2
+    },
+    {
+      "portal_project_id": "10017",
+      "crm_project_id": "9ebf9782-2fba-4825-93b6-674f4c8e328c",
+      "portal_name": "BINGHATTI HILLS",
+      "captured_available_units": 1
+    },
+    {
+      "portal_project_id": "10022",
+      "crm_project_id": "157833b8-d6f6-417e-9d3e-4785ebb7bfc5",
+      "portal_name": "BINGHATTI ROYALE",
+      "captured_available_units": 1
+    },
+    {
+      "portal_project_id": "10023",
+      "crm_project_id": "e0aa6201-1353-4db8-ad40-d036e98f34ac",
+      "portal_name": "ONE BY BINGHATTI",
+      "captured_available_units": 44
+    },
+    {
+      "portal_project_id": "10030",
+      "crm_project_id": "95872742-d435-462d-9303-698ea02ced34",
+      "portal_name": "BINGHATTI GROVE",
+      "captured_available_units": 16
+    },
+    {
+      "portal_project_id": "10052",
+      "crm_project_id": "aa122506-3dec-4704-a671-4e49395a5890",
+      "portal_name": "BINGHATTI GHOST",
+      "captured_available_units": 48
+    },
+    {
+      "portal_project_id": "10056",
+      "crm_project_id": "45b7da27-1260-4d1e-a444-4720f286f679",
+      "portal_name": "BINGHATTI STARLIGHT",
+      "captured_available_units": 8
+    },
+    {
+      "portal_project_id": "10057",
+      "crm_project_id": "67ad68ff-9e71-434d-b72d-b5c0148a8ef9",
+      "portal_name": "BINGHATTI IVORY",
+      "captured_available_units": 4
+    },
+    {
+      "portal_project_id": "10059",
+      "crm_project_id": "8ab23ab5-85d2-4695-9482-41d45a14bfd7",
+      "portal_name": "BINGHATTI SKYRISE",
+      "captured_available_units": 16
+    },
+    {
+      "portal_project_id": "10061",
+      "crm_project_id": "880405f5-2d66-4e20-8d6b-6dce2167276b",
+      "portal_name": "BINGHATTI ELITE",
+      "captured_available_units": 10
+    },
+    {
+      "portal_project_id": "10062",
+      "crm_project_id": "9d81458f-57cd-44dd-8875-5f7738e5c528",
+      "portal_name": "BINGHATTI PINNACLE",
+      "captured_available_units": 2
+    },
+    {
+      "portal_project_id": "10064",
+      "crm_project_id": "f53cd09b-4d99-4348-9ef5-8490a8ad1133",
+      "portal_name": "BINGHATTI SKYBLADE",
+      "captured_available_units": 14
+    },
+    {
+      "portal_project_id": "10065",
+      "crm_project_id": "24eaff78-2051-4bf7-a56e-40bbea95464d",
+      "portal_name": "BINGHATTI SKYHALL",
+      "captured_available_units": 5
+    },
+    {
+      "portal_project_id": "10068",
+      "crm_project_id": "76a56480-bac9-475d-9612-a85ba0b0db42",
+      "portal_name": "BINGHATTI AQUARISE",
+      "captured_available_units": 135
+    },
+    {
+      "portal_project_id": "10070",
+      "crm_project_id": "12ca6cb7-5478-4bd4-8c1e-05b71dc9f3fa",
+      "portal_name": "BINGHATTI TWILIGHT",
+      "captured_available_units": 19
+    },
+    {
+      "portal_project_id": "10071",
+      "crm_project_id": "4d74d752-8ebb-4bd4-9f13-db80c7bd2fd2",
+      "portal_name": "BINGHATTI RUBY",
+      "captured_available_units": 1
+    },
+    {
+      "portal_project_id": "10072",
+      "crm_project_id": "5520f244-08dc-4345-9747-6c22971ed1dc",
+      "portal_name": "BINGHATTI AMBERHALL",
+      "captured_available_units": 21
+    },
+    {
+      "portal_project_id": "10074",
+      "crm_project_id": "8614e4d4-ec13-4b6e-9184-ea9114f4ea06",
+      "portal_name": "BINGHATTI MOONLIGHT",
+      "captured_available_units": 12
+    },
+    {
+      "portal_project_id": "10075",
+      "crm_project_id": "75938ca5-8777-4469-923f-754a394aba27",
+      "portal_name": "BINGHATTI CIRCLE",
+      "captured_available_units": 13
+    },
+    {
+      "portal_project_id": "10078",
+      "crm_project_id": "b00c44a7-3632-4233-96d7-4d8e4002789f",
+      "portal_name": "BINGHATTI FLARE 01",
+      "captured_available_units": 2
+    },
+    {
+      "portal_project_id": "10079",
+      "crm_project_id": "b00c44a7-3632-4233-96d7-4d8e4002789f",
+      "portal_name": "BINGHATTI FLARE 02",
+      "captured_available_units": 4
+    },
+    {
+      "portal_project_id": "10080",
+      "crm_project_id": "73969972-63be-4a91-9b53-b2c5c9a863f3",
+      "portal_name": "BINGHATTI VINTAGE",
+      "captured_available_units": 8
+    },
+    {
+      "portal_project_id": "10081",
+      "crm_project_id": "2ba32bf9-085a-4eaf-af64-419052fbc172",
+      "portal_name": "BINGHATTI TITANIA",
+      "captured_available_units": 15
+    },
+    {
+      "portal_project_id": "10082",
+      "crm_project_id": "8834ba11-c275-4f13-9dd5-118e78c57e72",
+      "portal_name": "BINGHATTI HILLCREST",
+      "captured_available_units": 15
+    },
+    {
+      "portal_project_id": "10083",
+      "crm_project_id": "755b586a-8933-4f3a-a015-1c3fa4319aa1",
+      "portal_name": "BINGHATTI CULLINAN",
+      "captured_available_units": 21
+    },
+    {
+      "portal_project_id": "10084",
+      "crm_project_id": "719a5181-2748-46c1-9055-f7449b1454aa",
+      "portal_name": "BINGHATTI SKYTERRACES",
+      "captured_available_units": 173
+    },
+    {
+      "portal_project_id": "10085",
+      "crm_project_id": "d21013ff-2cdf-41fe-9844-b93ef9a0b077",
+      "portal_name": "BINGHATTI SKYFLAME 1",
+      "captured_available_units": 163
+    },
+    {
+      "portal_project_id": "10086",
+      "crm_project_id": "d21013ff-2cdf-41fe-9844-b93ef9a0b077",
+      "portal_name": "BINGHATTI SKYFLAME 2",
+      "captured_available_units": 214
+    },
+    {
+      "portal_project_id": "10087",
+      "crm_project_id": "ce286162-7dec-4940-9bfe-5efb4c521b16",
+      "portal_name": "BINGHATTI ETHEREA",
+      "captured_available_units": 131
+    },
+    {
+      "portal_project_id": "10088",
+      "crm_project_id": "1e2f4eeb-7038-471c-af2b-fda923de7b63",
+      "portal_name": "BINGHATTI LUXURIA",
+      "captured_available_units": 190
+    },
+    {
+      "portal_project_id": "10089",
+      "crm_project_id": "e632ef63-f463-4300-babf-ef19d94a8bc1",
+      "portal_name": "PROJECT MAYBACH",
+      "captured_available_units": 548
+    },
+    {
+      "portal_project_id": "10090",
+      "crm_project_id": "26c03481-994f-42ca-8a17-f53287656b85",
+      "portal_name": "MAYBACH ULTIMATE LUXURY",
+      "captured_available_units": 877
+    },
+    {
+      "portal_project_id": "10091",
+      "crm_project_id": "b906652a-1ba2-4a8d-a171-46dace09f958",
+      "portal_name": "MAYBACH 6",
+      "captured_available_units": 448
+    },
+    {
+      "portal_project_id": "10094",
+      "crm_project_id": "4f3a08d5-8791-4712-8dc6-f43f3ec020a1",
+      "portal_name": "VISION ICONIC",
+      "captured_available_units": 834
+    },
+    {
+      "portal_project_id": "10098",
+      "crm_project_id": "ed81b56e-7a77-4e72-84cf-2c88163871ba",
+      "portal_name": "TILAL BINGHATTI",
+      "captured_available_units": 405
+    },
+    {
+      "portal_project_id": "10101",
+      "crm_project_id": "3ce466d0-42d4-409b-825f-fa7eb152621f",
+      "portal_name": "BINGHATTI WRAITH",
+      "captured_available_units": 202
+    },
+    {
+      "portal_project_id": "10007",
+      "crm_project_id": "b38b0a50-4a0b-4c18-ba38-457e8def0fbf",
+      "portal_name": "BINGHATTI APEX",
+      "captured_available_units": null,
+      "provenance": {
+        "captured_at": "2026-08-01T05:45:04.493Z",
+        "source": "Original Binghatti /Properties projectFilter option extraction",
+        "source_session_id": "4b6f5b7e-f960-4b4e-b78e-0b95cf1e3d35",
+        "source_tool_result_line": 403
+      }
+    },
+    {
+      "portal_project_id": "10026",
+      "crm_project_id": "b95048e5-b1eb-4d78-aee5-2c8288148fad",
+      "portal_name": "BINGHATTI AURORA",
+      "captured_available_units": null,
+      "provenance": {
+        "captured_at": "2026-08-01T05:45:04.493Z",
+        "source": "Original Binghatti /Properties projectFilter option extraction",
+        "source_session_id": "4b6f5b7e-f960-4b4e-b78e-0b95cf1e3d35",
+        "source_tool_result_line": 403
+      }
+    },
+    {
+      "portal_project_id": "10073",
+      "crm_project_id": "4ad897e9-8bb5-4ce3-aec2-291e24da1b43",
+      "portal_name": "BINGHATTI HILL VIEWS",
+      "captured_available_units": null,
+      "provenance": {
+        "captured_at": "2026-08-01T05:45:04.493Z",
+        "source": "Original Binghatti /Properties projectFilter option extraction",
+        "source_session_id": "4b6f5b7e-f960-4b4e-b78e-0b95cf1e3d35",
+        "source_tool_result_line": 403
+      }
+    },
+    {
+      "portal_project_id": "28",
+      "crm_project_id": "9d32c8d6-c2d5-4fc9-93f7-2c07161d4b40",
+      "portal_name": "BINGHATTI PHOENIX",
+      "captured_available_units": null,
+      "provenance": {
+        "captured_at": "2026-08-01T05:45:04.493Z",
+        "source": "Original Binghatti /Properties projectFilter option extraction",
+        "source_session_id": "4b6f5b7e-f960-4b4e-b78e-0b95cf1e3d35",
+        "source_tool_result_line": 403
+      }
+    }
+  ],
+  "unmapped_portal_projects": [
+    {
+      "portal_project_id": "10025",
+      "portal_name": "DUSK BY BINGHATTI",
+      "captured_available_units": 1
+    },
+    {
+      "portal_project_id": "10069",
+      "portal_name": "BINGHATTI HAVEN",
+      "captured_available_units": 1
+    }
+  ],
+  "additional_filter_capture_at": "2026-08-01T05:45:04.493Z"
+}

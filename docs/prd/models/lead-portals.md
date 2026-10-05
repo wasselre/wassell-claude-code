@@ -5,7 +5,7 @@
 # Model: Lead portals / بوابات تسجيل العملاء  `lead_portals`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-29
+**Last updated (from DB):** 2026-10-05
 **Model id:** `1ead0000-0000-4000-8000-000000000001`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **2** (2 base, 0 non-base)
-- Fields: **17**
+- Fields: **25**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -72,6 +72,14 @@
 | `auto_register` | Auto-register ad leads / تسجيل عملاء الإعلانات تلقائياً | Checkbox | no | half | yes |  |
 | `otp_whatsapp_relay` | Ask for the code on the ops WhatsApp / طلب رمز التحقق عبر واتساب العمليات | Checkbox | no | half | yes |  |
 | `otp_relay_phone` | WhatsApp to ask for the code (default: sign-in phone) / رقم واتساب مستلم الرمز (افتراضياً رقم الدخول) | Phone | no | half | no |  |
+| `login_id` | Login ID / معرّف الدخول | Text | no | half | no |  |
+| `browserbase_persist_context` | Keep the portal signed in / حفظ جلسة الدخول | Checkbox | no | half | no |  |
+| `browserbase_context_id` | Browserbase context ID / معرّف جلسة المتصفح المحفوظة | Text | no | half | no |  |
+| `browserbase_authenticated_at` | Login established at / بداية جلسة الدخول | Date & time | no | half | no |  |
+| `browserbase_last_authenticated_at` | Last authenticated check / آخر تحقق من الدخول | Date & time | no | half | no |  |
+| `browserbase_session_reused_at` | Last login reuse / آخر إعادة استخدام للجلسة | Date & time | no | half | no |  |
+| `browserbase_login_survived_s` | Observed login lifetime (seconds) / مدة بقاء الدخول بالثواني | Number | no | half | no |  |
+| `inventory_capture_enabled` | Capture unit inventory daily / حفظ مخزون الوحدات يومياً | Checkbox | no | half | no |  |
 
 **Field details:**
 

@@ -1,0 +1,46 @@
+{
+  "captured_at": "2026-10-05T08:38:42.578Z",
+  "source": "Live production CRM records, read-only via Supabase management API",
+  "units": [
+    {
+      "id": "9626adae-e075-4f6f-ab9e-e0326319f57a",
+      "data": {
+        "bedrooms": 1,
+        "unit_area": 56.09,
+        "unit_type": "شقة",
+        "project_id": "3ce466d0-42d4-409b-825f-fa7eb152621f",
+        "source_file": "availability_2026-07-30.xlsx",
+        "total_price": 1328453.98,
+        "unit_number": "208",
+        "source_price": 1300999,
+        "source_fx_rate": 1.021103,
+        "source_currency": "AED",
+        "source_net_area": 603.75,
+        "source_area_unit": "sqft",
+        "source_unit_type": "One Bedroom",
+        "source_total_area": 663.16,
+        "developer_unit_code": "BWRT-208"
+      }
+    },
+    {
+      "id": "0e3e6953-8863-4cf2-9030-0786f1d1f1d2",
+      "data": {
+        "bedrooms": 1,
+        "unit_area": 56.1,
+        "unit_type": "شقة",
+        "project_id": "3ce466d0-42d4-409b-825f-fa7eb152621f",
+        "source_file": "availability_2026-07-30.xlsx",
+        "total_price": 1365213.69,
+        "unit_number": "645",
+        "source_price": 1336999,
+        "source_fx_rate": 1.021103,
+        "source_currency": "AED",
+        "source_net_area": 603.86,
+        "source_area_unit": "sqft",
+        "source_unit_type": "One Bedroom",
+        "source_total_area": 663.27,
+        "developer_unit_code": "BWRT-645"
+      }
+    }
+  ]
+}

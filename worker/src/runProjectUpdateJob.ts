@@ -25,6 +25,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   applyResult,
+  logChange,
   patchRecord,
   PROJECTS_MODEL_ID,
   UNIT_UPDATES_MODEL_ID,
@@ -38,6 +39,10 @@ import { fetchMajdProject, majdProjectId } from './projectUpdates/almajdiah.js';
 import { RivaPortal, rivaProjectIdFromUrl } from './projectUpdates/riva.js';
 import { fetchPublic, fetchSafaProject, loadBrokerSnapshot, safaProjectId, type PublicListing } from './projectUpdates/safa.js';
 import { developerSourcedCompanies, runWhatsAppGroup } from './projectUpdates/whatsapp.js';
+import { binghattiProjectId, binghattiProjectIdFromRow, binghattiOptionsOf, fetchBinghattiProject, enrichBinghattiTypes, binghattiPolicy, BINGHATTI_DEVELOPER_ID } from './projectUpdates/binghatti.js';
+import { ensureBinghattiCapture } from './projectUpdates/binghattiCapture.js';
+import { rebuildBinghattiMapping, validateBinghattiAreaConventions } from './projectUpdates/binghattiMapping.js';
+import binghattiHistoricalMapping from './projectUpdates/fixtures/binghatti-project-map.json' with { type: 'json' };
 import type { CrmUnit, ReconcilePolicy, ReconcileResult, SourceProject } from './projectUpdates/types.js';
 
 const LEAD_PORTALS_MODEL_ID = '1ead0000-0000-4000-8000-000000000001';
@@ -93,13 +98,16 @@ function frequencyDays(freq: unknown): number | null {
 async function loadAll(
   supabase: SupabaseClient,
   modelId: string,
-  filter: { key: string; value: string } | null,
+  filter: { key: string; value: string | string[] } | null,
 ): Promise<Array<{ id: string; data: Record<string, unknown> }>> {
+  if (filter && Array.isArray(filter.value) && filter.value.length === 0) return [];
   const out: Array<{ id: string; data: Record<string, unknown> }> = [];
   const PAGE = 500;
   for (let from = 0; ; from += PAGE) {
     let q = supabase.from('records').select('id, data').eq('model_id', modelId);
-    if (filter) q = q.filter(`data->>${filter.key}`, 'eq', filter.value);
+    if (filter) q = Array.isArray(filter.value)
+      ? q.in(`data->>${filter.key}`, filter.value)
+      : q.filter(`data->>${filter.key}`, 'eq', filter.value);
     const { data, error } = await q.order('id').range(from, from + PAGE - 1);
     if (error) throw new Error(`load ${modelId}: ${error.message}`);
     const rows = (data ?? []) as Array<{ id: string; data: Record<string, unknown> }>;
@@ -220,7 +228,7 @@ async function runRiva(
         entry.held_reason = brake;
         held++;
         if (!run.dry_run) {
-          await stamp(supabase, row, project.id, today, addDays(today, 1),
+          await stamp(supabase, run.id, row, project.id, today, addDays(today, 1),
             `${today} — ⛔ تحديث تلقائي موقوف: ${brake}. لم يُكتب شيء؛ سيُعاد غداً.`, false);
         }
         continue;
@@ -232,11 +240,12 @@ async function runRiva(
       }
       const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result, heartbeat, sourceLabel: 'بوابة وسطاء ريفا' });
       Object.assign(entry, { status: out.failures.length ? 'partial' : 'applied', written: out });
+      if (out.failures.length) failed++;
       totalChanges += out.updated + out.created;
       if (out.updated + out.created > 0) applied++;
       const fails = out.failures.length ? `؛ ⚠ تعذّر ${out.failures.length}` : '';
       const days = frequencyDays(row.data.update_frequency) ?? 7;
-      await stamp(supabase, row, project.id, today, addDays(today, days), logLine(today, 'بوابة وسطاء ريفا', result, gap + fails), true);
+      await stamp(supabase, run.id, row, project.id, today, addDays(today, days), logLine(today, 'بوابة وسطاء ريفا', result, gap + fails), true);
     } catch (err) {
       failed++;
       entry.status = 'error';
@@ -343,7 +352,8 @@ export interface ProjectSourceAdapter {
   sourceType: string;
   label: string;                                   // «API الماجدية» — for logs + notes
   idFromUrl: (url: unknown) => string | null;
-  fetch: (id: string) => Promise<SourceProject>;
+  idFromRow?: (row: Record<string, unknown>) => string | null;
+  fetch: (id: string, row?: Record<string, unknown>) => Promise<SourceProject>;
   /** May depend on what the fetch found (Safa: is the broker list fresh?). */
   policy: (scope: string, src: SourceProject) => ReconcilePolicy;
   /** Fill in units the CRM does not have yet, once the CRM side is known
@@ -363,7 +373,7 @@ async function runPerProject(
   const projects: Array<Record<string, unknown>> = [];
   let applied = 0, held = 0, failed = 0, totalChanges = 0;
   for (const row of registry) {
-    const sourceId = adapter.idFromUrl(row.data.source_url);
+    const sourceId = adapter.idFromRow ? adapter.idFromRow(row.data) : adapter.idFromUrl(row.data.source_url);
     const projectId = typeof row.data.project === 'string' ? row.data.project : null;
     const entry: Record<string, unknown> = { registry_id: row.id, source_id: sourceId, project_id: projectId };
     projects.push(entry);
@@ -371,12 +381,15 @@ async function runPerProject(
       if (!sourceId || !projectId) throw new Error('registry row has no source id or project');
       const project = await loadRecord(supabase, projectId);
       if (!project) throw new Error(`project ${projectId} not found`);
+      if (adapter.sourceType === 'binghatti_broker' && project.data.developer !== BINGHATTI_DEVELOPER_ID) {
+        throw new Error('Binghatti mapping points to a project belonging to another developer');
+      }
       const projectName = String(project.data.project_name ?? '');
       entry.project = projectName;
       const scope = typeof row.data.auto_scope === 'string' ? row.data.auto_scope : 'full';
       entry.scope = scope;
       if (scope === 'off') { entry.status = 'skipped_off'; continue; }
-      const src = await adapter.fetch(sourceId);
+      const src = await adapter.fetch(sourceId, row.data);
       const crm = (await loadAll(supabase, UNITS_MODEL_ID, { key: 'project_id', value: projectId })) as CrmUnit[];
       if (adapter.enrichNew) await adapter.enrichNew(src, crm);
       const developerId = typeof project.data.developer === 'string' ? project.data.developer : null;
@@ -410,7 +423,7 @@ async function runPerProject(
         entry.held_reason = brake;
         held++;
         if (!run.dry_run) {
-          await stamp(supabase, row, project.id, today, addDays(today, 1),
+          await stamp(supabase, run.id, row, project.id, today, addDays(today, 1),
             `${today} — ⛔ تحديث تلقائي موقوف: ${brake}. لم يُكتب شيء؛ سيُعاد غداً.`, false);
         }
         continue;
@@ -423,12 +436,13 @@ async function runPerProject(
         row.data.migration_log = `${prev ? `${prev}\n` : ''}${today} — ✅ أكّد المشغّل التغيير رغم إيقاف الأمان (${brake}).`;
       }
       Object.assign(entry, { status: out.failures.length ? 'partial' : 'applied', written: out });
+      if (out.failures.length) failed++;
       totalChanges += out.updated + out.created;
       if (out.updated + out.created > 0) applied++;
       const gap = `؛ المصدر ${src.units.length} وحدة${result.missingFromSource.length ? `، ${result.missingFromSource.length} وحدة في النظام غير موجودة في المصدر (لم تُلمس)` : ''}`;
       const fails = out.failures.length ? `؛ ⚠ تعذّر ${out.failures.length}` : '';
       const days = frequencyDays(row.data.update_frequency) ?? 7;
-      await stamp(supabase, row, project.id, today, addDays(today, days), logLine(today, adapter.label, result, gap + fails), true);
+      await stamp(supabase, run.id, row, project.id, today, addDays(today, days), logLine(today, adapter.label, result, gap + fails), true);
     } catch (err) {
       failed++;
       entry.status = 'error';
@@ -475,6 +489,7 @@ const MENACO: ProjectSourceAdapter = {
 /** Stamp the update-list row (and the project's last_source_update). */
 async function stamp(
   supabase: SupabaseClient,
+  runId: string,
   row: RegistryRow,
   projectId: string,
   today: string,
@@ -488,8 +503,20 @@ async function stamp(
     migration_log: prevLog ? `${prevLog}\n${line}` : line,
   };
   if (success) patch.last_migrated_at = today;
-  await patchRecord(supabase, row.id, patch);
-  if (success) await patchRecord(supabase, projectId, { last_source_update: today });
+  const before = await patchRecord(supabase, row.id, patch);
+  if (before) await logChange(supabase, {
+    run_id: runId, project_id: projectId, record_id: row.id, model: 'unit_updates',
+    action: 'update', before, after: Object.fromEntries(Object.keys(before).map((key) => [key, patch[key]])),
+    reason: 'project update schedule and log',
+  });
+  if (success) {
+    const sourcePatch = { last_source_update: today };
+    const sourceBefore = await patchRecord(supabase, projectId, sourcePatch);
+    if (sourceBefore) await logChange(supabase, {
+      run_id: runId, project_id: projectId, record_id: projectId, model: 'all_projects',
+      action: 'update', before: sourceBefore, after: sourcePatch, reason: 'project source refreshed',
+    });
+  }
 }
 
 export async function runProjectUpdateJob(args: {
@@ -522,6 +549,63 @@ export async function runProjectUpdateJob(args: {
       return runPerProject(supabase, run, settings, scoped, heartbeat, ALMAJDIAH);
     case 'menaco':
       return runPerProject(supabase, run, settings, scoped, heartbeat, MENACO);
+    case 'binghatti_broker': {
+      // Every CRM project is reconciled once against ALL its mapped phases.
+      // Refuse duplicate/overlapping rows instead of letting one phase sell
+      // the available inventory of another phase.
+      const projects = new Set<string>(), portalIds = new Set<string>();
+      for (const row of registry) {
+        const id = String(row.data.project ?? ''), ids = binghattiProjectIdFromRow(row.data);
+        if (!id || !ids) throw new Error(`Binghatti registry ${row.id} has no verified project mapping`);
+        if (projects.has(id)) throw new Error(`Binghatti project ${id} has duplicate registry rows; merge its portal IDs`);
+        projects.add(id);
+        for (const portalId of ids.split(',')) {
+          if (portalIds.has(portalId)) throw new Error(`Binghatti portal project ${portalId} is mapped more than once`);
+          portalIds.add(portalId);
+        }
+      }
+      const portals = (await loadAll(supabase, LEAD_PORTALS_MODEL_ID, null)).filter((portal) => {
+        if (portal.data.is_active === false || portal.data.developer !== BINGHATTI_DEVELOPER_ID) return false;
+        try { return new URL(String(portal.data.login_url)).hostname === 'partners.binghatti.com'; }
+        catch { return false; }
+      });
+      if (portals.length !== 1) throw new Error('Binghatti needs exactly one active, developer-linked broker portal record');
+      const portal = portals[0]!;
+      if (!scoped.length) throw new Error('Binghatti has no active verified project mappings');
+      const snapshot = await ensureBinghattiCapture(supabase, run, portal.id);
+      if (!snapshot) return { outcome: 'no_change', deferred: true, summary: { deferred: 'Waiting for Binghatti inventory capture' } };
+      const crmProjects = await loadAll(supabase, PROJECTS_MODEL_ID, { key: 'developer', value: BINGHATTI_DEVELOPER_ID });
+      // Project membership is authoritative even when the optional developer
+      // lookup on an imported unit has not been populated.
+      const allCrmUnits = await loadAll(supabase, UNITS_MODEL_ID, { key: 'project_id', value: crmProjects.map((project) => project.id) });
+      const mapping = rebuildBinghattiMapping(snapshot, allCrmUnits, registry.map((row) => ({
+        project: String(row.data.project), source_project_ids: binghattiProjectIdFromRow(row.data)!.split(','),
+      })), binghattiHistoricalMapping);
+      const areaValidation = validateBinghattiAreaConventions(mapping, registry.map((row) => ({
+        id: row.id, project: String(row.data.project),
+        binghatti_area_basis: row.data.binghatti_area_basis,
+        binghatti_area_unit: row.data.binghatti_area_unit,
+      })));
+      if (mapping.held || !areaValidation.complete) return { outcome: run.dry_run ? 'dry_run' : 'held', summary: {
+        source: 'binghatti_broker', registered: registry.length, applied: 0, held: registry.length,
+        failed: 0, total_changes: 0, mapping, area_validation: areaValidation, projects: [],
+      } };
+      snapshot.unitTypeMap = { ...snapshot.unitTypeMap, ...mapping.unitTypeMap };
+      const result = await runPerProject(supabase, run, settings, scoped, heartbeat, {
+        sourceType: 'binghatti_broker', label: 'بوابة وسطاء بن غاطي',
+        idFromUrl: binghattiProjectId, idFromRow: binghattiProjectIdFromRow,
+        fetch: (ids, row) => fetchBinghattiProject(ids, snapshot, binghattiOptionsOf(row ?? {})),
+        enrichNew: enrichBinghattiTypes, policy: binghattiPolicy,
+      });
+      result.summary.snapshot = { saved_at: snapshot.savedAt, totalCount: snapshot.totalCount, complete: snapshot.complete, portal_id: portal.id };
+      result.summary.mapping = mapping;
+      result.summary.area_validation = areaValidation;
+      result.summary.portal_only_projects = [...snapshot.byProject.entries()]
+        .filter(([id]) => !portalIds.has(id)).map(([id, units]) => ({ portal_id: id, units: units.length }));
+      result.summary.unmapped_crm_projects = crmProjects.filter((project) => !projects.has(project.id))
+        .map((project) => ({ project_id: project.id, name: project.data.project_name }));
+      return result;
+    }
     case 'safa_broker': {
       // The broker cards come from the portal's daily status check (one SMS
       // code a day covers both). Without a fresh file the run still updates

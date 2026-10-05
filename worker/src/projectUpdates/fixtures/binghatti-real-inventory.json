@@ -1,0 +1,35 @@
+{
+  "saved_at": "2026-08-07T04:53:30.203Z",
+  "totalCount": 1,
+  "items": [
+    {
+      "id": 84934,
+      "projectId": 10101,
+      "projectName": "BINGHATTI WRAITH",
+      "number": "645",
+      "code": "BWRT-645",
+      "unitTypeId": 2,
+      "unitTypeName": "One Bedroom",
+      "typeDescription": "1 Bedroom",
+      "actualPrice": 1336999,
+      "totalArea": 663.27,
+      "netArea": 603.86,
+      "terraceArea": 59.42,
+      "bedroomsCount": 1,
+      "floorNumber": "6",
+      "status": 1,
+      "unitStatusName": "Available"
+    }
+  ],
+  "provenance": {
+    "captured_at": "2026-08-07T04:53:30.203Z",
+    "source": "partners.binghatti.com available-units JSON; original Chrome tool result in August 7 payment-plan session",
+    "source_session_id": "371ca0de-795b-451f-9c83-bc7da3ce2404",
+    "source_tool_result_line": 261,
+    "trimmed": true,
+    "original_total_count": 4815,
+    "original_response_page_size": 10,
+    "area_unit": "sqft",
+    "note": "Single genuine portal JSON row, trimmed to inventory fields. Not a complete production snapshot."
+  }
+}

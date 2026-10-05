@@ -1,6 +1,6 @@
 # PRD: Automated project updates (portals + developer WhatsApp groups)
 
-**Status:** Live — Riva portal, Almajdiah API, Safa (portal snapshot + public site) and Menaco (public listings) weekly; WhatsApp groups of Al-Ramz, Safa, Riva. Al-Ramz portal being explored; Binghatti blocked (reCAPTCHA).
+**Status:** Live — Riva portal, Almajdiah API, Safa (portal snapshot + public site) and Menaco (public listings) weekly; WhatsApp groups of Al-Ramz, Safa, Riva. Binghatti implementation is ready; scheduling awaits a verified login, complete capture and first-run checks.
 **Last updated:** 2026-10-05
 **Related PRDs:** projects-units.md, chats.md, lead-portal-registration.md, data-migration.md (archived wizard)
 
@@ -25,9 +25,12 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 | Developer WhatsApp groups | Claude Opus 5.5 reads new messages + PDFs/images | live |
 | Al-Ramz Drive sheets | the Drive FOLDER is not publicly listable (only single files are) | not automatable as is — Al-Ramz updates arrive through the WhatsApp group; the Al-Ramz broker portal's projects page is captured daily (`save_items` key `projects`) to see whether it carries units |
 | Al-Ramz broker portal (`brokerportal.alramzre.com`) | the daily status check saves the projects list + detail pages (`save_inertia`, `inventory/<portal>/projects.json`). The portal shows per PROJECT only: total / available counts, area range, starting price, brochure — no unit list, no price list, no drawings (checked 2026-10-05, page code included) | **not used for updates** — operator decision 2026-10-05: Al-Ramz units are updated from their WhatsApp group only (the portal is not dependable); the portal may be added later. Its project «تل الربوة 1» = our «تل الربوة» |
-| Binghatti broker portal | sign-in = user id + SMS code + Google reCAPTCHA | **not automated by design** — we don't build automation around a CAPTCHA |
+| Binghatti broker portal (`binghatti_broker`, 43 CRM projects / 45 mapped portal phases) | Browserbase persistent login + automatic CAPTCHA; operator-entered login identifier and existing WhatsApp OTP relay; sequential paginated JSON from `/Properties` | configured; daily/weekly scheduling stays off until complete capture, dry/live/idempotence/revert verification. Current portal rejects the saved phone with email validation (2026-10-05); correct phone-login route pending |
 
 ## Key behaviors
+- **Binghatti uses its complete available inventory.** One JSON capture covers every project. Only a validated file less than 36 hours old is read; truncated pages, duplicate identities, future timestamps and trimmed test fixtures are rejected. Skyflame's and Flare's phases are merged before reconciliation. The developer code leads; a leading-letter-stripped unit number is a fallback only when unique on both sides. Reserved CRM units stay reserved. Missing available units may become sold only with a fresh complete snapshot; the existing brake and explicit per-run overrides still apply. Portal-only projects are reported, never created.
+- **Binghatti price and area provenance.** `source_price` stays AED and `total_price=Math.round(AED×1.021103)` is SAR. Price, currency and FX rate are saved and audited as one tuple; undo keeps the whole tuple when any price field was later edited. The verified import uses net square feet converted to square metres (`×0.09290304`, two decimals). New units retain the original areas, floor and source type. Unknown/conflicting types prevent creation and appear in the existing incomplete notice. Studio zero bedrooms is a valid value; zero-bedroom offices retain their type.
+- **Capture before a scheduled Binghatti update.** If its file is stale or missing, a live run requests one inventory-only portal job and defers until it completes. Requeues reuse the same job; a parked OTP, failed capture or 30-minute wait stops the run with no inventory writes. A dry run only reads a previously saved capture. Daily inventory capture is explicitly enabled even when the portal has no registered clients. Project scheduling stamps and update logs are now audited alongside the unit writes.
 - **One reconciler for every source.** A source only fetches + parses into a common snapshot; `reconcile.ts` decides what changes. Units are matched on, in order: our unit code (U-n) / the source's own unit id (`developer_unit_code`, e.g. `RIVA-901`), the unit title, block + number, building + number, block + building + floor, building + floor — each used only when it points at exactly ONE unit on both sides. A unit that matches two is reported as ambiguous, never guessed.
 - **Developer over marketer** (operator rule 2026-10-05): a project that has both its developer's source and a marketer's is updated from the developer's only. Riva's portal and Riva's WhatsApp group skip any project whose developer has its own enabled WhatsApp group (today: Al-Ramz → ستون الندى, أدوار جديل الرمال; run status `skipped_developer_source`). Riva is the marketer on all 21 of its portal projects; for the other 19 it is the only source we have, so they stay on Riva.
 - **Projects Riva stops listing leave Our Projects** (operator rule 2026-10-05) unless the developer has its own source: the weekly Riva run checks the broker portal AND riva.sa/projects; a project absent from both is removed from Our Projects (kept in All Projects with its units; off the website by trigger), its update-list row deactivated. Both lists must be read in full (≥ 10 projects), a project without a riva.sa page link is only reported, and more than 3 at once are held. Logged as `delete` (revertable). First applied by hand to شقق سماوة on 2026-10-05; عبق العارض stays (still on both lists).
@@ -59,6 +62,7 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 - Writes `project_update_incomplete_notices` (one row per project: signature of the last incomplete list reported) and enqueues `scheduled_whatsapp_jobs` (reference `project-update-incomplete:<project>`).
 - Writes `records` via `record_save`: `units` (status, price, `developer_unit_code`, new units + `unit_plan`), `all_projects` (`last_source_update`, `internal_sales_notes`, `handover_date`, new projects), `unit_updates` (stamps, log, new rows); `files` + `wassel-files` storage for plans
 - Reads `lead_portals` (portal login), `chat_messages` + `whatsapp-media/` (group messages and files), `inbound_media_jobs`
+- Binghatti stores the system-managed Browserbase context/authentication metadata on `lead_portals`, `source_project_ids` and verified area/mapping metadata on `unit_updates`, and private JSON captures under `portal-registrations/inventory/<portal>/units.json`.
 - AI: `claude-opus-5-5` through `trackedAnthropic` (area `sales`, call site `worker/projectUpdates/whatsapp`)
 
 ## Key files
@@ -72,6 +76,9 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 | `worker/src/projectUpdates/riva.ts` | Riva broker portal: login, scrape, parse |
 | `worker/src/projectUpdates/almajdiah.ts` | Almajdiah public units API |
 | `worker/src/projectUpdates/safa.ts` | Safa public site + broker snapshot, union, freshness/health guards |
+| `worker/src/projectUpdates/binghatti.ts`, `binghattiMapping.ts`, `binghattiCapture.ts` | complete snapshot adapter, mapping validation and one capture job before updates |
+| `worker/src/portals/{browserbase,captcha,jsonInventory}.ts` | persistent context, automatic CAPTCHA wait and strict JSON pagination |
+| `supabase/migrations/2026-10-05_09_binghatti_browserbase_contexts.sql` through `_13_binghatti_schedule_verification.sql` | portal metadata, claim serialization, atomic price undo, project mappings, recipe and verification gate |
 | `worker/src/portals/recipe.ts` (`save_items`) | the status-check step that saves a portal's unit cards |
 | `supabase/migrations/2026-10-04_13_register_almajdiah_updates.sql` | Almajdiah projects in the update list |
 | `supabase/migrations/2026-10-04_14_safa_status_check_saves_units.sql` | Safa / Al-Ramz status recipes save their pages |
@@ -81,7 +88,7 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 | `worker/src/__tests__/projectUpdates.test.ts` | rules above, pinned |
 
 ## Open questions / known limitations
-- Binghatti (43) cannot be signed into unattended (reCAPTCHA) — options: someone downloads its all-units Excel weekly and the system ingests the file, or a human-assisted sign-in. Al-Ramz's Drive folder is private; its updates come through the WhatsApp group.
+- Binghatti's current `/Authentication/Login` and `/Authentication/Index` reject the saved phone before the OTP request. Browserbase handles supported CAPTCHA automatically; the remaining verification needs the correct sign-in route or identifier. Daily/weekly switches remain off until that succeeds and the initial checks pass. Al-Ramz's Drive folder is private; its updates come through the WhatsApp group.
 - دروازة's update-list link points at a different phase than our units (held every week until the link is fixed).
 - A Riva project that leaves the portal is reported, not retired (retirement removes it from the website — a human decision).
 - WhatsApp videos and PowerPoint files are not read (only text, PDFs and images).

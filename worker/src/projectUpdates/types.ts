@@ -28,10 +28,23 @@ export interface SourceUnit {
   status?: UnitStatus | null;
   /** SAR. null/0 = the source shows no price («عند الطلب») → never overwrite. */
   price?: number | null;
+  /** Original currency price. These three fields form one provenance tuple;
+   *  when supplied, the reconciler writes them with the SAR price. */
+  sourcePrice?: number | null;
+  sourceCurrency?: string | null;
+  sourceFxRate?: number | null;
   area?: number | null;
+  sourceNetArea?: number | null;
+  sourceTotalArea?: number | null;
+  sourceAreaUnit?: 'sqft' | 'sqm' | null;
   bedrooms?: number | null;
   bathrooms?: number | null;
   floor?: string | null;
+  sourceFloor?: string | null;
+  /** Original unit type label (or its id if the source supplies no label). */
+  sourceUnitType?: string | null;
+  /** Portal type identity for evidence-based mapping; not a CRM type name. */
+  sourceUnitTypeId?: string | null;
   description?: string | null;
   planUrl?: string | null;
 }
@@ -77,6 +90,10 @@ export interface ReconcilePolicy {
   /** A source that never shows reservations (Safa) must not turn a CRM
    *  «reserved» unit back to available just because it still lists it. */
   keepReserved?: boolean;
+  /** Opt-in for Binghatti: developer code first, then unit number alone
+   *  after stripping leading letters, unique on BOTH sides. Other sources
+   *  keep their existing model / building / block matching. */
+  matchByUnitNumber?: boolean;
 }
 
 export interface UnitPatch {

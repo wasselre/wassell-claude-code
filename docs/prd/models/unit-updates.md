@@ -5,7 +5,7 @@
 # Model: Unit Updates / تحديثات الوحدات  `unit_updates`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-10-04
+**Last updated (from DB):** 2026-10-05
 **Model id:** `aa10c001-2026-4824-9000-000000000001`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **10**
+- Fields: **12**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -27,7 +27,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `project` | Project / المشروع | Lookup | yes | half | yes | → All Projects |
 | `update_frequency` | Frequency / دورية التحديث | Dropdown | yes | half | yes | 5 options |
-| `source_type` | Source / مصدر التحديث | Dropdown | no | half | yes | 7 options |
+| `source_type` | Source / مصدر التحديث | Dropdown | no | half | yes | 8 options |
 | `source_url` | Source URL / رابط المصدر | URL | no | half | no |  |
 | `last_migrated_at` | Last migrated / آخر تحديث | Date | no | half | yes |  |
 | `next_due` | Next due / التحديث القادم | Date | no | half | yes |  |
@@ -35,6 +35,8 @@
 | `migration_instructions` | Migration instructions (for the Claude session) / تعليمات الترحيل (لجلسة كلود) | Text area | no | full | no |  |
 | `migration_log` | Migration log / سجل التحديثات | Text area | no | full | no |  |
 | `auto_scope` | Automatic update scope / نطاق التحديث التلقائي | Dropdown | no | half | yes | 3 options |
+| `stated_unit_type` | Unit type stated by the developer / نوع الوحدات حسب المطوّر | Dropdown | no | half | no | 6 options |
+| `stated_unit_type_source` | Source of the stated unit type / مصدر نوع الوحدات | URL | no | half | no |  |
 
 **Field details:**
 
@@ -56,7 +58,15 @@
   - API value `menaco` → "Menaco platform" / "منصة منيكو" · color `#D4B896`
   - API value `safa_broker` → "Safa broker portal (Kasb)" / "بوابة كسب — صفا" · color `#B8734F`
   - API value `whatsapp_group` → "Developer WhatsApp group" / "مجموعة واتساب المطور" · color `#25D366`
+  - API value `binghatti_broker` → "Binghatti broker portal" / "بوابة وسطاء بن غاطي" · color `#B8734F`
 - **Automatic update scope / نطاق التحديث التلقائي** (`auto_scope`, type `dropdown`) — options:
   - API value `full` → "Full (status, price, new units)" / "كامل (الحالة والسعر والوحدات الجديدة)" · color `#10B981`
   - API value `status_only` → "Status only (forward)" / "الحالة فقط (للأمام)" · color `#F59E0B`
   - API value `off` → "Off" / "متوقف" · color `#9CA3AF`
+- **Unit type stated by the developer / نوع الوحدات حسب المطوّر** (`stated_unit_type`, type `dropdown`) — options:
+  - API value `شقة` → "Apartment" / "شقة" · color `#3B82F6`
+  - API value `دور` → "Floor" / "دور" · color `#8B5CF6`
+  - API value `فيلا` → "Villa" / "فيلا" · color `#10B981`
+  - API value `تاون هاوس` → "Townhouse" / "تاون هاوس" · color `#F59E0B`
+  - API value `دبلكس` → "Duplex" / "دبلكس" · color `#EC4899`
+  - API value `بنتهاوس` → "Penthouse" / "بنتهاوس" · color `#C09B5F`

@@ -638,6 +638,17 @@ PRD: `docs/prd/project-updates.md`.
    stays in All Projects with its units. Logged as a `delete` in
    project_update_changes, so project_update_revert restores it. More than 3
    in one run is held for a person (`worker/src/projectUpdates/unlist.ts`).
+11. **Binghatti uses Browserbase automatic CAPTCHA solving and an opt-in
+    persistent context** (operator 2026-10-05). Never ask for a manual CAPTCHA
+    tap. Its available JSON inventory must be complete, unique and <36h old
+    before anything is reconciled. Merge all portal phases of a CRM project
+    before considering absence sold. Keep reserved units; report portal-only
+    projects. SAR price = rounded AED × 1.021103, with AED/currency/FX saved,
+    audited and reverted together. Area = the verified imported net sqft ×
+    0.09290304 (two decimal sqm). Unknown/conflicting types skip new units.
+    Enable scheduling only via `project_update_enable_binghatti` after the
+    complete capture, first dry/live run, zero-change dry run and real revert
+    proof; never lower the brake to activate it. See `docs/binghatti-weekly-updates.md`.
 
 ## Office outreach (unanswered requests → WhatsApp to offices) (added 2026-09-28)
 

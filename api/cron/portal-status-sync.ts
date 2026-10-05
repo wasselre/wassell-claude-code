@@ -63,7 +63,9 @@ export default async function handler(req: Request): Promise<Response> {
         results.push({ portal_id: portal.id, portal: name, outcome: 'failed', reason: cntErr.message });
         continue;
       }
-      if (!count) {
+      // Inventory-only portals have no client registrations. Their explicit
+      // opt-in allows the same daily sign-in to refresh the unit snapshot.
+      if (!count && portal.data?.inventory_capture_enabled !== true) {
         results.push({ portal_id: portal.id, portal: name, outcome: 'skipped', reason: 'no registered clients' });
         continue;
       }

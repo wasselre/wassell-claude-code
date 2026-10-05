@@ -13,7 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordSaveWithRetry } from '../lib/recordSaveRetry.js';
 import { BROWSER_UA } from './http.js';
 import type { ReconcileResult, UnitCreate } from './types.js';
-import { incompleteNotice, incompleteSignature } from './reconcile.js';
+import { incompleteNotice, incompleteSignature, sourcePriceFields } from './reconcile.js';
 
 export const UNITS_MODEL_ID = '7ca3014d-f658-418e-9c53-2d279c97f009';
 export const PROJECTS_MODEL_ID = '220c49b9-de57-492d-9eca-c0d9f54fd40f';
@@ -93,6 +93,7 @@ export async function patchRecord(
   recordId: string,
   patch: Record<string, unknown>,
 ): Promise<Record<string, unknown> | null> {
+  assertCoupledPrice(patch);
   // Held in an object so the value the LAST build() attempt saw survives a
   // version-conflict retry (each retry re-reads the row and rebuilds).
   const holder: { before: Record<string, unknown> | null } = { before: null };
@@ -104,11 +105,31 @@ export async function patchRecord(
         if (JSON.stringify(cur[k] ?? null) !== JSON.stringify(v ?? null)) changed[k] = cur[k] ?? null;
       }
       if (Object.keys(changed).length === 0) { holder.before = null; return null; }
+      // A foreign price is one value with four parts. Keep the full before
+      // tuple even when rounding leaves SAR unchanged, so revert can restore
+      // it atomically and preserve a later human edit to any of its fields.
+      const priceKeys = ['total_price', 'source_price', 'source_currency', 'source_fx_rate'];
+      if (priceKeys.every((key) => Object.prototype.hasOwnProperty.call(patch, key))) {
+        for (const key of priceKeys) changed[key] = cur[key] ?? null;
+      }
       holder.before = changed;
       return { ...cur, ...patch };
     },
   });
   return holder.before;
+}
+
+/** Last boundary before any writer can submit foreign-price fields. */
+function assertCoupledPrice(data: Record<string, unknown>): void {
+  const keys = ['source_price', 'source_currency', 'source_fx_rate'];
+  if (!keys.some((key) => Object.prototype.hasOwnProperty.call(data, key))) return;
+  sourcePriceFields({ sourceId: null, unitModel: null,
+    price: typeof data.total_price === 'number' ? data.total_price : null,
+    sourcePrice: typeof data.source_price === 'number' ? data.source_price : null,
+    sourceCurrency: typeof data.source_currency === 'string' ? data.source_currency : null,
+    sourceFxRate: typeof data.source_fx_rate === 'number' ? data.source_fx_rate : null,
+  });
+  if (!keys.every((key) => data[key] != null)) throw new Error('refused incomplete source price / FX provenance');
 }
 
 async function uploadPlan(
@@ -187,7 +208,9 @@ export async function applyResult(
       if (!before) continue;
       await logChange(supabase, {
         run_id: args.runId, project_id: args.projectId, record_id: u.unitId, model: 'units',
-        action: 'update', before, after: u.patch, reason: u.reasons.join('; '),
+        action: 'update', before,
+        after: Object.fromEntries(Object.keys(before).map((key) => [key, u.patch[key]])),
+        reason: u.reasons.join('; '),
       });
       out.updated++;
     } catch (err) {
@@ -213,6 +236,7 @@ export async function applyResult(
         continue;
       }
       try {
+        assertCoupledPrice(data);
         const { error: saveErr } = await supabase.rpc('record_save', {
           p_model_id: UNITS_MODEL_ID, p_id: id, p_data: data,
           p_created_by: MIGRATION_USER_ID, p_expected_version: null,

@@ -24,6 +24,8 @@
  */
 
 import type { Locator, Page } from 'playwright-core';
+import { captureJsonInventory, type SaveJsonStep } from './jsonInventory.js';
+import { waitForAutomaticCaptcha, type WaitCaptchaStep } from './captcha.js';
 
 // ── Step vocabulary ─────────────────────────────────────────────────────────
 
@@ -64,6 +66,9 @@ export type RecipeStep =
   | { do: 'wait'; ms: number }
   | ({ do: 'wait_for'; state?: 'visible' | 'hidden' | 'attached' | 'detached'; timeout_ms?: number } & Target)
   | { do: 'wait_for_url'; pattern: string; timeout_ms?: number }
+  | WaitCaptchaStep
+  /** Record authentication only after a positive authenticated-page assertion. */
+  | { do: 'auth_state'; reused: boolean }
   | {
       do: 'request_input';
       /** Where the answer lands: `{{input.<key>}}`. */
@@ -89,6 +94,7 @@ export type RecipeStep =
   | CollectRowsStep
   | SaveItemsStep
   | SaveInertiaStep
+  | SaveJsonStep
   /** `outcome` turns the stop into a recorded ANSWER instead of a failure —
    *  e.g. the portal says the client is already another broker's. */
   | { do: 'fail'; ar: string; en: string; outcome?: RecipeOutcome }
@@ -432,6 +438,7 @@ const KNOWN_STEPS = new Set([
   'goto', 'fill', 'type', 'fill_otp', 'click', 'select', 'check', 'press', 'wait', 'wait_for', 'wait_for_url',
   'request_input', 'screenshot', 'save_html', 'assert', 'if_visible', 'phase', 'fail', 'set', 'collect_rows', 'save_items',
   'save_inertia',
+  'wait_captcha', 'auth_state', 'save_json',
 ]);
 
 /** Parse the `recipe` field (JSON text or an already-parsed array). Throws a
@@ -475,6 +482,12 @@ export function parseRecipe(raw: unknown): RecipeStep[] {
       if (step.do === 'request_input' && !step.key) {
         throw new RecipeError(`خطوة request_input بلا key (الخطوة ${at})`, `request_input at ${at} needs a "key"`);
       }
+      if (step.do === 'save_json' && (!step.key || !step.selector || !step.attr)) {
+        throw new RecipeError(`خطوة save_json ناقصة (الخطوة ${at})`, `save_json at ${at} needs key, selector and attr`);
+      }
+      if (step.do === 'auth_state' && typeof step.reused !== 'boolean') {
+        throw new RecipeError(`خطوة auth_state ناقصة (الخطوة ${at})`, `auth_state at ${at} needs reused:true/false`);
+      }
       return step;
     });
   };
@@ -498,6 +511,10 @@ export interface RecipeRuntime {
   requestInput: (step: Extract<RecipeStep, { do: 'request_input' }>) => Promise<string>;
   /** Throws RecipeCancelledError if the rep cancelled meanwhile. */
   checkCancelled: () => Promise<void>;
+  /** Keep long automated CAPTCHA waits and inventory fetches alive. */
+  heartbeat?: () => Promise<void>;
+  /** Auth metadata for an opt-in persistent portal context. */
+  authState?: (reused: boolean) => Promise<void>;
   /** Store the page HTML as run evidence (`save_html`). Absent ⇒ the step fails loudly. */
   saveHtml?: (label: string) => Promise<void>;
   /** Store what `save_items` read. Absent ⇒ the step fails loudly. */
@@ -505,6 +522,10 @@ export interface RecipeRuntime {
   /** Where `collect_rows` puts what it read. Absent on a registration run,
    *  where a `collect_rows` step is a recipe mistake and fails loudly. */
   collected?: CollectedRow[];
+  /** Set only when a collect_rows step actually executes (empty list is valid). */
+  didCollectRows?: boolean;
+  /** Completed inventory captures, for inventory-only status_check results. */
+  savedInventories?: { key: string; totalCount?: number }[];
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -652,6 +673,27 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
       scope.input[step.key] = answer;
       return;
     }
+    case 'wait_captcha': {
+      await waitForAutomaticCaptcha(page, {
+        ...step,
+        token_selector: step.token_selector ? r(step.token_selector) : undefined,
+        success_selector: step.success_selector ? r(step.success_selector) : undefined,
+        success_url: step.success_url ? r(step.success_url) : undefined,
+      }, rt);
+      return;
+    }
+    case 'auth_state': {
+      if (!rt.authState) throw new RecipeError('حالة الدخول غير متاحة هنا', 'auth_state is not available here', index);
+      await rt.authState(step.reused);
+      return;
+    }
+    case 'save_json': {
+      if (!rt.saveItems) throw new RecipeError('حفظ البيانات غير متاح هنا', 'save_json is not available here', index);
+      const payload = await captureJsonInventory(page, { ...step, selector: r(step.selector), attr: r(step.attr) }, rt);
+      await rt.saveItems(step.key, { ...payload });
+      (rt.savedInventories ??= []).push({ key: step.key, totalCount: payload.totalCount });
+      return;
+    }
     case 'save_items': {
       if (!rt.saveItems) throw new RecipeError('حفظ العناصر غير متاح هنا', 'save_items is not available here', index);
       if (!step.key || !Array.isArray(step.urls) || !step.item_selector) {
@@ -679,6 +721,7 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
         pages[tpl] = list;
       }
       await rt.saveItems(step.key, { saved_at: new Date().toISOString(), pages });
+      (rt.savedInventories ??= []).push({ key: step.key });
       } catch (err) {
         // Scoped to save_items with optional:true. A cancellation still
         // propagates (it is not an inventory failure).
@@ -737,6 +780,7 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
         }
         rt.log(`save_inertia ${step.key}: ${list.length} list page(s), ${ids.length} rows at ${rowsPath ?? '(none found)'}, ${Object.keys(details).length} detail page(s)`);
         await rt.saveItems(step.key, { saved_at: new Date().toISOString(), rows_path: rowsPath, list, details });
+        (rt.savedInventories ??= []).push({ key: step.key });
       } catch (err) {
         if (!step.optional || err instanceof RecipeCancelledError) throw err;
         const msg = err instanceof Error ? err.message : String(err);
@@ -802,6 +846,7 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
       return;
     }
     case 'collect_rows': {
+      rt.didCollectRows = true;
       if (!rt.collected) {
         throw new RecipeError('خطوة collect_rows تعمل في فحص الحالات فقط', 'collect_rows only runs in a status check', index);
       }
