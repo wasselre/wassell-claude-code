@@ -133,8 +133,14 @@ export function buildAiEvents(
     if (c.kind === 'outcome') {
       const o = typeof c.after_value === 'string' ? getOutcome(c.after_value) : undefined;
       ev.push({ id: `c${c.id}`, at: c.created_at, kind: 'outcome', text: t('chats.ai_changes.outcome', { label: o ? (isAr ? o.label_ar : o.label_en) : String(c.after_value ?? '') }), detail: c.quote, tone: c.undone_at ? 'muted' : 'ok' });
+    } else if (c.kind === 'profile') {
+      ev.push({ id: `c${c.id}`, at: c.created_at, kind: 'change', text: t('chats.ai_changes.profile_created', { name: c.profile_name ?? c.label ?? '' }), detail: c.quote, tone: c.undone_at ? 'muted' : 'ok' });
     } else if (c.kind === 'place') {
-      ev.push({ id: `c${c.id}`, at: c.created_at, kind: c.applied ? 'change' : 'kept', text: c.applied ? t('chats.ai_changes.place', { label: c.label ?? '' }) : t('chats.ai_changes.doubted', { label: c.label ?? '' }), detail: c.quote, tone: c.undone_at ? 'muted' : c.applied ? 'ok' : 'warn' });
+      const removed = c.note === 'flipped' || c.note === 'replaced';
+      const text = removed
+        ? t(c.note === 'flipped' ? 'chats.ai_changes.place_flipped' : 'chats.ai_changes.place_replaced', { label: c.label ?? '' })
+        : c.applied ? t('chats.ai_changes.place', { label: c.label ?? '' }) : t('chats.ai_changes.doubted', { label: c.label ?? '' });
+      ev.push({ id: `c${c.id}`, at: c.created_at, kind: c.applied ? 'change' : 'kept', text: `${text}${c.profile_name ? ` · ${t('chats.ai_changes.in_profile', { name: c.profile_name })}` : ''}`, detail: c.quote, tone: c.undone_at ? 'muted' : c.applied ? 'ok' : 'warn' });
     } else if (c.field) {
       ev.push({
         id: `c${c.id}`, at: c.created_at, kind: c.applied ? 'change' : 'kept',

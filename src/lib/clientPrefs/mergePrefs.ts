@@ -197,6 +197,18 @@ export interface AiPrefPatchResult extends PrefPatchResult {
   added: Record<string, string[]>;
   /** Range fields left alone because a REP set them (the AI heard something else). */
   keptRepValue: Array<{ slug: string; current: unknown; heard: unknown }>;
+  /** Set fields where the AI's earlier values were REPLACED (a change of mind). */
+  replaced: string[];
+}
+
+/**
+ * A change of mind: for these set fields the values the AI added earlier
+ * (`aiAdded`, still standing) are dropped before the new ones are added; values
+ * a rep typed stay.
+ */
+export interface AiReplace {
+  slugs: ReadonlySet<string>;
+  aiAdded: Readonly<Record<string, readonly string[]>>;
 }
 
 /**
@@ -215,16 +227,31 @@ export function buildAiPrefPatch(
   fields: readonly string[],
   optionsBySlug: Readonly<Record<string, readonly string[] | undefined>>,
   aiOwned: ReadonlySet<string>,
+  replace?: AiReplace,
 ): AiPrefPatchResult {
   const patch: Record<string, unknown> = {};
   const dropped: Array<{ slug: string; value: string }> = [];
   const added: Record<string, string[]> = {};
   const keptRepValue: AiPrefPatchResult['keptRepValue'] = [];
+  const replaced: string[] = [];
   for (const slug of new Set(fields)) {
     const kind = PREF_FIELD_KINDS[slug];
     const sug = suggestions[slug];
     if (!kind || !sug) continue;
     if (kind === 'set') {
+      if (replace?.slugs.has(slug)) {
+        const ai = new Set(replace.aiAdded[slug] ?? []);
+        const cur = asSetValue(current[slug]);
+        const base = cur.filter((v) => !ai.has(v));
+        const merged = mergeSetValues(base, sug.value, new Set(optionsBySlug[slug] ?? []));
+        for (const v of merged.dropped) dropped.push({ slug, value: v });
+        if (!valueEqual(cur, merged.values)) {
+          patch[slug] = merged.values.length ? merged.values : null;
+          added[slug] = merged.values.filter((v) => !cur.includes(v));
+          if (base.length < cur.length) replaced.push(slug);
+        }
+        continue;
+      }
       const merged = mergeSetValues(current[slug], sug.value, new Set(optionsBySlug[slug] ?? []));
       for (const v of merged.dropped) dropped.push({ slug, value: v });
       if (merged.added.length > 0) { patch[slug] = merged.values; added[slug] = merged.added; }
@@ -237,16 +264,23 @@ export function buildAiPrefPatch(
     if (cur && !aiOwned.has(slug)) { keptRepValue.push({ slug, current: cur, heard: next }); continue; }
     patch[slug] = next;
   }
-  return { patch, dropped, added, keptRepValue };
+  return { patch, dropped, added, keptRepValue, replaced };
 }
 
 /** Undo of ONE AI pref write on the FRESH value: a set field loses only the
  *  values the AI added; a range goes back to `before` only if it still holds
  *  what the AI wrote (else null = the field moved on, nothing to undo). */
 export function undoPrefValue(
-  slug: string, fresh: unknown, change: { before: unknown; after: unknown; added: unknown },
+  slug: string, fresh: unknown, change: { before: unknown; after: unknown; added: unknown; replaced?: boolean },
 ): { value: unknown } | null {
   const kind = PREF_FIELD_KINDS[slug];
+  // A replacement (change of mind) goes back to what it was — only while the
+  // field still holds exactly what the AI wrote.
+  if (kind === 'set' && change.replaced) {
+    if (!valueEqual(asSetValue(fresh), asSetValue(change.after))) return null;
+    const before = asSetValue(change.before);
+    return { value: before.length ? before : null };
+  }
   if (kind === 'set') {
     const remove = new Set(asSetValue(change.added));
     const cur = asSetValue(fresh);

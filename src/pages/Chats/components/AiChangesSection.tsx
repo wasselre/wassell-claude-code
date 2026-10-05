@@ -16,8 +16,10 @@ import { usePrefFieldFormat } from '../lib/usePrefFieldFormat';
 
 interface AiChange {
   id: string;
-  kind: 'pref' | 'place' | 'outcome';
+  kind: 'pref' | 'place' | 'outcome' | 'profile';
   field: string | null;
+  /** Set when the change went to a profile other than the active one (or created it). */
+  profile_name: string | null;
   before_value: unknown;
   after_value: unknown;
   added: unknown;
@@ -85,18 +87,24 @@ export default function AiChangesSection({ clientId, refreshKey, isAr, bare = fa
       const main = c.label ? ` · ${t('chats.ai_changes.main', { label: c.label })}` : '';
       return `${t('chats.ai_changes.outcome', { label: outcome })}${main}`;
     }
+    if (c.kind === 'profile') return t('chats.ai_changes.profile_created', { name: c.profile_name ?? c.label ?? '' });
+    const inProfile = c.profile_name ? ` · ${t('chats.ai_changes.in_profile', { name: c.profile_name })}` : '';
     if (c.kind === 'place') {
+      if (c.note === 'flipped' || c.note === 'replaced') {
+        return `${t(c.note === 'flipped' ? 'chats.ai_changes.place_flipped' : 'chats.ai_changes.place_replaced', { label: c.label ?? '' })}${inProfile}`;
+      }
       const n = Array.isArray(c.added) ? c.added.length : 0;
       const label = `${c.label ?? ''}${n > 1 ? ` (${n})` : ''}`;
-      return c.applied ? t('chats.ai_changes.place', { label }) : t('chats.ai_changes.doubted', { label });
+      return `${c.applied ? t('chats.ai_changes.place', { label }) : t('chats.ai_changes.doubted', { label })}${inProfile}`;
     }
     const field = c.field ? fieldLabel(c.field) : '';
     if (!c.applied) {
       return t('chats.ai_changes.kept', {
         field, heard: c.field ? formatValue(c.field, c.after_value) : '', current: c.field ? formatValue(c.field, c.before_value) : '',
-      });
+      }) + inProfile;
     }
-    return `${field}: ${c.field ? formatValue(c.field, c.after_value) : ''}`;
+    const replaced = c.note === 'replaced' ? ` ${t('chats.ai_changes.replaced')}` : '';
+    return `${field}: ${c.field ? formatValue(c.field, c.after_value) : ''}${replaced}${inProfile}`;
   };
 
   return (

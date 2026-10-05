@@ -58,7 +58,9 @@ export interface AgentRun {
 
 export interface AiChangeRow {
   id: string;
-  kind: 'pref' | 'place' | 'outcome';
+  kind: 'pref' | 'place' | 'outcome' | 'profile';
+  profile_id?: string | null;
+  profile_name?: string | null;
   field: string | null;
   before_value: unknown;
   after_value: unknown;

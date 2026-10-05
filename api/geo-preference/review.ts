@@ -282,11 +282,33 @@ export function locationItemSignature(item: LocationItem): string {
   return `e:${item.polarity}:${conds}`;
 }
 
-/** Union `incoming` onto `existing`, dropping duplicates by signature. Non-destructive. */
+/** The place an item is about, without its polarity («wanted» vs «excluded»). */
+export function locationItemPlaceKey(item: LocationItem): string {
+  return locationItemSignature(item).replace(/^(\w):(include|exclude):/, '$1:');
+}
+
+/**
+ * Union `incoming` onto `existing`, dropping duplicates by signature — except
+ * that a place is never both wanted and excluded: the NEWER statement wins and
+ * the opposite existing item is dropped. Inside one batch, an exclusion beats an
+ * inclusion of the same place (never push an area the customer rejected).
+ * Live test 2026-10-05: «مو الشرق» saved east as excluded while an earlier «شرق
+ * الرياض» stayed wanted — 53 districts both at once.
+ */
 export function mergeLocationItems(existing: LocationItem[], incoming: LocationItem[]): LocationItem[] {
-  const seen = new Set(existing.map(locationItemSignature));
-  const out = [...existing];
+  const batch = new Map<string, LocationItem>();
   for (const it of incoming) {
+    const k = locationItemPlaceKey(it);
+    const prev = batch.get(k);
+    if (!prev || (prev.polarity !== 'exclude' && it.polarity === 'exclude')) batch.set(k, it);
+  }
+  const incomingPolarity = new Map([...batch].map(([k, it]) => [k, it.polarity]));
+  const out = existing.filter((e) => {
+    const p = incomingPolarity.get(locationItemPlaceKey(e));
+    return p === undefined || p === e.polarity;
+  });
+  const seen = new Set(out.map(locationItemSignature));
+  for (const it of batch.values()) {
     const sig = locationItemSignature(it);
     if (seen.has(sig)) continue;
     seen.add(sig);
