@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readingFromSuggestions, applyCustomerReading } from '../prefReading.js';
+import { readingFromSuggestions, applyCustomerReading, readingWindow } from '../prefReading.js';
 
 const s = (slug: string, value: unknown) => ({ slug, value, quote: 'q', confidence: 90 });
 
@@ -51,5 +51,38 @@ describe('ready / off-plan (2026-10-05)', () => {
     const r = readingFromSuggestions({ preferred_readiness: s('preferred_readiness', ['ready', 'off_plan']) }, 'm');
     expect(r.readiness).toBeNull();
     expect(applyCustomerReading({ readiness: null }, r).criteria.readiness).toBeNull();
+  });
+});
+
+describe('the customer changes their mind (live test 2026-10-05)', () => {
+  it('a restart («انسى اللي قبل», «غيرت رأيي») — the reader reads from there on', () => {
+    const w = readingWindow([
+      { who: 'customer', text: 'ابي شقة جاهزة ٣ غرف' },
+      { who: 'us', text: 'أبشر' },
+      { who: 'customer', text: 'خلاص غيرت رأيي، ابي دور في ظهرة لبن' },
+    ]);
+    expect(w.turns.map((t) => t.text)).toEqual(['خلاص غيرت رأيي، ابي دور في ظهرة لبن']);
+    expect(w.current).toEqual(['خلاص غيرت رأيي، ابي دور في ظهرة لبن']);
+  });
+  it('current = the customer messages after our last reply', () => {
+    const w = readingWindow([
+      { who: 'customer', text: 'ابي شقة' },
+      { who: 'us', text: 'كم غرفة؟' },
+      { who: 'customer', text: '٣' },
+      { who: 'customer', text: 'بالشمال' },
+    ]);
+    expect(w.turns).toHaveLength(4);
+    expect(w.current).toEqual(['٣', 'بالشمال']);
+  });
+  it('a value read only from older messages does not replace what the agent read now', () => {
+    const r = { ...readingFromSuggestions({ preferred_unit_type: s('preferred_unit_type', ['شقة']), budget: s('budget', { max: 1_500_000 }) }, 'm'), older_only: ['unit_types' as const] };
+    const { criteria, overrides } = applyCustomerReading({ unit_types: ['دور'], budget_max: 1_400_000 }, r);
+    expect(criteria.unit_types).toEqual(['دور']);
+    expect(criteria.budget_max).toBe(1_500_000);
+    expect(overrides).toContain("kept agent's unit_types (reader's quote is from an older message)");
+  });
+  it('an older value still fills a field the agent left empty', () => {
+    const r = { ...readingFromSuggestions({ preferred_bedrooms: s('preferred_bedrooms', { min: 4 }) }, 'm'), older_only: ['bedrooms_min' as const] };
+    expect(applyCustomerReading({ bedrooms_min: null }, r).criteria.bedrooms_min).toBe(4);
   });
 });

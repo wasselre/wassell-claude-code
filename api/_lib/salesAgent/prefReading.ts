@@ -36,11 +36,44 @@ export interface CustomerReading {
   /** One English state line for the agent; null when nothing was read. */
   line: string | null;
   model: string;
+  /** Search fields whose quote is only in OLDER customer messages, not in the
+   *  ones since our last reply. For those the agent's own reading of what they
+   *  say NOW wins (applyCustomerReading). Live test 2026-10-05: «ابي دور في
+   *  ظهرة لبن» became شقة from an earlier «ابي شقة…», and apartments were searched. */
+  older_only?: ReadingField[];
 }
+
+export type ReadingField = 'unit_types' | 'budget_max' | 'bedrooms_min' | 'area_min' | 'readiness';
+
+const FIELD_OF_SLUG: Record<string, ReadingField> = {
+  preferred_unit_type: 'unit_types', budget: 'budget_max', preferred_bedrooms: 'bedrooms_min', preferred_area: 'area_min', preferred_readiness: 'readiness',
+};
 
 const EMPTY = (model: string): CustomerReading => ({
   unit_types: null, budget_max: null, bedrooms_min: null, area_min: null, purpose: null, readiness: null, amenities: null, line: null, model,
 });
+
+/** «انسى اللي قبل», «غيرت رأيي» — the customer starts over. */
+const RESTART = /انس(ى|ا|ي)\s+(كل\s+)?(اللي|طلب|ما\s+قلت)|غيرت\s+ر(أ|ا)ي|بدلت\s+ر(أ|ا)ي|forget\s+(what|everything)|changed\s+my\s+mind/i;
+
+/**
+ * PURE — the turns the reader should read: from the customer's last restart on
+ * (when there is one), and which of them are the CURRENT messages (the
+ * customer's turns after our last reply).
+ */
+export function readingWindow(turns: Array<{ who: 'customer' | 'us'; text: string }>): {
+  turns: Array<{ who: 'customer' | 'us'; text: string }>;
+  current: string[];
+} {
+  let start = 0;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i]!.who === 'customer' && RESTART.test(turns[i]!.text)) { start = i; break; }
+  }
+  const win = turns.slice(start);
+  const current: string[] = [];
+  for (let i = win.length - 1; i >= 0 && win[i]!.who === 'customer'; i--) current.unshift(win[i]!.text);
+  return { turns: win, current };
+}
 
 const PURPOSE_AR: Record<string, string> = { residential: 'سكن', investment: 'استثمار' };
 const fmt = (n: number): string => Math.round(n).toLocaleString('en-US');
@@ -89,19 +122,30 @@ export function applyCustomerReading(c: SearchCriteria, r: CustomerReading | nul
   if (!r) return { criteria: c, overrides: [] };
   const out: SearchCriteria = { ...c };
   const overrides: string[] = [];
+  const older = new Set(r.older_only ?? []);
+  // The reader's value comes only from older messages and the agent read
+  // something else: the agent is reading what they say now — keep it.
+  const keepAgent = (k: ReadingField, agentHas: boolean): boolean => {
+    if (!older.has(k) || !agentHas) return false;
+    overrides.push(`kept agent's ${k} (reader's quote is from an older message)`);
+    return true;
+  };
   if (r.unit_types && r.unit_types.length) {
     const same = (c.unit_types ?? []).length === r.unit_types.length && r.unit_types.every((t) => (c.unit_types ?? []).includes(t));
-    if (!same) overrides.push(`unit_types ${JSON.stringify(c.unit_types ?? [])}→${JSON.stringify(r.unit_types)}`);
-    out.unit_types = r.unit_types;
+    if (!same && !keepAgent('unit_types', (c.unit_types ?? []).length > 0)) {
+      overrides.push(`unit_types ${JSON.stringify(c.unit_types ?? [])}→${JSON.stringify(r.unit_types)}`);
+      out.unit_types = r.unit_types;
+    }
   }
-  if (r.readiness) {
-    if (c.readiness !== r.readiness) overrides.push(`readiness ${c.readiness ?? '-'}→${r.readiness}`);
+  if (r.readiness && c.readiness !== r.readiness && !keepAgent('readiness', !!c.readiness)) {
+    overrides.push(`readiness ${c.readiness ?? '-'}→${r.readiness}`);
     out.readiness = r.readiness;
   }
   for (const k of ['budget_max', 'bedrooms_min', 'area_min'] as const) {
     const v = r[k];
-    if (v == null) continue;
-    if (c[k] !== v) overrides.push(`${k} ${c[k] ?? '-'}→${v}`);
+    if (v == null || c[k] === v) continue;
+    if (keepAgent(k, c[k] != null)) continue;
+    overrides.push(`${k} ${c[k] ?? '-'}→${v}`);
     out[k] = v;
   }
   return { criteria: out, overrides };
@@ -118,11 +162,13 @@ export function readCustomerWants(
   turns: Array<{ who: 'customer' | 'us'; text: string }>,
   chatWid: string,
 ): Promise<CustomerReading> {
+  const win = readingWindow(turns.slice(-60));
   const conv: Conversation = {
     channel: 'chat',
     id: 'sales-agent',
-    turns: turns.slice(-60).map((t) => ({ speaker: t.who === 'customer' ? 'client' : 'agent', text: t.text })),
+    turns: win.turns.map((t) => ({ speaker: t.who === 'customer' ? 'client' : 'agent', text: t.text })),
   };
+  const currentConv: Conversation = { channel: 'chat', id: 'sales-agent-now', turns: win.current.map((text) => ({ speaker: 'client', text })) };
   if (!conv.turns.some((t) => t.speaker === 'client')) return Promise.resolve(EMPTY('none'));
   const key = createHash('sha1').update(JSON.stringify(conv.turns)).digest('hex');
   const hit = cache.get(key);
@@ -132,7 +178,15 @@ export function readCustomerWants(
     // Only what the customer provably said (the same guard as the profile save).
     const said: Record<string, PrefSuggestion> = {};
     for (const [slug, s] of Object.entries(ex.output.suggestions)) if (s && customerSaidIt(conv, s.quote)) said[slug] = s;
-    return readingFromSuggestions(said, ex.model);
+    const reading = readingFromSuggestions(said, ex.model);
+    const older = Object.entries(said)
+      .filter(([slug, s]) => FIELD_OF_SLUG[slug] && !customerSaidIt(currentConv, s.quote))
+      .map(([slug]) => FIELD_OF_SLUG[slug]!);
+    if (older.length) {
+      reading.older_only = older;
+      if (reading.line) reading.line += ` (${older.join(', ')}: from EARLIER messages only — if what they say now differs, follow what they say now)`;
+    }
+    return reading;
   })();
   cache.set(key, { at: Date.now(), value });
   value.catch(() => cache.delete(key));
