@@ -14,7 +14,7 @@
  * profiles get their own process). It writes the flat slugs when the target is
  * the active profile, and the target's snapshot otherwise.
  */
-import { randomUUID } from 'node:crypto';
+// globalThis.crypto (not node:crypto): edge functions import this file too (api/ai-actions → autoSave).
 
 export const PROFILES_KEY = 'preference_profiles';
 export const ACTIVE_PROFILE_KEY = 'active_profile_id';
@@ -81,7 +81,7 @@ export function writeProfileValues(data: Record<string, unknown>, profileId: str
  */
 export function addAiProfile(data: Record<string, unknown>, name: string, now: string): { data: Record<string, unknown>; profileId: string } {
   const { profiles, activeId } = readStoredProfiles(data);
-  const id = randomUUID();
+  const id = globalThis.crypto.randomUUID();
   const next: StoredProfile = { id, name: name.trim() || `تفضيل ${profiles.length + 1}`, created_at: now, data: {}, created_by: 'ai' };
   return { data: { ...data, [PROFILES_KEY]: [...profiles, next], [ACTIVE_PROFILE_KEY]: activeId }, profileId: id };
 }
