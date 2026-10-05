@@ -599,3 +599,20 @@ describe('a layout letter is not a unit identity', () => {
     expect(['SF083-A01-R01-019', 'BWRT-208', '299-C5-4-41'].some(isLayoutLetter)).toBe(false);
   });
 });
+
+describe('a floor unit is identified by block + building + floor', () => {
+  it('ربوة الرمز block 491: one row per building floor is created without a unit number', () => {
+    const r = reconcile([crm('v1', { block: '494', unit_number: '2' })], [
+      { sourceId: null, unitModel: null, block: '491', buildingNumber: '1', floor: 'الأول', status: 'available', price: 1_199_000, area: 183, bedrooms: 3, unitType: 'دور' },
+      { sourceId: null, unitModel: null, block: '491', buildingNumber: '1', floor: 'الملحق', status: 'available', price: 899_000, area: 102, bedrooms: 3, unitType: 'دور' },
+    ], RIVA, CTX);
+    expect(r.creates).toHaveLength(2);
+  });
+  it('two rows on the same floor of the same building are not identifiable without numbers', () => {
+    const r = reconcile([crm('v1', { block: '494', unit_number: '2' })], [
+      { sourceId: null, unitModel: null, block: '1', buildingNumber: '1', floor: 'الأرضي', status: 'available', price: 1, area: 1, bedrooms: 2, unitType: 'شقة' },
+      { sourceId: null, unitModel: null, block: '1', buildingNumber: '1', floor: 'الأرضي', status: 'available', price: 2, area: 1, bedrooms: 2, unitType: 'شقة' },
+    ], RIVA, CTX);
+    expect(r.creates).toHaveLength(0);
+  });
+});

@@ -139,8 +139,12 @@ export function isLayoutLetter(v: string): boolean {
 
 export function sourceUnitKey(s: SourceUnit): string {
   if (s.sourceId) return `id:${s.sourceId}`;
-  return ['l', normUnitKey(sourceLabel(s)), part(s.block) ?? '', part(s.buildingNumber) ?? '',
-    s.unitNumber ?? '', mapFloor(s.floor) ?? ''].join('|');
+  const key = ['l', normUnitKey(sourceLabel(s)), part(s.block) ?? '', part(s.buildingNumber) ?? '',
+    s.unitNumber ?? '', mapFloor(s.floor) ?? ''];
+  // No number and no code: two rows on the same floor are still two units
+  // when their price or area differ — don't fold them into one.
+  if (s.unitNumber == null && !part(s.unitCode)) key.push(String(s.price ?? ''), String(s.area ?? ''));
+  return key.join('|');
 }
 
 export function sourceLabel(s: SourceUnit): string {
@@ -456,7 +460,11 @@ export function reconcile(
     // unit NUMBER, a source row without a number (or a code) cannot be told
     // apart from the others — creating it would make a unit nobody can match
     // again (ستون الملقا replay 2026-10-05: rows read as «P», «J» → 18 junk units).
-    if (s.unitNumber == null && !part(s.unitCode) && (crmKeyKinds.has('gu') || crmKeyKinds.has('bu'))) missing.push('unit_number');
+    // A floor unit (ربوة الرمز block 491: building + floor, no number) is
+    // identified by block + building + floor when exactly one row has it.
+    const bgfKey = MATCH_KEYS.find(([n]) => n === 'block_building_floor')![1](srcKeyInput(s));
+    const floorIdentified = !!bgfKey && (srcCount.get(bgfKey) ?? 0) <= 1;
+    if (s.unitNumber == null && !part(s.unitCode) && !floorIdentified && (crmKeyKinds.has('gu') || crmKeyKinds.has('bu'))) missing.push('unit_number');
     if (missing.length) { incomplete.push({ unit: label, missing }); continue; }
     if (t) data.unit_type = t;
     if (s.price != null && s.price > 0) {
