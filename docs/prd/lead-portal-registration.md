@@ -19,6 +19,10 @@ portal's **recipe**. When the portal asks for a one-time code (most sign in by
 phone + OTP), the modal asks the rep for it; the rep reads it off the sign-in
 phone, types it, and the browser continues. The final screenshot is the proof.
 
+An optional Gmail reader is included for Binghatti, retaining manual input and
+the existing WhatsApp fallback. Its dedicated Internal Workspace authorization
+is verified; actual new OTP delivery and end-to-end login remain unconfirmed.
+
 Each portal is different, so each portal is **data**: one record in the
 **Lead portals** model holding the login URL, who it covers, the sign-in phone,
 the required customer fields, and the JSON recipe. Adding a portal is an edit in
@@ -36,6 +40,19 @@ profile's acquisition panel shows. Riva is switched on: leads from the يمام 
 ## Key behaviors
 
 - **Optional persistent portal login and automatic CAPTCHA (2026-10-05).** Browserbase sessions explicitly enable CAPTCHA solving. `wait_captcha` requires positive page advancement when a `success_selector` or `success_url` is configured; a response token alone cannot pass that check. Standalone waits require a real response token. Both modes retain heartbeat, cancellation and screenshot on failure. `browserbase_persist_context` preserves cookies per portal; the context ID and observed login lifetime are system managed. Existing portals keep fresh-session behavior unless opted in. `save_json` captures a complete paginated inventory with the session cookies and rejects partial results. Inventory-only status checks return a capture result without applying an empty client list. The daily cron also queues portals with `inventory_capture_enabled`, even when no clients are registered. Binghatti's switches remain off until its first capture and update verification pass.
+
+- **Binghatti Gmail OTP (2026-10-05).** Only its fixed portal
+  with `otp_channel=email` uses the optional reader. Preparation immediately
+  before SendOTP verifies the exact read-only scope/profile and takes a complete
+  message-ID baseline. Only a unique fresh authenticated MIME code for the expected
+  recipient qualifies; an atomic opaque-ID claim rejects replay and defers
+  to manual input already submitted. Gmail gets 20 seconds before the existing
+  WhatsApp request is queued once. The grant, profile, offline refresh and filtered
+  API read are verified; credentials are configured in Fly, with staged values
+  activated by the normal release. CAPTCHA still
+  returns `recaptcha_confirmed_bot_score`, fresh AE also failed, and Verified
+  returned HTTP 403 for Enterprise entitlement. Actual new OTP delivery/template
+  and end-to-end login/capture remain unconfirmed. See `docs/binghatti-gmail-oauth.md`.
 
 - **Automatic registration of ad leads.** `/api/cron/portal-auto-register` runs
   every 5 minutes. It reads `portal_auto_register_candidates(since)`: ad touches
@@ -231,9 +248,18 @@ profile's acquisition panel shows. Riva is switched on: leads from the يمام 
 4. **Fix a broken run.** Open the failed run's screenshots in the modal (or the
    `portal_registration_jobs` row), adjust the recipe on the portal record, «حاول
    مرة أخرى».
+5. **Binghatti email code flow.** The included Gmail
+   reader tries the fresh code while the manual modal remains available; if
+   no unique code qualifies within 20 seconds, the configured WhatsApp relay
+   ask once. This flow is not yet verified through an actual OTP delivery.
 
 ## Data touched
 
+- Email claim ledger/RPC: opaque Gmail message IDs, SHA256 of the saved
+  portal Login ID, job ID and claim time, service-only. The request nonce
+  identify the current `portal_registration_jobs.input_request`; email OTP values
+  remain in worker memory. Refresh credentials are configured Fly secrets,
+  never record/recipe data or committed files.
 - `models` row `lead_portals` (fixed id `1ead0000-0000-4000-8000-000000000001`),
   records in `records`. Fields: `name`, `login_url`, `developer` (lookup),
   `marketer` (lookup → the Companies list, model slug `developers`), `officers` (multi lookup → project_officers), `projects`
@@ -326,6 +352,8 @@ profile's acquisition panel shows. Riva is switched on: leads from the يمام 
 | Entry point | `src/pages/Chats/components/ChatDetail.tsx` (CrmActions «تسجيل في البوابة») |
 | Admin entry | `src/pages/Settings/SettingsPage.tsx` → `/model/lead_portals` |
 | Recipe docs | `docs/lead-portal-recipes.md` |
+| Binghatti email OTP | `worker/src/portals/gmailOtp.ts`, `worker/src/portals/inputWait.ts`; release order: claim migration `2026-10-05_14_binghatti_email_otp_claim.sql`, worker release, recipe migration `2026-10-05_15_binghatti_email_otp_recipe.sql`; setup/status in `docs/binghatti-gmail-oauth.md` |
+| Verified email claim guards / replay retention | `scripts/fixtures/binghatti-gmail-claim-check.sql` — passed inside rollback, leaving no test records |
 
 ## Open items
 

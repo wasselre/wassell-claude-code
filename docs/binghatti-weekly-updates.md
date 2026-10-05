@@ -2,8 +2,8 @@
 
 Updated 2026-10-05. Implementation follows the weekly-update spec with the
 operator's change: Browserbase handles CAPTCHA automatically. The existing
-WhatsApp OTP relay remains the fallback until the Gmail reader is authorized,
-configured and implemented; unattended email reading is not yet available.
+WhatsApp OTP relay remains the fallback for the implemented authorized Gmail
+reader; fresh OTP delivery and unattended login remain unverified.
 
 ## Configuration
 
@@ -39,18 +39,41 @@ entitlement. These failures occurred before any OTP dispatch was confirmed,
 so a response token alone is not treated as successful page advancement.
 
 The [dedicated Gmail OAuth setup guide](binghatti-gmail-oauth.md) describes the
-Internal app in the existing Workspace project. OAuth setup awaits the required
-API User Data Policy agreement; there is no OAuth client, Gmail grant or
-mail-reader runtime yet. Actual OTP delivery channel and email format remain
-unconfirmed until a successful fresh delivery. CAPTCHA acceptance and that
-delivery evidence are required before the first complete capture.
+Internal Workspace app and Web client in project `instant-medium-503214-f9`.
+Gmail API, the sole `gmail.readonly` grant, mailbox profile, offline refresh and
+filtered Binghatti message API read are verified. The three Gmail worker secrets
+are configured in Fly, with staged values activated by the normal release.
+Private credentials remain outside Git; the reader integration is implemented.
+Actual new OTP delivery channel and
+template remain unconfirmed. CAPTCHA acceptance and fresh delivery evidence are
+required before the first complete capture; no end-to-end login is proven.
+
+The email flow is limited to this portal with `otp_channel=email`.
+Immediately before `#sendOtpBtn`, `prepare_email_otp` verifies the mailbox
+and capture a complete recent message-ID baseline. Only a unique fresh,
+authenticated Binghatti MIME message with the expected recipient and OTP context
+supplies a code. A service-only atomic opaque-ID claim prevents replay
+and gives an already submitted manual reply precedence. Gmail gets 20 seconds
+before the existing WhatsApp fallback is queued once; cancellation, heartbeats
+and parking are preserved.
+
+The verified rollback fixture `scripts/fixtures/binghatti-gmail-claim-check.sql`
+proves claim guards, manual precedence and replay rejection, including replay
+marker retention after queue-job deletion. Fresh OTP delivery is still unverified.
 
 ## First capture and activation
+
+Before the first capture, apply additive
+`2026-10-05_14_binghatti_email_otp_claim.sql`, deploy the reviewed new worker to
+activate its staged secrets, then apply
+`2026-10-05_15_binghatti_email_otp_recipe.sql`. An older worker cannot run that
+new recipe. Neither migration enables daily capture or weekly scheduling.
 
 1. Deploy the worker and API. Enqueue one capture:
    `select portal_status_check_enqueue('0f828ff1-c3b9-482c-8b1d-215bef4b4d43',null);`
    Browserbase handles supported CAPTCHA. If the portal issues an OTP, supply
-   it through the existing relay until unattended email reading is ready.
+   the configured reader attempts it automatically, with the existing relay
+   available as fallback.
 2. Confirm the job completed with `inventory_capture` and the private file
    `portal-registrations/inventory/0f828ff1-c3b9-482c-8b1d-215bef4b4d43/units.json`
    contains exactly `totalCount` unique items. A trimmed fixture is never usable

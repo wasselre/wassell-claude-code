@@ -82,6 +82,13 @@ export type RecipeStep =
       timeout_s?: number;
     }
   | { do: 'screenshot'; label?: string; full?: boolean }
+  /** Prepare the automatic email-OTP read for the request_input of `key`:
+   *  verify the connected mailbox and snapshot the recent-message baseline.
+   *  MUST run immediately BEFORE the portal click that sends the OTP (never
+   *  after), so a code that arrived earlier is never mistaken for this run's.
+   *  Only the runtimes that own a mail reader install the hook; anywhere else
+   *  the step fails loudly instead of silently falling back to manual entry. */
+  | { do: 'prepare_email_otp'; key: string }
   /** Save the current page's HTML next to the screenshots (private bucket) —
    *  for writing a recipe against a portal whose pages need a sign-in to see. */
   | { do: 'save_html'; label?: string }
@@ -436,7 +443,7 @@ export function renderTemplate(input: string, scope: TemplateScope): string {
 
 const KNOWN_STEPS = new Set([
   'goto', 'fill', 'type', 'fill_otp', 'click', 'select', 'check', 'press', 'wait', 'wait_for', 'wait_for_url',
-  'request_input', 'screenshot', 'save_html', 'assert', 'if_visible', 'phase', 'fail', 'set', 'collect_rows', 'save_items',
+  'request_input', 'prepare_email_otp', 'screenshot', 'save_html', 'assert', 'if_visible', 'phase', 'fail', 'set', 'collect_rows', 'save_items',
   'save_inertia',
   'wait_captcha', 'auth_state', 'save_json',
 ]);
@@ -482,6 +489,9 @@ export function parseRecipe(raw: unknown): RecipeStep[] {
       if (step.do === 'request_input' && !step.key) {
         throw new RecipeError(`خطوة request_input بلا key (الخطوة ${at})`, `request_input at ${at} needs a "key"`);
       }
+      if (step.do === 'prepare_email_otp' && (typeof step.key !== 'string' || step.key.trim() === '')) {
+        throw new RecipeError(`خطوة prepare_email_otp بلا key (الخطوة ${at})`, `prepare_email_otp at ${at} needs a non-empty string "key"`);
+      }
       if (step.do === 'save_json' && (!step.key || !step.selector || !step.attr)) {
         throw new RecipeError(`خطوة save_json ناقصة (الخطوة ${at})`, `save_json at ${at} needs key, selector and attr`);
       }
@@ -509,6 +519,14 @@ export interface RecipeRuntime {
   screenshot: (label: string, full?: boolean) => Promise<void>;
   /** Pause: ask the rep a question (an OTP) and wait for the answer. */
   requestInput: (step: Extract<RecipeStep, { do: 'request_input' }>) => Promise<string>;
+  /** Prepare the automatic email-OTP read for the upcoming request_input of
+   *  `key` (verify the mailbox + snapshot the recent-message baseline). Only
+   *  runtimes with a configured mail reader install it — the job runner also
+   *  installs an explicit NO-OP when mail is deliberately disabled, so a
+   *  recipe step here never fails a portal whose relay is manual. Absent ⇒
+   *  the step fails loudly (a missing hook means misconfigured runtime, and
+   *  proceeding would click the portal's "send OTP" with nobody reading). */
+  prepareEmailOtp?: (key: string) => Promise<void>;
   /** Throws RecipeCancelledError if the rep cancelled meanwhile. */
   checkCancelled: () => Promise<void>;
   /** Keep long automated CAPTCHA waits and inventory fetches alive. */
@@ -671,6 +689,20 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
       rt.log(`request_input ${step.key}`);
       const answer = await rt.requestInput(step);
       scope.input[step.key] = answer;
+      return;
+    }
+    case 'prepare_email_otp': {
+      // Log the step and key ONLY — the hook's own logging (mailbox, codes,
+      // message ids) is the mail reader's responsibility and must stay opaque.
+      rt.log(`prepare_email_otp ${step.key}`);
+      if (!rt.prepareEmailOtp) {
+        throw new RecipeError(
+          'قراءة رمز البريد الإلكتروني غير مهيأة لهذا التشغيل',
+          'prepare_email_otp is not available in this runtime',
+          index,
+        );
+      }
+      await rt.prepareEmailOtp(step.key);
       return;
     }
     case 'wait_captcha': {

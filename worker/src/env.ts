@@ -137,6 +137,15 @@ export interface WorkerEnv {
    *  embed_text / embed_image role. Unset → the cv lanes self-disable (logged
    *  once at boot) and embedding calls fail with `provider:gemini`. */
   GEMINI_API_KEY: string | null;
+  /** Binghatti Gmail OTP reader (gmail.readonly OAuth, refresh-token flow).
+   *  ALL THREE UNSET → the portal registration lane keeps the current
+   *  manual/WhatsApp OTP relay and never touches Gmail. A PARTIAL set is a
+   *  misconfiguration: it is validated (loudly, with sanitized errors) by the
+   *  mail reader at runtime — loadEnv stays permissive so the worker boots for
+   *  every other queue. Never log these values. */
+  BINGHATTI_GMAIL_CLIENT_ID?: string | null;
+  BINGHATTI_GMAIL_CLIENT_SECRET?: string | null;
+  BINGHATTI_GMAIL_REFRESH_TOKEN?: string | null;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -184,5 +193,8 @@ export function loadEnv(): WorkerEnv {
     MODAL_CV_TOKEN: process.env.MODAL_CV_TOKEN ?? null,
     CV_LANES_ENABLED: process.env.CV_LANES_ENABLED !== '0',
     GEMINI_API_KEY: process.env.GEMINI_API_KEY?.trim() || null,
+    BINGHATTI_GMAIL_CLIENT_ID: process.env.BINGHATTI_GMAIL_CLIENT_ID ?? null,
+    BINGHATTI_GMAIL_CLIENT_SECRET: process.env.BINGHATTI_GMAIL_CLIENT_SECRET ?? null,
+    BINGHATTI_GMAIL_REFRESH_TOKEN: process.env.BINGHATTI_GMAIL_REFRESH_TOKEN ?? null,
   };
 }

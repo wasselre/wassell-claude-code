@@ -160,6 +160,34 @@ exist in the Vercel project** (the existing API uses the anon key
 `service_role` (it's labeled "secret"). NEVER expose this in the
 browser — it bypasses RLS.
 
+### Optional Binghatti Gmail OTP (2026-10-05)
+
+The Internal Workspace app and dedicated Web client are created in project
+`instant-medium-503214-f9`; Gmail API, the sole `gmail.readonly` grant, mailbox
+profile, offline refresh and filtered Binghatti message API read are verified.
+`BINGHATTI_GMAIL_CLIENT_ID`, `BINGHATTI_GMAIL_CLIENT_SECRET` and
+`BINGHATTI_GMAIL_REFRESH_TOKEN` are configured in Fly; the normal worker release
+activates staged values. Private
+`credentials.json` remains outside Git. Never copy mailbox addresses, credentials
+or tokens into this repository or reuse the connected Gmail connector's tokens.
+
+The included reader is optional and restricted to the fixed Binghatti portal
+with `otp_channel=email`; absent secrets preserve the existing flow and partial
+configuration fails. `prepare_email_otp` verifies scope/profile and records a
+complete message-ID baseline immediately before GetOTP. Only a unique fresh,
+authenticated inline MIME code qualifies. A service-only atomic opaque-ID
+claim prevents replay and preserves already submitted manual input. Gmail
+gets 20 seconds before the existing WhatsApp request is queued once.
+
+Release order: apply additive claim migration14, deploy the reviewed new worker
+to activate staged secrets, then apply recipe migration15. Keep scheduling off.
+Current CAPTCHA is rejected with `recaptcha_confirmed_bot_score` (fresh AE also
+failed); Verified API returned HTTP 403 for Enterprise entitlement. Actual new
+OTP delivery channel/template and end-to-end login/capture remain unverified.
+`scripts/fixtures/binghatti-gmail-claim-check.sql` verified claim guards and
+replay retention in a rollback transaction, leaving no test records.
+See [setup and operating status](../docs/binghatti-gmail-oauth.md).
+
 ### 5. Deploy
 
 ```powershell

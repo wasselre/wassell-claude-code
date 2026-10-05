@@ -23,6 +23,18 @@
  *   of failed, and the next WhatsApp from that phone restarts it with a fresh
  *   code. See supabase/migrations/2026-09-24_01_portal_otp_whatsapp_relay.sql.
  *
+ * Automatic email OTP (Binghatti Gmail): when the portal's code lands in a
+ *   fixed Gmail mailbox instead of on a phone, the recipe runs
+ *   `prepare_email_otp` BEFORE the click that sends the code (mailbox profile
+ *   check + recent-message baseline — baselining after the send could pick up
+ *   an older mail). The input wait then polls the mailbox ~every 5 s alongside
+ *   the manual row; a found code is accepted only via the atomic
+ *   portal_email_otp_claim RPC (job + key + mailbox fingerprint + message id +
+ *   request nonce — no code argument), so SQL stays the final arbiter and a
+ *   code is never taken twice or for another step's request. The WhatsApp
+ *   relay ask is delayed ~20 s to give the mailbox first chance. The reader
+ *   lives in portals/gmailOtp.ts; the shared wait loop in portals/inputWait.ts.
+ *
  * Evidence trail: a JPEG screenshot per `screenshot` step plus one on success
  * and one on failure, uploaded to the PRIVATE `portal-registrations` bucket
  * under <job id>/…; the API signs them for the modal. The Browserbase live-view
@@ -31,7 +43,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { chromium, type Browser } from 'playwright-core';
+import { chromium, type Browser, type Page } from 'playwright-core';
 import type { WorkerEnv } from './env.js';
 import { browserbaseSessionOptions, ensurePortalContext } from './portals/browserbase.js';
 import { assertSnapshotIsNewer } from './portals/jsonInventory.js';
@@ -45,6 +57,15 @@ import {
   type RecipeRuntime,
   type RecipeStep,
 } from './portals/recipe.js';
+import { createBinghattiGmailOtp, assertBinghattiOtpDestination } from './portals/gmailOtp.js';
+import { waitForPortalInput, PortalInputTimeoutError } from './portals/inputWait.js';
+
+/** The Binghatti Gmail OTP reader's own API, inferred from its factory so this
+ *  file tracks the reader (portals/gmailOtp.ts) without duplicating its types. */
+type GmailOtpReader = NonNullable<ReturnType<typeof createBinghattiGmailOtp>>;
+/** Prepared read window ({ key, nonce, requestedAt, mailboxFingerprint,
+ *  baselineIds }) — the baseline is taken BEFORE the portal sends the code. */
+type PreparedEmailOtp = Awaited<ReturnType<GmailOtpReader['prepare']>>;
 
 /** Shape of a claimed portal_registration_jobs row (the columns we use). */
 export interface PortalRegistrationJob {
@@ -75,8 +96,6 @@ interface RunArgs {
 }
 
 const BUCKET = 'portal-registrations';
-const INPUT_POLL_MS = 1_500;
-const HEARTBEAT_EVERY_POLLS = 4; // ≈ every 6 s while waiting
 const DEFAULT_INPUT_TIMEOUT_S = 300;
 /** The code wait ran out on a WhatsApp-relay run → park it, don't fail it. */
 class OtpRelayTimeoutError extends RecipeInterrupt {
@@ -248,6 +267,31 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
     if (!row || row.status === 'cancelled' || row.status === 'failed') throw new RecipeCancelledError();
   };
 
+  // Automatic email OTP reader (Binghatti Gmail): null unless this is the fixed
+  // Binghatti portal on the email channel with its OAuth secrets present — in
+  // every other case the manual / WhatsApp-relay flow runs unchanged. Created
+  // BEFORE the paid browser opens so a misconfiguration (e.g. a partial secret
+  // set) fails loudly here; the reader itself makes no Gmail calls until the
+  // recipe's prepare_email_otp step invokes prepareEmailOtp below.
+  let emailOtpPage: Page | null = null;
+  let gmailWaitEnded = false;
+  let protectEmailOtpInput = false;
+  const assertEmailDestination = () => assertBinghattiOtpDestination(emailOtpPage?.url() ?? '');
+  const gmailOtp = createBinghattiGmailOtp(env, job.portalRecordId, portalScope.otp_channel, portalScope.login_id, {
+    checkCancelled: async () => {
+      if (handingBack || gmailWaitEnded) throw new RecipeCancelledError();
+      assertEmailDestination();
+      await assertLive();
+    },
+    heartbeat: async () => {
+      if (!await rpc('portal_registration_job_heartbeat', { p_job_id: job.id })) throw new RecipeCancelledError();
+    },
+  });
+  if (gmailOtp) assertBinghattiOtpDestination(portalScope.login_url);
+  /** The single prepared email-OTP window (baseline BEFORE SendOTP). One at a
+   *  time, single-use — see prepareEmailOtp / requestInput below. */
+  let preparedEmailOtp: PreparedEmailOtp | null = null;
+
   await progress('starting', 'جارٍ فتح المتصفح…', 'Opening the browser…');
 
   // ── Browser ──────────────────────────────────────────────────────────────
@@ -278,6 +322,7 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
   try {
     const ctx = browser.contexts()[0]!;
     const page = ctx.pages()[0] ?? (await ctx.newPage());
+    emailOtpPage = page;
 
     const screenshot = async (label: string, full = false): Promise<void> => {
       try {
@@ -298,43 +343,95 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
 
     const requestInput = async (step: Extract<RecipeStep, { do: 'request_input' }>): Promise<string> => {
       await screenshot(`before-${step.key}`);
+      // The mail reader serves OTP requests ONLY, and only when the recipe ran
+      // prepare_email_otp for THIS key before clicking SendOTP — baselining now
+      // (after the code was sent) could pick up an older mail, so a configured
+      // reader without its prepared window fails loudly instead.
+      let emailWindow: PreparedEmailOtp | null = null;
+      if (gmailOtp && (step.kind ?? 'otp') === 'otp') {
+        assertEmailDestination();
+        if (!preparedEmailOtp || preparedEmailOtp.key !== step.key) {
+          throw new RecipeError(
+            'قراءة رمز البريد الإلكتروني غير مهيأة لهذه الخطوة — أضف خطوة prepare_email_otp قبل زر إرسال الرمز',
+            `Email OTP reader is configured but has no prepared window for "${step.key}" — add a prepare_email_otp step before the click that sends the code`,
+          );
+        }
+        emailWindow = preparedEmailOtp;
+        // A baseline is single-use: the next SendOTP needs its own prepare step.
+        preparedEmailOtp = null;
+      }
       const ok = await rpc('portal_registration_job_request_input', {
         p_job_id: job.id,
         p_request: {
           key: step.key, kind: step.kind ?? 'otp', prompt_ar: step.prompt_ar, prompt_en: step.prompt_en,
           length: step.length ?? null, otp_channel: portalScope.otp_channel || null,
+          // The claim RPC matches on this nonce, so it goes on the request ONLY
+          // while an email window is active.
+          ...(emailWindow ? { email_otp_nonce: emailWindow.nonce } : {}),
         },
       });
       if (!ok) throw new RecipeCancelledError();
       log(`awaiting input "${step.key}"`);
-      const waitMin = Math.round((step.timeout_s ?? DEFAULT_INPUT_TIMEOUT_S) / 60);
-      await relayNotify(
-        `🔐 وصلك الآن رمز تحقق من «${portalScope.name}» ${purposeAr}.
-` +
-        `أرسل لي الرمز هنا${step.length ? ` (${step.length} أرقام)` : ''} خلال ${waitMin} دقائق.`,
-      );
-      const deadline = Date.now() + (step.timeout_s ?? DEFAULT_INPUT_TIMEOUT_S) * 1000;
-      let polls = 0;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, INPUT_POLL_MS));
-        if (handingBack) throw new RecipeCancelledError();
-        const row = await readRow();
-        if (!row || row.status === 'cancelled' || row.status === 'failed') throw new RecipeCancelledError();
-        if (row.status === 'awaiting_input' && row.input_value != null && row.input_value !== '') {
-          const value = row.input_value.trim();
-          await rpc('portal_registration_job_resume', { p_job_id: job.id });
-          log(`input "${step.key}" received`);
-          return value;
+      const timeoutS = step.timeout_s ?? DEFAULT_INPUT_TIMEOUT_S;
+      const waitMin = Math.round(timeoutS / 60);
+      const ew = emailWindow;
+      let value: string;
+      try {
+        value = await waitForPortalInput({
+          key: step.key,
+          timeoutMs: timeoutS * 1000,
+          readRow,
+          resumeManual: () => rpc('portal_registration_job_resume', { p_job_id: job.id }),
+          checkCancelled: async () => {
+            if (handingBack) throw new RecipeCancelledError();
+            if (ew) assertEmailDestination();
+            await assertLive();
+          },
+          heartbeat: async () => {
+            if (!await rpc('portal_registration_job_heartbeat', { p_job_id: job.id })) throw new RecipeCancelledError();
+          },
+          notifyRelay: () => relayNotify(
+            `🔐 وصلك الآن رمز تحقق من «${portalScope.name}» ${purposeAr}.\n` +
+            `أرسل لي الرمز هنا${step.length ? ` (${step.length} أرقام)` : ''} خلال ${waitMin} دقائق.`,
+          ),
+          email: ew && gmailOtp ? {
+            nonce: ew.nonce,
+            findCandidate: (_remainingMs, signal) => {
+              return gmailOtp.findCandidate(ew, step.length ?? 6, timeoutS * 1000, signal);
+            },
+            // NO code argument: SQL claims the opaque mailbox/message pair and
+            // resumes ONLY this same awaiting key + nonce.
+            claimCandidate: async (messageId) => {
+              assertEmailDestination();
+              await assertLive();
+              const claimed = await rpc('portal_email_otp_claim', {
+                p_job_id: job.id, p_key: step.key, p_mailbox_fingerprint: ew.mailboxFingerprint,
+                p_message_id: messageId, p_request_nonce: ew.nonce,
+              });
+              if (claimed) protectEmailOtpInput = true;
+              return claimed;
+            },
+            discardCandidate: (messageId) => {
+              ew.baselineIds.push(messageId);
+            },
+          } : undefined,
+        });
+      } catch (err) {
+        if (err instanceof PortalInputTimeoutError) {
+          if (relay) throw new OtpRelayTimeoutError();
+          throw new RecipeError(
+            'انتهت مهلة انتظار الرمز — لم يُدخل خلال الوقت المحدد.',
+            'Timed out waiting for the code — it was not entered in time.',
+          );
         }
-        if (++polls % HEARTBEAT_EVERY_POLLS === 0) {
-          await rpc('portal_registration_job_heartbeat', { p_job_id: job.id });
-        }
+        throw err;
+      } finally {
+        if (ew) gmailWaitEnded = true;
       }
-      if (relay) throw new OtpRelayTimeoutError();
-      throw new RecipeError(
-        'انتهت مهلة انتظار الرمز — لم يُدخل خلال الوقت المحدد.',
-        'Timed out waiting for the code — it was not entered in time.',
-      );
+      if (protectEmailOtpInput) assertEmailDestination();
+      // Deliberately generic: never log which channel answered or the code itself.
+      log(`input "${step.key}" received`);
+      return value;
     };
 
     const rt: RecipeRuntime = {
@@ -355,7 +452,23 @@ export async function runPortalRegistrationJob({ supabase, env, job, isShuttingD
       },
       screenshot,
       requestInput,
-      checkCancelled: assertLive,
+      // prepare_email_otp: verify the mailbox + snapshot the recent-message
+      // baseline BEFORE the recipe clicks SendOTP. A new prepare ALWAYS clears
+      // the previous window first, so a stale baseline can never validate a
+      // later send. No reader (not Binghatti / no secrets) is a deliberate
+      // no-op — the code then arrives manually or via the WhatsApp relay.
+      // No mailbox/token/code logging here; the reader keeps its own opaque.
+      prepareEmailOtp: async (key) => {
+        preparedEmailOtp = null;
+        if (!gmailOtp) return;
+        assertEmailDestination();
+        gmailWaitEnded = false;
+        preparedEmailOtp = await gmailOtp.prepare(key);
+      },
+      checkCancelled: async () => {
+        await assertLive();
+        if (protectEmailOtpInput) assertEmailDestination();
+      },
       heartbeat: async () => {
         if (!await rpc('portal_registration_job_heartbeat', { p_job_id: job.id })) throw new RecipeCancelledError();
       },

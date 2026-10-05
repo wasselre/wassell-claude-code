@@ -1,8 +1,8 @@
 # Binghatti Gmail OAuth setup
 
-Updated 2026-10-05. This is the setup plan for unattended OTP reading by the Fly
-worker. Gmail integration and an OTP parser are not implemented; configuring
-OAuth alone does not enable them or activate the inventory schedule.
+Updated 2026-10-05. Gmail authorization is verified. The reader and its worker
+integration are implemented. Fresh OTP delivery remains unverified. The inventory
+schedule remains off.
 
 ## Current evidence
 
@@ -10,24 +10,25 @@ OAuth alone does not enable them or activate the inventory schedule.
   organization. The Console is signed in with a Workspace account from that
   organization. Use the privately saved portal Workspace Login ID / OTP mailbox;
   keep its actual address out of this public repository.
-- Google Auth Platform is unconfigured and has no OAuth clients. The Internal
-  branding form is prepared, awaiting acceptance of Google's API User Data
-  Policy. No credentials or Gmail access have been granted.
+- The Internal Workspace app and dedicated Web application client are created;
+  Gmail API is enabled. The sole `gmail.readonly` grant, expected mailbox profile,
+  offline refresh and filtered Binghatti message API read have been verified.
+- Private `credentials.json` is outside Git. All three `BINGHATTI_GMAIL_*`
+  credentials are configured in Fly; the normal release activates staged values.
 - Binghatti rejected the current automated login token with
   `recaptcha_confirmed_bot_score`; a fresh AE proxy attempt had the same result.
   Browserbase Verified session creation returned HTTP 403 for Enterprise
   entitlement. Gmail access will not resolve that CAPTCHA rejection.
-- Actual OTP delivery channel, receiving mailbox, sender, subject, code format
-  and expiry are unconfirmed. A fresh successful OTP delivery must establish
-  these facts before a parser is written.
+- Actual new OTP delivery channel, sender, subject, code format and expiry are
+  unconfirmed. No unattended login or complete inventory capture is proven.
 
 ## 1. Confirm Internal eligibility and scope
 
 Internal requires an organization-owned project and users in that same Google
 Workspace or Cloud Identity organization. The verified `wassel.re` project and
-account meet the organizational prerequisite; separately confirm the intended
-OTP mailbox has Gmail enabled and belongs to that organization. A personal
-`@gmail.com` account cannot authorize this Internal app. Workspace administrator
+account meet the organizational prerequisite, and the mailbox profile has been
+verified. A personal `@gmail.com` account cannot authorize this Internal app.
+Workspace administrator
 approval may still be required. [Google's Internal-use requirements](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification#internal-use-only)
 
 Request only `https://www.googleapis.com/auth/gmail.readonly`. This is a
@@ -40,11 +41,13 @@ bodies; `gmail.modify`, `gmail.send` and `https://mail.google.com/` are unnecess
 Use a dedicated OAuth client for this worker. Do not extract or reuse tokens
 from the connected Gmail connector; its authorization is separate.
 
-## 2. Configure the existing Google Cloud project
+## 2. Setup completed in the existing Google Cloud project
+
+The following setup is already complete; retain these steps for reconfiguration.
 
 1. Select `instant-medium-503214-f9` in the Cloud Console and enable **Gmail API**
    under **APIs & Services → Library**. [Enable Gmail API](https://developers.google.com/workspace/gmail/api/quickstart/nodejs#enable_the_api)
-2. Open **Google Auth Platform → Branding**. Complete the prepared form with a
+2. Open **Google Auth Platform → Branding**. Complete the form with a
    clear app name (for example, `Wassel Binghatti OTP Worker`), support email and
    developer contact. Review and accept the API User Data Policy to finish setup.
 3. In **Audience**, confirm **Internal**. In **Data Access**, record only
@@ -53,19 +56,20 @@ from the connected Gmail connector; its authorization is separate.
    still specify the exact scope. [Consent configuration](https://developers.google.com/workspace/guides/configure-oauth-consent)
 4. Under **Clients → Create Client**, choose **Web application**. Use a dedicated
    name and register a development callback such as
-   `http://localhost:8080/oauth2callback`. Keep the downloaded client credentials
-   in private local storage outside the repository. [Create a web client](https://developers.google.com/workspace/guides/create-credentials#web-application)
+   `http://localhost:8766/oauth2callback` used by the private bootstrap. Keep the
+   downloaded client credentials in private local storage outside the repository.
+   [Create a web client](https://developers.google.com/workspace/guides/create-credentials#web-application)
 
 If the intended mailbox is outside the organization, reassess the audience and
 verification route before authorization. External **Testing** refresh tokens
 with Gmail scopes expire after seven days and do not support durable unattended
 operation. [Google token expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration)
 
-## 3. Authorize the mailbox once, with offline access
+## 3. Offline authorization and future reauthorization
 
-After the required policy agreement is accepted, use a private local OAuth
-bootstrap with the registered callback to obtain the Gmail grant. Have the
-intended mailbox owner sign in and consent. Its
+The initial grant is verified. If reauthorization is needed, use the private
+local bootstrap with the registered callback. Have the intended mailbox owner
+sign in and consent. Its
 request to `https://accounts.google.com/o/oauth2/v2/auth` must include:
 
 | Parameter | Value |
@@ -92,7 +96,8 @@ mailbox matches the OTP recipient. [Profile endpoint](https://developers.google.
 
 ## 4. Store credentials in Fly secrets
 
-Proposed names, to be matched by the future worker integration:
+These three credentials are configured in Fly for `wassel-deck-worker`; the
+worker loads them as optional environment variables:
 
 ```text
 BINGHATTI_GMAIL_CLIENT_ID
@@ -106,17 +111,48 @@ into command arguments, chat, logs, source, recipes, database rows or committed
 files. `--stage` defers deployment; `fly secrets list --app wassel-deck-worker`
 checks names without exposing values. [Fly import command](https://docs.fly.io/flyctl/cmd/fly_secrets_import)
 
-A coordinated worker release must activate the staged secrets. Changing active
-Fly secrets restarts Machines; use the normal release process once the worker
-integration is ready. [Fly secret lifecycle](https://docs.fly.io/apps/secrets)
+The normal worker release activates staged values. Changing active Fly secrets
+restarts Machines; use the normal release process.
+[Fly secret lifecycle](https://docs.fly.io/apps/secrets)
 
-## 5. Evidence needed before unattended operation
+## 5. Implemented reader and release order
+
+Only portal `0f828ff1-c3b9-482c-8b1d-215bef4b4d43` with `otp_channel=email` uses
+this optional reader. All three secrets absent preserves the existing
+manual/WhatsApp flow; partial configuration must fail visibly.
+
+The `prepare_email_otp` step verifies the sole read-only scope and
+mailbox profile, then capture a complete bounded message-ID baseline immediately
+before `#sendOtpBtn`. Polling accepts only a unique expected-length code in
+bounded inline text/plain or inert text/html, with OTP context, a Binghatti sender
+whose first `Authentication-Results` header is from `mx.google.com` and proves
+aligned DMARC pass, and a matching recipient. Gmail `internalDate`, the baseline
+and the current request window reject old mail; defined future clock skew is
+limited to 5 seconds. Attachments and ambiguous messages do not supply a code.
+
+A service-only atomic claim stores opaque message IDs and a mailbox hash,
+not email addresses or OTPs. It checks the current job/request nonce and
+portal Login ID; an already submitted manual reply wins. Gmail gets
+20 seconds before the existing WhatsApp request is queued once. Manual replies,
+cancellation, heartbeats and timeout/parking behavior remain available.
+
+The verified rollback fixture `scripts/fixtures/binghatti-gmail-claim-check.sql`
+checks claim guards, manual precedence and replay rejection, including retention
+of the replay marker after queue-job deletion. It proves the atomic database
+path without claiming actual OTP delivery or login success.
+
+Release in this order: additive migration
+`2026-10-05_14_binghatti_email_otp_claim.sql`, reviewed worker deployment activating
+the staged secrets, then `2026-10-05_15_binghatti_email_otp_recipe.sql` adding the
+prepare step. Do not install that recipe on an older worker.
+
+## 6. Evidence needed before unattended operation
 
 Obtain a fresh OTP email after Binghatti accepts an automated CAPTCHA/login
 request. Establish the recipient, exact sender and message format from that
-delivery before implementing bounded polling and extraction. The worker must
-correlate mail with the current login attempt, reject stale or ambiguous codes,
-and avoid logging email bodies or OTPs.
+delivery before treating the provisional reader as verified. Email bodies,
+OTPs and credentials must not appear in logs or committed fixtures. Gmail
+authorization cannot establish CAPTCHA acceptance or OTP delivery.
 
 The refresh token supports future access-token renewal, but can be revoked or
 invalidated by password changes, inactivity or administrator policy. Surface

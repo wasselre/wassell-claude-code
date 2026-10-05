@@ -95,6 +95,7 @@ an unescaped dot is parsed as a class and the step fails with a bare
 | `wait_for` | target, `state?`, `timeout_ms?` | Wait until visible (or `hidden` / `attached`). |
 | `wait_for_url` | `pattern` (glob, or `re:` regex) | Wait for navigation. |
 | `request_input` | `key`, `prompt_ar`, `prompt_en`, `kind?` (`otp`/`text`), `length?`, `timeout_s?` | **Pause and ask the rep.** The modal shows the prompt + an input; the answer lands in `{{input.<key>}}`. Default wait 300 s. |
+| `prepare_email_otp` | `key` | Prepare the optional Binghatti Gmail reader immediately before the portal sends its OTP; verify scope/profile and capture the complete recent message-ID baseline. Uses the runtime's `prepareEmailOtp` hook. |
 | `wait_captcha` | `timeout_s?`, `token_selector?`, `success_selector?`, `success_url?` | Wait for Browserbase automatic solving. A configured success selector/URL must advance; standalone waits require a response token. Default 180 s, maximum 300 s. |
 | `auth_state` | `reused` (`true`/`false`) | Record a verified reused login or a new sign-in for an opt-in persistent portal. Put this after an authenticated-page assertion. |
 | `save_json` | `key`, `selector`, `attr`, pagination fields below | Capture a complete authenticated JSON list, with strict counts and unique IDs, into the private inventory bucket. |
@@ -248,11 +249,12 @@ out with a screenshot and a failed job; no CAPTCHA tap is requested.
 For invisible reCAPTCHA v3, first click the portal's button that executes the
 challenge, then wait for the portal's next step. Binghatti's current sign-in
 uses the visible OTP input after “send code”, and the inventory attribute after
-“login”, as proof. Its OTP still uses the existing WhatsApp relay. The saved
+“login”, as proof. Its included Gmail reader retains the existing WhatsApp relay
+as fallback. The saved
 Workspace login ID is email-validated, but on 2026-10-05 the automatic `SendOTP`
 request was rejected with `recaptcha_confirmed_bot_score`; no OTP dispatch or
 actual delivery channel has been confirmed. See the
-[Gmail OAuth setup guide](binghatti-gmail-oauth.md) for the planned email reader.
+[Gmail OAuth setup guide](binghatti-gmail-oauth.md) for the email reader.
 
 ```json
 [
@@ -276,6 +278,38 @@ or cookie expiry naturally returns to the sign-in branch.
 Browserbase's official references: [CAPTCHA solving](https://docs.browserbase.com/platform/identity/captcha-solving),
 [persistent contexts](https://docs.browserbase.com/platform/browser/core-features/contexts),
 [create a context](https://docs.browserbase.com/reference/api/create-a-context).
+
+### Binghatti email OTP (2026-10-05)
+
+The Internal Workspace app/Web client, Gmail API, sole `gmail.readonly` grant,
+profile, offline refresh and filtered message API read are verified. Three
+`BINGHATTI_GMAIL_*` credentials are configured in Fly; the normal worker release
+activates staged values.
+
+The flow applies only to portal
+`0f828ff1-c3b9-482c-8b1d-215bef4b4d43` with `otp_channel=email`. Its recipe places
+`{ "do": "prepare_email_otp", "key": "otp" }` immediately before
+`click #sendOtpBtn`. Preparation verifies the exact read-only grant and
+mailbox against `portal.login_id`, captures a complete bounded baseline, and
+retains the request time/nonce in worker memory. Missing all three secrets
+preserves manual input and the existing relay; partial configuration fails.
+
+The reader requires a unique fresh code in bounded inline plain/HTML
+MIME, authenticated Binghatti sender, matching recipient and explicit OTP context.
+It rejects baseline/stale/reused/ambiguous mail and avoids attachment fetches.
+The atomic service-only claim stores opaque IDs and a mailbox hash, never
+the code; a manual reply already on the row wins. Gmail gets 20 seconds
+before the existing WhatsApp request is queued once. Manual replies, cancellation,
+heartbeats and parking remain supported.
+
+Apply additive claim migration14, deploy the new worker activating staged
+secrets, then apply recipe migration15. CAPTCHA still fails with
+`recaptcha_confirmed_bot_score` (fresh AE also failed); Verified returned HTTP
+403 for Enterprise entitlement. Actual new OTP channel/template and end-to-end
+login remain unverified; daily capture and weekly scheduling remain off.
+
+`scripts/fixtures/binghatti-gmail-claim-check.sql` verified the claim guards and
+replay retention inside a rollback transaction, leaving no test records.
 
 ### `save_json` (added 2026-10-05)
 

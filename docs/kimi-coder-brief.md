@@ -109,7 +109,7 @@ End every run with:
 
 ## Defects this file exists to prevent
 
-Both were **context** failures, not coding failures — the planner under-specified
+These were **context** failures, not coding failures — the planner under-specified
 and the coder had no way to know:
 
 - **2026-09-16 — the five-machine stampede.** An hourly tick was added to the
@@ -121,6 +121,10 @@ and the coder had no way to know:
   reset, DNS, PostgREST 5xx); the loop does not catch, and its promise sits in
   the worker's `loops` array — one transient blip would have killed the worker
   on all five machines. → §2, §4.
+- **2026-10-05 — claim retention and default grants (caught in review).** A
+  replay marker must survive deletion of its queue job; use `ON DELETE SET NULL`
+  when keeping that foreign key. Supabase default table grants may already give
+  `service_role` all rights: revoke those before granting only the intended rights.
 
 When a defect gets through review, add a line here. This file is the memory the
 coder does not otherwise have.

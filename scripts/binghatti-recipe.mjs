@@ -17,6 +17,12 @@ const recipe = [
     { do: 'assert', selector: '#userId', timeout_ms: 30_000,
       error_ar: 'لم تظهر صفحة دخول بن غاطي', error_en: 'Binghatti login page did not load' },
     { do: 'fill', selector: '#userId', value: '{{portal.login_id}}' },
+    // Snapshot the Gmail baseline (verify mailbox + recent Binghatti message
+    // ids) AFTER the login id is on the page and IMMEDIATELY BEFORE the click
+    // that sends the OTP — a code that arrived earlier must never be
+    // auto-accepted as this run's. Needs the worker's mail-reader runtime
+    // (prepareEmailOtp hook); a no-op hook is installed when mail is disabled.
+    { do: 'prepare_email_otp', key: 'otp' },
     { do: 'click', selector: '#sendOtpBtn' },
     { do: 'if_visible', text: 'Please enter a valid email.', exact: true, timeout_ms: 1000, then: [
       { do: 'fail', ar: 'رفض بن غاطي معرّف الدخول المحفوظ قبل طلب الرمز',
@@ -41,9 +47,13 @@ const recipe = [
     page_param: 'pageNo', page_size_param: 'pageSize', page_size: 1000, id_key: 'id', max_pages: 50 },
 ];
 const json = JSON.stringify(recipe);
-writeFileSync(new URL('../supabase/migrations/2026-10-05_12_binghatti_capture_recipe.sql', import.meta.url), `
+writeFileSync(new URL('../supabase/migrations/2026-10-05_15_binghatti_email_otp_recipe.sql', import.meta.url), `
+-- DEPLOY-FIRST: apply ONLY AFTER the worker carrying the prepare_email_otp
+-- step + Gmail OTP lane is deployed. An older worker rejects the unknown step
+-- and Binghatti inventory captures/status checks would fail before signing in.
 -- Configure the operator-created portal; no credentials are stored here.
--- Daily/weekly scheduling waits for a successful first inventory validation.
+-- Daily/weekly scheduling stays OFF pending the existing activation proofs
+-- (email OTP delivery is still unverified end-to-end).
 BEGIN;
 UPDATE public.records SET data = data || jsonb_build_object(
   'status_recipe', $recipe$${json}$recipe$::text,
@@ -55,4 +65,4 @@ WHERE id='0f828ff1-c3b9-482c-8b1d-215bef4b4d43'
   AND data->>'developer'='759fa833-e60e-4775-86ab-292005c8d517';
 COMMIT;
 `);
-console.log('Generated the Binghatti capture recipe (automatic CAPTCHA, operator OTP relay)');
+console.log('Generated the Binghatti capture recipe (prepare_email_otp before SendOTP; deploy worker first)');
