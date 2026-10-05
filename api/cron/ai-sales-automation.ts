@@ -38,7 +38,7 @@ import { autoApplyOutcomes } from '../_lib/outcomeAutoApply.js';
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { LEAD_PORTALS_MODEL_ID, type Rec } from '../_lib/leadPortals.js';
 import { registerOnInterest, isTransientPortalFailure, RETRY_AFTER_MS } from '../_lib/portalInterest.js';
-import { draftOfficerNotice } from '../_lib/officerNoticeDraft.js';
+import { draftOfficerNotice, refreshPendingNotice } from '../_lib/officerNoticeDraft.js';
 import { draftFollowupMessage } from '../_lib/salesAgent/followupDraft.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
@@ -255,6 +255,22 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       }
     }
     report.officer = officerOut;
+
+    // ── 3a. Waiting officer drafts follow the facts (a visit booked after the
+    // draft, new link activity). Only drafts nobody edited; unchanged = no write.
+    if (!dryRun) {
+      const { data: waiting, error: wErr } = await svc.from('ai_actions').select('id').eq('kind', 'officer_notice').eq('status', 'pending').limit(50);
+      if (wErr) fail('pending officer notices read', wErr);
+      let refreshed = 0;
+      for (const w of (waiting ?? []) as { id: string }[]) {
+        try {
+          if (await refreshPendingNotice(svc, w.id)) refreshed += 1;
+        } catch (err) {
+          fail(`officer notice refresh ${w.id}`, err);
+        }
+      }
+      report.officer_refreshed = refreshed;
+    }
 
     // ── 3b. Follow-up results the AI records itself (no rep confirm) ─────────
     // Before the drafts: a follow-up that just got its result must not also

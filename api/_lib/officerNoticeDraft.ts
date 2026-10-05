@@ -9,7 +9,8 @@
  *   السلام عليكم،
  *   عندنا عميل مهتم كثير بمشروع «X»، وهو مسجّل عندكم في البوابة.
  *   سبب الاهتمام: سأل عن الأسعار والمخططات.
- *   ما قام به العميل: فتح صفحة المشروع 3 مرات، تصفّح البروشور (5 صفحات)، حجز موعد زيارة.
+ *   ما قام به العميل: فتح صفحة المشروع 3 مرات، تصفّح البروشور (5 صفحات).
+ *   حجز العميل موعد زيارة لمشروع «X» يوم الاثنين 5 أكتوبر الساعة 7:00 مساءً.
  *   اهتمامه أقل بـ«Y».
  *   العميل: محمد — رقمه: 05…
  *   نتمنى تتواصلون معه، ويعطيك العافية.
@@ -171,6 +172,7 @@ export function noticeBody(a: {
     `عندنا عميل مهتم${asking ? '' : ' كثير'} بمشروع «${a.projectName}»${a.registered ? '، وهو مسجّل عندكم في البوابة' : ''}.`,
     ...(a.why.reason ? [`سبب الاهتمام: ${a.why.reason}.`] : []),
     ...(a.why.actions.length ? [`ما قام به العميل: ${a.why.actions.join('، ')}.`] : []),
+    ...(a.why.booking ? [bookingLine(a.why.booking, a.projectName)] : []),
     ...(a.lowNames.length ? [`اهتمامه أقل بـ«${a.lowNames.join('» و«')}».`] : []),
     ...a.questions.map((q) => `سؤال العميل: «${q}»`),
     `العميل: ${a.clientName || '—'}${a.clientPhone ? ` — رقمه: ${a.clientPhone}` : ''}`,
@@ -181,8 +183,84 @@ export function noticeBody(a: {
 export interface InterestWhy {
   /** A general reason («سأل عن الأسعار والمخططات») — never the customer's literal words. */
   reason: string | null;
-  /** What the client actually did («فتح صفحة المشروع 3 مرات»، «حجز موعد زيارة»). */
+  /** What the client actually did («فتح صفحة المشروع 3 مرات»، «تصفّح البروشور»). */
   actions: string[];
+  /** The visit booked (or made) for this project, with its date and time — its own line. */
+  booking?: Booking | null;
+}
+
+/** An appointment or visit for the project. `at` = Riyadh wall-clock «YYYY-MM-DDTHH:mm». */
+export interface Booking { at: string; done: boolean }
+
+const AR_DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+const AR_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+
+/**
+ * PURE — «حجز العميل موعد زيارة لمشروع «X» يوم الاثنين 5 أكتوبر الساعة 7:00 مساءً.»
+ * (operator, 2026-10-05: when a visit is saved the officer must see, below the
+ * interest and what the client did, that the client booked a visit at this time
+ * for this project). The stored time is Riyadh wall-clock — no conversion.
+ */
+export function bookingLine(b: Booking, projectName: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(b.at);
+  if (!m) return b.done ? `زار العميل مشروع «${projectName}».` : `حجز العميل موعد زيارة لمشروع «${projectName}».`;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const day = `يوم ${AR_DAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()]} ${d} ${AR_MONTHS[mo - 1]}`;
+  let time = '';
+  if (m[4] !== undefined) {
+    const h = Number(m[4]);
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    const part = h < 12 ? 'صباحاً' : h === 12 ? 'ظهراً' : 'مساءً';
+    time = ` الساعة ${h12}:${m[5]} ${part}`;
+  }
+  return b.done
+    ? `زار العميل مشروع «${projectName}» ${day}${time}.`
+    : `حجز العميل موعد زيارة لمشروع «${projectName}» ${day}${time}.`;
+}
+
+/** Riyadh wall-clock now, «YYYY-MM-DDTHH:mm» (Saudi Arabia has no daylight saving). */
+const riyadhNow = (): string => new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 16);
+
+/**
+ * The visit to show for this client × project: the next upcoming booking
+ * (appointment not cancelled / no-show / completed, or a visit still ahead),
+ * else the most recent visit made. Appointments and visits point at the
+ * our_projects record, whose `project` is the master all_projects id.
+ */
+async function findBooking(svc: Svc, clientId: string, projectId: string): Promise<Booking | null> {
+  const { data: models, error: mErr } = await svc.from('models').select('id, name').in('name', ['our_projects', 'appointments', 'visits']);
+  if (mErr) throw new Error(`models read failed: ${mErr.message}`);
+  const idOf = (n: string) => ((models ?? []) as { id: string; name: string }[]).find((x) => x.name === n)?.id ?? null;
+  const ourModel = idOf('our_projects');
+  if (!ourModel) return null;
+  const { data: ours, error: oErr } = await svc.from('records').select('id').eq('model_id', ourModel).eq('data->>project', projectId);
+  if (oErr) throw new Error(`our project read failed: ${oErr.message}`);
+  const projectIds = new Set([projectId, ...((ours ?? []) as { id: string }[]).map((r) => r.id)]);
+  const read = async (model: string | null) => {
+    if (!model) return [] as Array<{ data: Record<string, unknown> | null }>;
+    const { data, error } = await svc.from('records').select('data').eq('model_id', model).eq('data->>client_id', clientId);
+    if (error) throw new Error(`booking read failed: ${error.message}`);
+    return ((data ?? []) as Array<{ data: Record<string, unknown> | null }>).filter((r) => projectIds.has(str(r.data?.project_id)));
+  };
+  const [appts, visits] = await Promise.all([read(idOf('appointments')), read(idOf('visits'))]);
+  const now = riyadhNow();
+  const upcoming: string[] = [];
+  const done: string[] = [];
+  for (const r of appts) {
+    const at = str(r.data?.appointment_date);
+    const st = str(r.data?.appointment_status);
+    if (!at || st === 'cancelled' || st === 'no_show') continue;
+    if (st === 'completed') done.push(at);
+    else if (at >= now) upcoming.push(at);
+  }
+  for (const r of visits) {
+    const at = str(r.data?.scheduled_datetime);
+    if (!at) continue;
+    (at >= now ? upcoming : done).push(at);
+  }
+  if (upcoming.length) return { at: upcoming.sort()[0]!, done: false };
+  if (done.length) return { at: done.sort().reverse()[0]!, done: true };
+  return null;
 }
 
 /** What the customer asked about, as general topics (fixed order). */
@@ -214,7 +292,7 @@ export function describeInterest(r: {
 }, l: {
   sessions: number; open_days: number; brochure_pages: number; brochure_seconds: number; videos_played: number;
   max_video_pct: number; photos_opened: number; units_opened: number; opened_map: boolean;
-} | null): InterestWhy {
+} | null, booking: Booking | null = null): InterestWhy {
   let reason: string | null = null;
   if (r.message_level && r.message_level !== 'rejected') {
     const q = fold(r.message_quote ?? '');
@@ -232,6 +310,7 @@ export function describeInterest(r: {
   if (l && l.photos_opened > 0) actions.push(l.photos_opened === 1 ? 'فتح صورة من صور المشروع' : `فتح ${l.photos_opened} صور`);
   if (l && l.units_opened > 0) actions.push(l.units_opened === 1 ? 'فتح تفاصيل وحدة' : `فتح تفاصيل ${l.units_opened} وحدات`);
   if (l?.opened_map) actions.push('فتح موقع المشروع على الخريطة');
+  if (booking) return { reason, actions, booking };
   if (r.visits > 0) actions.push('زار المشروع');
   else if (r.appointments > 0) actions.push('حجز موعد زيارة');
   return { reason, actions };
@@ -243,7 +322,7 @@ export function describeInterest(r: {
  * or booked appointment, and the topics they asked about.
  */
 async function interestWhy(svc: Svc, clientId: string, projectId: string, chatWid: string | null): Promise<InterestWhy> {
-  const [{ data, error }, { data: links, error: lErr }] = await Promise.all([
+  const [{ data, error }, { data: links, error: lErr }, booking] = await Promise.all([
     svc.from('v_client_project_interest')
       .select('appointments, visits, message_level, message_quote')
       .eq('client_id', clientId).eq('project_id', projectId).maybeSingle(),
@@ -251,6 +330,7 @@ async function interestWhy(svc: Svc, clientId: string, projectId: string, chatWi
       .select('sessions, open_days, brochure_pages, brochure_seconds, videos_played, max_video_pct, photos_opened, units_opened, opened_map')
       .eq('project_id', projectId)
       .or(chatWid ? `client_id.eq.${clientId},chat_wid.eq.${chatWid}` : `client_id.eq.${clientId}`),
+    findBooking(svc, clientId, projectId),
   ]);
   if (error) throw new Error(`interest read failed: ${error.message}`);
   if (lErr) throw new Error(`link activity read failed: ${lErr.message}`);
@@ -267,7 +347,7 @@ async function interestWhy(svc: Svc, clientId: string, projectId: string, chatWi
     photos_opened: Math.max(acc.photos_opened, num(x.photos_opened)), units_opened: Math.max(acc.units_opened, num(x.units_opened)),
     opened_map: acc.opened_map || x.opened_map === true,
   }), { sessions: 0, open_days: 0, brochure_pages: 0, brochure_seconds: 0, videos_played: 0, max_video_pct: 0, photos_opened: 0, units_opened: 0, opened_map: false }) : null;
-  return describeInterest({ ...r, appointments: num(r.appointments), visits: num(r.visits) }, l);
+  return describeInterest({ ...r, appointments: num(r.appointments), visits: num(r.visits) }, l, booking);
 }
 
 /**
