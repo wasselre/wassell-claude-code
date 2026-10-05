@@ -3,8 +3,9 @@ import { SlidersHorizontal, Loader2, Sparkles, Lock, Check, ChevronDown, Chevron
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import PreferenceProfileBar from '@/components/PreferenceProfileBar';
-import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
 import { readPrefsFromText } from '@/lib/clientPrefs/fromText';
+import { ADVANCED_PREF_SLUGS, BASIC_PREF_SLUGS, EDITABLE_PREF_SLUGS, GEO_PREF_SLUGS, RIYADH_LOCATION } from '@/lib/clientPrefs/prefSlugs';
+import { usePreferencesAutosave, type PrefSaveState } from '../hooks/usePreferencesAutosave';
 import type { ExtractionInput, FieldMeta } from '@/lib/salesProcess/qualificationDraft';
 import type { ModelField } from '@/types';
 
@@ -28,29 +29,18 @@ interface PreferenceSummaryProps {
    *  passes the qualification session's `applyRepText`. Absent ⇒ the free-text
    *  box writes the values straight into the panel's own buffer. */
   onApplyRepText?: (extraction: ExtractionInput) => void;
+  /** The page's own autosave state. When given, the PAGE saves the draft (one
+   *  saver per page — the inline panel and the floating pop-up edit the same
+   *  draft) and this panel only shows the state; absent ⇒ the panel saves. */
+  saveState?: PrefSaveState;
 }
 
-// ── The field layout (operator, 2026-10-05) ──────────────────────────────────
-// 1. Geographic preferences — the location field (city cascade + places).
-// 2. Basic preferences — unit type, bedrooms, budget, purchase goal.
-// 3. Advanced (collapsed) — everything else the matcher can use.
-// Unit age (preferred_max_unit_age) is HIDDEN: not shown, not part of the
-// autosave patch, so a stored value is left untouched. Slugs missing from the
-// live clients model are skipped.
-const GEO_SLUGS = ['location'] as const;
-const BASIC_SLUGS = ['preferred_unit_type', 'preferred_bedrooms', 'budget', 'purchase_objective'] as const;
-const ADVANCED_SLUGS = ['preferred_readiness', 'preferred_area', 'preferred_amenities', 'preference_notes'] as const;
-const PREF_SLUGS = [...GEO_SLUGS, ...BASIC_SLUGS, ...ADVANCED_SLUGS] as const;
-
-/** Riyadh — the default city when a client has none (operator, 2026-10-05).
- *  The same country / region / city record ids 124 clients already carry. */
-const RIYADH_LOCATION = {
-  country: ['d15a0003-0000-4000-8000-000000000001'],
-  region: ['9c0c7a82-738d-6456-2101-b7226cc84e20'],
-  city: ['44254a38-ce40-938f-17b7-55814a44e45c'],
-};
-
-const AUTOSAVE_MS = 900;
+// Field sections + Riyadh default live in @/lib/clientPrefs/prefSlugs (shared
+// with the page-level autosave and the floating preferences pop-up).
+const GEO_SLUGS = GEO_PREF_SLUGS;
+const BASIC_SLUGS = BASIC_PREF_SLUGS;
+const ADVANCED_SLUGS = ADVANCED_PREF_SLUGS;
+const PREF_SLUGS = EDITABLE_PREF_SLUGS;
 
 /** The provenance key for a field: places live in `location_items`, not `location`. */
 const metaKeyOf = (slug: string) => (slug === 'location' ? 'location_items' : slug);
@@ -90,8 +80,8 @@ function SectionTitle({ icon, children }: { icon: React.ReactNode; children: Rea
 }
 
 /** Inline-editable client preferences, saved automatically as the rep types. */
-export default function PreferenceSummary({ clientId, onEditFull, draft: draftProp, onFieldChange, meta, onApplyRepText }: PreferenceSummaryProps) {
-  const { models, records, language, saveRecord, addToast } = useAppStore();
+export default function PreferenceSummary({ clientId, onEditFull, draft: draftProp, onFieldChange, meta, onApplyRepText, saveState: saveStateProp }: PreferenceSummaryProps) {
+  const { models, records, language } = useAppStore();
   const isAr = language === 'ar';
   const L = (ar: string, en: string) => (isAr ? ar : en);
 
@@ -139,52 +129,10 @@ export default function PreferenceSummary({ clientId, onEditFull, draft: draftPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, clientRec]);
 
-  // ── Autosave: every change is saved a moment after the rep stops typing ────
-  // The version we write against only moves forward: our own saves bump it
-  // (nextVersion), and a newer version arriving over realtime is adopted.
-  const versionRef = useRef<number | null>(null);
-  useEffect(() => {
-    const v = clientRec?.version ?? null;
-    if (v !== null && (versionRef.current === null || v > versionRef.current)) versionRef.current = v;
-  }, [clientRec?.version]);
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const savingRef = useRef(false);
-  const [retryTick, setRetryTick] = useState(0);
-  const draftKey = JSON.stringify([...PREF_SLUGS, 'location_items', 'preference_constraints'].map((s) => draft[s] ?? null));
-  const dirty = clientRec ? preferencesDirty(clientRec.data, draft, PREF_SLUGS) : false;
-
-  useEffect(() => {
-    if (!clientRec || !dirty) return;
-    const t = setTimeout(async () => {
-      if (savingRef.current) { setRetryTick((n) => n + 1); return; } // one in flight — try again after it
-      savingRef.current = true;
-      setSaveState('saving');
-      // The freshest copy from the store (an echo may have landed since render).
-      const st = useAppStore.getState();
-      const cm = st.models.find((m) => m.name === 'clients');
-      const fresh = cm ? (st.records[cm.id] ?? []).find((r) => r.id === clientRec.id) ?? clientRec : clientRec;
-      const res = await saveClientPreferences({
-        client: fresh,
-        draft: draftRef.current,
-        slugs: PREF_SLUGS,
-        saveRecord,
-        expectedVersion: versionRef.current ?? fresh.version ?? null,
-        isAr,
-      });
-      savingRef.current = false;
-      if (res.ok) {
-        if (res.nextVersion != null) versionRef.current = res.nextVersion;
-        setSaveState('saved');
-      } else {
-        // A conflict is surfaced loudly and autosave pauses until the next edit
-        // (retrying a stale version would only conflict again).
-        setSaveState('error');
-        addToast(res.message, res.tone);
-      }
-    }, AUTOSAVE_MS);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey, dirty, retryTick]);
+  // ── Autosave: the page's saver when it has one, else our own ───────────────
+  const own = usePreferencesAutosave(clientId, draft, saveStateProp === undefined);
+  const saveState = saveStateProp ?? own.saveState;
+  const dirty = own.dirty;
 
   // ── Free text → fields ─────────────────────────────────────────────────────
   const [freeText, setFreeText] = useState('');

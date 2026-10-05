@@ -27,6 +27,8 @@ import QuickAppointmentModal from './components/QuickAppointmentModal';
 import ClientDetailModal from './components/ClientDetailModal';
 import OutcomePanel from './components/OutcomePanel';
 import SalesAssistantSidePanel from './components/SalesAssistantSidePanel';
+import ClientPrefsFab from './components/ClientPrefsFab';
+import { usePreferencesAutosave } from './hooks/usePreferencesAutosave';
 import StartChatModal from '@/pages/Chats/components/StartChatModal';
 import ChatThreadModal from '@/pages/Chats/components/ChatThreadModal';
 import { resolveClientSlugs, recordToPickedClient } from '@/pages/Chats/components/ClientPicker';
@@ -140,6 +142,9 @@ export default function FollowUpWorkspacePage() {
   const qual = useQualificationDraft({ clientId: ctx.clientId, followupId: record?.id ?? null });
   const prefDraft = qual.draft;
   const setPrefField = qual.setPrefField;
+  // ONE saver for the page: the inline panel (Qualify step) and the floating
+  // preferences pop-up (every step) edit this same draft.
+  const prefSave = usePreferencesAutosave(ctx.clientId, prefDraft);
 
   // Live count of OUR projects that fit the current (draft) preferences — reacts as
   // the rep qualifies. Deterministic (Project Finder mode:'count'); see the hook.
@@ -349,6 +354,7 @@ export default function FollowUpWorkspacePage() {
                 onFieldChange={setPrefField}
                 meta={qual.meta}
                 onApplyRepText={qual.applyRepText}
+                saveState={prefSave.saveState}
               />
             </div>
             {/* Left rail: the Suggested Projects launcher (full "Present" stage
@@ -425,6 +431,18 @@ export default function FollowUpWorkspacePage() {
       </div>
       </div>
       </div>
+
+      {/* Client preferences — a floating circle on every step of the task. */}
+      <ClientPrefsFab
+        isAr={isAr}
+        clientId={ctx.clientId}
+        draft={prefDraft}
+        meta={qual.meta}
+        onFieldChange={setPrefField}
+        onApplyRepText={qual.applyRepText}
+        saveState={prefSave.saveState}
+        onEditFull={() => setShowClientModal(true)}
+      />
 
       {showApptModal && (
         <QuickAppointmentModal

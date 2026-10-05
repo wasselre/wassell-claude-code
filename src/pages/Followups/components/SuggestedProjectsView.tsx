@@ -173,7 +173,17 @@ interface Props {
    *  rep's unsaved preferences across the switch. Omit for hosts with a single
    *  stable mount (the standalone page, the follow-up workspace). */
   sessionRef?: { current: FinderSession | null };
+  /** The client's preferences were edited OUTSIDE this finder (the floating
+   *  preferences pop-up, or a units-window filter applied to the client) — a new
+   *  `key` per change. `autoSearch` re-runs the search with them at once (the
+   *  pop-up just closed); otherwise a «search again» bar is offered, so results
+   *  never reload under an open units window. */
+  livePrefs?: { draft: Record<string, unknown>; key: number; autoSearch: boolean } | null;
 }
+
+/** The fields whose change makes the current results stale. */
+const LIVE_PREF_KEYS = ['location', 'location_items', 'preferred_unit_type', 'preferred_bedrooms', 'budget', 'purchase_objective', 'preferred_readiness', 'preferred_area', 'preferred_amenities', 'preference_constraints'];
+const livePrefsKey = (d: Record<string, unknown>) => JSON.stringify(LIVE_PREF_KEYS.map((k) => d[k] ?? null));
 
 const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
   budget: { ar: 'الميزانية', en: 'Budget' },
@@ -190,7 +200,7 @@ const PAGE = 24;
 
 export default function SuggestedProjectsView({
   isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, clientName,
-  defaultPrefsCollapsed, editPrefsFirst, onDone, onOpenSource, onToggleLayout, layoutDocked, sessionRef,
+  defaultPrefsCollapsed, editPrefsFirst, onDone, onOpenSource, onToggleLayout, layoutDocked, sessionRef, livePrefs,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
@@ -344,6 +354,27 @@ export default function SuggestedProjectsView({
   // The draft of the LAST ATTEMPTED search — retry after a timeout re-sends it
   // verbatim (searchedDraft only updates on success, so it can't serve here).
   const lastDraftRef = useRef<Record<string, unknown>>(restored?.lastDraft ?? prefDraft);
+  // The page's autosave may have saved the client since we loaded it — adopt a
+  // newer version so this surface's own Save doesn't self-conflict.
+  useEffect(() => {
+    const v = clientRec?.version ?? null;
+    if (clientRec && v !== null && prefVersionRef.current?.id === clientRec.id && (prefVersionRef.current.version ?? -1) < v) {
+      prefVersionRef.current = { id: clientRec.id, version: v };
+    }
+  }, [clientRec, clientRec?.version]);
+
+  // Preferences edited outside the finder (pop-up / units filter).
+  const [pendingLive, setPendingLive] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    if (!livePrefs) return;
+    if (livePrefsKey(livePrefs.draft) === livePrefsKey(searchedDraft)) { setPendingLive(null); return; }
+    setEditDraft({ ...livePrefs.draft });
+    if (livePrefs.autoSearch) { setPendingLive(null); runSearch({ ...livePrefs.draft }); }
+    else setPendingLive({ ...livePrefs.draft });
+    // runSearch / searchedDraft are read at the moment of the change on purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livePrefs?.key]);
+
   // Re-run the deterministic match for a preference draft and reset the view.
   function runSearch(d: Record<string, unknown>) {
     markActivity('finder: search request');
@@ -1131,6 +1162,20 @@ export default function SuggestedProjectsView({
                 <span>{L('تعذّر تحميل إعلانات السوق — أعد المحاولة.', 'Couldn’t load market listings — please retry.')}</span>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {pendingLive && (
+        <div className="border-b border-amber-200 bg-amber-50">
+          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-2 sm:px-6">
+            <span className="text-xs font-semibold text-amber-800">
+              {L('تحدّثت تفضيلات العميل — النتائج المعروضة مبنية على التفضيلات السابقة.', "The client's preferences changed — these results use the previous ones.")}
+            </span>
+            <button type="button" onClick={() => { const d = pendingLive; setPendingLive(null); runSearch(d); }}
+              className="inline-flex items-center gap-1 rounded-lg bg-copper px-3 py-1 text-xs font-bold text-white hover:bg-terracotta">
+              <Search size={12} /> {L('ابحث بالتفضيلات الجديدة', 'Search with the new preferences')}
+            </button>
           </div>
         </div>
       )}

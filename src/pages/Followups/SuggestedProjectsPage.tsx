@@ -1,10 +1,13 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { resolveFollowupContext } from './lib/followupContext';
 import { getFinderHandoff } from '@/lib/matching/finderHandoff';
 import SuggestedProjectsView from './components/SuggestedProjectsView';
+import ClientPrefsFab from './components/ClientPrefsFab';
+import { useQualificationDraft } from './hooks/useQualificationDraft';
+import { usePreferencesAutosave } from './hooks/usePreferencesAutosave';
 import type { AppRecord } from '@/types';
 
 /**
@@ -57,6 +60,22 @@ export default function SuggestedProjectsPage() {
   const prefDraft = handoff?.prefDraft ?? (clientRec?.data as Record<string, unknown> | undefined) ?? {};
   const followupDraft = handoff?.followupDraft ?? (followupRec?.data as Record<string, unknown> | undefined) ?? {};
 
+  // The client's preferences on this page too (operator, 2026-10-05): the same
+  // qualification session as the follow-up (it survives the navigation), saved
+  // by ONE page-level autosave, edited from the floating circle or applied from
+  // a units-window filter. Every change is handed to the finder (livePrefs):
+  // the pop-up closing re-runs the search; a units-filter change offers it.
+  const qual = useQualificationDraft({ clientId: ctx?.clientId ?? null, followupId: recordId ?? null });
+  const prefSave = usePreferencesAutosave(ctx?.clientId ?? null, qual.draft);
+  const [livePrefs, setLivePrefs] = useState<{ draft: Record<string, unknown>; key: number; autoSearch: boolean } | null>(null);
+  const seen = useRef<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    if (seen.current === null) { seen.current = qual.draft; return; } // first draft = what the finder opened with
+    if (seen.current === qual.draft) return;
+    seen.current = qual.draft;
+    setLivePrefs({ draft: qual.draft, key: Date.now(), autoSearch: false });
+  }, [qual.draft]);
+
   const onDone = () => {
     if (recordId) navigate(`/model/followups/${recordId}`);
     else navigate(-1);
@@ -74,6 +93,17 @@ export default function SuggestedProjectsPage() {
   }
 
   return (
+    <>
+    <ClientPrefsFab
+      isAr={isAr}
+      clientId={ctx?.clientId ?? null}
+      draft={qual.draft}
+      meta={qual.meta}
+      onFieldChange={qual.setPrefField}
+      onApplyRepText={qual.applyRepText}
+      saveState={prefSave.saveState}
+      onClosed={(changed, draft) => { if (changed) setLivePrefs({ draft, key: Date.now(), autoSearch: true }); }}
+    />
     <SuggestedProjectsView
       key={recordId}
       isAr={isAr}
@@ -85,6 +115,8 @@ export default function SuggestedProjectsPage() {
       projectName={projectName}
       clientName={clientName}
       onDone={onDone}
+      livePrefs={livePrefs}
     />
+    </>
   );
 }

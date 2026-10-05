@@ -15,6 +15,7 @@ import { downloadPdf, type ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import SendUnitsPdfModal from '@/pages/Chats/components/SendUnitsPdfModal';
 import UnitDrawer from './UnitDrawer';
 import UnitCompareModal from './UnitCompareModal';
+import UnitFilterPrefsPrompt from './UnitFilterPrefsPrompt';
 
 interface UnitsInventoryProps {
   projectId: string;
@@ -470,6 +471,22 @@ export default function UnitsInventory({ projectId, projectName, isAr, project, 
             />
           )}
         </div>
+      )}
+
+      {/* A client is in context: offer to carry a bedrooms / price / size /
+          unit-type filter into the client's preferences (never without a yes). */}
+      {clientId && (
+        <UnitFilterPrefsPrompt
+          isAr={isAr}
+          clientId={clientId}
+          filters={{
+            type: (() => {
+              const o = type ? (typeField?.options ?? []).find((x) => x.value === type) : undefined;
+              return o ? { value: o.value, label_ar: o.label_ar, label_en: o.label_en, color: o.color ?? null } : null;
+            })(),
+            bedMin, bedMax, priceMin, priceMax, areaMin, areaMax,
+          }}
+        />
       )}
 
       {/* Selection action bar */}
