@@ -13,6 +13,10 @@ describe('describeInterest — a general reason and the exact actions (operator,
     expect(w.reason).toBe('سأل عن الأسعار والمخططات والبروشور');
     expect(w.reason).not.toContain('«');
   });
+  it('floors, rooms and driver/maid rooms are topics too (live drafts, 2026-10-05)', () => {
+    expect(describeInterest({ message_level: 'asked', message_quote: 'الدور الاخير ٣ غرف نوم؟', appointments: 0, visits: 0 }, noLinks).reason).toBe('سأل عن الأدوار وعدد الغرف');
+    expect(describeInterest({ message_level: 'asked', message_quote: 'يتوفر غرف سائقين', appointments: 0, visits: 0 }, noLinks).reason).toBe('سأل عن غرف السائق والخادمة');
+  });
   it('a wish with no recognisable topic gets a general line', () => {
     expect(describeInterest({ message_level: 'wants', message_quote: 'عجبني مره', appointments: 0, visits: 0 }, noLinks).reason).toBe('أبدى رغبة واضحة في المشروع');
     expect(describeInterest({ message_level: 'rejected', message_quote: 'ما يناسبني', appointments: 0, visits: 0 }, noLinks).reason).toBeNull();
