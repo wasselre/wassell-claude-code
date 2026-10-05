@@ -644,6 +644,24 @@ async function runBrainTurn(
           return { ok: false, error: msg };
         }
       },
+      // A visit-details question → the project's officer, as a draft in the AI
+      // tab (operator, 2026-10-05: «any questions regarding details of visits
+      // should go to officers»). The officer contacts the customer directly.
+      askOfficer: async (question, projectId) => {
+        if (dryRun) return { ok: true };
+        try {
+          const ctx = await loadChatContext(svc, chatWid);
+          if (!ctx.clientId) return { ok: true, noOfficer: true };
+          const r = await draftOfficerQuestion(svc, { clientId: ctx.clientId, projectId, clientChatWid: chatWid, question, trigger: 'visit_question' });
+          console.log(`[salesAgent] officer visit question chat=${chatWid} project=${projectId} → ${r.status}`);
+          if (r.status === 'no_officer' || r.status === 'no_phone' || r.status === 'missing_record') return { ok: true, noOfficer: true };
+          return { ok: true };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[salesAgent] officer visit question failed chat=${chatWid}:`, msg);
+          return { ok: false, error: msg };
+        }
+      },
       bookVisit: async (projectId, day, slot, time) => {
         if (dryRun) return { ok: true };
         try {

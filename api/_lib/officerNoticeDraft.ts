@@ -391,7 +391,7 @@ export type OfficerQuestionResult =
  */
 export async function draftOfficerQuestion(
   svc: Svc,
-  args: { clientId: string; projectId: string; clientChatWid: string; question: string },
+  args: { clientId: string; projectId: string; clientChatWid: string; question: string; trigger?: 'negotiation_handoff' | 'visit_question' },
 ): Promise<OfficerQuestionResult> {
   const question = args.question.replace(/\s+/g, ' ').trim().slice(0, 300);
   if (!question) return { status: 'duplicate' };
@@ -435,7 +435,7 @@ export async function draftOfficerQuestion(
     officer_id: officer.id, phone: `+${wid.split('@')[0]}`, body, original_body: body,
     context: {
       client_name: clientName || null, client_chat_wid: args.clientChatWid, project_name: projectName(project),
-      officer_name: officer.name, officer_coverage: officer.coverage, registered, questions: [question], trigger: 'negotiation_handoff',
+      officer_name: officer.name, officer_coverage: officer.coverage, registered, questions: [question], trigger: args.trigger ?? 'negotiation_handoff',
     },
   }).select('id').single();
   if (insErr) throw new Error(`officer question insert failed: ${insErr.message}`);
