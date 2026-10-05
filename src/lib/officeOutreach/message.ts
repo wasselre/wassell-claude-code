@@ -29,6 +29,8 @@ export interface RequestFacts {
   unitTypes: string[];
   /** Requested district / area labels, de-duplicated. */
   places: string[];
+  /** More places exist than `places` names (a drawing's «+20») → «وغيرها». */
+  morePlaces?: boolean;
   /** City label, when known. */
   city?: string | null;
   budgetMin?: number | null;
@@ -130,10 +132,11 @@ function whereText(f: RequestFacts, officeDistrict: string | null): string {
   if (places.length > 0) {
     const shown = places.slice(0, MAX_PLACES);
     // «النرجس والياسمين» / «أ، ب، ج، د وغيرها».
-    const list = places.length > MAX_PLACES || shown.length === 1
+    const more = places.length > MAX_PLACES || f.morePlaces === true;
+    const list = more || shown.length === 1
       ? shown.join('، ')
       : `${shown.slice(0, -1).join('، ')} و${shown[shown.length - 1]}`;
-    return `في ${list}${places.length > MAX_PLACES ? ' وغيرها' : ''}${city ? ` ${inCity(city)}` : ''}`;
+    return `في ${list}${more ? ' وغيرها' : ''}${city ? ` ${inCity(city)}` : ''}`;
   }
   return city ? `في ${city}` : '';
 }

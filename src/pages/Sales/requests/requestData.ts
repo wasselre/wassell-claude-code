@@ -50,20 +50,37 @@ export function clientOf(request: AppRecord, clientsById: Map<string, AppRecord>
   return id ? clientsById.get(id) ?? null : null;
 }
 
-/** The client's included place labels, de-duplicated, in the client's order. */
-export function requestedPlaces(clientData: Record<string, unknown> | null | undefined): string[] {
+/**
+ * The client's included place names, de-duplicated, in the client's order.
+ * A drawn area's label is the picker's coverage text («منطقة مرسومة: اشبيلية،
+ * الازدهار، الاندلس +20») — its district names are taken out of it, and the
+ * «+20» sets `more` so the ask says «وغيرها».
+ */
+export function requestedPlaces(clientData: Record<string, unknown> | null | undefined): { places: string[]; more: boolean } {
   const items = clientData?.location_items;
-  if (!Array.isArray(items)) return [];
   const out: string[] = [];
+  let more = false;
+  if (!Array.isArray(items)) return { places: out, more };
+  const add = (s: string) => { const t = s.trim(); if (t && !out.includes(t)) out.push(t); };
   for (const it of items) {
     if (!it || typeof it !== 'object') continue;
     const o = it as Record<string, unknown>;
     if (o.polarity === 'exclude') continue;
+    if (o.kind === 'drawn_area') {
+      const label = typeof o.label === 'string' ? o.label : '';
+      const colon = label.indexOf(':');
+      if (colon < 0) continue; // «منطقة مرسومة 1» — no names to show
+      for (const part of label.slice(colon + 1).split('،')) {
+        const m = part.match(/^(.*?)\s*\+\d+\s*$/);
+        if (m) { more = true; add(m[1] ?? ''); } else add(part);
+      }
+      continue;
+    }
     const label = typeof o.district_label === 'string' ? o.district_label
       : typeof o.label === 'string' ? o.label : null;
-    if (label && label.trim() && !out.includes(label.trim())) out.push(label.trim());
+    if (label) add(label);
   }
-  return out;
+  return { places: out, more };
 }
 
 const strings = (v: unknown): string[] =>
@@ -85,9 +102,11 @@ export function clientRequestFacts(clientData: Record<string, unknown> | null | 
   const beds = rangeOf(c.preferred_bedrooms);
   const area = rangeOf(c.preferred_area);
   const readiness = strings(c.preferred_readiness);
+  const where = requestedPlaces(c);
   return {
     unitTypes: strings(c.preferred_unit_type),
-    places: requestedPlaces(c),
+    places: where.places,
+    morePlaces: where.more,
     city: cityId ? geoName(store, 'cities', cityId) : null,
     budgetMin: budget.min, budgetMax: budget.max,
     bedroomsMin: beds.min, bedroomsMax: beds.max,

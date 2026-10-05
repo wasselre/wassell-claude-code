@@ -13,8 +13,9 @@
  *
  * The minimum (operator, 2026-10-05):
  *   - at least one unit type,
- *   - at least one INCLUDED district — offices are matched on the district ids
- *     in `location_items` (office_outreach_candidates), nothing else,
+ *   - at least one INCLUDED district — picked one by one, OR a drawn area on
+ *     the map (2026-10-05: office_outreach_candidates turns a drawing into the
+ *     districts it covers via office_outreach_client_districts),
  *   - at least ONE of: a budget, a bedroom count, or a size (min or max of any).
  *
  * The WhatsApp sales agent is told the same gaps (savedProfile.ts →
@@ -43,15 +44,20 @@ const hasRange = (v: unknown): boolean => {
   return positive(r.min) || positive(r.max);
 };
 
-/** True when the client has at least one included district with an id. */
+/**
+ * True when the client has at least one included district: one picked by id,
+ * or a drawn area (a closed ring of ≥ 4 points — the districts it covers are
+ * resolved in SQL, office_outreach_client_districts). Excluded items never count.
+ */
 export function hasRequestedDistrict(locationItems: unknown): boolean {
   if (!Array.isArray(locationItems)) return false;
   return locationItems.some((it) => {
     if (!it || typeof it !== 'object') return false;
     const o = it as Record<string, unknown>;
-    return o.kind === 'district'
-      && o.polarity !== 'exclude'
-      && typeof o.district_id === 'string' && o.district_id.trim() !== '';
+    if (o.polarity === 'exclude') return false;
+    if (o.kind === 'district') return typeof o.district_id === 'string' && o.district_id.trim() !== '';
+    if (o.kind === 'drawn_area') return Array.isArray(o.coordinates) && o.coordinates.length >= 4;
+    return false;
   });
 }
 

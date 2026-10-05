@@ -25,9 +25,17 @@ describe('requestPreferenceGaps', () => {
     expect(requestPreferenceGaps({ ...READY, location_items: [district('d1', 'exclude')] })).toEqual(['districts']);
   });
 
-  it('a geo-element rule or drawn area is not a district (office matching reads district ids only)', () => {
-    const items = [{ id: 'e', kind: 'element_rule', polarity: 'include', element_label: 'x' }, { id: 'a', kind: 'drawn_area', polarity: 'include' }];
-    expect(hasRequestedDistrict(items)).toBe(false);
+  it('a drawn area counts as districts (the districts it covers) — operator, 2026-10-05', () => {
+    const ring = [[46.7, 24.7], [46.8, 24.7], [46.8, 24.8], [46.7, 24.7]];
+    expect(hasRequestedDistrict([{ id: 'a', kind: 'drawn_area', polarity: 'include', coordinates: ring }])).toBe(true);
+    expect(requestPreferenceGaps({ ...READY, location_items: [{ id: 'a', kind: 'drawn_area', polarity: 'include', coordinates: ring }] })).toEqual([]);
+  });
+
+  it('an excluded drawing, a broken drawing or a geo-element rule is not a district', () => {
+    const ring = [[46.7, 24.7], [46.8, 24.7], [46.8, 24.8], [46.7, 24.7]];
+    expect(hasRequestedDistrict([{ id: 'a', kind: 'drawn_area', polarity: 'exclude', coordinates: ring }])).toBe(false);
+    expect(hasRequestedDistrict([{ id: 'a', kind: 'drawn_area', polarity: 'include', coordinates: ring.slice(0, 2) }])).toBe(false);
+    expect(hasRequestedDistrict([{ id: 'e', kind: 'element_rule', polarity: 'include', element_label: 'x' }])).toBe(false);
     expect(hasRequestedDistrict([{ ...district(''), district_id: '' }])).toBe(false);
   });
 
