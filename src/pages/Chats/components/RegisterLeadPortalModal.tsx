@@ -14,6 +14,8 @@ import {
   fetchPortalJob,
   subscribePortalJob,
   pickErrorLine,
+  isRegisteredByUs,
+  type ClientPortalStatus,
   type PortalOption,
   type PortalHistoryItem,
   type PortalJob,
@@ -77,6 +79,7 @@ export default function RegisterLeadPortalModal({
   const [loadingPortals, setLoadingPortals] = useState(false);
   const [portals, setPortals] = useState<PortalOption[] | null>(null);
   const [history, setHistory] = useState<PortalHistoryItem[]>([]);
+  const [registrations, setRegistrations] = useState<ClientPortalStatus[]>([]);
   const [portalId, setPortalId] = useState<string | null>(null);
   useEffect(() => {
     if (!projectId) {
@@ -88,11 +91,13 @@ export default function RegisterLeadPortalModal({
     setLoadingPortals(true);
     setPortals(null);
     loadPortalOptions(clientId, projectId)
-      .then(({ portals: list, history: hist }) => {
+      .then(({ portals: list, history: hist, registrations: regs }) => {
         if (cancelled) return;
         setPortals(list);
         setHistory(hist);
-        const first = list.find((p) => p.recipe_ok) ?? list[0] ?? null;
+        setRegistrations(regs);
+        const blocked = new Set(regs.filter((r) => isRegisteredByUs(r.our_status)).map((r) => r.portal_record_id));
+        const first = list.find((p) => p.recipe_ok && !blocked.has(p.id)) ?? list.find((p) => p.recipe_ok) ?? list[0] ?? null;
         setPortalId(first?.id ?? null);
       })
       .catch((err) => {
@@ -120,6 +125,12 @@ export default function RegisterLeadPortalModal({
   const missing = useMemo(
     () => (portal ? portal.fields.filter((f) => f.required !== false && !(lead[f.key] ?? '').trim()) : []),
     [portal, lead],
+  );
+  // Our own record says this client is already in this portal → no new run.
+  // (The server refuses it too; this is so the rep sees why before pressing.)
+  const registeredHere = useMemo(
+    () => (portal ? registrations.find((r) => r.portal_record_id === portal.id && isRegisteredByUs(r.our_status)) ?? null : null),
+    [portal, registrations],
   );
   const priorDone = useMemo(
     () => (portal ? history.find((h) => h.portal_record_id === portal.id && h.status === 'done') ?? null : null),
@@ -203,7 +214,13 @@ export default function RegisterLeadPortalModal({
         created_at: new Date().toISOString(), started_at: null, finished_at: null,
       });
     } catch (err) {
-      addToast(err instanceof Error ? err.message : String(err), 'error');
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(
+        msg.includes('already_registered_by_us')
+          ? (isAr ? 'هذا العميل مسجّل لدينا في هذه البوابة مسبقاً — لم تبدأ محاولة جديدة.' : 'This client is already registered by us in this portal — no new run was started.')
+          : msg,
+        'error',
+      );
     } finally {
       setStarting(false);
     }
@@ -380,8 +397,28 @@ export default function RegisterLeadPortalModal({
                   </div>
                 ) : null}
 
+                {/* Already registered by us → blocked */}
+                {registeredHere && portal && (
+                  <div className="mb-3 flex items-start gap-2 rounded-xl border border-green-300 bg-green-50 p-3 text-xs text-green-900">
+                    <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+                    <span>
+                      {registeredHere.our_status === 'registered'
+                        ? (isAr
+                          ? `هذا العميل مسجّل لدينا في «${portal.name}»${registeredHere.registered_at ? ` منذ ${fmtDate(registeredHere.registered_at)}` : ''}${registeredHere.portal_status ? ` — حالته في البوابة: «${registeredHere.portal_status}»` : ''}. لن يُسجَّل مرة أخرى.`
+                          : `This client is already registered by us in "${portal.name}"${registeredHere.registered_at ? ` since ${fmtDate(registeredHere.registered_at)}` : ''}${registeredHere.portal_status ? ` — portal status: "${registeredHere.portal_status}"` : ''}. It will not be registered again.`)
+                        : (isAr
+                          ? `أفادت «${portal.name}» أن هذا العميل مسجّل لدى وسيط آخر. لن يُسجَّل مرة أخرى.`
+                          : `"${portal.name}" said this client is already another broker's. It will not be registered again.`)}
+                      {' '}
+                      {isAr
+                        ? 'إن كانت هذه المعلومة خاطئة فعدّل «حالتنا» من تبويب «البوابات» في ملف العميل ثم أعد المحاولة.'
+                        : 'If this is wrong, change "our status" in the client’s Portals tab, then try again.'}
+                    </span>
+                  </div>
+                )}
+
                 {/* Prior registration warning */}
-                {priorTaken && !priorDone && (
+                {!registeredHere && priorTaken && !priorDone && (
                   <div className="mb-3 flex items-start gap-2 rounded-xl border border-sky-300 bg-sky-50 p-3 text-xs text-sky-900">
                     <Info size={14} className="mt-0.5 shrink-0" />
                     <span>
@@ -391,7 +428,7 @@ export default function RegisterLeadPortalModal({
                     </span>
                   </div>
                 )}
-                {priorDone && (
+                {!registeredHere && priorDone && (
                   <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
                     <History size={14} className="mt-0.5 shrink-0" />
                     <span>
@@ -492,7 +529,7 @@ export default function RegisterLeadPortalModal({
 
                 <div className="flex justify-end gap-2">
                   <Button variant="secondary" onClick={onClose} disabled={starting}>{isAr ? 'إلغاء' : 'Cancel'}</Button>
-                  <Button onClick={start} disabled={!portal || !portal.recipe_ok || missing.length > 0 || starting}>
+                  <Button onClick={start} disabled={!portal || !portal.recipe_ok || !!registeredHere || missing.length > 0 || starting}>
                     {starting ? <Loader2 size={15} className="animate-spin" /> : <Globe size={15} />}
                     {isAr ? 'ابدأ التسجيل' : 'Start registration'}
                   </Button>

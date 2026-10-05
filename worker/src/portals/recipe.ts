@@ -649,10 +649,18 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
     }
     case 'if_visible': {
       const loc = locate(page, step, scope);
+      // ONLY a timeout means "not visible". Anything else (the page closed, a
+      // bad selector, the browser dropped) is a real failure and must fail the
+      // step — until 2026-10-05 every error read as "not visible", so a broken
+      // check silently took the wrong branch (Riva: the login was skipped and
+      // the run died 30 s later on the login page with a misleading message).
       const visible = await loc
         .waitFor({ state: 'visible', timeout: step.timeout_ms ?? 3_000 })
         .then(() => true)
-        .catch(() => false);
+        .catch((err: unknown) => {
+          if (err instanceof Error && err.name === 'TimeoutError') return false;
+          throw err;
+        });
       rt.log(`if_visible ${describeTarget(step)} → ${visible}`);
       const branch = visible ? step.then : step.else;
       if (branch) await runSteps(branch, rt);

@@ -2630,6 +2630,11 @@ async function claimAndRunOnePortal(): Promise<boolean> {
       console.log(`[worker] portal job=${job.id} → already registered by another broker`);
       return true;
     }
+    if ((result as { outcome?: string }).outcome === 'skipped_registered') {
+      // Already closed by portal_registration_job_skip_if_registered.
+      console.log(`[worker] portal job=${job.id} → skipped, client already registered by us in this portal`);
+      return true;
+    }
     const { error: doneErr } = await supabase.rpc('portal_registration_job_complete', {
       p_job_id: job.id,
       p_result: result ?? {},

@@ -94,7 +94,7 @@ an unescaped dot is parsed as a class and the step fails with a bare
 | `request_input` | `key`, `prompt_ar`, `prompt_en`, `kind?` (`otp`/`text`), `length?`, `timeout_s?` | **Pause and ask the rep.** The modal shows the prompt + an input; the answer lands in `{{input.<key>}}`. Default wait 300 s. |
 | `screenshot` | `label?`, `full?` | Save a screenshot to the run's evidence (`full: true` = the whole page, not just the viewport). |
 | `assert` | target, `error_ar?`, `error_en?`, `timeout_ms?` | Fail the run with that message unless the element appears (use it to prove success). |
-| `if_visible` | target, `timeout_ms?`, `then?: [...]`, `else?: [...]` | Branch (e.g. "already registered" dialog). |
+| `if_visible` | target, `timeout_ms?`, `then?: [...]`, `else?: [...]` | Branch (e.g. "already registered" dialog). Returns as soon as the target shows, so a long `timeout_ms` costs nothing when it does. **Only a timeout means "not visible"** — any other error (page closed, bad selector) fails the step (since 2026-10-05; before, every error silently took `else`). |
 | `phase` | `ar`, `en` | Progress label shown to the rep. |
 | `fail` | `ar`, `en`, optional `outcome` | Stop with a message. With `"outcome": "already_registered"` the run is NOT a failure: it ends as its own status `already_registered` (the portal answered that the client is another broker's) — sky-blue «مسجّل لدى وسيط آخر» on the chat card, an activity-log line on the client, «ℹ️» on the ops WhatsApp, no retry button. It is the only outcome so far (`RECIPE_OUTCOMES` in `recipe.ts`); an unknown value fails the step. |
 | `collect_rows` | `url` (with `{{page}}`), `source`, `fields {ref,name,phone,status}`, optional `ref_prefix`, `status_labels`, `max_pages` (200). `source: "inertia"` + `rows_path` + `last_page_path` (fields = JSON keys); `source: "table"` + `rows_selector` (fields = CSS selectors inside a row; `@attr` = an attribute of the row, `sel@attr` = of a child; `status_detail` is appended as «status — detail»; `ref_pattern` = a regex with one capture group applied to the ref) | **Status checks only.** Reads the portal's own client list page by page. `inertia` reads the page's embedded JSON (`#app[data-page]`, Al Ramz); `table` reads a plain HTML table (Riva's Livewire «طلباتي») and walks `?page=1,2,…` until a page has no rows or repeats the last one. A row without a phone is dropped (empty-state rows). More pages than `max_pages` fails loudly — never a silent partial list. |
@@ -183,9 +183,17 @@ edited by hand on the client's tab.
    for password portals).
 3. Write the recipe; put a `request_input` step exactly where the portal asks
    for the code.
-4. End with an `assert` on something that only appears after a successful
+4. **A run starts in a fresh browser — it is never already signed in.** Give the
+   sign-in check a generous `timeout_ms` (Riva uses 30 000): the form can appear
+   seconds after the page loads (Cloudflare's script runs first). A short check
+   that runs out silently skips the sign-in, and the run then fails much later
+   on the login page with a misleading "missing field" timeout — Riva's
+   failures 2026-09-27 → 10-04 were exactly this. After opening the page you
+   actually need, check for it and, if the portal sent you back to the login
+   page, sign in again (see Riva's recipe).
+5. End with an `assert` on something that only appears after a successful
    registration — otherwise a silent portal error looks like success.
-5. Test on a real client from a chat (Register in portal). Watch the live view;
+6. Test on a real client from a chat (Register in portal). Watch the live view;
    the failure screenshot tells you which step and what the page showed.
 
 ## Guarantees the engine gives

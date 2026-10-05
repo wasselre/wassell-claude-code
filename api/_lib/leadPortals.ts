@@ -387,3 +387,37 @@ export async function wakeWorker(jobId: string): Promise<void> {
     console.warn(`[portal-registration] wake ping failed (non-fatal): ${(err as Error).message}`);
   }
 }
+
+/**
+ * Our record of this client in this portal, when it means "do not register
+ * again": 'registered' (a run of ours finished, a rep recorded it by hand, or
+ * the portal's own list showed the client at the last status check) or
+ * 'already_registered' (the portal said the client is another broker's).
+ * Every path that queues a registration checks this first; the enqueue RPC
+ * refuses the same pairs (SQLSTATE WS412) as the backstop.
+ */
+export interface RegisteredByUs {
+  our_status: 'registered' | 'already_registered';
+  registered_at: string | null;
+  registered_via: string | null;
+  portal_status: string | null;
+}
+
+export async function registeredByUs(svc: Svc, clientId: string, portalId: string): Promise<RegisteredByUs | null> {
+  const { data, error } = await svc
+    .from('client_portal_registrations')
+    .select('our_status, registered_at, registered_via, portal_status')
+    .eq('client_record_id', clientId)
+    .eq('portal_record_id', portalId)
+    .maybeSingle();
+  if (error) throw new Error(`registration lookup failed: ${error.message}`);
+  const row = data as RegisteredByUs | { our_status: string } | null;
+  if (!row || (row.our_status !== 'registered' && row.our_status !== 'already_registered')) return null;
+  return row as RegisteredByUs;
+}
+
+/** The enqueue RPC's refusal for a pair we already registered (WS412). */
+export function isAlreadyRegisteredError(err: { message?: string; code?: string } | null | undefined): boolean {
+  if (!err) return false;
+  return (err.message ?? '').includes('already_registered_by_us') || err.code === 'WS412';
+}

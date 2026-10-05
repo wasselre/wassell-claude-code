@@ -2,7 +2,7 @@
  * Sales Workspace shell (D13).
  *
  * ONE sidebar entry → a workspace with section tabs: Overview · Clients ·
- * Work Queue · WhatsApp. Every section REUSES the mature existing pages
+ * Work Queue · WhatsApp · Unanswered Requests · Portals. Every section REUSES the mature existing pages
  * unchanged, so the lifecycle models are surfaced THROUGH the workspace:
  *   - Overview   → SalesManagerPage (manager health; No-Next-Action is live)
  *   - Clients    → MyClientsPage (rep book + mine/all scope + situation tabs)
@@ -25,7 +25,7 @@
  */
 import { useMemo } from 'react';
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
-import { BarChart3, UserCheck, ListChecks, MessageSquareText, SearchX } from 'lucide-react';
+import { BarChart3, UserCheck, ListChecks, MessageSquareText, SearchX, Globe } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanAccessPage } from '@/hooks/usePermission';
 import type { CustomPageId } from '@/lib/customPages';
@@ -35,8 +35,9 @@ import MyTasksPage from './MyTasksPage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import SalesToolsMenu from './components/SalesToolsMenu';
 import UnansweredRequestsSection from './requests/UnansweredRequestsSection';
+import PortalsSection from './portals/PortalsSection';
 
-type SectionKey = 'overview' | 'clients' | 'work-queue' | 'whatsapp' | 'requests';
+type SectionKey = 'overview' | 'clients' | 'work-queue' | 'whatsapp' | 'requests' | 'portals';
 
 interface SectionDef {
   key: SectionKey;
@@ -52,6 +53,7 @@ const SECTIONS: SectionDef[] = [
   { key: 'work-queue', pageId: 'sw_work_queue', icon: ListChecks, ar: 'قائمة العمل', en: 'Work Queue' },
   { key: 'whatsapp', pageId: 'sw_whatsapp', icon: MessageSquareText, ar: 'واتساب', en: 'WhatsApp' },
   { key: 'requests', pageId: 'sw_unanswered', icon: SearchX, ar: 'الطلبات غير المجابة', en: 'Unanswered Requests' },
+  { key: 'portals', pageId: 'sw_portals', icon: Globe, ar: 'البوابات', en: 'Portals' },
 ];
 
 export default function SalesWorkspace() {
@@ -59,23 +61,25 @@ export default function SalesWorkspace() {
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language) === 'ar';
 
-  // Per-section access — hooks called unconditionally (fixed set of 5).
+  // Per-section access — hooks called unconditionally (fixed set of 6).
   const canOverview = useCanAccessPage('sw_overview');
   const canClients = useCanAccessPage('sw_clients');
   const canWorkQueue = useCanAccessPage('sw_work_queue');
   const canWhatsApp = useCanAccessPage('sw_whatsapp');
   const canRequests = useCanAccessPage('sw_unanswered');
+  const canPortals = useCanAccessPage('sw_portals');
   const accessByKey: Record<SectionKey, boolean> = {
     overview: canOverview,
     clients: canClients,
     'work-queue': canWorkQueue,
     whatsapp: canWhatsApp,
     requests: canRequests,
+    portals: canPortals,
   };
 
   const visibleSections = useMemo(
     () => SECTIONS.filter((s) => accessByKey[s.key]),
-    [canOverview, canClients, canWorkQueue, canWhatsApp, canRequests],
+    [canOverview, canClients, canWorkQueue, canWhatsApp, canRequests, canPortals],
   );
 
   const requested = (params.section as SectionKey | undefined) ?? undefined;
@@ -123,6 +127,7 @@ export default function SalesWorkspace() {
       {active === 'work-queue' && <MyTasksPage />}
       {active === 'whatsapp' && <ChatsSplitPage />}
       {active === 'requests' && <UnansweredRequestsSection />}
+      {active === 'portals' && <PortalsSection />}
 
       {active === null && (
         <div className="card p-10 text-center text-charcoal/50 text-sm">

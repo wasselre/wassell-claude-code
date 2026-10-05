@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { BarChart3, LineChart, UserCheck, ListChecks, Compass, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench, Briefcase, Megaphone } from 'lucide-react';
+import { BarChart3, LineChart, UserCheck, ListChecks, Compass, Radar, Calculator, DatabaseZap, ClipboardList as ClipboardListIcon, MessageSquareText, Boxes, LayoutDashboard, Star, Building2, Users, RefreshCw, Wrench, Briefcase, Megaphone, Globe } from 'lucide-react';
 import { MARKET_LISTINGS_ARCHIVED } from '@/lib/featureFlags';
 
 /**
@@ -37,6 +37,7 @@ export type CustomPageId =
   | 'sw_work_queue'
   | 'sw_whatsapp'
   | 'sw_unanswered'
+  | 'sw_portals'
   | 'my_clients'
   | 'my_tasks'
   | 'sales_manager'
@@ -156,6 +157,17 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_ar: 'الطلبات غير المجابة',
     label_en: 'Unanswered Requests',
     icon: ClipboardListIcon,
+    default_access: 'all',
+    hidden_from_sidebar: true,
+  },
+  {
+    // Developer / marketer broker portals: every client × portal, live and
+    // failed registration runs. Rows are scoped by the viewer's client RLS.
+    id: 'sw_portals',
+    route: '/sales-workspace/portals',
+    label_ar: 'البوابات — المبيعات',
+    label_en: 'Portals (Sales)',
+    icon: Globe,
     default_access: 'all',
     hidden_from_sidebar: true,
   },

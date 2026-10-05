@@ -41,7 +41,7 @@
  */
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import {
-  LEAD_PORTALS_MODEL_ID, type Rec, idList, str, loadRecord, resolvePortals, wakeWorker,
+  LEAD_PORTALS_MODEL_ID, type Rec, idList, str, loadRecord, resolvePortals, wakeWorker, registeredByUs, isAlreadyRegisteredError,
 } from '../_lib/leadPortals.js';
 
 export const config = { runtime: 'edge' };
@@ -156,6 +156,15 @@ export default async function handler(req: Request): Promise<Response> {
         const hasNoOwnerMarker = existingRows.some((r) => r.result?.skip_reason === 'no_owner');
         if (existingRows.some((r) => r.result?.skip_reason !== 'no_owner')) continue;
 
+        // Already registered by us in this portal (by hand, or found in the
+        // portal's own list by the status check — neither leaves a job) →
+        // never register again.
+        const reg = await registeredByUs(svc, c.client_record_id, portal.id);
+        if (reg) {
+          results.push({ ...base, outcome: { status: 'skipped', reason: `already ${reg.our_status} in portal "${portal.name}"` } });
+          continue;
+        }
+
         if (portal.otp_channel && portal.otp_channel !== 'none' && !portal.otp_whatsapp_relay) {
           const reason = `portal "${portal.name}" needs a ${portal.otp_channel} code and has no WhatsApp code relay — it cannot run unattended; turn otp_whatsapp_relay on or auto_register off`;
           console.error(`[portal-auto-register] ${reason}`);
@@ -268,6 +277,11 @@ export default async function handler(req: Request): Promise<Response> {
           p_attribution_id: c.attribution_id,
           p_parked: parked,
         });
+        if (isAlreadyRegisteredError(enqErr)) {
+          // Registered between the check above and the insert — the RPC's backstop.
+          results.push({ ...base, outcome: { status: 'skipped', reason: `already registered in portal "${portal.name}"` } });
+          continue;
+        }
         if (enqErr || !jobId) throw new Error(`enqueue failed: ${enqErr?.message ?? 'no job id'}`);
         const parkedAt = parked;
 

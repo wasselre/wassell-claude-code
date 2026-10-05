@@ -25,7 +25,7 @@
  * portal for the event's portal_result.
  */
 import {
-  type Rec, type Svc, idList, str, loadRecord, resolvePortals, prefillField, wakeWorker,
+  type Rec, type Svc, idList, str, loadRecord, resolvePortals, prefillField, wakeWorker, isAlreadyRegisteredError,
 } from './leadPortals.js';
 
 export type PortalOutcome =
@@ -216,6 +216,7 @@ export async function registerOnInterest(
       p_attribution_id: null,
       p_parked: parked,
     });
+    if (isAlreadyRegisteredError(enqErr)) { out.push({ ...base, status: 'covered' }); continue; }
     if (enqErr || !jobId) throw new Error(`enqueue failed: ${enqErr?.message ?? 'no job id'}`);
     // interest_id is bookkeeping only (the worker never reads it), so setting it
     // after the insert cannot change how the run behaves.

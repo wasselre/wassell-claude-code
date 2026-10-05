@@ -74,6 +74,34 @@ describe('runSteps error wrapping', () => {
   });
 });
 
+describe('if_visible', () => {
+  function runtimeWith(waitFor: () => Promise<void>): RecipeRuntime {
+    const loc = { nth: () => loc, waitFor };
+    return { ...runtime(async () => ''), page: { locator: () => loc } as unknown as Page };
+  }
+  const branchSteps = [
+    { do: 'if_visible', selector: "input[name='email']", then: [{ do: 'set', key: 'took', value: 'then' }],
+      else: [{ do: 'set', key: 'took', value: 'else' }] },
+  ] as RecipeStep[];
+
+  it('takes `else` only when the wait TIMES OUT', async () => {
+    const timeout = Object.assign(new Error('locator.waitFor: Timeout 5000ms exceeded.'), { name: 'TimeoutError' });
+    const rt = runtimeWith(async () => { throw timeout; });
+    await runSteps(branchSteps, rt);
+    expect(rt.scope.vars.took).toBe('else');
+  });
+
+  it('fails the step on any other error instead of pretending "not visible"', async () => {
+    // Regression 2026-10-05 (Riva): a non-timeout error read as "no login
+    // form", the sign-in was skipped, and the run failed later on the login page.
+    const rt = runtimeWith(async () => { throw new Error('Target page, context or browser has been closed'); });
+    const err = await runSteps(branchSteps, rt).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RecipeError);
+    expect((err as RecipeError).en).toContain('if_visible');
+    expect(rt.scope.vars.took).toBeUndefined();
+  });
+});
+
 describe('collect_rows helpers (portal status checks)', () => {
   // Shape copied from Al Ramz's Inertia `data-page` (props.clients paginator).
   const alRamzStep = {

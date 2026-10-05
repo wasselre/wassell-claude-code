@@ -307,3 +307,154 @@ export async function requestStatusCheck(svc: Svc, portal: Rec, actorAuthUid: st
 }
 
 export { canCheck as portalCanCheckStatus };
+
+// ── Sales Workspace «البوابات» overview — every client × portal, every run ──
+
+export interface OverviewRun {
+  id: string;
+  kind: 'register' | 'status_check';
+  portal_record_id: string;
+  client_record_id: string | null;
+  project_name: string | null;
+  status: string;
+  phase_ar: string | null;
+  phase_en: string | null;
+  error_message: string | null;
+  origin: 'manual' | 'auto';
+  attempts: number;
+  skip_reason: string | null;
+  screenshot_count: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  parked_at: string | null;
+  /** Who the run belongs to (the rep who pressed, or the auto run's owner). */
+  owner_name: string | null;
+}
+
+export interface OverviewClient {
+  id: string;
+  name: string;
+  phone: string;
+  owner_name: string | null;
+}
+
+export interface OverviewPortal {
+  id: string;
+  name: string;
+  is_active: boolean;
+  auto_register: boolean;
+  otp_channel: string | null;
+  otp_whatsapp_relay: boolean;
+  can_check_status: boolean;
+}
+
+const PAGE = 1000;
+
+/** Read EVERY row (keyset over id) — never the silent first 1,000. */
+async function readAll<T extends { id: string }>(
+  svc: Svc,
+  table: string,
+  select: string,
+  eq?: [column: string, value: string],
+): Promise<T[]> {
+  const out: T[] = [];
+  let after: string | null = null;
+  for (;;) {
+    let q = svc.from(table).select(select);
+    if (eq) q = q.eq(eq[0], eq[1]);
+    if (after) q = q.gt('id', after);
+    const { data, error } = await q.order('id', { ascending: true }).limit(PAGE);
+    if (error) throw new Error(`${table} read failed: ${error.message}`);
+    const rows = (data ?? []) as unknown as T[];
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+    after = rows[rows.length - 1]!.id;
+  }
+  return out;
+}
+
+/**
+ * Everything the Sales Workspace «البوابات» tab shows. Reads with the service
+ * client, then keeps only the clients the caller can see (`visibleClients`,
+ * resolved by the caller under its own RLS) — a rep sees their own book, an
+ * admin sees everything. Status checks are portal-wide (no client) and shown
+ * to everyone who can open the tab.
+ */
+export async function listPortalsOverview(
+  svc: Svc,
+  visibleClients: (ids: string[]) => Promise<OverviewClient[]>,
+): Promise<{ portals: OverviewPortal[]; registrations: RegistrationRow[]; runs: OverviewRun[]; clients: OverviewClient[]; generated_at: string }> {
+  const [regs, jobs, portalRows, users] = await Promise.all([
+    readAll<RegistrationRow>(svc, 'client_portal_registrations', '*'),
+    readAll<{
+      id: string; kind: string; portal_record_id: string; client_record_id: string | null; status: string;
+      phase_ar: string | null; phase_en: string | null; error_message: string | null; origin: string | null;
+      attempts: number | null; result: Record<string, unknown> | null; screenshots: unknown[] | null;
+      lead_data: Record<string, unknown> | null; user_id: string | null;
+      created_at: string; started_at: string | null; finished_at: string | null; parked_at: string | null;
+    }>(
+      svc, 'portal_registration_jobs',
+      'id, kind, portal_record_id, client_record_id, status, phase_ar, phase_en, error_message, origin, attempts, result, screenshots, lead_data, user_id, created_at, started_at, finished_at, parked_at',
+    ),
+    readAll<Rec>(svc, 'unified_records', 'id, data', ['model_id', LEAD_PORTALS_MODEL_ID]),
+    readAll<{ id: string; auth_uid: string | null; name_ar: string | null; name_en: string | null }>(svc, 'users', 'id, auth_uid, name_ar, name_en'),
+  ]);
+
+  const clientIds = new Set<string>();
+  for (const r of regs) clientIds.add(r.client_record_id);
+  for (const j of jobs) if (j.client_record_id) clientIds.add(j.client_record_id);
+  const clients = await visibleClients([...clientIds]);
+  const visible = new Set(clients.map((c) => c.id));
+
+  const nameByAuth = new Map<string, string>();
+  for (const u of users) {
+    const n = str(u.name_ar) || str(u.name_en);
+    if (u.auth_uid && n) nameByAuth.set(u.auth_uid, n);
+  }
+
+  const runs: OverviewRun[] = jobs
+    .filter((j) => (j.client_record_id ? visible.has(j.client_record_id) : j.kind === 'status_check'))
+    .map((j) => ({
+      id: j.id,
+      kind: j.kind === 'status_check' ? ('status_check' as const) : ('register' as const),
+      portal_record_id: j.portal_record_id,
+      client_record_id: j.client_record_id,
+      project_name: str(j.lead_data?.project_name) || null,
+      status: j.status,
+      phase_ar: j.phase_ar,
+      phase_en: j.phase_en,
+      error_message: j.error_message,
+      origin: j.origin === 'auto' ? ('auto' as const) : ('manual' as const),
+      attempts: j.attempts ?? 0,
+      skip_reason: str(j.result?.skip_reason) || null,
+      screenshot_count: Array.isArray(j.screenshots) ? j.screenshots.length : 0,
+      created_at: j.created_at,
+      started_at: j.started_at,
+      finished_at: j.finished_at,
+      parked_at: j.parked_at,
+      owner_name: j.user_id ? nameByAuth.get(j.user_id) ?? null : null,
+    }))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+  return {
+    portals: portalRows
+      .map((p) => {
+        const d = p.data ?? {};
+        return {
+          id: p.id,
+          name: str(d.name) || '—',
+          is_active: d.is_active !== false,
+          auto_register: d.auto_register === true,
+          otp_channel: str(d.otp_channel) || null,
+          otp_whatsapp_relay: d.otp_whatsapp_relay === true,
+          can_check_status: canCheck(p),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'ar')),
+    registrations: regs.filter((r) => visible.has(r.client_record_id)),
+    runs,
+    clients,
+    generated_at: new Date().toISOString(),
+  };
+}

@@ -148,6 +148,43 @@ export async function assertCanAccessRecord(
   if (!data) throw new AuthError(403, 'not permitted for this record');
 }
 
+/**
+ * The subset of `recordIds` the CALLER can see under RLS, with the columns in
+ * `select` — the many-record twin of assertCanAccessRecord. Used where a
+ * service-role read gathers rows across many clients (e.g. the Sales
+ * Workspace portals overview) and must only return the caller's visible ones.
+ * Batched so a long id list never builds an over-long URL. Throws on error —
+ * a failed visibility check must never fall back to "show everything".
+ */
+export async function readVisibleRecords<T extends { id: string }>(
+  req: Request,
+  recordIds: string[],
+  serviceName: string,
+  select = 'id',
+): Promise<T[]> {
+  const ids = [...new Set(recordIds)];
+  if (ids.length === 0) return [];
+  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) throw new AuthError(500, 'Supabase env vars missing (URL or anon key)');
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+    throw new AuthError(401, 'missing bearer token');
+  }
+  const scoped = createClient(url, anonKey, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: authHeader, ...serviceIdentityHeaders(serviceName) } },
+  });
+  const out: T[] = [];
+  const BATCH = 150;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const { data, error } = await scoped.from('records').select(select).in('id', ids.slice(i, i + BATCH));
+    if (error) throw new AuthError(500, `visibility check failed: ${error.message}`);
+    out.push(...((data ?? []) as unknown as T[]));
+  }
+  return out;
+}
+
 export function jsonError(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
     status,

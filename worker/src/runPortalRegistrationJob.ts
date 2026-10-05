@@ -147,6 +147,20 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
   const tag = `[portal ${job.id.slice(0, 8)}]`;
   const log = (m: string) => console.log(`${tag} ${m}`);
 
+  // Never register a client we have already registered in this portal. The
+  // job may have waited (queued / parked for a code) while the status check
+  // found the client in the portal, or a rep recorded the registration by
+  // hand — so look again now, before a browser is paid for. The RPC closes
+  // the job as 'cancelled' with result.skip_reason='already_registered_by_us'.
+  if (job.kind === 'register') {
+    const { data: skipped, error: skipErr } = await supabase.rpc('portal_registration_job_skip_if_registered', { p_job_id: job.id });
+    if (skipErr) throw new Error(`portal_registration_job_skip_if_registered failed: ${skipErr.message}`);
+    if (skipped === true) {
+      log('client is already registered by us in this portal → skipped, no browser opened');
+      return { outcome: 'skipped_registered' };
+    }
+  }
+
   // ── Inputs: the portal recipe + the three records the templates read ──────
   const [portal, client, project] = await Promise.all([
     loadRecord(supabase, job.portalRecordId),

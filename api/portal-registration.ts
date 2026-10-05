@@ -22,6 +22,13 @@
  *   POST { action:'registration_add', client_id, portal_id, our_status?, portal_status?, portal_ref?, notes?, project_name? }
  *   POST { action:'status_check', portal_id } → 202 { job_id } (one code refreshes the whole portal)
  *
+ * Sales Workspace «البوابات» tab (every client × portal the caller can see):
+ *   GET  ?overview=1 → { portals, registrations, runs, clients, generated_at }
+ *
+ * ALREADY REGISTERED BY US: 'start' refuses (409 already_registered_by_us) a
+ * client whose row for that portal is 'registered' / 'already_registered' —
+ * the same check every automatic path makes, backed by the enqueue RPC.
+ *
  * ENQUEUE-ONLY: a registration takes 1–5 minutes (sign-in, the rep's OTP, the
  * form). Nothing here waits for the browser — same rule as every other worker
  * queue in this repo. The worker pauses on `request_input` steps and reads the
@@ -43,15 +50,16 @@
  * marketer are dropped — see pickPortals in _lib/leadPortals.ts.
  */
 
-import { withAuth, jsonOk, jsonError, assertCanAccessRecord, AuthError } from './_lib/auth.js';
+import { withAuth, jsonOk, jsonError, assertCanAccessRecord, readVisibleRecords, AuthError } from './_lib/auth.js';
 import { makeServiceClient } from './_lib/serviceClient.js';
 import {
   type Svc, type Rec,
-  str, parseFields, checkRecipe, loadRecord, resolvePortals, wakeWorker,
+  str, idList, parseFields, checkRecipe, loadRecord, resolvePortals, wakeWorker,
+  registeredByUs, isAlreadyRegisteredError,
 } from './_lib/leadPortals.js';
 import {
   listClientRegistrations, loadRegistration, updateRegistration, addRegistration,
-  requestStatusCheck, RegistrationInputError,
+  requestStatusCheck, RegistrationInputError, listPortalsOverview, type OverviewClient,
 } from './_lib/portalRegistrations.js';
 
 export const config = { runtime: 'edge' };
@@ -105,6 +113,29 @@ export default async function handler(req: Request): Promise<Response> {
     try {
       if (req.method === 'GET') {
         const url = new URL(req.url);
+        if (url.searchParams.get('overview') !== null) {
+          // Visible clients come from the caller's OWN RLS read of records.
+          const visibleClients = async (ids: string[]): Promise<OverviewClient[]> => {
+            const rows = await readVisibleRecords<{ id: string; client_name: string | null; phone_number: string | null; client_owner: unknown }>(
+              req, ids, 'api:portal-registration',
+              'id, client_name:data->>client_name, phone_number:data->>phone_number, client_owner:data->client_owner',
+            );
+            const ownerIds = [...new Set(rows.map((r) => idList(r.client_owner)[0]).filter((x): x is string => !!x))];
+            const ownerName = new Map<string, string>();
+            if (ownerIds.length) {
+              const { data: us, error: uErr } = await svc.from('users').select('id, name_ar, name_en').in('id', ownerIds);
+              if (uErr) throw new Error(`owner names read failed: ${uErr.message}`);
+              for (const u of (us ?? []) as { id: string; name_ar: unknown; name_en: unknown }[]) {
+                ownerName.set(u.id, str(u.name_ar) || str(u.name_en));
+              }
+            }
+            return rows.map((r) => {
+              const o = idList(r.client_owner)[0];
+              return { id: r.id, name: str(r.client_name), phone: str(r.phone_number), owner_name: (o && ownerName.get(o)) || null };
+            });
+          };
+          return jsonOk(await listPortalsOverview(svc, visibleClients));
+        }
         const regsFor = url.searchParams.get('registrations_for');
         if (regsFor !== null) {
           if (!UUID_RE.test(regsFor)) return jsonError(400, 'invalid registrations_for');
@@ -121,7 +152,14 @@ export default async function handler(req: Request): Promise<Response> {
             .maybeSingle();
           if (error) return jsonError(500, `job read failed: ${error.message}`);
           const row = data as (JobRow & { user_id: string }) | null;
-          if (!row || row.user_id !== user.userId) return jsonError(404, 'job not found');
+          if (!row) return jsonError(404, 'job not found');
+          if (row.user_id !== user.userId) {
+            // Not the caller's run: anyone who can see the CLIENT may see its
+            // run (the portals overview opens other reps' failures). A status
+            // check has no client and stays owner-only.
+            if (!row.client_record_id) return jsonError(404, 'job not found');
+            await assertCanAccessRecord(req, row.client_record_id, 'api:portal-registration');
+          }
           const { user_id: _omit, ...job } = row;
           return jsonOk({ job: await withSignedScreenshots(svc, job) });
         }
@@ -168,7 +206,15 @@ export default async function handler(req: Request): Promise<Response> {
           origin: h.origin === 'auto' ? 'auto' : 'manual',
         }));
 
-        return jsonOk({ portals, history });
+        // This client's per-portal rows, so the modal can block a portal we
+        // already registered them in (the start action refuses it too).
+        const { data: regRows, error: regErr } = await svc
+          .from('client_portal_registrations')
+          .select('portal_record_id, our_status, registered_at, registered_via, portal_status')
+          .eq('client_record_id', clientId);
+        if (regErr) return jsonError(500, `registrations read failed: ${regErr.message}`);
+
+        return jsonOk({ portals, history, registrations: regRows ?? [] });
       }
 
       if (req.method === 'POST') {
@@ -213,6 +259,12 @@ export default async function handler(req: Request): Promise<Response> {
 
           const loginPhone = str(body.login_phone).trim() || str(pd.login_phone).trim() || null;
 
+          // Never register a client we already registered in this portal.
+          const already = await registeredByUs(svc, clientId, portalId);
+          if (already) {
+            return jsonError(409, `already_registered_by_us: this client is already ${already.our_status === 'registered' ? 'registered by us' : "another broker's"} in this portal`);
+          }
+
           const { data: jobId, error: enqErr } = await svc.rpc('portal_registration_job_enqueue', {
             p_portal_record_id: portalId,
             p_client_record_id: clientId,
@@ -221,6 +273,7 @@ export default async function handler(req: Request): Promise<Response> {
             p_lead_data: lead,
             p_login_phone: loginPhone,
           });
+          if (isAlreadyRegisteredError(enqErr)) return jsonError(409, 'already_registered_by_us: this client is already registered in this portal');
           if (enqErr || !jobId) return jsonError(500, `failed to enqueue: ${enqErr?.message ?? 'unknown'}`);
           console.log(`[portal-registration] queued job=${jobId} portal=${portalId} client=${clientId} user=${user.userId}`);
           void wakeWorker(jobId as string);

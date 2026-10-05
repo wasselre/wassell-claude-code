@@ -99,16 +99,25 @@ async function readError(res: Response): Promise<never> {
   throw new Error(body?.error ?? `portal registration request failed (${res.status})`);
 }
 
+/** This client's row for one portal — what blocks registering again. */
+export interface ClientPortalStatus {
+  portal_record_id: string;
+  our_status: RegistrationOurStatus;
+  registered_at: string | null;
+  registered_via: string | null;
+  portal_status: string | null;
+}
+
 export async function loadPortalOptions(
   clientId: string,
   projectId: string | null,
-): Promise<{ portals: PortalOption[]; history: PortalHistoryItem[] }> {
+): Promise<{ portals: PortalOption[]; history: PortalHistoryItem[]; registrations: ClientPortalStatus[] }> {
   const qs = new URLSearchParams({ client_id: clientId });
   if (projectId) qs.set('project_id', projectId);
   const res = await fetch(`/api/portal-registration?${qs.toString()}`, { headers: await authHeader() });
   if (!res.ok) return readError(res);
-  const body = (await res.json()) as { portals?: PortalOption[]; history?: PortalHistoryItem[] };
-  return { portals: body.portals ?? [], history: body.history ?? [] };
+  const body = (await res.json()) as { portals?: PortalOption[]; history?: PortalHistoryItem[]; registrations?: ClientPortalStatus[] };
+  return { portals: body.portals ?? [], history: body.history ?? [], registrations: body.registrations ?? [] };
 }
 
 export async function startPortalRegistration(input: {
@@ -293,4 +302,67 @@ export async function requestPortalStatusCheck(portalId: string): Promise<{ jobI
   const j = (await res.json()) as { job_id?: string };
   if (!j.job_id) throw new Error('status check enqueued but job_id missing');
   return { jobId: j.job_id };
+}
+
+/** Our record says "do not register this client in this portal again". */
+export function isRegisteredByUs(s: RegistrationOurStatus | null | undefined): boolean {
+  return s === 'registered' || s === 'already_registered';
+}
+
+// ── Sales Workspace «البوابات» overview ───────────────────────────────────────
+
+export interface OverviewPortal {
+  id: string;
+  name: string;
+  is_active: boolean;
+  auto_register: boolean;
+  otp_channel: string | null;
+  otp_whatsapp_relay: boolean;
+  can_check_status: boolean;
+}
+
+export interface OverviewClient {
+  id: string;
+  name: string;
+  phone: string;
+  owner_name: string | null;
+}
+
+export interface OverviewRun {
+  id: string;
+  kind: 'register' | 'status_check';
+  portal_record_id: string;
+  client_record_id: string | null;
+  project_name: string | null;
+  status: PortalJobStatus;
+  phase_ar: string | null;
+  phase_en: string | null;
+  error_message: string | null;
+  origin: 'manual' | 'auto';
+  attempts: number;
+  /** 'no_owner' | 'already_registered_by_us' when the run never reached a browser. */
+  skip_reason: string | null;
+  screenshot_count: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  parked_at: string | null;
+  owner_name: string | null;
+}
+
+export type OverviewRegistration = Omit<ClientPortalRegistration, 'events'>;
+
+export interface PortalsOverview {
+  portals: OverviewPortal[];
+  registrations: OverviewRegistration[];
+  runs: OverviewRun[];
+  clients: OverviewClient[];
+  generated_at: string;
+}
+
+/** Every client × portal the caller can see (their RLS), plus every run. */
+export async function fetchPortalsOverview(): Promise<PortalsOverview> {
+  const res = await fetch('/api/portal-registration?overview=1', { headers: await authHeader() });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as PortalsOverview;
 }
