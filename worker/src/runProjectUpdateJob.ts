@@ -486,11 +486,12 @@ export async function runProjectUpdateJob(args: {
         fetch: (id) => fetchSafaProject(id, broker, pubs.get(id) ?? { units: [], comingSoon: false }, publicHealthy),
         policy: (scope, src) => scope === 'status_only'
           ? STATUS_ONLY_POLICY
-          // updatePrices: false — the broker card's price is not on one basis
-          // with ours (صفا 80: card = ours +5% on 28 of 31 units, صفا 85: equal;
-          // 2026-10-05). Differences are REPORTED (price_diffs) until a person
-          // settles which price we store. New units still take the card price.
-          : { absentAvailable: src.meta?.absent_means_sold ? 'sold' : 'leave', createMissing: true, updatePrices: false, keepReserved: true },
+          // Prices: the BROKER CARD price («السعر:») is what we store — operator
+          // decision 2026-10-05 ("use the portal price as Safa shows it now"),
+          // after the run showed it differs from our older stored prices on
+          // some projects (صفا 80: +5% on 28 of 31 units). The public site's
+          // price is never used (see parsePublicCard).
+          : { absentAvailable: src.meta?.absent_means_sold ? 'sold' : 'leave', createMissing: true, updatePrices: true, keepReserved: true },
       });
     }
     case 'whatsapp_group': {
