@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { geminiPost, resetGeminiKeyState, DAILY_QUOTA_MARK } from '../providers/geminiHttp.js';
+import { geminiPost, geminiKeyFor, resetGeminiKeyState, DAILY_QUOTA_MARK } from '../providers/geminiHttp.js';
 
 const perDay = () => new Response(JSON.stringify({ error: { code: 429, message: 'quota', details: [
   { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel' }] },
@@ -40,5 +40,18 @@ describe('geminiPost — key rotation on a per-day quota', () => {
     const err2 = await geminiPost('/v1beta/models/gemini-3.8-flash:generateContent', {}, opts).then(() => null, (e: unknown) => e as Error);
     expect(err2?.message).toContain('all 2 key(s)');
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a pinned call (uploaded file) uses only its key, and a refusal sends the next job elsewhere', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'k1');
+    vi.stubEnv('GEMINI_API_KEY_2', 'k2');
+    const seen: string[] = [];
+    const fetchMock = vi.fn(async (_u: string, init: RequestInit) => { seen.push((init.headers as Record<string, string>)['x-goog-api-key']!); return perDay(); });
+    const opts = { fetch: fetchMock as unknown as typeof fetch, sleep: async () => {} };
+    expect(geminiKeyFor('gemini-3.8-flash')).toEqual({ key: 'k1', index: 0 });
+    const err = await geminiPost('/v1beta/models/gemini-3.8-flash:generateContent', {}, { ...opts, pinKeyIndex: 0 }).then(() => null, (e: unknown) => e as Error);
+    expect(err?.message).toContain(DAILY_QUOTA_MARK);
+    expect(seen).toEqual(['k1']); // never retried on k2: k2 cannot read k1's file
+    expect(geminiKeyFor('gemini-3.8-flash')).toEqual({ key: 'k2', index: 1 });
   });
 });

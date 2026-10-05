@@ -14,7 +14,7 @@
 // rates in ai/providers/geminiHttp.ts), success or failure.
 // ============================================================================
 import { readFile } from 'node:fs/promises';
-import { flashCostUsd, geminiApiKey, geminiPost, GEMINI_API_BASE, type GeminiUsage } from '../../../ai/providers/geminiHttp.js';
+import { DAILY_QUOTA_MARK, flashCostUsd, geminiApiKey, geminiKeyFor, geminiPost, GEMINI_API_BASE, type GeminiUsage } from '../../../ai/providers/geminiHttp.js';
 import { recordAiUsage } from '../../../lib/aiUsage.js';
 import { vocabForPrompt, CV_VOCAB } from '../vocab.js';
 import { CERTAIN_CUT_SCORE, HINT_CUT_SCORE, type DetectedCut } from './shots.js';
@@ -156,8 +156,8 @@ export interface GeminiVideoResult {
   via: 'inline' | 'file';
 }
 
-export async function uploadFile(path: string, bytes: number): Promise<{ name: string; uri: string }> {
-  const key = geminiApiKey();
+export async function uploadFile(path: string, bytes: number, apiKey?: string): Promise<{ name: string; uri: string }> {
+  const key = apiKey ?? geminiApiKey();
   const start = await fetch(`${GEMINI_API_BASE}/upload/v1beta/files`, {
     method: 'POST',
     headers: {
@@ -194,8 +194,8 @@ export async function uploadFile(path: string, bytes: number): Promise<{ name: s
   throw new Error('provider:gemini uploaded video was not ready after 5 minutes');
 }
 
-export async function deleteFile(name: string): Promise<void> {
-  const r = await fetch(`${GEMINI_API_BASE}/v1beta/${name}`, { method: 'DELETE', headers: { 'x-goog-api-key': geminiApiKey() }, signal: AbortSignal.timeout(30_000) });
+export async function deleteFile(name: string, apiKey?: string): Promise<void> {
+  const r = await fetch(`${GEMINI_API_BASE}/v1beta/${name}`, { method: 'DELETE', headers: { 'x-goog-api-key': apiKey ?? geminiApiKey() }, signal: AbortSignal.timeout(30_000) });
   // A leftover file costs nothing and Google deletes it after 48 h — log, do not fail the video.
   if (!r.ok) console.error(`[cv/gemini] delete uploaded file ${name} failed: HTTP ${r.status}`);
 }
@@ -222,6 +222,11 @@ export async function analyzeVideoWithGemini(input: AnalyzeVideoInput): Promise<
   const started = Date.now();
   const via: 'inline' | 'file' = input.videoBytes <= INLINE_MAX_BYTES ? 'inline' : 'file';
   let uploaded: { name: string; uri: string } | null = null;
+  // An uploaded file belongs to the project whose key uploaded it: upload and
+  // call with the SAME key (2026-10-05: 403 "permission to access the File"
+  // once a second project's key started taking calls).
+  const pin = via === 'file' ? geminiKeyFor(GEMINI_VIDEO_MODEL) : null;
+  if (via === 'file' && !pin) throw new Error(`provider:gemini ${DAILY_QUOTA_MARK} all keys at their daily quota for ${GEMINI_VIDEO_MODEL} — retry after 3600s`);
   let replied = false;
   const track = { area: 'competitors' as const, callSite: 'worker/cv/gemini_video', operation: 'analyze_video', provider: 'gemini' as const, model: GEMINI_VIDEO_MODEL, entityKind: 'mkt_cv_video', entityId: input.videoId };
   try {
@@ -229,7 +234,7 @@ export async function analyzeVideoWithGemini(input: AnalyzeVideoInput): Promise<
     if (via === 'inline') {
       videoPart = { inline_data: { mime_type: 'video/mp4', data: (await readFile(input.videoPath)).toString('base64') } };
     } else {
-      uploaded = await uploadFile(input.videoPath, input.videoBytes);
+      uploaded = await uploadFile(input.videoPath, input.videoBytes, pin!.key);
       videoPart = { file_data: { mime_type: 'video/mp4', file_uri: uploaded.uri } };
     }
     const r = await geminiPost<GenerateResponse>(`/v1beta/models/${GEMINI_VIDEO_MODEL}:generateContent`, {
@@ -244,7 +249,7 @@ export async function analyzeVideoWithGemini(input: AnalyzeVideoInput): Promise<
     // Gemini answers 503 "high demand" in bursts (seen 2026-10-04: four tries
     // in 15 s all refused). Six tries over ~2.5 min ride most bursts out; the
     // job queue's own requeue covers the rest.
-    }, { timeoutMs: 600_000, maxAttempts: 6, baseDelayMs: 5_000 });
+    }, { timeoutMs: 600_000, maxAttempts: 6, baseDelayMs: 5_000, ...(pin ? { pinKeyIndex: pin.index } : {}) });
     const u = r.usageMetadata ?? {};
     const inputTokens = Number(u.promptTokenCount ?? 0) || 0;
     const outputTokens = (Number(u.candidatesTokenCount ?? 0) || 0) + (Number(u.thoughtsTokenCount ?? 0) || 0);
@@ -272,6 +277,6 @@ export async function analyzeVideoWithGemini(input: AnalyzeVideoInput): Promise<
     if (!replied) await recordAiUsage({ ...track, status: 'error', error: e instanceof Error ? e.message : String(e), latencyMs: Date.now() - started });
     throw e;
   } finally {
-    if (uploaded) await deleteFile(uploaded.name);
+    if (uploaded) await deleteFile(uploaded.name, pin?.key);
   }
 }

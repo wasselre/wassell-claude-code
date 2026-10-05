@@ -23,7 +23,7 @@
 // .claude/skills/content-enrichment/SKILL.md — change both together.
 // ============================================================================
 import { readFile } from 'node:fs/promises';
-import { flashCostUsd, geminiPost, type GeminiUsage } from '../../ai/providers/geminiHttp.js';
+import { DAILY_QUOTA_MARK, flashCostUsd, geminiKeyFor, geminiPost, type GeminiUsage } from '../../ai/providers/geminiHttp.js';
 import { recordAiUsage } from '../../lib/aiUsage.js';
 import { deleteFile, uploadFile } from '../cv/gemini/geminiVideo.js';
 import type { EnrichAnswer, EnrichCandidate } from './enrichmentValidate.js';
@@ -180,7 +180,7 @@ function parseObject(text: string): Record<string, unknown> {
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 /** One generateContent call, recorded once in ai_usage with its tokens either way. */
-async function generate(parts: unknown[], schema: unknown, operation: string, postId: string, meta: Record<string, unknown>): Promise<{ obj: Record<string, unknown>; costUsd: number; inputTokens: number; outputTokens: number }> {
+async function generate(parts: unknown[], schema: unknown, operation: string, postId: string, meta: Record<string, unknown>, pinKeyIndex?: number): Promise<{ obj: Record<string, unknown>; costUsd: number; inputTokens: number; outputTokens: number }> {
   const started = Date.now();
   const track = { area: 'competitors' as const, callSite: 'worker/marketing/geminiRead', operation, provider: 'gemini' as const, model: READER_MODEL, entityKind: 'mkt_content_post', entityId: postId };
   let replied = false;
@@ -188,7 +188,7 @@ async function generate(parts: unknown[], schema: unknown, operation: string, po
     const r = await geminiPost<GenerateResponse>(`/v1beta/models/${READER_MODEL}:generateContent`, {
       contents: [{ parts }],
       generationConfig: { responseMimeType: 'application/json', responseJsonSchema: schema, mediaResolution: 'MEDIA_RESOLUTION_HIGH', thinkingConfig: { thinkingLevel: 'low' }, maxOutputTokens: 16384 },
-    }, { timeoutMs: 600_000, maxAttempts: 6, baseDelayMs: 5_000 });
+    }, { timeoutMs: 600_000, maxAttempts: 6, baseDelayMs: 5_000, ...(pinKeyIndex !== undefined ? { pinKeyIndex } : {}) });
     const u = r.usageMetadata ?? {};
     const inputTokens = Number(u.promptTokenCount ?? 0) || 0;
     const outputTokens = (Number(u.candidatesTokenCount ?? 0) || 0) + (Number(u.thoughtsTokenCount ?? 0) || 0);
@@ -219,6 +219,10 @@ function toAnswer(postId: string, o: Record<string, unknown>): EnrichAnswer {
 export async function readPostWithGemini(ctx: PostContext, media: ReadMedia[]): Promise<ReadResult> {
   if (media.length === 0) throw new Error('permanent: readPostWithGemini needs at least one media item');
   const uploaded: string[] = [];
+  // Uploaded files belong to the uploading project: pin the call to that key.
+  const needsUpload = media.some((m) => m.kind !== 'image' && m.bytes > INLINE_MAX_BYTES);
+  const pin = needsUpload ? geminiKeyFor(READER_MODEL) : null;
+  if (needsUpload && !pin) throw new Error(`provider:gemini ${DAILY_QUOTA_MARK} all keys at their daily quota for ${READER_MODEL} — retry after 3600s`);
   try {
     const parts: unknown[] = [];
     for (const m of media) {
@@ -227,14 +231,14 @@ export async function readPostWithGemini(ctx: PostContext, media: ReadMedia[]): 
       } else if (m.bytes <= INLINE_MAX_BYTES) {
         parts.push({ inline_data: { mime_type: 'video/mp4', data: (await readFile(m.path)).toString('base64') } });
       } else {
-        const f = await uploadFile(m.path, m.bytes);
+        const f = await uploadFile(m.path, m.bytes, pin!.key);
         uploaded.push(f.name);
         parts.push({ file_data: { mime_type: 'video/mp4', file_uri: f.uri } });
       }
     }
     const labels = media.map((m) => (m.kind === 'video' ? 'video' : 'image'));
     parts.push({ text: buildReadPrompt({ ...ctx, ocr_text: '' }, labels) });
-    const r = await generate(parts, READ_SCHEMA, 'read_post', ctx.post_id, { media: labels.join(','), candidates: ctx.candidates?.length ?? 0 });
+    const r = await generate(parts, READ_SCHEMA, 'read_post', ctx.post_id, { media: labels.join(','), candidates: ctx.candidates?.length ?? 0 }, pin?.index);
     const byIndex = new Map<number, string[]>();
     for (const e of Array.isArray(r.obj.media_text) ? r.obj.media_text : []) {
       const it = e as { media?: unknown; lines?: unknown };
@@ -244,7 +248,7 @@ export async function readPostWithGemini(ctx: PostContext, media: ReadMedia[]): 
     const mediaText = media.map((m, i) => ({ mediaId: m.mediaId, lines: (byIndex.get(i + 1) ?? []).map((l) => l.trim()).filter(Boolean) }));
     return { answer: toAnswer(ctx.post_id, r.obj), mediaText, costUsd: r.costUsd, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
   } finally {
-    for (const name of uploaded) await deleteFile(name);
+    for (const name of uploaded) await deleteFile(name, pin?.key);
   }
 }
 

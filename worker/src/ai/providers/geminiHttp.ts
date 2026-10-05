@@ -29,6 +29,13 @@ export const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
 
 export interface GeminiHttpOptions {
   apiKey?: string;
+  /**
+   * Use exactly this key (index into geminiApiKeys()) and never rotate: a call
+   * that references a Files-API upload must use the project that owns the file
+   * (another project's key gets 403 "permission to access the File"). A
+   * per-day refusal still marks the key so the NEXT job picks another one.
+   */
+  pinKeyIndex?: number;
   fetch?: typeof fetch;
   timeoutMs?: number;
   maxAttempts?: number;
@@ -66,6 +73,14 @@ function modelOf(path: string): string {
   return /\/models\/([^:/]+)/.exec(path)?.[1] ?? path;
 }
 
+/** The key a new piece of work should use for `model` (first not set aside), or null when all are. */
+export function geminiKeyFor(model: string): { key: string; index: number } | null {
+  const keys = geminiApiKeys();
+  const now = Date.now();
+  const index = keys.findIndex((_, i) => (keyExhaustedUntil.get(`${i}|${model}`) ?? 0) <= now);
+  return index >= 0 ? { key: keys[index]!, index } : null;
+}
+
 /** Test hook: forget which keys were refused. */
 export function resetGeminiKeyState(): void { keyExhaustedUntil.clear(); }
 
@@ -77,8 +92,11 @@ export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHtt
   const baseDelayMs = opts.baseDelayMs ?? 2_000;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   // An explicit key (tests, one-off callers) is used alone; otherwise rotate.
-  const rotating = opts.apiKey === undefined;
-  const keys = rotating ? geminiApiKeys() : [geminiApiKey(opts.apiKey)];
+  const pinned = opts.apiKey === undefined && opts.pinKeyIndex !== undefined;
+  const rotating = opts.apiKey === undefined && !pinned;
+  const allKeys = geminiApiKeys();
+  if (pinned && !allKeys[opts.pinKeyIndex!]) throw providerError('gemini', `no Gemini key at index ${opts.pinKeyIndex}`);
+  const keys = rotating ? allKeys : pinned ? [allKeys[opts.pinKeyIndex!]!] : [geminiApiKey(opts.apiKey)];
   if (keys.length === 0) throw providerError('gemini', 'GEMINI_API_KEY is not set');
   const model = modelOf(path);
   const pickKey = (): number => {
@@ -130,6 +148,7 @@ export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHtt
       const daily = res.status === 429 ? dailyQuotaOf(snippet) : null;
       if (daily) {
         if (rotating) keyExhaustedUntil.set(`${keyIndex}|${model}`, Date.now() + daily.retryAfterSec * 1000);
+        if (pinned) keyExhaustedUntil.set(`${opts.pinKeyIndex}|${model}`, Date.now() + daily.retryAfterSec * 1000);
         const next = rotating ? pickKey() : -1;
         if (next >= 0) {
           console.warn(`[ai/gemini] key #${keyIndex + 1} hit its daily quota for ${model} (${daily.quota}) — switching to key #${next + 1}`);
