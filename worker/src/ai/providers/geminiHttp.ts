@@ -44,6 +44,31 @@ export function geminiApiKey(explicit?: string): string {
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
+/**
+ * Several keys, one per Google Cloud project (2026-10-05). The per-day request
+ * quota is per PROJECT and per MODEL (Tier 1: 10,000/day for gemini-3.8-flash),
+ * so a second project's key doubles the daily capacity. Keys are tried in
+ * order; a key Google refuses with a per-day quota is set aside for that model
+ * until the quota's retry time, and the call moves to the next key at once.
+ * Only when every key is refused does the caller see DAILY_QUOTA_MARK (and
+ * pause). All keys bill the same prepaid account, so an empty balance (402)
+ * is never retried on another key.
+ */
+const keyExhaustedUntil = new Map<string, number>(); // `${keyIndex}|${model}` → epoch ms
+
+export function geminiApiKeys(): string[] {
+  return [process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_2, process.env.GEMINI_API_KEY_3]
+    .map((k) => (k ?? '').trim())
+    .filter((k) => k.length > 0);
+}
+
+function modelOf(path: string): string {
+  return /\/models\/([^:/]+)/.exec(path)?.[1] ?? path;
+}
+
+/** Test hook: forget which keys were refused. */
+export function resetGeminiKeyState(): void { keyExhaustedUntil.clear(); }
+
 /** POST JSON to `${GEMINI_API_BASE}${path}`; returns the parsed body. */
 export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHttpOptions = {}): Promise<R> {
   const doFetch = opts.fetch ?? globalThis.fetch;
@@ -51,7 +76,23 @@ export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHtt
   const maxAttempts = Math.max(1, opts.maxAttempts ?? 5);
   const baseDelayMs = opts.baseDelayMs ?? 2_000;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const key = geminiApiKey(opts.apiKey);
+  // An explicit key (tests, one-off callers) is used alone; otherwise rotate.
+  const rotating = opts.apiKey === undefined;
+  const keys = rotating ? geminiApiKeys() : [geminiApiKey(opts.apiKey)];
+  if (keys.length === 0) throw providerError('gemini', 'GEMINI_API_KEY is not set');
+  const model = modelOf(path);
+  const pickKey = (): number => {
+    const now = Date.now();
+    if (!rotating) return 0;
+    return keys.findIndex((_, i) => (keyExhaustedUntil.get(`${i}|${model}`) ?? 0) <= now);
+  };
+  let keyIndex = pickKey();
+  if (keyIndex < 0) {
+    // Every key is set aside for this model: report the soonest it may return.
+    const soonest = Math.min(...keys.map((_, i) => keyExhaustedUntil.get(`${i}|${model}`) ?? 0));
+    throw providerError('gemini', `${DAILY_QUOTA_MARK} all ${keys.length} key(s) at their daily quota for ${model} — retry after ${Math.max(60, Math.ceil((soonest - Date.now()) / 1000))}s`);
+  }
+  let key = keys[keyIndex]!;
   const payload = JSON.stringify(body);
 
   for (let attempt = 1; ; attempt++) {
@@ -88,6 +129,15 @@ export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHtt
       }
       const daily = res.status === 429 ? dailyQuotaOf(snippet) : null;
       if (daily) {
+        if (rotating) keyExhaustedUntil.set(`${keyIndex}|${model}`, Date.now() + daily.retryAfterSec * 1000);
+        const next = rotating ? pickKey() : -1;
+        if (next >= 0) {
+          console.warn(`[ai/gemini] key #${keyIndex + 1} hit its daily quota for ${model} (${daily.quota}) — switching to key #${next + 1}`);
+          keyIndex = next;
+          key = keys[next]!;
+          attempt--; // a key switch is not a failed attempt
+          continue;
+        }
         // A per-DAY quota does not refill in seconds — retrying here only burns
         // the job. Callers recognise DAILY_QUOTA_MARK and defer the work.
         throw providerError('gemini', `${DAILY_QUOTA_MARK} ${daily.quota} — retry after ${daily.retryAfterSec}s`);
