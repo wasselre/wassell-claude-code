@@ -297,6 +297,37 @@ async function loadCandidates(supabase: SupabaseClient, companyIds: string[], de
   return [...out.values()];
 }
 
+const OUTRANK_DAYS = 7;
+
+/** The label of an enabled chat of the same company with a HIGHER priority
+ *  that changed this project (not reverted) within OUTRANK_DAYS, or null. */
+async function outrankedBy(
+  supabase: SupabaseClient,
+  group: { chat_wid: string; company_ids: string[]; priority?: number | null },
+  projectId: string,
+): Promise<string | null> {
+  const { data: gs, error: gErr } = await supabase.from('project_update_groups')
+    .select('chat_wid, label, company_ids').eq('is_enabled', true).gt('priority', group.priority ?? 0);
+  if (gErr) throw new Error(`higher-priority chats: ${gErr.message}`);
+  const higher = ((gs ?? []) as Array<{ chat_wid: string; label: string; company_ids: string[] | null }>)
+    .filter((h) => h.chat_wid !== group.chat_wid && (h.company_ids ?? []).some((c) => group.company_ids.includes(c)));
+  if (!higher.length) return null;
+  const since = new Date(Date.now() - OUTRANK_DAYS * 86_400_000).toISOString();
+  for (const h of higher) {
+    const { data: runs, error: rErr } = await supabase.from('project_update_runs').select('id')
+      .eq('source_type', 'whatsapp_group').eq('dry_run', false).gte('created_at', since)
+      .filter('params->>chat_wid', 'eq', h.chat_wid);
+    if (rErr) throw new Error(`higher-priority runs: ${rErr.message}`);
+    const ids = ((runs ?? []) as Array<{ id: string }>).map((x) => x.id);
+    if (!ids.length) continue;
+    const { data: ch, error: cErr } = await supabase.from('project_update_changes').select('id')
+      .in('run_id', ids).eq('project_id', projectId).is('reverted_at', null).limit(1);
+    if (cErr) throw new Error(`higher-priority changes: ${cErr.message}`);
+    if ((ch ?? []).length) return h.label;
+  }
+  return null;
+}
+
 async function loadUnits(supabase: SupabaseClient, projectId: string): Promise<CrmUnit[]> {
   const out: CrmUnit[] = [];
   for (let from = 0; ; from += 500) {
@@ -351,7 +382,7 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
 
   const { data: g, error: gErr } = await supabase.from('project_update_groups').select('*').eq('chat_wid', chatWid).maybeSingle();
   if (gErr || !g) throw new Error(`group ${chatWid}: ${gErr?.message ?? 'not registered'}`);
-  const group = g as { chat_wid: string; label: string; company_ids: string[]; read_through: string | null };
+  const group = g as { chat_wid: string; label: string; company_ids: string[]; read_through: string | null; priority?: number | null };
   const backfill = typeof a.params.since === 'string';
   const since = (a.params.since as string | undefined) ?? group.read_through ?? '1970-01-01T00:00:00Z';
   const until = (a.params.until as string | undefined) ?? new Date().toISOString();
@@ -531,11 +562,23 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
         r.dropped = `price list skipped: ${project.name} is updated from its portal (${String(reg!.data.source_type)})`;
         continue;
       }
+      // A higher-priority chat of the same company (the officer's PRIVATE chat
+      // outranks the broker group — operator rule 2026-10-05) updated this
+      // project in the last 7 days → this chat's sheet / price list is skipped,
+      // so an old file re-posted here cannot roll back the newer private one.
+      // Bookings still apply (they only move a unit forward).
+      if (it.kind === 'available_list') {
+        const by = await outrankedBy(supabase, group, projectId);
+        if (by) {
+          r.dropped = `sheet skipped: «${by}» updated ${project.name} in the last ${OUTRANK_DAYS} days and outranks this chat`;
+          continue;
+        }
+      }
 
       if (it.kind === 'project_terms') {
         const t = it.terms ?? {};
         // Terms that already ended are history, not an update.
-        if (t.commission_until && /^d{4}-d{2}-d{2}$/.test(t.commission_until) && t.commission_until < today) {
+        if (t.commission_until && /^\d{4}-\d{2}-\d{2}$/.test(t.commission_until) && t.commission_until < today) {
           r.dropped = `expired on ${t.commission_until}`;
           continue;
         }
