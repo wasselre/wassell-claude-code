@@ -14,7 +14,7 @@ export interface AgentRunSearch {
   overrides: string[];
   top: AgentFoundProject[];
   /** Nothing fit: the closest options, each missing one condition. */
-  alternatives?: Array<{ without: 'near' | 'readiness' | 'near_and_readiness'; top: AgentFoundProject[] }>;
+  alternatives?: Array<{ without: 'near' | 'readiness' | 'near_and_readiness' | 'area'; top: AgentFoundProject[] }>;
 }
 
 export interface AgentFoundProject { id: string; name: string; district: string | null; price_from: number | null }

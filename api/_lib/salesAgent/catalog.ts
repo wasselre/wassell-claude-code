@@ -121,8 +121,13 @@ export interface CatalogSearch {
    *  2026-10-05: «شقة جاهزة 3 غرف شمال الرياض قريبة من مترو بمليون و200» got
    *  "nothing" while مينا 51 (ready, 2.5 km from a station) and مكانة (0.5 km,
    *  off-plan) were there. Never a fit — the reply says what differs. */
-  alternatives?: Array<{ without: 'near' | 'readiness' | 'near_and_readiness'; relaxed: CatalogSearch['relaxed']; total: number; projects: CatalogProject[] }>;
+  alternatives?: Array<{ without: AlternativeWithout; relaxed: CatalogSearch['relaxed']; total: number; projects: CatalogProject[] }>;
 }
+
+/** What an alternative leaves out. «area» = outside the asked area — tried only
+ *  when nothing else turned up (an area with none of our projects: «دور في ظهرة
+ *  لبن» got nothing while 3-room أدوار were elsewhere in Riyadh). */
+export type AlternativeWithout = 'near' | 'readiness' | 'near_and_readiness' | 'area';
 
 const TOP = 6;
 
@@ -458,14 +463,14 @@ export async function searchProjects(
   // road, a distance from a place…) replaces the zone test when present.
   const areaIds = criteria.area_ids ? new Set(criteria.area_ids) : null;
   const inArea = (r: { master: Master; inArea: boolean }) => (areaIds ? areaIds.has(r.master.id) : r.inArea);
-  interface Drop { near?: boolean; readiness?: boolean }
+  interface Drop { near?: boolean; readiness?: boolean; area?: boolean }
   const pick = (check: FitCheck, areaOnly: boolean, nearFactor = 1, drop: Drop = {}): Array<{ master: Master; m: FinderMatch; inArea: boolean }> =>
-    resolved.filter((r) => (!areaOnly || inArea(r))
+    resolved.filter((r) => (!areaOnly || drop.area || inArea(r))
       && (drop.near || nearOk(r.master.id, nearFactor))
       && projectFits(r.master.data, check)
       && unitsFit(r.master.id, check)
       && (drop.readiness || !criteria.readiness || readinessOf(r.master.data) === criteria.readiness)
-      && (!wantDistricts.size || (typeof r.m.facts?.district === 'string' && wantDistricts.has(districtKey(r.m.facts.district)))));
+      && (drop.area || !wantDistricts.size || (typeof r.m.facts?.district === 'string' && wantDistricts.has(districtKey(r.m.facts.district)))));
 
   const beds = criteria.bedrooms_min ?? null;
   const budget = criteria.budget_max ?? null;
@@ -526,9 +531,10 @@ export async function searchProjects(
   // Nothing at all → the closest real options, each labelled with what it lacks.
   // Inside the asked area only (no area rung): "outside the area" is its own answer.
   let alternatives: CatalogSearch['alternatives'];
-  if (!all.length && (nearDist.length || criteria.readiness)) {
+  const areaAsked = zoneKnown || !!areaIds || wantDistricts.size > 0;
+  if (!all.length && (nearDist.length || criteria.readiness || areaAsked)) {
     alternatives = [];
-    const tries: Array<{ without: 'near' | 'readiness' | 'near_and_readiness'; drop: Drop }> = [];
+    const tries: Array<{ without: AlternativeWithout; drop: Drop }> = [];
     if (nearDist.length) tries.push({ without: 'near', drop: { near: true } });
     if (criteria.readiness) tries.push({ without: 'readiness', drop: { readiness: true } });
     for (const t of tries) {
@@ -538,6 +544,10 @@ export async function searchProjects(
     if (!alternatives.length && nearDist.length && criteria.readiness) {
       const r = runLadder({ near: true, readiness: true }, false);
       if (r.fits.length) alternatives.push({ without: 'near_and_readiness', relaxed: r.relaxed, total: r.fits.length, projects: toProjects(r.fits, r.used).slice(0, 3) });
+    }
+    if (!alternatives.length && areaAsked) {
+      const r = runLadder({ area: true }, false);
+      if (r.fits.length) alternatives.push({ without: 'area', relaxed: r.relaxed, total: r.fits.length, projects: toProjects(r.fits, r.used).slice(0, 3) });
     }
     if (!alternatives.length) alternatives = undefined;
   }
