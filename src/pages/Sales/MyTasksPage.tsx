@@ -507,7 +507,9 @@ export default function MyTasksPage() {
           loading={aiApprovals.loading}
           error={aiApprovals.error}
           isAr={isAr}
-          onActionDone={(id) => { aiApprovals.dropAction(id); void aiApprovals.refresh(); }}
+          onActionDone={(id) => aiApprovals.dropAction(id)}
+          onActionRestore={(id) => aiApprovals.restoreAction(id)}
+          onActionSettled={() => void aiApprovals.refresh()}
           onResultDone={(id) => { aiApprovals.dropResult(id); void aiApprovals.refresh(); }}
         />
       )}

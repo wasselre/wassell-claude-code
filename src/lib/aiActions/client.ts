@@ -20,7 +20,12 @@ function normalize(row: Record<string, unknown>): AiAction {
   };
 }
 
-/** Pending actions (oldest first) plus the last day's failures, so a failed send is never invisible. */
+/**
+ * Pending actions (oldest first) plus the last day's failures, so a failed send
+ * is never invisible. An approved message (`sending`) is NOT listed — it is the
+ * operator's decision already made, and it leaves the list the moment they
+ * approve (operator, 2026-10-05); if the send then fails it comes back as failed.
+ */
 export async function fetchAiActions(): Promise<AiAction[]> {
   if (!supabase) return [];
   const since = new Date(Date.now() - 24 * 3600_000).toISOString();
@@ -29,7 +34,7 @@ export async function fetchAiActions(): Promise<AiAction[]> {
     const { data, error } = await supabase
       .from('ai_actions')
       .select(COLUMNS)
-      .or(`status.eq.pending,status.eq.sending,and(status.eq.failed,updated_at.gte.${since})`)
+      .or(`status.eq.pending,and(status.eq.failed,updated_at.gte.${since})`)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + 999);
@@ -46,11 +51,12 @@ export async function fetchAiActions(): Promise<AiAction[]> {
 export type AiActionDecisionError =
   | 'already_decided' | 'followup_moved' | 'client_closed' | 'ai_paused' | 'no_operations_line' | string;
 
-/** Approve (optionally with the operator's edited text) or reject one action. */
+/** Approve (optionally with the operator's edited text) or reject one action (a reject needs `note`). */
 export async function decideAiAction(
   id: string,
   action: 'approve' | 'reject',
   body?: string,
+  note?: string,
 ): Promise<{ ok: true } | { ok: false; error: AiActionDecisionError }> {
   const session = supabase ? (await supabase.auth.getSession()).data.session : null;
   const res = await fetch('/api/ai-actions', {
@@ -59,7 +65,7 @@ export async function decideAiAction(
       'Content-Type': 'application/json',
       ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
     },
-    body: JSON.stringify({ id, action, ...(body !== undefined ? { body } : {}) }),
+    body: JSON.stringify({ id, action, ...(body !== undefined ? { body } : {}), ...(note !== undefined ? { note } : {}) }),
   });
   if (res.ok) return { ok: true };
   const payload = (await res.json().catch(() => ({}))) as { error?: string };

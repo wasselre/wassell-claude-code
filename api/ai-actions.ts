@@ -4,7 +4,8 @@
  * project's officer. Nothing the AI writes is sent until this is called
  * (operator, 2026-10-04).
  *
- * Body: { id, action: 'approve' | 'reject', body? }
+ * Body: { id, action: 'approve' | 'reject', body?, note? } — a reject needs a note
+ *   (why the draft was wrong; operator, 2026-10-05), stored in reject_note.
  *   approve → re-checks the action is still right to send, then queues it:
  *     · followup_message: to the client's chat on the line the client last
  *       wrote from (else the sales line), reference 'ai:followup:<id>:<round>'
@@ -40,7 +41,7 @@ interface ActionRow {
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
   return withAuth(req, async (user) => {
-    let input: { id?: string; action?: string; body?: string };
+    let input: { id?: string; action?: string; body?: string; note?: string };
     try { input = (await req.json()) as typeof input; }
     catch { return jsonError(400, 'invalid JSON body'); }
     const id = input.id ?? '';
@@ -48,6 +49,8 @@ export default async function handler(req: Request): Promise<Response> {
     if (input.action !== 'approve' && input.action !== 'reject') return jsonError(400, 'action must be approve or reject');
     const edited = typeof input.body === 'string' ? input.body.trim() : null;
     if (edited !== null && (edited.length === 0 || edited.length > 2000)) return jsonError(400, 'body must be 1–2000 characters');
+    const note = typeof input.note === 'string' ? input.note.trim() : '';
+    if (input.action === 'reject' && (note.length === 0 || note.length > 1000)) return jsonError(400, 'note_required');
 
     // Who may decide: whoever RLS lets see the row (admins).
     const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
@@ -68,7 +71,7 @@ export default async function handler(req: Request): Promise<Response> {
 
     if (input.action === 'reject') {
       const { data: upd, error: uErr } = await svc.from('ai_actions')
-        .update({ status: 'rejected', decided_by: me, decided_at: now, updated_at: now })
+        .update({ status: 'rejected', decided_by: me, decided_at: now, updated_at: now, reject_note: note })
         .eq('id', id).eq('status', 'pending').select('id');
       if (uErr) return jsonError(500, `could not save: ${uErr.message}`);
       if (!upd?.length) return jsonError(409, 'already_decided');

@@ -61,16 +61,20 @@ function fmtAt(iso: string | null, isAr: boolean): string {
   });
 }
 
-function MessageCard({ action, isAr, clientName, onDone }: {
+function MessageCard({ action, isAr, clientName, onDone, onRestore, onSettled }: {
   action: AiAction;
   isAr: boolean;
   clientName: string | null;
   onDone: (id: string) => void;
+  onRestore: (id: string) => void;
+  onSettled: () => void;
 }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const addToast = useAppStore((s) => s.addToast);
   const [text, setText] = useState(action.body);
-  const [busy, setBusy] = useState<'approve' | 'reject' | null>(null);
+  const [busy, setBusy] = useState<'reject' | null>(null);
+  const [rejecting, setRejecting] = useState(false);
+  const [note, setNote] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
   const isOfficer = action.kind === 'officer_notice';
   const warnings = ctxList(action, 'warnings');
@@ -82,19 +86,39 @@ function MessageCard({ action, isAr, clientName, onDone }: {
   const failed = action.status === 'failed';
   const sending = action.status === 'sending';
 
-  const decide = async (decision: 'approve' | 'reject') => {
-    setBusy(decision);
-    const edited = decision === 'approve' && text.trim() !== action.body ? text.trim() : undefined;
-    const r = await decideAiAction(action.id, decision, edited);
+  // Errors that close the card for good — anything else puts it back.
+  const isFinal = (e: string) => e === 'already_decided' || e === 'followup_moved' || e === 'client_closed';
+  const failToast = (e: string) => {
+    const known = DECISION_ERRORS[e];
+    addToast(known ? L(known.ar, known.en) : L(`تعذّر: ${e}`, `Failed: ${e}`), 'error');
+  };
+
+  // Approve: the card leaves the list at once (operator, 2026-10-05) — the
+  // send happens in the background and only a failure brings it back.
+  const approve = async () => {
+    const edited = text.trim() !== action.body ? text.trim() : undefined;
+    onDone(action.id);
+    const r = await decideAiAction(action.id, 'approve', edited);
+    if (!r.ok) {
+      failToast(r.error);
+      if (!isFinal(r.error)) onRestore(action.id);
+    }
+    onSettled();
+  };
+
+  // Reject: needs a note saying what was wrong with the draft.
+  const reject = async () => {
+    if (!note.trim()) return;
+    setBusy('reject');
+    const r = await decideAiAction(action.id, 'reject', undefined, note.trim());
     setBusy(null);
     if (!r.ok) {
-      const known = DECISION_ERRORS[r.error];
-      addToast(known ? L(known.ar, known.en) : L(`تعذّر: ${r.error}`, `Failed: ${r.error}`), 'error');
-      if (r.error === 'already_decided' || r.error === 'followup_moved' || r.error === 'client_closed') onDone(action.id);
+      failToast(r.error);
+      if (isFinal(r.error)) { onDone(action.id); onSettled(); }
       return;
     }
-    addToast(decision === 'approve' ? L('أُرسلت للإرسال', 'Queued to send') : L('رُفضت', 'Rejected'), 'success');
     onDone(action.id);
+    onSettled();
   };
 
   return (
@@ -191,16 +215,45 @@ function MessageCard({ action, isAr, clientName, onDone }: {
             </span>
           ) : (
             <>
-              <Button className={BTN} disabled={busy !== null || !text.trim()} onClick={() => void decide('approve')}>
-                {busy === 'approve' ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+              <Button className={BTN} disabled={busy !== null || rejecting || !text.trim()} onClick={() => void approve()}>
+                <Send size={12} />
                 {L('اعتمد وأرسل', 'Approve & send')}
               </Button>
-              <Button className={BTN} variant="secondary" disabled={busy !== null} onClick={() => void decide('reject')}>
-                {busy === 'reject' ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
-                {L('رفض', 'Reject')}
-              </Button>
+              {!rejecting && (
+                <Button className={BTN} variant="secondary" disabled={busy !== null} onClick={() => setRejecting(true)}>
+                  <X size={12} />
+                  {L('رفض', 'Reject')}
+                </Button>
+              )}
             </>
           )}
+        </div>
+      )}
+
+      {rejecting && !failed && (
+        <div className="mt-2 space-y-2 rounded-xl border border-terracotta/30 bg-terracotta/5 p-2.5">
+          <label className="block text-xs font-bold text-chocolate" htmlFor={`reject-note-${action.id}`}>
+            {L('سبب الرفض (مطلوب) — ما الخطأ في الرسالة؟', 'Reason for rejecting (required) — what is wrong with the message?')}
+          </label>
+          <textarea
+            id={`reject-note-${action.id}`}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            dir="auto"
+            maxLength={1000}
+            autoFocus
+            className="form-input w-full resize-y text-sm"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button className={BTN} variant="danger" disabled={busy !== null || !note.trim()} onClick={() => void reject()}>
+              {busy === 'reject' ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+              {L('تأكيد الرفض', 'Confirm reject')}
+            </Button>
+            <Button className={BTN} variant="ghost" disabled={busy !== null} onClick={() => { setRejecting(false); setNote(''); }}>
+              {L('إلغاء', 'Cancel')}
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -342,13 +395,15 @@ function ResultCard({ suggestion: s, isAr, onDone }: {
   );
 }
 
-export default function AiApprovalsSection({ actions, results, loading, error, isAr, onActionDone, onResultDone }: {
+export default function AiApprovalsSection({ actions, results, loading, error, isAr, onActionDone, onActionRestore, onActionSettled, onResultDone }: {
   actions: AiAction[];
   results: ChatOutcomeSuggestion[];
   loading: boolean;
   error: string | null;
   isAr: boolean;
   onActionDone: (id: string) => void;
+  onActionRestore: (id: string) => void;
+  onActionSettled: () => void;
   onResultDone: (id: string) => void;
 }) {
   const models = useAppStore((s) => s.models);
@@ -402,10 +457,10 @@ export default function AiApprovalsSection({ actions, results, loading, error, i
       ) : (
         <>
           {group(L('متابعات للعملاء', 'Follow-ups to clients'), clientMsgs.map((a) => (
-            <MessageCard key={a.id} action={a} isAr={isAr} clientName={clientNames.get(a.client_id) ?? null} onDone={onActionDone} />
+            <MessageCard key={a.id} action={a} isAr={isAr} clientName={clientNames.get(a.client_id) ?? null} onDone={onActionDone} onRestore={onActionRestore} onSettled={onActionSettled} />
           )), clientMsgs.length)}
           {group(L('رسائل للمسؤولين', 'Messages to officers'), officerMsgs.map((a) => (
-            <MessageCard key={a.id} action={a} isAr={isAr} clientName={clientNames.get(a.client_id) ?? null} onDone={onActionDone} />
+            <MessageCard key={a.id} action={a} isAr={isAr} clientName={clientNames.get(a.client_id) ?? null} onDone={onActionDone} onRestore={onActionRestore} onSettled={onActionSettled} />
           )), officerMsgs.length)}
           {group(L('نتائج المتابعات', 'Follow-up results'), liveResults.map((s) => (
             <ResultCard key={s.id} suggestion={s} isAr={isAr} onDone={onResultDone} />
