@@ -140,6 +140,14 @@ export async function geminiPost<R>(path: string, body: unknown, opts: GeminiHtt
     clearTimeout(timer);
     if (!res.ok) {
       const snippet = (await safeText(res)).slice(0, 1500);
+      if (res.status === 429 && /monthly spending cap/i.test(snippet)) {
+        // Tier spend cap (Tier 1: $250/month per billing account,
+        // ai.google.dev/gemini-api/docs/billing#tier-spend-caps). Nothing works
+        // until the month resets, the account moves up a tier or the cap is
+        // raised — so pause like an empty balance and re-check hourly.
+        // Hit 2026-10-05 07:40 UTC during the catch-up.
+        throw providerError('gemini', `${DAILY_QUOTA_MARK} ${MONTHLY_CAP} — retry after ${MONTHLY_CAP_RECHECK_SEC}s: ${snippet.replace(/\s+/g, ' ').slice(0, 200)}`);
+      }
       if (res.status === 402) {
         // "Your prepayment credits are depleted": nothing works until someone
         // tops up the AI Studio prepay balance. Same path as a daily quota —
@@ -202,6 +210,9 @@ export const DAILY_QUOTA_MARK = 'daily_quota_exhausted';
 /** Names the 402 case inside a DAILY_QUOTA_MARK error: the AI Studio prepaid balance is empty. */
 export const CREDITS_DEPLETED = 'prepayment_credits_depleted';
 const CREDITS_RECHECK_SEC = 900;
+/** Names the 429 'monthly spending cap' case inside a DAILY_QUOTA_MARK error. */
+export const MONTHLY_CAP = 'monthly_spending_cap';
+const MONTHLY_CAP_RECHECK_SEC = 3600;
 
 /** `{quota, retryAfterSec}` when a 429 body names a per-day quota; else null. Pure — tested. */
 export function dailyQuotaOf(body: string): { quota: string; retryAfterSec: number } | null {
