@@ -1,7 +1,7 @@
 # PRD: Automated project updates (portals + developer WhatsApp groups)
 
-**Status:** Live — Riva portal + Almajdiah API weekly; WhatsApp groups of Al-Ramz, Safa, Riva. Safa built (waits for its first saved portal snapshot). Al-Ramz portal being explored; Binghatti blocked (reCAPTCHA).
-**Last updated:** 2026-10-04
+**Status:** Live — Riva portal, Almajdiah API and Safa (portal snapshot + public site) weekly; WhatsApp groups of Al-Ramz, Safa, Riva. Al-Ramz portal being explored; Binghatti blocked (reCAPTCHA).
+**Last updated:** 2026-10-05
 **Related PRDs:** projects-units.md, chats.md, lead-portal-registration.md, data-migration.md (archived wizard)
 
 ## What it is (in plain English)
@@ -20,7 +20,7 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 |---|---|---|
 | Riva broker portal (`riva_broker`, 21 projects) | plain-HTTP sign-in with the `lead_portals` Riva login; unit JSON in each card | weekly, live |
 | Almajdiah API (`developer_api`, 10 projects) | public `etmaam.almajdiah.com/api/client/v1/projects/<id>` — every unit with its real status; price = `price_before_tax` | weekly, live |
-| Safa (`safa_broker`, 12 projects) | public `safainv.sa/project/units/<id>` + the broker cards the portal's DAILY STATUS CHECK saves (`save_items` step → `portal-registrations/inventory/<portal>/units.json`; one SMS code a day through the WhatsApp relay covers both) | built; scheduled once the first snapshot is verified |
+| Safa (`safa_broker`, 12 projects) | public `safainv.sa/project/units/<id>` + the broker cards the portal's DAILY STATUS CHECK saves (`save_items` step → `portal-registrations/inventory/<portal>/units.json`; one SMS code a day through the WhatsApp relay covers both) | weekly, live (first live run 2026-10-05: 179 units created for صفا 101/102; 4 projects held) |
 | Developer WhatsApp groups | Claude Opus 5.5 reads new messages + PDFs/images | live |
 | Al-Ramz Drive sheets | the Drive FOLDER is not publicly listable (only single files are) | not automatable as is — Al-Ramz updates arrive through the WhatsApp group; the Al-Ramz broker portal's projects page is captured daily (`save_items` key `projects`) to see whether it carries units |
 | Binghatti broker portal | sign-in = user id + SMS code + Google reCAPTCHA | **not automated by design** — we don't build automation around a CAPTCHA |
@@ -38,6 +38,7 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 - **Almajdiah:** a complete source — its status wins both ways; units it does not list are reported, not touched. Identity = the full unit code where the API uses one (`TY01-H-0-1`), else building + number; مكانة carries `developer_unit_code = MAJD-<id>` (mapped once 2026-10-04, every pair's area agreed).
 - **Safa:** neither source shows sold/reserved, so "absent from BOTH lists → sold" applies only when the broker snapshot is < 36 h old AND the public site returned units for at least one project in the run (a soft-blocked public site answers «لا توجد نتائج» for everything — that must never read as "sold out"). Prices come ONLY from broker cards (the public price is on another basis — VAT / discount); a public-only new unit is created without a price, the public figure in its notes. A unit WE marked reserved is never flipped back to available by a list that cannot show reservations (`keepReserved`).
 - **A source that shares NO unit with the CRM is held** (≥ 5 units each side) — a wrong project link or a different numbering, not a reason to stack a second inventory (دروازة: the API lists Block 1, our 22 units are Blocks 3–4).
+- **Safa card facts (verified on the real snapshot, 2026-10-05):** the code is `.unit-title` in two formats («SF085-A01-F01-001-APT», and «299-C5-4-41» for صفا 101/102); the price is the «السعر:» line, never the «مبلغ العمولة:» line; floors come as GF/FF/SF/TF/RF/4F…/«سَطح»/Arabic ordinals; a card without a price is a not-yet-on-sale unit → under construction. **Existing Safa prices are REPORTED, not written** (`price_diffs_sample` in the run summary): the card price is not on one basis with ours (صفا 80: ours +5% on 28 of 31 units, صفا 85: equal) until a person settles which price we store. New units take the card price; their unit type stays empty when the card does not state it.
 - **Ended terms are dropped** (a commission or offer whose period is over is history, not an update).
 
 ## User flows
