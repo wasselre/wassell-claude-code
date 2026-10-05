@@ -7,7 +7,9 @@
  * client was registered. The text is a fixed template, so nothing in it can be
  * invented:
  *   السلام عليكم،
- *   عندنا عميل مهتم كثير بمشروع «X» (على الخارطة)، وهو مسجّل عندكم في البوابة.
+ *   عندنا عميل مهتم كثير بمشروع «X»، وهو مسجّل عندكم في البوابة.
+ *   سبب الاهتمام: سأل عن الأسعار والمخططات.
+ *   ما قام به العميل: فتح صفحة المشروع 3 مرات، تصفّح البروشور (5 صفحات)، حجز موعد زيارة.
  *   اهتمامه أقل بـ«Y».
  *   العميل: محمد — رقمه: 05…
  *   نتمنى تتواصلون معه، ويعطيك العافية.
@@ -22,7 +24,6 @@
  */
 import { type Rec, type Svc, idList, str, loadRecord, resolvePortals } from './leadPortals.js';
 import { resolveProjectOfficers } from './projectOfficers.js';
-import { resolveProjectDelivery } from '../../src/lib/projectMessage/delivery.js';
 
 export type OfficerDraftResult =
   | { status: 'drafted'; action_id: string; officer_id: string }
@@ -121,20 +122,10 @@ export async function draftOfficerNotice(
     }
   }
 
-  const delivery = resolveProjectDelivery(project.data ?? {});
-  const readiness = delivery.kind === 'off_plan' ? ' (على الخارطة)' : delivery.kind === 'ready' ? ' (جاهز)' : '';
   const clientName = str(client.data?.client_name).trim();
   const clientPhone = localPhone(str(client.data?.phone_number));
-  const why = await interestWhy(svc, args.clientId, args.projectId);
-  const lines = [
-    'السلام عليكم،',
-    `عندنا عميل مهتم كثير بمشروع «${projectName(project)}»${readiness}${registered ? '، وهو مسجّل عندكم في البوابة' : ''}.`,
-    ...(why ? [why] : []),
-    ...(lowNames.length ? [`اهتمامه أقل بـ«${lowNames.join('» و«')}».`] : []),
-    `العميل: ${clientName || '—'}${clientPhone ? ` — رقمه: ${clientPhone}` : ''}`,
-    'نتمنى تتواصلون معه، ويعطيك العافية.',
-  ];
-  const body = lines.join('\n');
+  const why = await interestWhy(svc, args.clientId, args.projectId, args.chatWid);
+  const body = noticeBody({ projectName: projectName(project), registered, why, lowNames, clientName, clientPhone, questions: [] });
 
   const { data: ins, error: insErr } = await svc.from('ai_actions').insert({
     kind: 'officer_notice',
@@ -169,25 +160,137 @@ export async function draftOfficerNotice(
   return { status: 'drafted', action_id: actionId, officer_id: officer.id };
 }
 
+/** The officer message, from facts only. PURE. */
+export function noticeBody(a: {
+  projectName: string; registered: boolean; why: InterestWhy; lowNames: string[];
+  clientName: string; clientPhone: string; questions: string[];
+}): string {
+  const asking = a.questions.length > 0;
+  return [
+    'السلام عليكم،',
+    `عندنا عميل مهتم${asking ? '' : ' كثير'} بمشروع «${a.projectName}»${a.registered ? '، وهو مسجّل عندكم في البوابة' : ''}.`,
+    ...(a.why.reason ? [`سبب الاهتمام: ${a.why.reason}.`] : []),
+    ...(a.why.actions.length ? [`ما قام به العميل: ${a.why.actions.join('، ')}.`] : []),
+    ...(a.lowNames.length ? [`اهتمامه أقل بـ«${a.lowNames.join('» و«')}».`] : []),
+    ...a.questions.map((q) => `سؤال العميل: «${q}»`),
+    `العميل: ${a.clientName || '—'}${a.clientPhone ? ` — رقمه: ${a.clientPhone}` : ''}`,
+    asking ? 'نتمنى تتواصلون معه وتردون على سؤاله، ويعطيك العافية.' : 'نتمنى تتواصلون معه، ويعطيك العافية.',
+  ].join('\n');
+}
+
+export interface InterestWhy {
+  /** A general reason («سأل عن الأسعار والمخططات») — never the customer's literal words. */
+  reason: string | null;
+  /** What the client actually did («فتح صفحة المشروع 3 مرات»، «حجز موعد زيارة»). */
+  actions: string[];
+}
+
+/** What the customer asked about, as general topics (fixed order). */
+const TOPICS: Array<{ label: string; re: RegExp }> = [
+  { label: 'الأسعار', re: /سعر|اسعار|بكم|كم\s+(?:السعر|الشقه|الفيلا|الوحده)/ },
+  { label: 'المخططات', re: /مخطط|بلان|plan/i },
+  { label: 'البروشور', re: /بروشور|بروشر|كتيب|brochure/i },
+  { label: 'المساحات', re: /مساح|متر/ },
+  { label: 'الوحدات المتاحة', re: /متاح|متوفر|الوحدات/ },
+  { label: 'طريقة الدفع', re: /دفع|تقسيط|قسط|اقساط|تمويل|بنك/ },
+  { label: 'الموقع', re: /موقع|لوكيشن|وين\s+(?:المشروع|مكانه)/ },
+  { label: 'موعد التسليم', re: /تسليم|استلام/ },
+  { label: 'زيارة المشروع', re: /زياره|ازور|نزور|اشوف\s+المشروع/ },
+];
+
+const fold = (t: string): string => t.replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي');
+
 /**
- * Why we say the client is interested — FACTS only (operator, 2026-10-04: the
- * officer needs the interest made clear): the client's own words about the
- * project (quoted verbatim, from the outcome agent's quote-checked reading), a
- * visit / a booked appointment, and how much they opened the project's links.
+ * PURE — the officer's «why» from what the client did (exact) and what they
+ * asked about (general). Operator, 2026-10-05: «give them the exact actions
+ * executed by the client with a general reason — not the literal client words,
+ * that is weird» (the draft quoted «البروشور و المخطط و الأسعار» and a 43/100 score).
  */
-async function interestWhy(svc: Svc, clientId: string, projectId: string): Promise<string | null> {
-  const { data, error } = await svc.from('v_client_project_interest')
-    .select('link_score, appointments, visits, message_level, message_quote')
-    .eq('client_id', clientId).eq('project_id', projectId).maybeSingle();
+export function describeInterest(r: {
+  message_level: string | null; message_quote: string | null; appointments: number; visits: number;
+}, l: {
+  sessions: number; open_days: number; brochure_pages: number; brochure_seconds: number; videos_played: number;
+  max_video_pct: number; photos_opened: number; units_opened: number; opened_map: boolean;
+} | null): InterestWhy {
+  let reason: string | null = null;
+  if (r.message_level && r.message_level !== 'rejected') {
+    const q = fold(r.message_quote ?? '');
+    const topics = TOPICS.filter((t) => t.re.test(q)).map((t) => t.label);
+    reason = topics.length
+      ? `سأل عن ${topics.join(' و')}`
+      : r.message_level === 'wants' ? 'أبدى رغبة واضحة في المشروع' : 'سأل عن تفاصيل المشروع';
+  }
+  const actions: string[] = [];
+  if (l && l.sessions > 0) {
+    actions.push(l.sessions === 1 ? 'فتح صفحة المشروع' : `فتح صفحة المشروع ${l.sessions === 2 ? 'مرتين' : `${l.sessions} مرات`}${l.open_days === 2 ? ' في يومين' : l.open_days > 2 ? ` في ${l.open_days} أيام` : ''}`);
+  }
+  if (l && (l.brochure_pages > 0 || l.brochure_seconds > 0)) actions.push(l.brochure_pages > 1 ? `تصفّح البروشور (${l.brochure_pages} صفحات)` : 'تصفّح البروشور');
+  if (l && l.videos_played > 0) actions.push(l.max_video_pct >= 90 ? 'شاهد فيديو المشروع كاملاً' : l.max_video_pct > 0 ? `شاهد فيديو المشروع (${Math.round(l.max_video_pct)}٪ منه)` : 'شغّل فيديو المشروع');
+  if (l && l.photos_opened > 0) actions.push(l.photos_opened === 1 ? 'فتح صورة من صور المشروع' : `فتح ${l.photos_opened} صور`);
+  if (l && l.units_opened > 0) actions.push(l.units_opened === 1 ? 'فتح تفاصيل وحدة' : `فتح تفاصيل ${l.units_opened} وحدات`);
+  if (l?.opened_map) actions.push('فتح موقع المشروع على الخريطة');
+  if (r.visits > 0) actions.push('زار المشروع');
+  else if (r.appointments > 0) actions.push('حجز موعد زيارة');
+  return { reason, actions };
+}
+
+/**
+ * Why we say the client is interested — FACTS only: what the client did with
+ * the project's links (v_project_interest, every chat of this client), a visit
+ * or booked appointment, and the topics they asked about.
+ */
+async function interestWhy(svc: Svc, clientId: string, projectId: string, chatWid: string | null): Promise<InterestWhy> {
+  const [{ data, error }, { data: links, error: lErr }] = await Promise.all([
+    svc.from('v_client_project_interest')
+      .select('appointments, visits, message_level, message_quote')
+      .eq('client_id', clientId).eq('project_id', projectId).maybeSingle(),
+    svc.from('v_project_interest')
+      .select('sessions, open_days, brochure_pages, brochure_seconds, videos_played, max_video_pct, photos_opened, units_opened, opened_map')
+      .eq('project_id', projectId)
+      .or(chatWid ? `client_id.eq.${clientId},chat_wid.eq.${chatWid}` : `client_id.eq.${clientId}`),
+  ]);
   if (error) throw new Error(`interest read failed: ${error.message}`);
-  const r = data as { link_score: number; appointments: number; visits: number; message_level: string | null; message_quote: string | null } | null;
-  if (!r) return null;
-  const parts = [
-    r.message_quote && r.message_level !== 'rejected' ? `قال «${r.message_quote.replace(/\s+/g, ' ').trim().slice(0, 160)}»` : null,
-    r.visits > 0 ? 'زار المشروع' : r.appointments > 0 ? 'حجز موعد زيارة' : null,
-    r.link_score > 0 ? `فتح روابط المشروع (تفاعله ${r.link_score} من 100)` : null,
-  ].filter((x): x is string => !!x);
-  return parts.length ? `سبب الاهتمام: ${parts.join('، ')}.` : null;
+  if (lErr) throw new Error(`link activity read failed: ${lErr.message}`);
+  const r = (data ?? { message_level: null, message_quote: null, appointments: 0, visits: 0 }) as {
+    message_level: string | null; message_quote: string | null; appointments: number; visits: number;
+  };
+  type L = { sessions: number; open_days: number; brochure_pages: number; brochure_seconds: number; videos_played: number; max_video_pct: number; photos_opened: number; units_opened: number; opened_map: boolean };
+  const rows = (links ?? []) as Array<Partial<Record<keyof L, unknown>>>;
+  const num = (v: unknown) => (typeof v === 'number' ? v : Number(v ?? 0) || 0);
+  const l: L | null = rows.length ? rows.reduce<L>((acc, x) => ({
+    sessions: acc.sessions + num(x.sessions), open_days: acc.open_days + num(x.open_days),
+    brochure_pages: Math.max(acc.brochure_pages, num(x.brochure_pages)), brochure_seconds: acc.brochure_seconds + num(x.brochure_seconds),
+    videos_played: Math.max(acc.videos_played, num(x.videos_played)), max_video_pct: Math.max(acc.max_video_pct, num(x.max_video_pct)),
+    photos_opened: Math.max(acc.photos_opened, num(x.photos_opened)), units_opened: Math.max(acc.units_opened, num(x.units_opened)),
+    opened_map: acc.opened_map || x.opened_map === true,
+  }), { sessions: 0, open_days: 0, brochure_pages: 0, brochure_seconds: 0, videos_played: 0, max_video_pct: 0, photos_opened: 0, units_opened: 0, opened_map: false }) : null;
+  return describeInterest({ ...r, appointments: num(r.appointments), visits: num(r.visits) }, l);
+}
+
+/**
+ * Rebuild a PENDING officer notice nobody edited yet with the current wording
+ * (no readiness tag; actions + a general reason). Returns false when it was
+ * edited or already decided — those are left exactly as they are.
+ */
+export async function refreshPendingNotice(svc: Svc, actionId: string): Promise<boolean> {
+  const { data, error } = await svc.from('ai_actions')
+    .select('id, status, body, original_body, client_id, project_id, context').eq('id', actionId).maybeSingle();
+  if (error) throw new Error(`notice read failed: ${error.message}`);
+  const a = data as { id: string; status: string; body: string; original_body: string | null; client_id: string; project_id: string; context: Record<string, unknown> | null } | null;
+  if (!a || a.status !== 'pending' || a.body !== a.original_body) return false;
+  const [client, project] = await Promise.all([loadRecord(svc, a.client_id), loadRecord(svc, a.project_id)]);
+  if (!client || !project) return false;
+  const ctx = a.context ?? {};
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  const why = await interestWhy(svc, a.client_id, a.project_id, typeof ctx.client_chat_wid === 'string' ? ctx.client_chat_wid : null);
+  const body = noticeBody({
+    projectName: projectName(project), registered: ctx.registered === true, why, lowNames: strings(ctx.less_interest),
+    clientName: str(client.data?.client_name).trim(), clientPhone: localPhone(str(client.data?.phone_number)), questions: strings(ctx.questions),
+  });
+  if (body === a.body) return false;
+  const { error: uErr } = await svc.from('ai_actions').update({ body, original_body: body }).eq('id', a.id).eq('status', 'pending').eq('body', a.body);
+  if (uErr) throw new Error(`notice refresh failed: ${uErr.message}`);
+  return true;
 }
 
 export type OfficerQuestionResult =
@@ -240,19 +343,10 @@ export async function draftOfficerQuestion(
   }
 
   const registered = await isRegistered(svc, client, project);
-  const delivery = resolveProjectDelivery(project.data ?? {});
-  const readiness = delivery.kind === 'off_plan' ? ' (على الخارطة)' : delivery.kind === 'ready' ? ' (جاهز)' : '';
   const clientName = str(client.data?.client_name).trim();
   const clientPhone = localPhone(str(client.data?.phone_number));
-  const why = await interestWhy(svc, args.clientId, args.projectId);
-  const body = [
-    'السلام عليكم،',
-    `عندنا عميل مهتم بمشروع «${projectName(project)}»${readiness}${registered ? '، وهو مسجّل عندكم في البوابة' : ''}.`,
-    ...(why ? [why] : []),
-    qLine,
-    `العميل: ${clientName || '—'}${clientPhone ? ` — رقمه: ${clientPhone}` : ''}`,
-    'نتمنى تتواصلون معه وتردون على سؤاله، ويعطيك العافية.',
-  ].join('\n');
+  const why = await interestWhy(svc, args.clientId, args.projectId, args.clientChatWid);
+  const body = noticeBody({ projectName: projectName(project), registered, why, lowNames: [], clientName, clientPhone, questions: [question] });
   const { data: ins, error: insErr } = await svc.from('ai_actions').insert({
     kind: 'officer_notice', client_id: args.clientId, chat_wid: wid, project_id: args.projectId,
     officer_id: officer.id, phone: `+${wid.split('@')[0]}`, body, original_body: body,
