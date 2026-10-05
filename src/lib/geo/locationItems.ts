@@ -202,12 +202,18 @@ function describeExcludeCondition(cond: ElementCondition, name: string, isAr: bo
   }
 }
 
+/** A label that already says what it is: «حي …», or a zone («شمال الرياض», «الشمال», «north Riyadh»). */
+const LABEL_NEEDS_NO_HAY = /^(?:حي\s|(?:ال)?(?:شمال|جنوب|شرق|غرب|وسط)(?:\s|$)|(?:north|south|east|west|central|center)\b)/i;
+
 /** Human-readable, bilingual chip label for a saved item. */
 export function describeLocationItem(item: LocationItem, isAr: boolean): string {
   const ex = item.polarity === 'exclude';
   if (item.kind === 'district') {
     const name = item.district_label || (isAr ? 'حي' : 'district');
-    if (isAr) return ex ? `استثناء حي ${name}` : `حي ${name}`;
+    // «حي» only in front of a bare district name — never doubled («حي حي النرجس»)
+    // and never on a zone's shared label («شمال الرياض» is a zone, not a district).
+    const shown = isAr && !LABEL_NEEDS_NO_HAY.test(name.trim()) ? `حي ${name}` : name;
+    if (isAr) return ex ? `استثناء ${shown}` : shown;
     return ex ? `Exclude ${name}` : name;
   }
   if (item.kind === 'drawn_area') {

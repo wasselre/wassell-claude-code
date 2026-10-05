@@ -25,7 +25,7 @@ export function normalizeForQuote(s: string): string {
 
 /**
  * PURE — was this quote said by the CUSTOMER? Every fragment of the quote
- * (split on «...» / «…»; bracketed editor notes like «[العميل لم ينفِ]»
+ * (split on «...» / «…» / « / » / « | »; bracketed editor notes like «[العميل لم ينفِ]»
  * removed) must appear in the customer's own turns. The prompt already asks for
  * the customer's words, but measured 2026-09-29 the model still quoted the
  * salesperson in 3 of 14 audit suggestions («أنتِ تبحثين عن شقة…», «أبديت
@@ -37,7 +37,11 @@ export function customerSaidIt(conversation: Conversation, quote: string | null)
   const customerText = ` ${normalizeForQuote(conversation.turns.filter((t) => t.speaker === 'client').map((t) => t.text).join(' '))} `;
   const fragments = quote
     .replace(/\[[^\]]*\]/g, ' ')
-    .split(/\.{2,}|…/)
+    // «…» / «...» between fragments; « / » or « | » when the reader joins what the
+    // customer said in two messages («ميزانيتي حدود مليون ونص / المهم ما تتعدى ٣
+    // مليون» — dropped as unverified in the live test 2026-10-05). Every part
+    // must still be the customer's own words.
+    .split(/\.{2,}|…|\s[\/|]\s/)
     .map(normalizeForQuote)
     .filter((f) => f.length >= 2);
   if (fragments.length === 0) return false;

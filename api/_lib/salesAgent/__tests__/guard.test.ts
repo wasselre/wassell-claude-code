@@ -79,3 +79,23 @@ describe('spoken amounts are checked whole (2026-10-04)', () => {
 function spokenAmountsValues(t: string): number[] {
   return spokenAmounts(t).map((a) => a.value);
 }
+
+describe('place-distance claims need a measured search (live test 2026-10-05)', () => {
+  const g = new Set<number>([1, 3, 4]);
+  it('refuses «قريبة من محطة مترو، أقل من كيلو» when nothing was measured', async () => {
+    const { checkReply } = await import('../guard.js');
+    const v = checkReply('الأربعة مشاريع كلها قريبة من محطة مترو، أقل من كيلو. تبي 3 غرف ولا 4؟', { lang: 'ar', grounded: g, distancesMeasured: false });
+    expect(v.ok).toBe(false);
+    expect(v.problems.join(' ')).toMatch(/no search measured/);
+  });
+  it('allows it after a near search, and leaves replies without a place alone', async () => {
+    const { checkReply } = await import('../guard.js');
+    expect(checkReply('يبعد 1 كيلو عن محطة مترو', { lang: 'ar', grounded: g, distancesMeasured: true }).ok).toBe(true);
+    expect(checkReply('قريب منك إن شاء الله، تبي 3 غرف ولا 4؟', { lang: 'ar', grounded: g, distancesMeasured: false }).ok).toBe(true);
+    expect(checkReply('المسبح ما هو مسجل عندي، بشيك عليه', { lang: 'ar', grounded: g, distancesMeasured: false }).ok).toBe(true);
+  });
+  it('without the flag (old callers) nothing changes', async () => {
+    const { checkReply } = await import('../guard.js');
+    expect(checkReply('قريبة من محطة مترو', { lang: 'ar', grounded: g }).ok).toBe(true);
+  });
+});

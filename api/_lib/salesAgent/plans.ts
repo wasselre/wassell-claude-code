@@ -40,6 +40,17 @@ export interface PlanCheck {
   evidence: Array<{ answer: PlanAnswer; units: number; note: string }>;
 }
 
+type PlanImageType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+
+/** PURE — the image type from its first bytes (null when unknown). */
+export function sniffImageType(b: Uint8Array): PlanImageType | null {
+  if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'image/gif';
+  if (b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp';
+  return null;
+}
+
 interface FileRow { id: string; storage_bucket: string | null; storage_path: string | null; mime_type: string | null }
 
 async function readPlan(client: Anthropic, svc: SupabaseClient, file: FileRow, feature: string): Promise<{ answer: PlanAnswer; evidence: string }> {
@@ -48,14 +59,18 @@ async function readPlan(client: Anthropic, svc: SupabaseClient, file: FileRow, f
   }
   const { data: blob, error } = await svc.storage.from(file.storage_bucket).download(file.storage_path);
   if (error || !blob) throw new Error(`plan download failed (${file.id}): ${error?.message ?? 'empty'}`);
-  const b64 = Buffer.from(await blob.arrayBuffer()).toString('base64');
+  const bytes = Buffer.from(await blob.arrayBuffer());
+  const b64 = bytes.toString('base64');
+  // The bytes decide the type, not the files row: a PNG stored as image/jpeg
+  // was refused by the API (400) and its 6 plans went unchecked (live test 2026-10-05).
+  const mediaType = sniffImageType(bytes) ?? (file.mime_type as PlanImageType);
   const res = await client.messages.create({
     model: PLAN_MODEL,
     max_tokens: 300,
     messages: [{
       role: 'user',
       content: [
-        { type: 'image', source: { type: 'base64', media_type: file.mime_type as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif', data: b64 } },
+        { type: 'image', source: { type: 'base64', media_type: mediaType, data: b64 } },
         { type: 'text', text: `This is the floor plan of one residential unit (labels are usually Arabic).\nQuestion: does this unit have «${feature}»?\nAnswer ONLY with JSON: {"answer":"yes"|"no"|"unclear","evidence":"<one short Arabic line saying what in the plan shows it>"}.\n"unclear" when the plan cannot tell (unreadable, the feature is not something a plan shows).` },
       ],
     }],

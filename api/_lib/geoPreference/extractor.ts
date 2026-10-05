@@ -606,6 +606,13 @@ function repairRelations(raw: unknown, validIds: Set<string>): EvidenceRelation[
 /** Parse raw model text ⇒ validated ExtractResult. Never throws. When the
  *  conversation is supplied, every mention's `source` is attributed to the turn
  *  it came from (see attributeMentionSource); otherwise `source` is used as-is. */
+/** The extractor's reply could not be read (cut off, not JSON) — the read must FAIL, not save nothing. */
+export class ExtractorOutputError extends Error {}
+
+/** Output room: a long chat's reply ran past 4,000 tokens and was cut off (2026-10-05). */
+const DEEPSEEK_MAX_OUTPUT = 8000; // DeepSeek's own ceiling
+const CLAUDE_MAX_OUTPUT = 12000;
+
 export function parseExtractorOutput(
   raw: string,
   source: Evidence['source'],
@@ -616,13 +623,18 @@ export function parseExtractorOutput(
   text = text.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
   const a = text.indexOf('{');
   const b = text.lastIndexOf('}');
-  if (a === -1 || b <= a) return { evidence: [], relations: [] };
+  // An unreadable reply is an ERROR, never "the customer named no places".
+  // Until 2026-10-05 both cases returned empty: a long chat's reply cut off at
+  // max_tokens (4,000) parsed as nothing, the read counted as a success, the
+  // watermark moved past the customer's «النرجس أو الياسمين» and no place was
+  // ever saved (live test, client 27fb95c1).
+  if (a === -1 || b <= a) throw new ExtractorOutputError('the extractor reply has no JSON object');
 
   let obj: Record<string, unknown>;
   try {
     obj = JSON.parse(text.slice(a, b + 1)) as Record<string, unknown>;
-  } catch {
-    return { evidence: [], relations: [] };
+  } catch (err) {
+    throw new ExtractorOutputError(`the extractor reply is not valid JSON (${err instanceof Error ? err.message : String(err)})`);
   }
 
   const rawEvidence = Array.isArray(obj.evidence) ? obj.evidence : [];
@@ -679,10 +691,14 @@ async function claudeExtract(userText: string): Promise<string> {
   const client = trackedAnthropic(new Anthropic({ apiKey }), { area: 'sales', callSite: 'api/_lib/geoPreference/extractor', isFallback: llmRoutingEnabled(), fallbackFrom: llmRoutingEnabled() ? 'deepseek' : null });
   const resp = await client.messages.create({
     model: CLAUDE_FALLBACK_MODEL,
-    max_tokens: 4000,
+    max_tokens: CLAUDE_MAX_OUTPUT,
     system: EXTRACT_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userText }],
   });
+  // A reply cut off at the ceiling is incomplete JSON — never read it as "no places".
+  if (resp.stop_reason === 'max_tokens') {
+    throw new ExtractorOutputError(`the extractor reply was cut off at ${CLAUDE_MAX_OUTPUT} tokens`);
+  }
   return resp.content
     .filter((b): b is Anthropic.TextBlock => b.type === 'text')
     .map((b) => b.text)
@@ -731,7 +747,7 @@ export async function extract(
         track: { area: 'sales', callSite: 'api/_lib/geoPreference/extractor', operation: 'extract' },
         system: EXTRACT_SYSTEM_PROMPT,
         user: userText,
-        maxTokens: 4000,
+        maxTokens: DEEPSEEK_MAX_OUTPUT,
         temperature: 0,
         json: true,
       });
@@ -749,9 +765,12 @@ export async function extract(
     const raw = await claudeExtract(userText);
     return parseExtractorOutput(raw, source, conversation, projectNames);
   } catch (err) {
-    console.error('[geoPreference/extract] Claude fallback failed:', err instanceof Error ? err.message : String(err));
-    // No provider succeeded — return well-formed empty rather than throwing.
-    return { evidence: [], relations: [] };
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[geoPreference/extract] Claude fallback failed:', msg);
+    // No provider succeeded. Throw: an empty result here was read as "the
+    // customer named no places", the chat was marked read, and its places were
+    // lost for good. A failed read keeps its watermark and is retried.
+    throw err instanceof Error ? err : new Error(msg);
   } finally {
     releaseFallback?.();
   }

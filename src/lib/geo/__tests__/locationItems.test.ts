@@ -80,3 +80,19 @@ describe('describeLocationItem (bilingual)', () => {
     expect(describeLocationItem({ ...mk('north_of', 'الطريق الدائري'), polarity: 'exclude' }, true)).toBe('ليس شمال الطريق الدائري (حتى 5 كم)');
   });
 });
+
+describe('describeLocationItem — «حي» only before a bare district name (live test 2026-10-05)', () => {
+  const d = (label: string, polarity: 'include' | 'exclude' = 'include') =>
+    ({ id: 'x', kind: 'district', polarity, district_id: 'd', district_label: label }) as Parameters<typeof describeLocationItem>[0];
+  it('adds it to a bare name, never doubles it', () => {
+    expect(describeLocationItem(d('النرجس'), true)).toBe('حي النرجس');
+    expect(describeLocationItem(d('حي النرجس'), true)).toBe('حي النرجس');
+    expect(describeLocationItem(d('حي النرجس', 'exclude'), true)).toBe('استثناء حي النرجس');
+  });
+  it('a zone label is not a district', () => {
+    expect(describeLocationItem(d('شمال الرياض'), true)).toBe('شمال الرياض');
+    expect(describeLocationItem(d('الشمال'), true)).toBe('الشمال');
+    expect(describeLocationItem(d('north Riyadh'), true)).toBe('north Riyadh');
+    expect(describeLocationItem(d('شمال الرياض', 'exclude'), true)).toBe('استثناء شمال الرياض');
+  });
+});

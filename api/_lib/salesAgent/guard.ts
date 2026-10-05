@@ -95,7 +95,20 @@ function isGrounded(n: number, allowed: Set<number>): boolean {
   return false;
 }
 
-export function checkReply(text: string, opts: { lang: 'ar' | 'en'; grounded: Set<number> }): GuardVerdict {
+/**
+ * A distance / nearness claim about a PLACE («قريبة من محطة مترو، أقل من كيلو»,
+ * «جنب الجامعة», «يبعد 2 كيلو عن المول»). Only a search with `near` measures
+ * distances (distances_km); without one the claim is a guess. Live test
+ * 2026-10-05: «الأربعة… كلها قريبة من محطة مترو، أقل من كيلو» — the nearest
+ * station was 5.8–8.1 km away, and no number in it for the number check to catch.
+ */
+const PLACE_WORD = /(مترو|محطة|مول|جامعة|مستشفى|حديقة|طريق|metro|station|mall|university|hospital|park)/i;
+const NEAR_WORD = /(قريب|قريبة|جنب|جمب|بجانب|يبعد|تبعد|كيلو|متر من|دقايق|دقائق|مشي|near|walking|\bkm\b|minutes)/i;
+export function claimsPlaceDistance(text: string): boolean {
+  return text.split(/[\n.،,؟?!]/).some((part) => PLACE_WORD.test(part) && NEAR_WORD.test(part));
+}
+
+export function checkReply(text: string, opts: { lang: 'ar' | 'en'; grounded: Set<number>; distancesMeasured?: boolean }): GuardVerdict {
   const problems: string[] = [];
   const t = text.trim();
   if (!t) return { ok: false, problems: ['empty message'] };
@@ -120,6 +133,9 @@ export function checkReply(text: string, opts: { lang: 'ar' | 'en'; grounded: Se
   }
   if (opts.lang === 'en' && arabic && latinWords < 2) problems.push('the customer writes English — reply in English');
 
+  if (opts.distancesMeasured === false && claimsPlaceDistance(t)) {
+    problems.push('you said how near a place is (a metro station, mall, road…) but no search measured it — search with near first, or say you will check; never guess a distance');
+  }
   const ungrounded = numbersInText(t).filter((n) => !isGrounded(n, opts.grounded));
   if (ungrounded.length) {
     problems.push(`numbers not found in the tool results or the customer's words: ${[...new Set(ungrounded)].join(', ')} — only quote numbers the tools returned`);

@@ -114,6 +114,13 @@ function anchorLabel(anchors: { span?: string; normalized_token?: string }[] | u
 
 const CARDINAL_WORD = /^(north|south|east|west|شمال|جنوب|شرق|غرب)$/i;
 
+/** A zone's label: the direction anchor's normalized token when it is Arabic («شمال الرياض»), else null. */
+function zoneLabel(anchors: { anchor_type?: string; span?: string; normalized_token?: string }[]): string | null {
+  const a = anchors.find((x) => x.anchor_type === 'direction') ?? anchors[0];
+  const t = (a?.normalized_token ?? '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  return /[؀-ۿ]/.test(t) ? t : null;
+}
+
 type AnchorLike = { anchor_type?: string; span?: string; normalized_token?: string };
 
 /** The direction anchor of a band's source anchors (the first typed 'direction', else the first). */
@@ -195,10 +202,17 @@ function anchorRefToItems(
   }
 
   switch (op) {
+    case 'zone_union': {
+      // A zone's districts share ONE label (the screens group them into one
+      // chip). Use the extractor's normalized Arabic («شمال الرياض»), not the
+      // customer's own wording — an English «north Riyadh» in a chat's history
+      // became the label of 36 districts (live test 2026-10-05).
+      const zone = zoneLabel(anchors) || label;
+      return ids.map((id) => newDistrictItem(id, zone || id, polarity));
+    }
     case 'district_polygon':
     case 'district_union':
     case 'pin_containing_district':
-    case 'zone_union':
       return ids.map((id) => newDistrictItem(id, label || id, polarity));
     case 'within_radius':
     case 'pin_point': {

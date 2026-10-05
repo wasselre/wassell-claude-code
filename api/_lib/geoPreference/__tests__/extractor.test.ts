@@ -278,8 +278,14 @@ describe('parseExtractorOutput — validate/repair drops malformed shapes', () =
     expect(relations).toEqual([]);
   });
 
-  it('returns empty (never throws) on non-JSON garbage', () => {
-    const out: { evidence: Evidence[]; relations: EvidenceRelation[] } = parseExtractorOutput('sorry, no JSON here', source);
+  // Changed 2026-10-05: "empty" here meant a cut-off reply silently saved no
+  // places and marked the chat read. An unreadable reply must FAIL the read.
+  it('throws on non-JSON garbage and on a reply cut off mid-JSON', () => {
+    expect(() => parseExtractorOutput('sorry, no JSON here', source)).toThrow(/no JSON object/);
+    expect(() => parseExtractorOutput('{"evidence":[{"id":"e1","mention_span":"النرج', source)).toThrow();
+  });
+  it('a real empty answer is still empty', () => {
+    const out: { evidence: Evidence[]; relations: EvidenceRelation[] } = parseExtractorOutput('{"evidence":[],"relations":[]}', source);
     expect(out).toEqual({ evidence: [], relations: [] });
   });
 });
