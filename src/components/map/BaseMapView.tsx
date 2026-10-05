@@ -3,7 +3,7 @@ import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
 import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
 import { Loader2, MapPin, X, Maximize2, Minimize2 } from 'lucide-react';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildClusterIcon } from '@/lib/locationUtils';
+import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildClusterIcon, cachedPillIcon } from '@/lib/locationUtils';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import { useClientAreaLayer } from '@/components/map/useClientAreaLayer';
 import MapLayersOverlay from '@/components/map/MapLayersOverlay';
@@ -49,6 +49,11 @@ export interface MapPin {
   icon: google.maps.Icon | undefined;
   /** Hover title. */
   title: string;
+  /** Draw the pin as a NAME PILL (the label in this color) instead of `icon`.
+   *  Built when the marker is created — i.e. once Google Maps has loaded — so it
+   *  never comes out empty (an icon built before the script loads is undefined
+   *  and the marker falls back to Google's default red pin). */
+  pill?: { label: string; color: string };
   /** Higher = drawn on top (e.g. our-projects / the main option sit above the rest). */
   zIndex?: number;
   /** When true the marker is placed on the map DIRECTLY and never absorbed into a
@@ -196,7 +201,7 @@ export default function BaseMapView({
     for (const p of pins) {
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
-        icon: p.icon,
+        icon: p.icon ?? (p.pill ? (cachedPillIcon(p.pill.label, p.pill.color) as google.maps.Icon | undefined) : undefined),
         title: p.title,
         zIndex: p.zIndex,
       });

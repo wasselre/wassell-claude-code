@@ -1,6 +1,5 @@
 import { useMemo, type ReactNode } from 'react';
 import { markActivity } from '@/lib/perf/freezeDetector';
-import { cachedPillIcon } from '@/lib/locationUtils';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
 import BaseMapView, { type MapPin } from '@/components/map/BaseMapView';
 import type { LocationItem } from '@/lib/geo/locationItems';
@@ -81,7 +80,8 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
         id: m.project_id,
         lat,
         lng,
-        icon: cachedPillIcon(m.project_name, SOURCE_COLOR[m.source]) as google.maps.Icon | undefined,
+        icon: undefined,
+        pill: { label: m.project_name, color: SOURCE_COLOR[m.source] },
         title: `${m.project_name}${extId}`,
         // Our projects sit on top so they're never hidden under a market pin.
         zIndex: m.source === 'our_projects' ? 1000 : undefined,
