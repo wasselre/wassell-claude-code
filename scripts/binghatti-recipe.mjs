@@ -7,10 +7,18 @@ const inventory = '[data-available-units-url]';
 const recipe = [
   { do: 'phase', ar: 'التحقق من جلسة بن غاطي المحفوظة', en: 'Checking the saved Binghatti login' },
   { do: 'goto', url: 'https://partners.binghatti.com/Properties' },
-  { do: 'if_visible', selector: '#userId', timeout_ms: 5000, then: [
+  { do: 'if_visible', selector: inventory, timeout_ms: 8000, then: [
+    { do: 'auth_state', reused: true },
+  ], else: [
     { do: 'goto', url: '{{portal.login_url}}' },
+    { do: 'assert', selector: '#userId', timeout_ms: 30_000,
+      error_ar: 'لم تظهر صفحة دخول بن غاطي', error_en: 'Binghatti login page did not load' },
     { do: 'fill', selector: '#userId', value: '{{portal.login_id}}' },
     { do: 'click', selector: '#sendOtpBtn' },
+    { do: 'if_visible', text: 'Please enter a valid email.', exact: true, timeout_ms: 1000, then: [
+      { do: 'fail', ar: 'رفض بن غاطي معرّف الدخول المحفوظ قبل طلب الرمز',
+        en: 'Binghatti rejected the saved login ID before requesting an OTP' },
+    ] },
     { do: 'phase', ar: 'حل التحقق آلياً بواسطة Browserbase', en: 'Browserbase is handling CAPTCHA automatically' },
     { do: 'wait_captcha', timeout_s: 90, success_selector: '#password:not(.d-none)' },
     { do: 'assert', selector: '#password:not(.d-none)', timeout_ms: 30_000,
@@ -23,9 +31,6 @@ const recipe = [
     { do: 'assert', selector: inventory, timeout_ms: 30_000,
       error_ar: 'فشل تسجيل الدخول إلى مخزون بن غاطي', error_en: 'Binghatti inventory login failed' },
     { do: 'auth_state', reused: false },
-  ], else: [
-    { do: 'assert', selector: inventory, timeout_ms: 30_000 },
-    { do: 'auth_state', reused: true },
   ] },
   { do: 'phase', ar: 'حفظ قائمة بن غاطي الكاملة', en: 'Capturing the complete Binghatti inventory' },
   { do: 'save_json', key: 'units', selector: inventory, attr: 'data-available-units-url',

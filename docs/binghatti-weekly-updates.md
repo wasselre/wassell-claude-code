@@ -10,7 +10,8 @@ The operator-created portal is `0f828ff1-c3b9-482c-8b1d-215bef4b4d43`, linked to
 Binghatti `759fa833-e60e-4775-86ab-292005c8d517`. Credentials remain on that record.
 The recipe uses `{{portal.login_id}}`: explicit Login ID, then login email,
 then the entered sign-in phone. It opens `/Properties` first and only signs in
-when logged out. Each portal may opt into its own Browserbase context; existing
+when the authenticated inventory marker is absent, including a redirect to the
+public landing page. Each portal may opt into its own Browserbase context; existing
 portals retain their session behavior unless the switch is enabled.
 
 There are 43 weekly registry rows covering 45 verified portal phases. Skyflame
