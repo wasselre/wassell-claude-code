@@ -369,7 +369,13 @@ async function runPerProject(
         missing_sample: result.missingFromSource.slice(0, 15),
         ambiguous: result.ambiguous,
       });
-      if (brake) {
+      // The operator can confirm a held project ("they are sold") — the run's
+      // params.override_brake lists the registry rows let through. Scoped to
+      // ONE run and named rows, never a standing switch; recorded on the
+      // project's update log.
+      const overridden = !!brake && Array.isArray(run.params.override_brake)
+        && (run.params.override_brake as unknown[]).includes(row.id);
+      if (brake && !overridden) {
         entry.status = 'held';
         entry.held_reason = brake;
         held++;
@@ -379,8 +385,13 @@ async function runPerProject(
         }
         continue;
       }
+      if (overridden) entry.brake_overridden = brake;
       if (run.dry_run) { entry.status = 'dry_run'; totalChanges += result.updates.length + result.creates.length; continue; }
       const out = await applyResult(supabase, { runId: run.id, projectId, projectName, result, heartbeat });
+      if (overridden) {
+        const prev = typeof row.data.migration_log === 'string' ? row.data.migration_log : '';
+        row.data.migration_log = `${prev ? `${prev}\n` : ''}${today} — ✅ أكّد المشغّل التغيير رغم إيقاف الأمان (${brake}).`;
+      }
       Object.assign(entry, { status: out.failures.length ? 'partial' : 'applied', written: out });
       totalChanges += out.updated + out.created;
       if (out.updated + out.created > 0) applied++;
