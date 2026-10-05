@@ -1492,6 +1492,16 @@ The app deploys to Vercel. Its config (`vercel.json`) is validated against a **s
 
 The same "strict schema, not validated by `npm run build`" principle applies to any other deploy-layer config we add later (e.g. `netlify.toml`, GitHub Actions workflows, Supabase `config.toml`).
 
+**Function region = `bom1` (Mumbai), next to the database (2026-10-05).** The
+Supabase project is `ap-south-1` (Mumbai) and the users are in Saudi Arabia, but
+Node functions ran in Vercel's default `iad1` (Washington): every server request
+crossed the world several times (~200 ms per database round trip). Measured on a
+phone: the chat's AI card endpoint took 2.2-3.3 s from `iad1` while an edge
+endpoint (which runs near the user) took 0.2-0.7 s. `vercel.json` `"regions":
+["bom1"]` puts Node functions next to the database. Edge functions are
+unaffected (they always run near the caller). **Don't remove it or move the
+region away from the database** — if the database ever moves, move this with it.
+
 ## Silent Failures (CRITICAL — read before adding any try/catch or skip)
 
 **This codebase has been bitten repeatedly by silent error catches.** All of the following bugs were hidden for weeks-to-months by silent swallowed errors:

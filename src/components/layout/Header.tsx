@@ -8,9 +8,12 @@ import { Languages, Menu, User, LogOut, Loader2, Eye, X } from 'lucide-react';
 
 interface HeaderProps {
   onMenuClick?: () => void;
+  /** Hide the bar on phones (an open conversation owns the whole screen and
+   *  has its own back arrow). Desktop always shows it. */
+  hideOnPhone?: boolean;
 }
 
-export default function Header({ onMenuClick }: HeaderProps = {}) {
+export default function Header({ onMenuClick, hideOnPhone = false }: HeaderProps = {}) {
   const { t } = useTranslation();
   // Narrow selectors: the Header is ALWAYS mounted; a whole-store
   // `useAppStore()` re-rendered it on every store write app-wide. (2026-08
@@ -88,6 +91,9 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
       const model = models.find((m) => m.name === modelName);
       if (model) {
         const recordId = params.recordId;
+        // A conversation is not a record being edited — the chat header under
+        // this bar already names the person, so the bar just says «المحادثات».
+        if (model.name === 'chats') return isAr ? model.label_ar : model.label_en;
         if (recordId) return `${t('records.edit_record')} — ${isAr ? model.label_ar : model.label_en}`;
         if (path.endsWith('/new')) return `${t('records.new_record')} — ${isAr ? model.label_ar : model.label_en}`;
         return isAr ? model.label_ar : model.label_en;
@@ -101,7 +107,7 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
     // `safe-top` keeps the header's contents clear of the notch when the app
     // runs standalone from the Home Screen; the translucent background still
     // extends up behind the status bar. Inert in a normal browser tab.
-    <header className="safe-top sticky top-0 z-30 bg-cream-light/80 backdrop-blur-md">
+    <header className={`safe-top sticky top-0 z-30 bg-cream-light/80 backdrop-blur-md ${hideOnPhone ? 'hidden md:block' : ''}`}>
       <div className="flex items-center justify-between gap-3 px-4 md:px-8 py-4">
         <div className="flex items-center gap-3 min-w-0">
           {onMenuClick && (

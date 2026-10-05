@@ -7,8 +7,11 @@
  * The menu is PORTALED with fixed positioning, measured from the button, so no
  * `overflow` on the chat header (or the mobile bottom sheet) can clip it.
  * Closes on outside click, Escape, scroll/resize, or after choosing an item.
+ * Opens UPWARD when there is no room below — in the phone's bottom sheet the
+ * button sits at the screen's bottom edge, and opening down put «حجز موعد» and
+ * «تسجيل زيارة» off-screen where they could not be tapped (2026-10-05).
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Wrench, ChevronDown, NotebookPen, CalendarPlus, MapPin, type LucideIcon } from 'lucide-react';
@@ -49,6 +52,18 @@ export default function ChatToolsMenu({ onLogInteraction, onBookAppointment, onR
     const left = Math.max(8, Math.min(rawLeft, window.innerWidth - MENU_WIDTH - 8));
     setPos({ top: r.bottom + 6, left });
   }, [isRtl]);
+
+  // Once the menu has a real height: if it runs past the bottom of the screen,
+  // put it above the button instead (or pin it to the top edge if neither fits).
+  useLayoutEffect(() => {
+    if (!open || !pos) return;
+    const menuH = menuRef.current?.getBoundingClientRect().height ?? 0;
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!menuH || !r) return;
+    if (pos.top + menuH <= window.innerHeight - 8) return;
+    const above = Math.max(8, r.top - 6 - menuH);
+    if (above !== pos.top) setPos({ ...pos, top: above });
+  }, [open, pos]);
 
   useEffect(() => {
     if (!open) return;

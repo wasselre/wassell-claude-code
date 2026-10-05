@@ -2043,6 +2043,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       const excludeModelIds = loadedModels ? bootExcludedModelIds(loadedModels) : [];
       return supabaseLoad<AppRecord>('unified_records', { excludeModelIds });
     })();
+    // ROUTE-FIRST: when the app opens straight onto one model's page
+    // (/model/chats — a rep tapping the home-screen icon, or a WhatsApp push),
+    // that model's rows are fetched on their own as well, so the page fills in
+    // ~1 s instead of waiting for the whole wave-1 payload (~5 s measured on a
+    // phone, 2026-10-05: critical-ready 0.8 s, records-landed 5.7 s). Wave 1
+    // still loads every model and replaces these rows when it lands.
+    const routeModelName = (() => {
+      if (typeof window === 'undefined') return null;
+      const m = /^\/model\/([^/?#]+)/.exec(window.location.pathname);
+      return m ? decodeURIComponent(m[1]!) : null;
+    })();
+    const routeRecordsP = (async () => {
+      if (!routeModelName) return null;
+      const loadedModels = await modelsP;
+      const target = loadedModels?.find((m) => m.name === routeModelName);
+      // Only models wave 1 carries (excluded ones load on their own paths).
+      if (!target || (loadedModels && bootExcludedModelIds(loadedModels).includes(target.id))) return null;
+      const rows = await supabaseLoad<AppRecord>('unified_records', { includeModelIds: [target.id] });
+      return rows ? { modelId: target.id, rows } : null;
+    })();
     // SECOND BOOT WAVE: the heavy deferred models (units, ~7.9k heavy rows —
     // ~60% of the boot record count) are pulled OUT of the wave-1 payload above
     // (via bootExcludedModelIds) so the light user-facing models paint first,
@@ -2609,12 +2629,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     try { performance.measure('wassell:init:critical', 'wassell:init:start', 'wassell:init:critical-ready'); }
     catch { /* perf API quirk — never block init on telemetry */ }
 
+    // Paint the opened page's own rows as soon as they arrive — unless wave 1
+    // beat them, in which case its complete set is already on the way.
+    let waveOneLanded = false;
+    void routeRecordsP.then((hit) => {
+      if (!hit || waveOneLanded) return;
+      set((st) => ({ records: { ...st.records, [hit.modelId]: hit.rows } }));
+      markEvent('init:route-records-landed');
+    }).catch((err: unknown) => {
+      // A failed early fetch only loses the head start; wave 1 still loads it.
+      console.error('[init] route-first records load failed:', err);
+    });
+
     // ─── Phase D.2: slow tail ─────────────────────────────────
     // These loads were kicked off in parallel at the top of init();
     // awaiting them here only blocks the rest of init(), not chrome.
     // Variables were declared earlier so they remain in scope for
     // the migrations and final set below.
     const supabaseRecords = await unifiedRecordsP;
+    waveOneLanded = true;
     markEvent('init:records-landed');
     if (supabaseRecords) {
       records = {};
@@ -5884,6 +5917,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         nextList[curIdx] = { ...curRec, data: revertData };
         return { records: { ...s.records, [chatsModel.id]: nextList } };
       });
+      // The optimistic row was already written above — put the database back
+      // too, or it keeps the status the gateway refused while the screen shows
+      // the old one (until the next reload shows the wrong one).
+      void supabaseUpsert(
+        'records',
+        { ...rec, data: { ...nextData, status: prevStatus, labels: prevLabels } },
+        { table: 'models', id: rec.model_id },
+      );
       const msg = err instanceof Error ? err.message : String(err);
       get().addToast(msg, 'error');
       throw err;

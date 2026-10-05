@@ -122,7 +122,7 @@ export default function AiChangesSection({ clientId, refreshKey, isAr, bare = fa
                   type="button"
                   onClick={() => void undo(c.id)}
                   disabled={busy !== null}
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-[10.5px] text-copper hover:bg-copper/10 disabled:opacity-50"
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded px-2 py-2 md:px-1 md:py-0 text-[10.5px] text-copper hover:bg-copper/10 disabled:opacity-50"
                 >
                   {busy === c.id ? <Loader2 size={10} className="animate-spin" /> : <Undo2 size={10} aria-hidden />}
                   {t('chats.ai_changes.undo')}

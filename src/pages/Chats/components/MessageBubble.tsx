@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle, MessageSquare, ListChecks, User, RotateCcw, Building2, BookmarkPlus, Check, LayoutGrid } from 'lucide-react';
 import AckIndicator from './AckIndicator';
 import LinkEngagementChip from './LinkEngagementChip';
-import { fetchFileBlob } from '@/lib/haberchat/client';
+import { fetchFileBlob, HaberchatClientError } from '@/lib/haberchat/client';
 import { isLegacyHaberchatRef } from '@/lib/chat/legacyMedia';
 import { deviceIdString } from '@/lib/haberchat/normalize';
 import { useAppStore } from '@/stores/appStore';
@@ -184,7 +184,7 @@ function ReactionBadge({ reactions, isAr }: { reactions: ChatMessage[]; isAr: bo
 function ProjectActionStrip({ actions, isAr }: { actions: MessageProjectActions; isAr: boolean }) {
   const noClientHint = isAr ? 'اربط عميلاً بالمحادثة أولاً' : 'Link a client to this chat first';
   const btn =
-    'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-45 disabled:cursor-not-allowed';
+    'inline-flex items-center gap-1 rounded-lg border px-2.5 py-2 md:px-2 md:py-1 text-[11px] font-semibold transition-colors disabled:opacity-45 disabled:cursor-not-allowed';
   return (
     <div className="mt-2 flex flex-wrap gap-1.5 border-t border-copper/15 pt-2">
       <button
@@ -444,6 +444,14 @@ type MediaState = { url: string | null; status: 'loading' | 'ready' | 'error' | 
  * content (or not resolve at all) across namespaces.
  */
 const mediaCache = new Map<string, string>(); // key = fileId|deviceId, value = blob: URL
+/**
+ * Files the gateway answered 404 / 410 for — gone for good (WhatsApp drops old
+ * media). Remembered for the session so a voice note or video that no longer
+ * exists is not downloaded again on every re-render and every visit: measured
+ * 2026-10-05 on a phone, five dead files in one thread were requested up to
+ * 25 times each. Only 404/410 — a 5xx or a network drop is retried next time.
+ */
+const goneMedia = new Set<string>();
 
 function useMediaBlob(fileId: string | null, deviceId: string | undefined): MediaState {
   const cacheKey = fileId ? `${fileId}|${deviceId ?? ''}` : null;
@@ -455,6 +463,9 @@ function useMediaBlob(fileId: string | null, deviceId: string | undefined): Medi
     // straight away rather than spending a request per bubble to be told 403 —
     // one thread alone holds 34 of these.
     if (isLegacyHaberchatRef(fileId)) {
+      return { url: null, status: 'unavailable', error: null };
+    }
+    if (cacheKey && goneMedia.has(cacheKey)) {
       return { url: null, status: 'unavailable', error: null };
     }
     const cached = cacheKey ? mediaCache.get(cacheKey) : null;
@@ -477,6 +488,11 @@ function useMediaBlob(fileId: string | null, deviceId: string | undefined): Medi
         mediaCache.set(cacheKey, objectUrl);
         setState({ url: objectUrl, status: 'ready', error: null });
       } catch (err) {
+        if (err instanceof HaberchatClientError && (err.status === 404 || err.status === 410)) {
+          goneMedia.add(cacheKey);
+          if (!cancelled) setState({ url: null, status: 'unavailable', error: null });
+          return;
+        }
         if (cancelled) return;
         setState({
           url: null,
@@ -527,8 +543,8 @@ function MediaUnavailableRow({ isAr }: { isAr: boolean }) {
         </div>
         <div className="text-[11px] text-charcoal/45 mt-0.5">
           {isAr
-            ? 'أُرسل عبر مزوّد الواتساب السابق ولم يعد محفوظًا لدينا'
-            : 'Sent through the previous WhatsApp provider and no longer stored'}
+            ? 'لم يعد الملف محفوظًا على واتساب'
+            : 'The file is no longer stored on WhatsApp'}
         </div>
       </div>
     </div>

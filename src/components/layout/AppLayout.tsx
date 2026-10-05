@@ -17,6 +17,10 @@ export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const currentUserId = useAppStore((s) => s.currentUserId);
+  // An open WhatsApp conversation is full-screen on a phone, like WhatsApp
+  // itself: the app bar above the chat's own header cost ~80px of every screen.
+  // Its back arrow returns to the chat list, where the bar shows again.
+  const conversationOpen = /^\/model\/chats\/(?!new$)[^/]+$/.test(location.pathname);
 
   useEffect(() => {
     setMobileSidebarOpen(false);
@@ -62,7 +66,7 @@ export default function AppLayout() {
         />
       )}
       <div className="main-content">
-        <Header onMenuClick={() => setMobileSidebarOpen(true)} />
+        <Header onMenuClick={() => setMobileSidebarOpen(true)} hideOnPhone={conversationOpen} />
         {/* `safe-bottom` keeps the last row of content above the home
             indicator when running standalone from the Home Screen. */}
         <main className="safe-bottom px-4 md:px-8 py-6">

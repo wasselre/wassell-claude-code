@@ -41,7 +41,9 @@ export default function ChatsSplitPage() {
     // stays ABOVE the keyboard instead of behind it (100dvh does NOT shrink for
     // the keyboard on iOS). Defaults to 100dvh. 4.25rem ≈ the sticky Header
     // (68px). Desktop (md+) unchanged: the framed, inset two-pane card.
-    <div className="chats-split -mx-4 -mt-6 h-[calc(var(--app-height)-4.25rem)] md:mx-0 md:mt-0 md:h-[calc(100vh-8rem)] flex overflow-hidden bg-white md:rounded-2xl md:border md:border-sand/20">
+    // With a conversation open the app bar is hidden on phones (AppLayout), so
+    // the split takes the full visual viewport.
+    <div className={`chats-split -mx-4 -mt-6 ${recordId ? 'h-[var(--app-height)]' : 'h-[calc(var(--app-height)-4.25rem)]'} md:mx-0 md:mt-0 md:h-[calc(100vh-8rem)] flex overflow-hidden bg-white md:rounded-2xl md:border md:border-sand/20`}>
       {/* Left: list. Hidden on mobile when a chat is selected. */}
       <div
         className={`w-full md:w-[360px] shrink-0 border-e border-sand/20 flex-col ${

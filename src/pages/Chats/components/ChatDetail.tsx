@@ -481,7 +481,14 @@ export default function ChatDetail({ recordId, line = null }: {
       setShowCompleteFollowup(true);
       return;
     }
-    await patchChat(chatWid ?? '', { status: next });
+    try {
+      await patchChat(chatWid ?? '', { status: next });
+    } catch (err) {
+      // patchChat already reverted the change and showed the error toast; the
+      // buttons calling this do not await it, so a re-throw here would only
+      // become an unhandled rejection (seen on a phone run, 2026-10-05).
+      console.error('[ChatDetail] status change failed:', err);
+    }
   };
 
   const BackIcon = isAr ? ArrowRight : ArrowLeft;
@@ -836,7 +843,7 @@ export default function ChatDetail({ recordId, line = null }: {
                 <button
                   type="button"
                   onClick={() => setReplyOpenFor(null)}
-                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-copper hover:bg-copper/10"
+                  className="inline-flex items-center gap-1 rounded px-2 py-2 md:px-1.5 md:py-0.5 text-[11px] text-copper hover:bg-copper/10"
                 >
                   <Sparkles size={11} aria-hidden /> {t('chats.ai_act.back_to_cards')}
                 </button>
@@ -1549,7 +1556,7 @@ function StatusPicker({
       <button
         onClick={() => setOpen((v) => !v)}
         disabled={!chatWid || saving != null}
-        className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full hover:brightness-95 disabled:opacity-60"
+        className="relative inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full hover:brightness-95 disabled:opacity-60 after:absolute after:-inset-2 after:content-[''] md:after:hidden"
         style={{ backgroundColor: `${color}14`, color }}
       >
         {saving ? <Loader2 size={10} className="animate-spin" /> : null}
@@ -1568,7 +1575,7 @@ function StatusPicker({
                   key={opt}
                   onClick={() => pick(opt)}
                   disabled={isCurrent || saving != null}
-                  className={`w-full px-3 py-1.5 text-start text-xs flex items-center gap-2 transition-colors ${
+                  className={`w-full px-3 py-2.5 md:py-1.5 text-start text-xs flex items-center gap-2 transition-colors ${
                     isCurrent ? 'bg-charcoal/5' : 'hover:bg-cream/60'
                   }`}
                 >

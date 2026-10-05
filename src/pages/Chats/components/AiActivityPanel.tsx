@@ -138,7 +138,7 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, p
   return (
     <div className="border-t border-sand/30 bg-cream/40 md:mt-3 md:rounded-2xl md:border" dir={isAr ? 'rtl' : 'ltr'}>
       <div className="flex items-center justify-between gap-2 px-3 pt-2">
-        <button type="button" onClick={toggle} className="flex min-w-0 items-center gap-1.5 text-start text-xs font-bold text-chocolate" aria-expanded={open}>
+        <button type="button" onClick={toggle} className="flex min-w-0 items-center gap-1.5 py-2 md:py-0 text-start text-xs font-bold text-chocolate" aria-expanded={open}>
           <Bot size={14} className="shrink-0 text-copper" aria-hidden />
           <span className="truncate">{t('chats.ai_act.title')}</span>
           {!open && data && (
@@ -149,10 +149,10 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, p
           {open ? <ChevronDown size={13} className="shrink-0" /> : <ChevronUp size={13} className="shrink-0" />}
         </button>
         <div className="flex shrink-0 items-center gap-1">
-          <button type="button" onClick={() => void reload()} className="rounded p-1 text-charcoal/50 hover:bg-cream" aria-label={t('chats.ai_act.refresh')} title={t('chats.ai_act.refresh')}>
+          <button type="button" onClick={() => void reload()} className="rounded p-2.5 md:p-1 text-charcoal/50 hover:bg-cream" aria-label={t('chats.ai_act.refresh')} title={t('chats.ai_act.refresh')}>
             {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
           </button>
-          <Button variant="secondary" className="!px-3 !py-1 !text-xs" onClick={onReply}>
+          <Button variant="secondary" className="!px-4 !py-2.5 md:!px-3 md:!py-1 !text-xs" onClick={onReply}>
             <PenLine size={13} aria-hidden /> {t('chats.ai_act.write_reply')}
           </Button>
         </div>

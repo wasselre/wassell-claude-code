@@ -251,7 +251,13 @@ export default function CompleteWhatsAppFollowupModal({
           <button
             type="button"
             disabled={saving}
-            onClick={async () => { setSaving(true); try { await onResolveChat(); } finally { setSaving(false); onClose(); } }}
+            onClick={async () => {
+              setSaving(true);
+              try { await onResolveChat(); }
+              // The store already reverted and showed the error toast.
+              catch (err) { console.error('[CompleteWhatsAppFollowup] resolving the chat failed:', err); }
+              finally { setSaving(false); onClose(); }
+            }}
             className="inline-flex items-center gap-2 rounded-xl border-[1.5px] border-[#C09B5F] bg-[#C09B5F]/10 px-4 py-2.5 text-sm font-bold text-[#8E4E3A] transition hover:bg-[#C09B5F]/20 disabled:opacity-40"
             title={isAr ? 'إغلاق المحادثة وترك المتابعة في حالة انتظار الرد' : 'Close the chat and leave the follow-up waiting for a reply'}
           >

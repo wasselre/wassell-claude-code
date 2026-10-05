@@ -377,7 +377,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
         </h2>
         <button
           onClick={() => setShowStartModal(true)}
-          className="p-1.5 rounded-lg text-charcoal/50 hover:text-copper hover:bg-cream transition-colors"
+          className="p-2.5 md:p-1.5 rounded-lg text-charcoal/50 hover:text-copper hover:bg-cream transition-colors"
           aria-label={isAr ? 'محادثة جديدة' : 'New chat'}
           title={isAr ? 'محادثة جديدة' : 'New chat'}
         >
@@ -386,7 +386,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="p-1.5 rounded-lg text-charcoal/50 hover:text-copper hover:bg-cream transition-colors"
+          className="p-2.5 md:p-1.5 rounded-lg text-charcoal/50 hover:text-copper hover:bg-cream transition-colors"
           aria-label={isAr ? 'تحديث' : 'Refresh'}
           title={isAr ? 'تحديث' : 'Refresh'}
         >
@@ -418,7 +418,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
                 role="tab"
                 aria-selected={on}
                 onClick={() => setSelectedLine(opt.id)}
-                className={`shrink-0 whitespace-nowrap text-xs font-semibold rounded-full py-1 px-3 border transition-colors ${
+                className={`shrink-0 whitespace-nowrap text-xs font-semibold rounded-full py-2 md:py-1 px-3 border transition-colors ${
                   on
                     ? 'bg-chocolate text-white border-chocolate'
                     : 'bg-white text-charcoal/70 border-sand/40 hover:border-copper hover:text-copper'
@@ -455,7 +455,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex-1 text-xs font-semibold rounded-lg py-1.5 px-2 transition-colors ${
+            className={`flex-1 text-xs font-semibold rounded-lg py-2 md:py-1.5 px-2 transition-colors ${
               tab === t.id
                 ? 'bg-copper text-white'
                 : 'bg-cream/60 text-charcoal/60 hover:bg-cream hover:text-charcoal'
@@ -476,7 +476,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
             <button
               key={f.id}
               onClick={() => setClientFilter(f.id)}
-              className={`text-[11px] font-medium rounded-full px-2.5 py-1 whitespace-nowrap transition-colors ${
+              className={`text-[11px] font-medium rounded-full px-2.5 py-2 md:py-1 whitespace-nowrap transition-colors ${
                 clientFilter === f.id
                   ? 'bg-copper/15 text-copper font-semibold'
                   : 'text-charcoal/50 hover:bg-cream hover:text-charcoal'

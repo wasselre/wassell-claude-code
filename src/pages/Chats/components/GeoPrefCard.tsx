@@ -277,7 +277,7 @@ export default function GeoPrefCard({ clientId, chatWid, task, outcome, onRecord
       <div className="px-3 pt-1 shrink-0">
         <button
           onClick={() => setCollapsedPersist(false)}
-          className="w-full flex items-center justify-center gap-1 rounded-md border border-sand/60 bg-cream/40 py-0.5 text-[10px] text-charcoal/45 hover:text-copper hover:border-copper/40 transition-colors"
+          className="w-full flex items-center justify-center gap-1 rounded-md border border-sand/60 bg-cream/40 py-2 md:py-0.5 text-[10px] text-charcoal/45 hover:text-copper hover:border-copper/40 transition-colors"
           title={t('chats.ai.card_show')}
         >
           <ChevronDown size={11} />
@@ -350,7 +350,7 @@ export default function GeoPrefCard({ clientId, chatWid, task, outcome, onRecord
               role="tab"
               aria-selected={active}
               onClick={() => setChosenTab(k)}
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold transition-colors ${
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-2 md:px-2 md:py-0.5 text-[10.5px] font-bold transition-colors ${
                 active ? 'bg-copper text-white' : 'text-charcoal/70 hover:text-copper'
               }`}
             >
@@ -369,7 +369,7 @@ export default function GeoPrefCard({ clientId, chatWid, task, outcome, onRecord
       <div className="ms-auto flex items-center gap-1.5">
         <button
           onClick={() => setCollapsedPersist(true)}
-          className="text-charcoal/30 hover:text-copper transition-colors"
+          className="p-2.5 -m-2.5 md:p-0 md:m-0 text-charcoal/30 hover:text-copper transition-colors"
           title={t('chats.ai.card_hide')}
           aria-label={t('chats.ai.card_hide')}
         >
