@@ -166,7 +166,6 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, p
               {' · '}{t('chats.ai_act.collapsed_line', { replies: num(s?.ai ?? 0, isAr), runs: num(data.runs.length, isAr), sent: num(sent.size, isAr) })}
             </span>
           )}
-          {open ? <ChevronDown size={13} className="shrink-0" /> : <ChevronUp size={13} className="shrink-0" />}
         </button>
         <div className="flex shrink-0 items-center gap-1">
           <button type="button" onClick={() => void reload()} className="rounded p-2.5 md:p-1 text-charcoal/50 hover:bg-cream" aria-label={t('chats.ai_act.refresh')} title={t('chats.ai_act.refresh')}>
@@ -175,6 +174,18 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, p
           <Button variant="secondary" className="!px-4 !py-2.5 md:!px-3 md:!py-1 !text-xs" onClick={onReply}>
             <PenLine size={13} aria-hidden /> {t('chats.ai_act.write_reply')}
           </Button>
+          {/* Same fold button as the chat's top section (ChatDetail), so the
+              two sections hide the same way. */}
+          <button
+            type="button"
+            onClick={toggle}
+            className="inline-flex shrink-0 items-center justify-center rounded-lg p-2.5 md:p-1.5 text-charcoal/50 transition-colors hover:bg-cream hover:text-copper"
+            aria-expanded={open}
+            aria-label={t(open ? 'chats.ai_act.hide' : 'chats.ai_act.show')}
+            title={t(open ? 'chats.ai_act.hide' : 'chats.ai_act.show')}
+          >
+            {open ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+          </button>
         </div>
       </div>
 
