@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, Phone, MessageCircle, Plus, Sparkles, FolderKanban, Hourglass, CalendarDays, AlertTriangle, Bot, CheckCheck, HelpCircle } from 'lucide-react';
+import { ClipboardList, MessageCircle, Plus, Sparkles, FolderKanban, Hourglass, CalendarDays, AlertTriangle, Bot, CheckCheck, HelpCircle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import { useIsAdmin, usePermission } from '@/hooks/usePermission';
@@ -9,16 +9,18 @@ import { useClientWhatsApp } from '@/pages/Clients/lib/useClientWhatsApp';
 import { useAiNotifications } from './lib/useAiNotifications';
 import { useAgentQuestions } from './lib/useAgentQuestions';
 import {
-  buildFollowupTasks, buildWaitingTasks, tasksForRep, byPriority, priorityTier, isWaitingForCustomer,
-  type FollowupChannel, type FollowupTask,
+  buildFollowupTasks, tasksForRep, byPriority, priorityTier, isWaitingForCustomer,
+  type FollowupTask,
 } from './lib/myWork';
 import FollowupTaskCard from './components/FollowupTaskCard';
 import AgentQuestionsSection from './components/AgentQuestionsSection';
 import AiApprovalsSection from './components/AiApprovalsSection';
 import { useAiApprovals } from './lib/useAiApprovals';
 import { useCampaignAgent } from './lib/useCampaignAgent';
+import { useAiChatReviews } from './lib/useAiChatReviews';
+import AiChatReviewSection from './components/AiChatReviewSection';
 
-type Section = 'actions' | 'agent_questions' | 'waiting' | 'search' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
+type Section = 'actions' | 'agent_questions' | 'ai_review' | 'search' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
 type ApptBucket = 'today' | 'tomorrow' | 'future' | 'last7' | 'older' | 'no_show';
 
 function ownerIdOf(v: unknown): string | null {
@@ -112,7 +114,6 @@ export default function MyTasksPage() {
   const aiApprovals = useAiApprovals(canApprove);
 
   const [section, setSection] = useState<Section>('actions');
-  const [channel, setChannel] = useState<FollowupChannel | 'all'>('all');
   const [apptBucket, setApptBucket] = useState<ApptBucket>('today');
   const [showAll, setShowAll] = useState(false); // manager-only: include all reps
 
@@ -138,21 +139,16 @@ export default function MyTasksPage() {
     const followups = followupsModel ? records[followupsModel.id] ?? [] : [];
     const all = buildFollowupTasks(followups, clientsById, now);
     const scoped = isManager && showAll ? all : tasksForRep(all, currentUserId);
-    return scoped.filter((t) => !isWaitingForCustomer(t)).sort(byPriority(now));
+    // No WhatsApp tasks for people (operator, 2026-10-05): the AI agent works
+    // WhatsApp. The tasks still exist for the AI (drafts, no-reply steps); a
+    // person's WhatsApp work is approving AI messages and reviewing AI chats.
+    return scoped.filter((t) => t.channel !== 'whatsapp' && !isWaitingForCustomer(t)).sort(byPriority(now));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [followupsModel, records, clientsById, currentUserId, isManager, showAll]);
 
-  // Waiting for customer — parked WhatsApp tasks, any day bucket.
-  const waitingTasks: FollowupTask[] = useMemo(() => {
-    const followups = followupsModel ? records[followupsModel.id] ?? [] : [];
-    const all = buildWaitingTasks(followups, clientsById, now);
-    return isManager && showAll ? all : tasksForRep(all, currentUserId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [followupsModel, records, clientsById, currentUserId, isManager, showAll]);
-
-  const channelTasks = channel === 'all' ? actionTasks : actionTasks.filter((t) => t.channel === channel);
-  const callCount = actionTasks.filter((t) => t.channel === 'call').length;
-  const waCount = actionTasks.filter((t) => t.channel === 'whatsapp').length;
+  // The day's review of the AI agent's WhatsApp work.
+  const aiReviews = useAiChatReviews();
+  const pendingReviews = aiReviews.reviews.filter((r) => r.status === 'pending').length;
 
   // Appointments, bucketed by calendar day + the No-shows worklist.
   // Past un-updated appointments split by recency (user request 2026-07-21):
@@ -277,7 +273,7 @@ export default function MyTasksPage() {
     { id: 'actions', label: { ar: 'ملعبك', en: 'Your court' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
     // Questions the WhatsApp AI could not answer — a customer is waiting on each.
     { id: 'agent_questions', label: { ar: 'المساعد الذكي', en: 'AI' }, count: agentQuestions.length + pendingApprovals, danger: agentQuestions.length + pendingApprovals > 0 },
-    { id: 'waiting', label: { ar: 'ملعب العميل', en: "Client's court" }, count: waitingTasks.length },
+    { id: 'ai_review', label: { ar: 'مراجعة المساعد', en: 'AI review' }, count: pendingReviews, danger: pendingReviews > 0 },
     // Section badge counts only the LIVE schedule (today + tomorrow + future +
     // no-shows) — the stale past buckets shouldn't inflate the headline number.
     // Overdue search tasks are flagged: a search nobody has touched is a client
@@ -302,33 +298,46 @@ export default function MyTasksPage() {
     return <div className="p-6 text-sm text-charcoal/50">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>;
   }
 
-  const channelChip = (id: FollowupChannel | 'all', label: string, icon: React.ReactNode, count: number, activeCls: string) => (
-    <button
-      type="button"
-      onClick={() => setChannel(id)}
-      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition ${
-        channel === id ? activeCls : 'bg-white text-charcoal/70 hover:bg-cream'
-      }`}
-    >
-      {icon} {label}
-      <span className={`rounded-full px-1.5 text-xs ${channel === id ? 'bg-white/25' : 'bg-sand/60'}`}>{count}</span>
-    </button>
-  );
-
   const renderActions = () => (
     <>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {channelChip('all', isAr ? 'الكل' : 'All', <ClipboardList size={14} />, actionTasks.length, 'bg-copper text-white')}
-        {channelChip('call', isAr ? 'مكالمات' : 'Calls', <Phone size={14} />, callCount, 'bg-copper text-white')}
-        {channelChip('whatsapp', isAr ? 'محادثات' : 'Conversations', <MessageCircle size={14} />, waCount, 'bg-[#25D366] text-white')}
-      </div>
-      {channelTasks.length === 0 ? (
+      {/* Start of the day: the two WhatsApp jobs a person still has. */}
+      {(pendingApprovals > 0 || pendingReviews > 0) && (
+        <div className="mb-4 grid gap-2 sm:grid-cols-2">
+          {pendingApprovals > 0 && canApprove && (
+            <button
+              type="button"
+              onClick={() => setSection('agent_questions')}
+              className="flex items-center gap-3 rounded-xl border border-copper/40 bg-copper/5 px-4 py-3 text-start hover:bg-copper/10"
+            >
+              <CheckCheck size={18} className="shrink-0 text-copper" />
+              <span className="flex-1">
+                <span className="block font-bold text-chocolate">{isAr ? 'اعتماد رسائل المساعد' : 'Approve AI messages'}</span>
+                <span className="block text-xs text-charcoal/60">{isAr ? `${pendingApprovals} بانتظار اعتمادك` : `${pendingApprovals} waiting for you`}</span>
+              </span>
+            </button>
+          )}
+          {pendingReviews > 0 && (
+            <button
+              type="button"
+              onClick={() => setSection('ai_review')}
+              className="flex items-center gap-3 rounded-xl border border-copper/40 bg-copper/5 px-4 py-3 text-start hover:bg-copper/10"
+            >
+              <Bot size={18} className="shrink-0 text-copper" />
+              <span className="flex-1">
+                <span className="block font-bold text-chocolate">{isAr ? 'مراجعة أداء المساعد في واتساب' : 'Review the AI agent on WhatsApp'}</span>
+                <span className="block text-xs text-charcoal/60">{isAr ? `${pendingReviews} محادثة` : `${pendingReviews} chats`}</span>
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+      {actionTasks.length === 0 ? (
         <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">
           {isAr ? 'لا توجد إجراءات مطلوبة الآن — كل شيء تحت السيطرة.' : 'Nothing needs you right now — all clear.'}
         </p>
       ) : (
         <ul className="space-y-3">
-          {channelTasks.map((t) => (
+          {actionTasks.map((t) => (
             <FollowupTaskCard
               key={t.followupId}
               task={t}
@@ -344,33 +353,6 @@ export default function MyTasksPage() {
     </>
   );
 
-  const renderWaiting = () => (
-    <>
-      <p className="mb-4 rounded-xl bg-[#D97706]/10 px-4 py-2.5 text-xs text-[#8a5a10]">
-        {isAr
-          ? 'الكرة الآن في ملعب العميل. تعود المهمة إلى «ملعبك» تلقائيًا عند رد العميل أو بعد ٢٤ ساعة صمت.'
-          : "The ball is in the client's court. A task returns to Your court automatically when they reply or after 24h of silence."}
-      </p>
-      {waitingTasks.length === 0 ? (
-        <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">
-          {isAr ? 'لا توجد محادثات بانتظار رد العميل.' : 'No conversations waiting on a customer.'}
-        </p>
-      ) : (
-        <ul className="space-y-3">
-          {waitingTasks.map((t) => (
-            <FollowupTaskCard
-              key={t.followupId}
-              task={t}
-              isAr={isAr}
-              returnTo={RETURN_TO}
-              navigate={navigate}
-              onWhatsApp={(id, phone) => id && openWhatsApp(id, phone)}
-            />
-          ))}
-        </ul>
-      )}
-    </>
-  );
 
   const APPT_TABS: { id: ApptBucket; label: { ar: string; en: string }; danger?: boolean }[] = [
     { id: 'today', label: { ar: 'اليوم', en: 'Today' } },
@@ -572,7 +554,7 @@ export default function MyTasksPage() {
                 on ? 'border-copper font-bold text-copper' : 'border-transparent text-charcoal hover:text-terracotta'
               }`}
             >
-              {s.id === 'waiting' && <Hourglass size={13} className="text-[#D97706]" />}
+              {s.id === 'ai_review' && <Bot size={13} className="text-copper" />}
               {s.id === 'appointments' && <CalendarDays size={13} />}
               {s.id === 'ai_notifications' && <Bot size={13} className="text-copper" />}
               {s.id === 'agent_questions' && <HelpCircle size={13} className="text-amber-700" />}
@@ -608,7 +590,16 @@ export default function MyTasksPage() {
           onStale={() => void agentQ.refresh()}
         />
       )}
-      {section === 'waiting' && renderWaiting()}
+      {section === 'ai_review' && (
+        <AiChatReviewSection
+          reviews={aiReviews.reviews}
+          clientsById={clientsById}
+          isAr={isAr}
+          loading={aiReviews.loading}
+          error={aiReviews.error}
+          onSubmit={aiReviews.submit}
+        />
+      )}
       {section === 'search' && (
         <>
           <p className="mb-3 text-xs text-charcoal/55">

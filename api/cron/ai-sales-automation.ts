@@ -135,6 +135,10 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       const { data: tick, error: tickErr } = await svc.rpc('sales_campaign_tick');
       if (tickErr) fail('sales_campaign_tick', tickErr);
       else report.campaign_tick = tick;
+      // The day's "review the AI agent's WhatsApp work" list (once per working day).
+      const { data: review, error: revErr } = await svc.rpc('ai_review_tick');
+      if (revErr) fail('ai_review_tick', revErr);
+      else report.review_tick = review;
     }
 
     // ── 1. High interest from the links ──────────────────────────────────────
