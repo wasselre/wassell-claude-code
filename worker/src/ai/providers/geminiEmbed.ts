@@ -15,6 +15,7 @@
  */
 
 import { embeddingCostUsd, errMessage, geminiPost, type GeminiHttpOptions, type GeminiUsage } from './geminiHttp.js';
+import { imageToBoundedJpeg } from '../../marketing/content/ffmpegMedia.js';
 import {
   providerError,
   type EmbedInput,
@@ -67,12 +68,23 @@ export function createGeminiEmbedProvider(opts: GeminiEmbedOptions = {}): Gemini
       throw providerError('gemini', `image download failed (${url.slice(0, 120)}): ${errMessage(err)}`, err);
     }
     if (!res.ok) throw providerError('gemini', `image download HTTP ${res.status} (${url.slice(0, 120)})`);
-    const buf = Buffer.from(await res.arrayBuffer());
+    let buf = Buffer.from(await res.arrayBuffer());
     if (buf.length === 0) throw providerError('gemini', `image download returned 0 bytes (${url.slice(0, 120)})`);
-    if (buf.length > IMAGE_MAX_BYTES) throw providerError('gemini', `image is ${buf.length} bytes, over the ${IMAGE_MAX_BYTES} limit (${url.slice(0, 120)})`);
     const header = (res.headers.get('content-type') ?? '').split(';')[0]!.trim();
-    const mime = IMAGE_MIME.test(header) ? header.toLowerCase() : mimeFromUrl(url);
+    let mime = IMAGE_MIME.test(header) ? header.toLowerCase() : mimeFromUrl(url);
     if (!mime) throw providerError('gemini', `not an embeddable image type '${header || 'unknown'}' (${url.slice(0, 120)})`);
+    if (buf.length > IMAGE_MAX_BYTES) {
+      // Our own design files reach 15-31 MB (print-size PNGs; 12 refused on
+      // 2026-10-05). The embedding sees ~a thumbnail anyway, so shrink to a
+      // 1600 px JPEG instead of refusing the image.
+      try {
+        buf = await imageToBoundedJpeg(buf, mime.split('/')[1] ?? 'img');
+        mime = 'image/jpeg';
+      } catch (err) {
+        throw providerError('gemini', `image is ${buf.length} bytes (over ${IMAGE_MAX_BYTES}) and shrinking it failed (${url.slice(0, 120)}): ${errMessage(err)}`, err);
+      }
+      if (buf.length > IMAGE_MAX_BYTES) throw providerError('gemini', `image still ${buf.length} bytes after shrinking (${url.slice(0, 120)})`);
+    }
     return { inline_data: { mime_type: mime, data: buf.toString('base64') } };
   }
 

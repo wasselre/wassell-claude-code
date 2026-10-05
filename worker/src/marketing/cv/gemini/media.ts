@@ -100,11 +100,29 @@ export async function silentCopy(src: string, dir: string, maxMs: number): Promi
 
 /** One JPEG at `tsMs`, long edge at most 960 px. */
 export async function extractFrame(src: string, tsMs: number, outPath: string): Promise<Buffer> {
-  await runProc('ffmpeg', ['-y', '-loglevel', 'error', '-ss', (tsMs / 1000).toFixed(3), '-i', src, '-frames:v', '1',
-    '-vf', 'scale=960:960:force_original_aspect_ratio=decrease,format=yuvj420p', '-q:v', '3', outPath], 60_000);
-  const buf = await readFile(outPath);
-  if (buf.length < 4 || buf[0] !== 0xFF || buf[1] !== 0xD8) throw new Error(`frame at ${tsMs}ms is not a JPEG (${buf.length} bytes)`);
-  return buf;
+  const vf = ['-vf', 'scale=960:960:force_original_aspect_ratio=decrease,format=yuvj420p', '-q:v', '3'];
+  // ffmpeg exits 0 and writes NOTHING when the seek lands past the last
+  // decodable frame (the container's duration can outrun the video stream —
+  // ENOENT on 5 of ~250 jobs on 2026-10-05). Step back, then take the last frame.
+  const attempts: string[][] = [
+    ['-ss', (tsMs / 1000).toFixed(3)],
+    ['-ss', (Math.max(0, tsMs - 500) / 1000).toFixed(3)],
+    ['-ss', (Math.max(0, tsMs - 1500) / 1000).toFixed(3)],
+    ['-sseof', '-0.5'],
+  ];
+  for (const seek of attempts) {
+    await runProc('ffmpeg', ['-y', '-loglevel', 'error', ...seek, '-i', src, '-frames:v', '1', ...vf, outPath], 60_000);
+    let buf: Buffer;
+    try {
+      buf = await readFile(outPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue; // no frame at this seek — try the next one
+      throw err;
+    }
+    if (buf.length < 4 || buf[0] !== 0xFF || buf[1] !== 0xD8) throw new Error(`frame at ${tsMs}ms is not a JPEG (${buf.length} bytes)`);
+    return buf;
+  }
+  throw new Error(`no frame could be extracted at or before ${tsMs}ms (seeks past the end of the video stream)`);
 }
 
 /** JPEG dimensions from the SOF marker (no decode). */
