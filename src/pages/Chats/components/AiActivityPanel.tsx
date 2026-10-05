@@ -26,6 +26,9 @@ interface Props {
   isAr: boolean;
   /** Changes when the thread grows — the cards re-load after a new message. */
   refreshKey: number;
+  /** The client's saved preferences as chips (the header's chips) — what the
+   *  agent reads before every reply (savedProfile.ts), shown under «ما فهمه». */
+  profileChips: string[];
   onReply: () => void;
 }
 
@@ -102,7 +105,7 @@ function initialOpen(): boolean {
   return window.innerHeight >= 900;
 }
 
-export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, onReply }: Props) {
+export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, profileChips, onReply }: Props) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(initialOpen);
   const toggle = () => {
@@ -174,12 +177,19 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, o
           </Card>
 
           <Card icon={<Brain size={12} />} title={t('chats.ai_act.card_reading')}>
-            {latestReading ? (
-              <>
+            {latestReading && (
+              <div className="mb-1.5">
+                <p className="mb-0.5 text-[10px] font-semibold text-charcoal/50">{t('chats.ai_act.from_last_reply', { when: dateTimeShort(latestReading.created_at, isAr) })}</p>
                 <Chips items={readingChips(latestReading.reading, t, isAr)} />
-                <p className="mt-1 text-[10px] text-charcoal/45">{t('chats.ai_act.as_of', { when: dateTimeShort(latestReading.created_at, isAr) })}</p>
-              </>
-            ) : <Empty text={t('chats.ai_act.no_reading')} />}
+              </div>
+            )}
+            {profileChips.length > 0 && (
+              <div>
+                <p className="mb-0.5 text-[10px] font-semibold text-charcoal/50">{t('chats.ai_act.from_profile')}</p>
+                <Chips items={profileChips} />
+              </div>
+            )}
+            {!latestReading && profileChips.length === 0 && <Empty text={t('chats.ai_act.no_reading')} />}
           </Card>
 
           <Card icon={<Search size={12} />} title={t('chats.ai_act.card_searches')} wide>

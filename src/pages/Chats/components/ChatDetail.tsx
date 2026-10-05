@@ -826,6 +826,7 @@ export default function ChatDetail({ recordId, line = null }: {
             chatWid={chatWid}
             isAr={isAr}
             refreshKey={threadCount}
+            profileChips={prefChips.map((c) => c.text)}
             onReply={() => setReplyOpenFor(chatWid)}
           />
         ) : identity.status === 'ready' ? (
