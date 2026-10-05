@@ -179,6 +179,14 @@ interface Props {
    *  pop-up just closed); otherwise a «search again» bar is offered, so results
    *  never reload under an open units window. */
   livePrefs?: { draft: Record<string, unknown>; key: number; autoSearch: boolean } | null;
+  /** The follow-up's own finder page (operator, 2026-10-05): OUR projects only in
+   *  one list (no tabs, no refine toolbar), no «Edit preferences» (the floating
+   *  preferences circle does that), no «Select all» / «Save options» — ticking a
+   *  card's box marks it PRESENTED and saves it at once, then a result menu
+   *  (main focus / interested / not interested) appears on the card. */
+  followupMode?: boolean;
+  /** «Back» — returns to the follow-up's Qualify step (followupMode). */
+  onBack?: () => void;
 }
 
 /** The fields whose change makes the current results stale. */
@@ -201,6 +209,7 @@ const PAGE = 24;
 export default function SuggestedProjectsView({
   isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, clientName,
   defaultPrefsCollapsed, editPrefsFirst, onDone, onOpenSource, onToggleLayout, layoutDocked, sessionRef, livePrefs,
+  followupMode = false, onBack,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
@@ -520,7 +529,13 @@ export default function SuggestedProjectsView({
 
   // Leaving without saving a single option for the client needs a confirmation
   // (only once results were actually shown — an empty/failed search isn't a choice).
-  const mustConfirmLeave = !!clientRec && !savedAny && totalFinderMatches(resp) > 0;
+  // followupMode: options are saved the moment they're ticked as presented — a
+  // project already presented (this visit or before) means the rep did choose.
+  const anyPresented = followupMode && Object.values(resp?.groups ?? {}).flat().filter((i) => i.source === 'our_projects').some((i) => {
+    const st = existingStatusFor(i);
+    return !!st && ['presented', 'main_focus', 'interested', 'not_interested', 'reserved', 'closed'].includes(st);
+  });
+  const mustConfirmLeave = !!clientRec && !savedAny && !anyPresented && totalFinderMatches(resp) > 0;
   function requestDone() {
     if (mustConfirmLeave) setConfirmLeave(true);
     else onDone();
@@ -576,6 +591,14 @@ export default function SuggestedProjectsView({
       facts: item.facts,
       status: 'suitable',
     };
+  }
+
+  // followupMode: the box = «presented». Ticking saves the option as presented;
+  // unticking takes it back to a plain saved option (suitable) — never deleted.
+  function togglePresented(item: FinderMatch) {
+    const st = existingStatusFor(item);
+    const presented = !!st && ['presented', 'main_focus', 'interested', 'not_interested', 'reserved', 'closed'].includes(st);
+    void onSetStatus(item, presented ? 'suitable' : 'presented');
   }
 
   function toggleSelect(item: FinderMatch) {
@@ -846,7 +869,7 @@ export default function SuggestedProjectsView({
               : L('ترتيب دقيق موثّق بالإحداثيات — مبني على تفضيلات هذه المتابعة.', 'Coordinate-verified ranking — based on this follow-up’s preferences.')}
           </p>
         </div>
-        {editFields.length > 0 && (
+        {editFields.length > 0 && !followupMode && (
           <button
             type="button"
             onClick={() => setShowEdit((v) => !v)}
@@ -858,7 +881,7 @@ export default function SuggestedProjectsView({
             <span className="hidden sm:inline">{L('تعديل التفضيلات', 'Edit preferences')}</span>
           </button>
         )}
-        {clientRec && (
+        {clientRec && !followupMode && (
           <>
             <button
               type="button"
@@ -901,10 +924,21 @@ export default function SuggestedProjectsView({
             <span className="hidden sm:inline">{layoutDocked ? L('ملء الشاشة', 'Full screen') : L('تقسيم', 'Split')}</span>
           </button>
         )}
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60"
+            title={L('العودة إلى خطوة التأهيل', 'Back to the Qualify step')}
+          >
+            {L('رجوع', 'Back')}
+          </button>
+        )}
         <button
           type="button"
           onClick={requestDone}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60"
+          className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-bold transition ${followupMode ? 'bg-copper text-white hover:bg-terracotta' : 'border border-sand/60 bg-white text-charcoal/75 hover:bg-cream/60'}`}
+          title={followupMode ? L('الانتقال إلى خطوة النتيجة', 'Go to the Outcome step') : undefined}
         >
           <Check size={16} />
           {L('تم', 'Done')}
@@ -948,7 +982,7 @@ export default function SuggestedProjectsView({
       {/* Editable preferences panel — refine the SERVER-SIDE search. Height is
           CAPPED with its own scrollbar so it can never swallow the results area
           (critical when the finder is embedded in a popup / short viewport). */}
-      {showEdit && editFields.length > 0 && (
+      {showEdit && !followupMode && editFields.length > 0 && (
         <div className="max-h-[42vh] overflow-y-auto overscroll-contain border-b border-sand/40 bg-white/70">
           <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6">
             {/* Sticky panel header: the COLLAPSE control lives here so the
@@ -1197,13 +1231,15 @@ export default function SuggestedProjectsView({
                   </span>
                 )}
                 <span className="truncate text-[11px] font-semibold text-charcoal/50">
-                  {showControls
+                  {followupMode
+                    ? L(`${ourProjects.length} من مشاريعنا`, `${ourProjects.length} of our projects`)
+                    : showControls
                     ? L('أدوات التصفية والتبويبات', 'Refine & tabs')
                     : `${L('التطابق ≥', 'Match ≥')} ${scoreThreshold}% · ${isAr ? DISPLAY_TAB_LABELS[activeTab].ar : DISPLAY_TAB_LABELS[activeTab].en} (${ourProjects.length + tabView.tabs[activeTab].length})`}
                 </span>
               </div>
               <ViewToggle viewMode={viewMode} onViewMode={setViewMode} isAr={isAr} />
-              <button
+              {!followupMode && <button
                 type="button"
                 onClick={() => setShowControls((v) => !v)}
                 className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold text-copper transition hover:bg-cream"
@@ -1211,9 +1247,9 @@ export default function SuggestedProjectsView({
               >
                 {showControls ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                 {showControls ? L('طيّ', 'Collapse') : L('توسيع', 'Expand')}
-              </button>
+              </button>}
             </div>
-            {showControls && (<>
+            {showControls && !followupMode && (<>
             <FinderRefinementBar
               isAr={isAr}
               floor={FETCH_FLOOR}
@@ -1271,7 +1307,7 @@ export default function SuggestedProjectsView({
               >
                 {savingPrefs ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />} {L('ابدأ البحث', 'Start search')}
               </button>
-              {!showEdit && editFields.length > 0 && (
+              {!showEdit && !followupMode && editFields.length > 0 && (
                 <button
                   type="button"
                   onClick={() => setShowEdit(true)}
@@ -1301,7 +1337,7 @@ export default function SuggestedProjectsView({
                 )}
               </p>
               <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-                {editFields.length > 0 && (
+                {editFields.length > 0 && !followupMode && (
                   <button
                     type="button"
                     onClick={() => setShowEdit(true)}
@@ -1336,7 +1372,7 @@ export default function SuggestedProjectsView({
             <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
               <Info size={24} className="text-copper" />
               <p className="text-sm">{L('لم تُحدَّد أي تفضيلات لهذا العميل. حدِّد الحي أو الميزانية أو نوع العقار (أو اسأل العميل) للحصول على ترشيح دقيق.', 'No preferences are set for this client. Set a district, budget, or unit type (or ask the client) for a precise match.')}</p>
-              {editFields.length > 0 && (
+              {editFields.length > 0 && !followupMode && (
                 <button type="button" onClick={() => setShowEdit(true)} className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta">
                   <SlidersHorizontal size={15} /> {L('تعديل التفضيلات', 'Edit preferences')}
                 </button>
@@ -1349,22 +1385,28 @@ export default function SuggestedProjectsView({
               <p className="text-sm">{L('لا توجد مشاريع مطابقة بالتفضيلات الحالية. جرّب توسيع الميزانية أو الموقع، أو اسأل العميل عن تفاصيل أكثر.', 'No matching projects for the current preferences. Try widening the budget or location, or gather more details from the client.')}</p>
             </div>
           )}
-          {!loading && !error && !needsPreferences && fetchedTotal > 0 && refinedTotal === 0 && (
+          {followupMode && hasSearched && !loading && !error && !needsPreferences && fetchedTotal > 0 && ourProjects.length === 0 && (
+            <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+              <Info size={24} className="text-copper" />
+              <p className="text-sm">{L('لا يوجد من مشاريعنا ما يناسب هذه التفضيلات. عدّلها من زر التفضيلات أسفل الصفحة.', 'None of our projects match these preferences. Adjust them with the preferences button at the bottom.')}</p>
+            </div>
+          )}
+          {!followupMode && !loading && !error && !needsPreferences && fetchedTotal > 0 && refinedTotal === 0 && (
             <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
               <Info size={24} className="text-copper" />
               <p className="text-sm">{L('لا نتائج بهذه التصفية. اخفض نسبة التطابق أو وسّع التصفية الدقيقة.', 'Nothing matches this refinement. Lower the score or relax the refine filters.')}</p>
             </div>
           )}
-          {!loading && !error && refinedTotal > 0 && activeCount === 0 && (
+          {!followupMode && !loading && !error && refinedTotal > 0 && activeCount === 0 && (
             <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
           )}
 
           {/* MAP view — plots the active tab's pinned our-projects + other matches.
               Click a pin → Details (same as a card). Client-option actions stay on
               the list; the map is a presentation surface. */}
-          {viewMode === 'map' && !loading && !error && activeCount > 0 && (
+          {viewMode === 'map' && !loading && !error && (followupMode ? ourProjects.length > 0 : activeCount > 0) && (
             <FinderMapView
-              matches={[...ourProjects, ...tierItems]}
+              matches={followupMode ? ourProjects : [...ourProjects, ...tierItems]}
               isAr={isAr}
               focus={mapFocus}
               areaItems={searchedAreaItems}
@@ -1376,7 +1418,8 @@ export default function SuggestedProjectsView({
                   isAr={isAr}
                   onOpenDetails={onOpenDetails}
                   selected={selected.has(item.project_id)}
-                  onToggleSelect={toggleSelect}
+                  onToggleSelect={followupMode ? togglePresented : toggleSelect}
+                  presentedMode={followupMode}
                   onSaveOption={onSaveOption}
                   onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
                   onReactivate={onReactivate}
@@ -1405,7 +1448,8 @@ export default function SuggestedProjectsView({
                     isAr={isAr}
                     onOpenDetails={onOpenDetails}
                     selected={selected.has(item.project_id)}
-                    onToggleSelect={toggleSelect}
+                    onToggleSelect={followupMode ? togglePresented : toggleSelect}
+                    presentedMode={followupMode}
                     onSaveOption={onSaveOption}
                     onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
                     onReactivate={onReactivate}
@@ -1424,7 +1468,7 @@ export default function SuggestedProjectsView({
           )}
 
           {/* This tab's other matches (all_projects + market_listings). */}
-          {viewMode === 'list' && !loading && !error && shownTier.length > 0 && (
+          {!followupMode && viewMode === 'list' && !loading && !error && shownTier.length > 0 && (
             <>
               {ourProjects.length > 0 && <SectionLabel text={L('خيارات أخرى', 'Other options')} tone="other" />}
               <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1453,7 +1497,7 @@ export default function SuggestedProjectsView({
               </div>
             </>
           )}
-          {viewMode === 'list' && !loading && !error && tierItems.length > 0 && (
+          {!followupMode && viewMode === 'list' && !loading && !error && tierItems.length > 0 && (
             <>
               {visibleCount < tierItems.length && <div ref={sentinelRef} className="h-1" aria-hidden />}
               <div className="py-3 text-center text-[11px] text-charcoal/45">
@@ -1466,7 +1510,7 @@ export default function SuggestedProjectsView({
 
       {/* Footer — the selection summary (the Save-options action lives in the
           header; the list/map toggle lives in the top strip). */}
-      {!loading && !error && fetchedTotal > 0 && clientRec && (
+      {!followupMode && !loading && !error && fetchedTotal > 0 && clientRec && (
         <div className="border-t border-sand/40 bg-white">
           <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-2 sm:px-6">
             {clientRec && (

@@ -77,7 +77,18 @@ interface Props {
   /** Replaces the «Suggested units» block (the Quick Finder passes the units
    *  that FULLY match the request, available only). */
   unitsSlot?: ReactNode;
+  /** The follow-up finder (operator, 2026-10-05): the box at the top means «I
+   *  presented this option» (ticked = the option exists with a presented-or-later
+   *  status; the page saves it at once — no «Save options»), and once ticked a
+   *  result menu beside it offers ONLY main focus / interested / not interested.
+   *  The bottom status menu is hidden. */
+  presentedMode?: boolean;
 }
+
+/** Statuses that mean the option was shown to the client. */
+const PRESENTED_STATUSES: ClientOptionStatus[] = ['presented', 'main_focus', 'interested', 'not_interested', 'reserved', 'closed'];
+/** The outcomes a rep picks after presenting (presentedMode). */
+const PRESENTATION_RESULTS: ClientOptionStatus[] = ['main_focus', 'interested', 'not_interested'];
 
 const fmtNum = (n: number) => n.toLocaleString('en-US');
 
@@ -137,6 +148,7 @@ const asCoord = (v: unknown): number | null => {
 export default function FinderCard({
   item, isAr, onOpenDetails, selected, onToggleSelect, saveState, existingStatus,
   onSetStatus, onSendToClient, onShowOnMap, hideClientActions, chatPdf, clientId, requirements, quick = false, unitsSlot,
+  presentedMode = false,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
@@ -203,7 +215,22 @@ export default function FinderCard({
 
       {/* Title row */}
       <div className="flex items-center gap-2 border-b border-sand/30 px-3 py-2">
-        {!hideClientActions && (
+        {!hideClientActions && (presentedMode ? (() => {
+          const presented = !!existingStatus && PRESENTED_STATUSES.includes(existingStatus);
+          return (
+            <button
+              type="button"
+              onClick={() => onToggleSelect(item)}
+              disabled={saveState === 'saving'}
+              className={`shrink-0 transition disabled:opacity-50 ${presented ? 'text-copper' : 'text-charcoal/35 hover:text-charcoal/60'}`}
+              aria-label={L('عرضته على العميل', 'Presented to the client')}
+              aria-pressed={presented}
+              title={presented ? L('عُرض على العميل — اضغط للإلغاء', 'Presented to the client — click to undo') : L('اضغط إذا عرضت هذا المشروع على العميل', 'Click once you have presented this project to the client')}
+            >
+              {presented ? <CheckSquare size={17} /> : <Square size={17} />}
+            </button>
+          );
+        })() : (
           <button
             type="button"
             onClick={() => onToggleSelect(item)}
@@ -214,7 +241,7 @@ export default function FinderCard({
           >
             {selected ? <CheckSquare size={17} /> : <Square size={17} />}
           </button>
-        )}
+        ))}
         <Building2 size={15} className="shrink-0 text-charcoal/50" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-charcoal">{item.project_name}</div>
@@ -225,6 +252,13 @@ export default function FinderCard({
         </div>
         <BandBadge band={item.match_band} score={item.score} isAr={isAr} />
       </div>
+      {/* presentedMode: once presented, the result of the presentation — right at the top. */}
+      {presentedMode && !hideClientActions && onSetStatus && existingStatus && PRESENTED_STATUSES.includes(existingStatus) && (
+        <div className="flex items-center gap-2 border-b border-sand/30 bg-copper/5 px-3 py-1.5">
+          <span className="text-[11px] font-bold text-chocolate">{L('نتيجة العرض:', 'Result:')}</span>
+          <ResultSelect value={existingStatus} saving={saveState === 'saving'} isAr={isAr} onChange={(s) => onSetStatus(item, s)} />
+        </div>
+      )}
 
       <div className="space-y-2.5 p-3">
         {/* Match type + geography verification + distance */}
@@ -392,7 +426,7 @@ export default function FinderCard({
             <ContactAdvertiserButton listingId={item.project_id} isAr={isAr} />
           )}
 
-          {!hideClientActions && onSetStatus && (
+          {!hideClientActions && onSetStatus && !presentedMode && (
             <StatusSelect
               value={existingStatus}
               saving={saveState === 'saving'}
@@ -453,6 +487,32 @@ function StatusSelect({
         <option key={s} value={s}>
           {isAr ? CLIENT_OPTION_STATUS_META[s].ar : CLIENT_OPTION_STATUS_META[s].en}
         </option>
+      ))}
+    </select>
+  );
+}
+
+/** presentedMode: the outcome of presenting an option — three choices only. */
+function ResultSelect({ value, saving, isAr, onChange }: {
+  value: ClientOptionStatus; saving: boolean; isAr: boolean; onChange: (status: ClientOptionStatus) => void;
+}) {
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  const current = PRESENTATION_RESULTS.includes(value) ? value : '';
+  const meta = current ? CLIENT_OPTION_STATUS_META[current] : null;
+  return (
+    <select
+      value={current}
+      disabled={saving}
+      onChange={(e) => { const v = e.target.value; if (v) onChange(v as ClientOptionStatus); }}
+      className="flex-1 rounded-lg border px-2 py-1 text-[11px] font-bold transition disabled:opacity-60 focus:outline-none focus:ring-1 focus:ring-copper/40"
+      style={meta
+        ? { color: meta.color, borderColor: `${meta.color}66`, backgroundColor: `${meta.color}12` }
+        : { color: '#8E6E52', borderColor: 'rgba(212,184,150,0.6)', backgroundColor: '#fff' }}
+      aria-label={L('نتيجة العرض', 'Presentation result')}
+    >
+      <option value="" disabled>{saving ? '…' : L('اختر النتيجة…', 'Pick the result…')}</option>
+      {PRESENTATION_RESULTS.map((s) => (
+        <option key={s} value={s}>{isAr ? CLIENT_OPTION_STATUS_META[s].ar : CLIENT_OPTION_STATUS_META[s].en}</option>
       ))}
     </select>
   );

@@ -152,7 +152,12 @@ export default function FollowUpWorkspacePage() {
 
   // Which stage of the guided mission the rep is on. The page is keyed by recordId
   // (App.tsx), so this resets when the rep opens a different follow-up.
-  const [stage, setStage] = useState<MissionStage>('context');
+  // A page can send the rep to a given step (the follow-up finder: Back → Qualify,
+  // Done → Outcome) via navigation state; anything else starts at Context.
+  const [stage, setStage] = useState<MissionStage>(() => {
+    const want = (location.state as { stage?: string } | null)?.stage;
+    return want === 'qualify' || want === 'confirm' || want === 'call' || want === 'whatsapp' ? want : 'context';
+  });
   const [showScript, setShowScript] = useState(false);
   const [showVisit, setShowVisit] = useState(false);
   const [showClient360, setShowClient360] = useState(false);
@@ -167,6 +172,9 @@ export default function FollowUpWorkspacePage() {
 
   // Guided-mission stages for this follow-up type + Next/Back navigation.
   const stages = missionStages(ctx.typeKey, typeConfig?.primary_channel);
+  // A requested step this follow-up type doesn't have (e.g. Qualify on a
+  // confirmation call) falls back to the first step.
+  if (!stages.includes(stage)) setStage(stages[0] ?? 'context');
   const stageIdx = Math.max(0, stages.indexOf(stage));
   const goNextStage = () => { if (stageIdx < stages.length - 1) setStage(stages[stageIdx + 1]!); };
   const goPrevStage = () => { if (stageIdx > 0) setStage(stages[stageIdx - 1]!); };

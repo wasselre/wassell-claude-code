@@ -76,8 +76,13 @@ export default function SuggestedProjectsPage() {
     setLivePrefs({ draft: qual.draft, key: Date.now(), autoSearch: false });
   }, [qual.draft]);
 
+  // Done → the follow-up's Outcome step; Back → its Qualify step.
   const onDone = () => {
-    if (recordId) navigate(`/model/followups/${recordId}`);
+    if (recordId) navigate(`/model/followups/${recordId}`, { state: { stage: 'confirm' } });
+    else navigate(-1);
+  };
+  const onBack = () => {
+    if (recordId) navigate(`/model/followups/${recordId}`, { state: { stage: 'qualify' } });
     else navigate(-1);
   };
 
@@ -115,6 +120,8 @@ export default function SuggestedProjectsPage() {
       projectName={projectName}
       clientName={clientName}
       onDone={onDone}
+      onBack={onBack}
+      followupMode
       livePrefs={livePrefs}
     />
     </>
