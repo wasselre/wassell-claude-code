@@ -73,6 +73,17 @@ function fmtWhen(iso: unknown, isAr: boolean): string {
   });
 }
 
+/** The newest item per key (input is oldest-first, as the API returns it). */
+function latestBy<T extends { created_at: string }>(items: readonly T[], key: (t: T) => string): T[] {
+  const out = new Map<string, T>();
+  for (const it of items) {
+    const k = key(it);
+    const prev = out.get(k);
+    if (!prev || prev.created_at <= it.created_at) out.set(k, it);
+  }
+  return [...out.values()];
+}
+
 // ── One card's frame: summary, highlight, accept / reject + correction ─────────
 
 function CardShell({
@@ -188,8 +199,15 @@ export default function AiReviewCards({
   const [mapOpen, setMapOpen] = useState(false);
   const verdictOf = (k: ReviewCardKey) => detail.cards.find((c) => c.card === k);
 
-  const places = detail.changes.filter((c) => c.kind === 'place');
-  const prefs = detail.changes.filter((c) => c.kind === 'pref' && c.field);
+  // Each AI reading re-saves what it heard, so one field / one district can
+  // appear many times in a window (measured: bedrooms saved 11× in one chat).
+  // Show the LATEST per field and per district; highlight on ALL their quotes.
+  const allPlaces = detail.changes.filter((c) => c.kind === 'place');
+  const allPrefs = detail.changes.filter((c) => c.kind === 'pref' && c.field);
+  const places = useMemo(() => latestBy(allPlaces, (c) => `${c.label ?? ''}|${c.applied ? 1 : 0}`)
+    // A district that was saved at some point is not also listed as "doubted".
+    .filter((c, _i, arr) => c.applied || !arr.some((o) => o.applied && o.label === c.label)), [allPlaces]);
+  const prefs = useMemo(() => latestBy(allPrefs, (c) => c.field as string), [allPrefs]);
   const prefSlugs = useMemo(() => [...new Set(prefs.map((c) => c.field as string))], [prefs]);
   const locationField = clientFields.find((f) => f.name === 'location');
 
@@ -218,7 +236,7 @@ export default function AiReviewCards({
       empty={places.length === 0}
       verdict={verdictOf('places')}
       active={activeCard === 'places'}
-      onHighlight={() => toggle('places', messagesMatching(messages, [...placeLabels, ...places.flatMap((c) => (c.applied ? quoteFragments(c.quote) : []))], true))}
+      onHighlight={() => toggle('places', messagesMatching(messages, [...placeLabels, ...allPlaces.flatMap((c) => (c.applied ? quoteFragments(c.quote) : []))], true))}
       rejecting={!!rejecting.places}
       setRejecting={(v) => setRejecting((r) => ({ ...r, places: v }))}
       onAccept={() => setCard('places', 'accepted', null, null)}
@@ -279,7 +297,7 @@ export default function AiReviewCards({
       empty={prefs.length === 0}
       verdict={verdictOf('preferences')}
       active={activeCard === 'preferences'}
-      onHighlight={() => toggle('preferences', messagesMatching(messages, prefs.flatMap((c) => quoteFragments(c.quote))))}
+      onHighlight={() => toggle('preferences', messagesMatching(messages, allPrefs.flatMap((c) => quoteFragments(c.quote))))}
       rejecting={!!rejecting.preferences}
       setRejecting={(v) => setRejecting((r) => ({ ...r, preferences: v }))}
       onAccept={() => setCard('preferences', 'accepted', null, null)}
