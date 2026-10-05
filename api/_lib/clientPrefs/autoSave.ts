@@ -44,7 +44,7 @@ import {
 import { prefOptionsFromSchema } from '../../client-prefs/review.js';
 import { locationItemPlaceKey } from '../../geo-preference/review.js';
 import {
-  readStoredProfiles, resolveTarget, profileValues, writeProfileValues, addAiProfile, removeAiProfile,
+  readStoredProfiles, resolveTarget, profileValues, writeProfileValues, addAiProfile, removeAiProfile, DEFAULT_PROFILE_ID,
 } from './profileTarget.js';
 import { routeWish, SLUG_OF_FIELD, type Heard, type WishField, type WishRoute } from './wishRouter.js';
 
@@ -124,12 +124,11 @@ export function normalizeChangeRows(rows: ChangeRow[]): Array<Required<ChangeRow
 
 /**
  * Does an earlier change row belong to the profile being written? A row with
- * no profile_id was written before profiles were tracked — it counts as the
- * active profile's. PURE.
+ * no profile_id was written while the client had one profile — the main one
+ * (`default`), even if another profile is active now. PURE.
  */
 export function rowInProfile(rowProfileId: string | null, target: string | null, activeId: string): boolean {
-  if (target) return rowProfileId === target;
-  return rowProfileId === null || rowProfileId === activeId;
+  return (rowProfileId ?? DEFAULT_PROFILE_ID) === (target ?? activeId);
 }
 
 /** The name to record for a non-active target profile (null for the active one). PURE. */
@@ -668,8 +667,8 @@ export async function undoAiChange(sb: SupabaseClient, changeId: string, userId:
         if (!next) { moved = true; return null; }
         return next;
       }
-      // The profile the change was written to (null / unknown → the active one).
-      const target = resolveTarget(fresh, c.profile_id);
+      // The profile the change was written to (none recorded = the main one, `default`).
+      const target = resolveTarget(fresh, c.profile_id ?? DEFAULT_PROFILE_ID);
       const values = profileValues(fresh, target);
       if (c.kind === 'pref' && c.field) {
         const r = undoPrefValue(c.field, values[c.field], { before: c.before_value, after: c.after_value, added: c.added, replaced: c.note === 'replaced' });

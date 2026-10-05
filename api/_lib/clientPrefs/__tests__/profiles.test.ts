@@ -101,3 +101,14 @@ describe('the wish router', () => {
     expect(routeFromAnswer({ decision: 'same_wish', profile_id: 'nope' }, ctx)).toMatchObject({ kind: 'same', profileId: null });
   });
 });
+
+describe('which profile an earlier AI change belongs to', () => {
+  it('a change with no profile recorded is the main profile\'s, even when another is active', async () => {
+    const { rowInProfile } = await import('../autoSave.js');
+    expect(rowInProfile(null, null, 'default')).toBe(true);
+    expect(rowInProfile(null, null, 'p-dubai')).toBe(false);
+    expect(rowInProfile(null, 'default', 'p-dubai')).toBe(true);
+    expect(rowInProfile('p-dubai', 'p-dubai', 'default')).toBe(true);
+    expect(rowInProfile('p-dubai', null, 'default')).toBe(false);
+  });
+});

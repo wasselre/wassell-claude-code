@@ -37,12 +37,13 @@ export function useAiFieldMarks(clientId: string, data: Record<string, unknown>,
   return useMemo(() => {
     const out: Record<string, AiFieldMark> = {};
     let places = 0;
-    // Only changes to the profile on screen (the active one): a change written
-    // to another profile, or before profiles were tracked (no id), shows there.
-    const activeId = typeof data.active_profile_id === 'string' ? data.active_profile_id : null;
+    // Only changes to the profile on screen (the active one). A change with no
+    // profile recorded was written while the client had one profile — the main
+    // one (`default`).
+    const activeId = typeof data.active_profile_id === 'string' ? data.active_profile_id : 'default';
     for (const c of changes) {
       if (!c.applied || c.undone_at) continue;
-      if (c.profile_id && c.profile_id !== activeId) continue;
+      if ((c.profile_id ?? 'default') !== activeId) continue;
       if (c.kind === 'pref' && c.field && !out[c.field]) {
         out[c.field] = { at: c.created_at, source: c.source, quote: c.quote, current: same(c.after_value, data[c.field]) };
       } else if (c.kind === 'place' && Array.isArray(c.added) && c.added.length) {
