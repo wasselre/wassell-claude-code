@@ -1,6 +1,6 @@
 # PRD: Automated project updates (portals + developer WhatsApp groups)
 
-**Status:** Live — Riva portal, Almajdiah API and Safa (portal snapshot + public site) weekly; WhatsApp groups of Al-Ramz, Safa, Riva. Al-Ramz portal being explored; Binghatti blocked (reCAPTCHA).
+**Status:** Live — Riva portal, Almajdiah API, Safa (portal snapshot + public site) and Menaco (public listings) weekly; WhatsApp groups of Al-Ramz, Safa, Riva. Al-Ramz portal being explored; Binghatti blocked (reCAPTCHA).
 **Last updated:** 2026-10-05
 **Related PRDs:** projects-units.md, chats.md, lead-portal-registration.md, data-migration.md (archived wizard)
 
@@ -21,6 +21,7 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 | Riva broker portal (`riva_broker`, 21 projects) | plain-HTTP sign-in with the `lead_portals` Riva login; unit JSON in each card | weekly, live |
 | Almajdiah API (`developer_api`, 10 projects) | public `etmaam.almajdiah.com/api/client/v1/projects/<id>` — every unit with its real status; price = `price_before_tax` | weekly, live |
 | Safa (`safa_broker`, 12 projects) | public `safainv.sa/project/units/<id>` + the broker cards the portal's DAILY STATUS CHECK saves (`save_items` step → `portal-registrations/inventory/<portal>/units.json`; one SMS code a day through the WhatsApp relay covers both) | weekly, live (first live run 2026-10-05: 179 units created for صفا 101/102; 4 projects held) |
+| Menaco (`menaco`, 2 projects: مينا 51, مينا 52) | public `menaco.sa/listings/<id>` (no login): Livewire `loadMore` chained until `hasMorePages=false`; each card = code (A01, 3/1), price, `for-what` badge (مباع/محجوز/للبيع — the «متاح للزيارة» tag is a visit marker, not a status), rooms. The card area is GROSS and never stored; a unit the CRM lacks gets its NET area, floor, type and plan from its own page `/listings/sub/<id>`. Units missing from the page are left alone (the page lists sold units too) | weekly, live since 2026-10-05 (first run: 51/51 + 16/16 matched, 0 changes) |
 | Developer WhatsApp groups | Claude Opus 5.5 reads new messages + PDFs/images | live |
 | Al-Ramz Drive sheets | the Drive FOLDER is not publicly listable (only single files are) | not automatable as is — Al-Ramz updates arrive through the WhatsApp group; the Al-Ramz broker portal's projects page is captured daily (`save_items` key `projects`) to see whether it carries units |
 | Binghatti broker portal | sign-in = user id + SMS code + Google reCAPTCHA | **not automated by design** — we don't build automation around a CAPTCHA |
@@ -77,7 +78,7 @@ On 2026-10-04, 34 of the 37 active projects in the update list were past their u
 | `worker/src/__tests__/projectUpdates.test.ts` | rules above, pinned |
 
 ## Open questions / known limitations
-- Menaco (2 projects) has no adapter yet. Binghatti (43) cannot be signed into unattended (reCAPTCHA) — options: someone downloads its all-units Excel weekly and the system ingests the file, or a human-assisted sign-in. Al-Ramz's Drive folder is private; its updates come through the WhatsApp group.
+- Binghatti (43) cannot be signed into unattended (reCAPTCHA) — options: someone downloads its all-units Excel weekly and the system ingests the file, or a human-assisted sign-in. Al-Ramz's Drive folder is private; its updates come through the WhatsApp group.
 - دروازة's update-list link points at a different phase than our units (held every week until the link is fixed).
 - A Riva project that leaves the portal is reported, not retired (retirement removes it from the website — a human decision).
 - WhatsApp videos and PowerPoint files are not read (only text, PDFs and images).
