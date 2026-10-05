@@ -73,3 +73,34 @@ describe('portal choice: developer first', () => {
     expect(pickPortals([ramzPortal, rivaPortal], null, none)).toEqual([]);
   });
 });
+
+describe('Al Ramz: a project not on the portal → its default + the real one in the notes', () => {
+  // The live Al Ramz fields (2026-10-05), trimmed to project + notes.
+  const { fields } = parseFields(JSON.stringify([
+    { key: 'project', type: 'select', source: 'project.project_name', default: 'تل الربوة 1', allow_unlisted: true,
+      map: { 'تل الربوة': 'تل الربوة 1' },
+      options: [{ value: 'ستون الندى' }, { value: 'تل الربوة 1' }, { value: 'ربوة الرمز' }, { value: 'ستون الملقا' }] },
+    { key: 'notes', type: 'textarea', required: false, source: 'template:المشروع المطلوب للعميل: {project.project_name}' },
+  ]));
+  const project = fields.find((f) => f.key === 'project')!;
+  const notes = fields.find((f) => f.key === 'notes')!;
+  const ctx = (projectName: string) => ({ client: {}, project: { project_name: projectName }, user: { email: '', name: '', phone: '' } });
+
+  it('parses allow_unlisted', () => {
+    expect(project.allow_unlisted).toBe(true);
+  });
+
+  it('an unlisted project (ريا النخيل) goes in as the default, and the notes name the real one', () => {
+    expect(prefillField(project, ctx('ريا النخيل'))).toBe('تل الربوة 1');
+    expect(prefillField(notes, ctx('ريا النخيل'))).toBe('المشروع المطلوب للعميل: ريا النخيل');
+  });
+
+  it('a listed project keeps its own name', () => {
+    expect(prefillField(project, ctx('تل الربوة'))).toBe('تل الربوة 1');
+    expect(prefillField(project, ctx('ستون الندى'))).toBe('ستون الندى');
+  });
+
+  it('a template whose placeholders are all empty yields nothing, not a bare label', () => {
+    expect(prefillField(notes, ctx(''))).toBe('');
+  });
+});

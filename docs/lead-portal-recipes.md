@@ -60,6 +60,12 @@ then available to the recipe as `{{lead.<key>}}`.
 - If the field is empty, the two defaults above (`name` + `phone`) are used.
 - `lead.project_name` is always available even if not declared.
 
+### Projects a portal does not list — `allow_unlisted` (2026-10-05)
+
+On the project field, `"allow_unlisted": true` means the portal accepts a stand-in: a client whose project is not one of the field's `options` is sent under its `default`, and a notes field should name the real project, e.g. `"source": "template:المشروع المطلوب للعميل: {project.project_name}"`. Without it the high-interest path refuses rather than send the client under another project (the strict-project rule). Al Ramz uses it; Safa and Riva do not.
+
+`template:` sources fill `{client.<field>}`, `{project.<field>}` and `{user.<email|name|phone>}`; when every placeholder is empty the field is left empty rather than a bare label.
+
 ## `recipe`
 
 A JSON array of steps, run in order in a real browser (Browserbase, Saudi IP).

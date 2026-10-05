@@ -29,6 +29,13 @@ export interface PortalFieldSpec {
   map?: Record<string, string>;
   /** Prefill fallback when the source resolves to nothing. */
   default?: string;
+  /** The portal accepts a stand-in when the client's value is not one of its
+   *  options (Al Ramz, operator 2026-10-05: "if the project is not in the
+   *  portal, select any project and type the real project in the notes").
+   *  Without it, the high-interest path refuses rather than send the client
+   *  under `default` (the strict-project rule). Pair it with a notes field
+   *  whose source names the real value, e.g. a `template:` source. */
+  allow_unlisted?: boolean;
   /** The portal rejects a value with fewer letters/digits than this (Riva: a
    *  name needs 3). A shorter prefill is replaced by `fallback_source`. */
   min_length?: number;
@@ -123,6 +130,7 @@ export function parseFields(raw: unknown): { fields: PortalFieldSpec[]; error: s
           ? Object.fromEntries(Object.entries(o.map as Record<string, unknown>).map(([k, v]) => [k, str(v)]))
           : undefined,
       default: str(o.default) || undefined,
+      allow_unlisted: o.allow_unlisted === true || undefined,
       min_length: typeof o.min_length === 'number' && o.min_length > 0 ? o.min_length : undefined,
       fallback_source: str(o.fallback_source) || undefined,
       hidden: o.hidden === true,
@@ -207,13 +215,25 @@ export function checkRecipe(raw: unknown): { ok: boolean; error: string | null }
   return { ok: true, error: null };
 }
 
-/** Resolve a prefill `source` against the client / project / caller. */
+/** Resolve a prefill `source` against the client / project / caller.
+ *  `template:<text>` fills `{client.x}` / `{project.x}` / `{user.x}` inside the
+ *  text (e.g. «المشروع المطلوب للعميل: {project.project_name}»); a template
+ *  whose placeholders all resolve to nothing yields '' (no orphan label). */
 export function resolveSource(
   source: string | undefined,
   ctx: { client: Record<string, unknown>; project: Record<string, unknown>; user: { email: string; name: string; phone: string } },
 ): string {
   if (!source) return '';
   if (source.startsWith('literal:')) return source.slice('literal:'.length);
+  if (source.startsWith('template:')) {
+    let filled = 0;
+    const out = source.slice('template:'.length).replace(/\{([a-z]+\.[a-zA-Z0-9_.]+)\}/g, (_m, inner: string) => {
+      const v = resolveSource(inner, ctx).trim();
+      if (v) filled += 1;
+      return v;
+    });
+    return filled > 0 ? out.trim() : '';
+  }
   const [root, ...rest] = source.split('.');
   const path = rest.join('.');
   if (root === 'client') return valueToText(ctx.client[path]);

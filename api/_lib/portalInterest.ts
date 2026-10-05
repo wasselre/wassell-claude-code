@@ -15,7 +15,8 @@
  *   · otherwise a run is queued exactly like the ad sweep's (origin 'auto' so
  *     the OTP relay works, owner = the client's owner), tagged with interest_id.
  *
- * STRICT PROJECT: the portal's project field must match this project. A
+ * STRICT PROJECT (unless the field says `allow_unlisted`): the portal's
+ * project field must match this project. A
  * project missing from the portal's list is NOT sent under the portal's
  * default project (how seven «ريا النخيل» clients reached Al Ramz as
  * «تل الربوة 1»); a failed row names the gap instead.
@@ -154,16 +155,20 @@ export async function registerOnInterest(
     }
 
     // The lead, exactly as the modal would prefill it — except that a project
-    // field never falls back to the portal's default project.
+    // field never falls back to the portal's default project, unless the
+    // portal says it accepts a stand-in (`allow_unlisted`).
     const lead: Record<string, string> = {};
     const missing: string[] = [];
     let projectGap = false;
     const ctx = { client: client.data ?? {}, project: project.data ?? {}, user };
     for (const f of portal.fields) {
       const isProjectField = (f.source ?? '').startsWith('project.');
-      const v = (isProjectField ? prefillField({ ...f, default: undefined }, ctx) : (portal.prefill[f.key] ?? '')).trim();
+      // allow_unlisted (Al Ramz, 2026-10-05): the portal takes its default
+      // project and the notes carry the real one — the operator's rule.
+      const strict = isProjectField && !f.allow_unlisted;
+      const v = (strict ? prefillField({ ...f, default: undefined }, ctx) : (portal.prefill[f.key] ?? '')).trim();
       if (v) lead[f.key] = v;
-      else if (f.required) { missing.push(f.key); if (isProjectField) projectGap = true; }
+      else if (f.required) { missing.push(f.key); if (strict) projectGap = true; }
     }
     const projectName = str(project.data?.project_name);
     if (projectName) lead.project_name = projectName;
