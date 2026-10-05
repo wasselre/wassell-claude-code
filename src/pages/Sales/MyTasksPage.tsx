@@ -16,6 +16,7 @@ import FollowupTaskCard from './components/FollowupTaskCard';
 import AgentQuestionsSection from './components/AgentQuestionsSection';
 import AiApprovalsSection from './components/AiApprovalsSection';
 import { useAiApprovals } from './lib/useAiApprovals';
+import { useCampaignAgent } from './lib/useCampaignAgent';
 
 type Section = 'actions' | 'agent_questions' | 'waiting' | 'search' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
 type ApptBucket = 'today' | 'tomorrow' | 'future' | 'last7' | 'older' | 'no_show';
@@ -104,8 +105,11 @@ export default function MyTasksPage() {
   );
 
   // What the AI prepared and waits for approval (messages, officer notices,
-  // follow-up results). Admin-only — RLS on ai_actions agrees.
-  const aiApprovals = useAiApprovals(isManager);
+  // follow-up results). Admins — and the old-lead campaign's agent, who
+  // approves the day's messages (RLS on ai_actions agrees).
+  const campaignAgent = useCampaignAgent();
+  const canApprove = isManager || (!!currentUserId && campaignAgent === currentUserId);
+  const aiApprovals = useAiApprovals(canApprove);
 
   const [section, setSection] = useState<Section>('actions');
   const [channel, setChannel] = useState<FollowupChannel | 'all'>('all');
@@ -582,7 +586,7 @@ export default function MyTasksPage() {
       </nav>
 
       {section === 'actions' && renderActions()}
-      {section === 'agent_questions' && isManager && (
+      {section === 'agent_questions' && canApprove && (
         <AiApprovalsSection
           actions={aiApprovals.actions}
           results={aiApprovals.results}

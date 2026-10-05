@@ -7,6 +7,8 @@ import {
   buildFollowupTasks,
   indexClientFollowups,
   isHotLead,
+  isNewClientCall,
+  isCampaignReplied,
   priorityTier,
   type FollowupTask,
 } from '../myWork';
@@ -177,6 +179,7 @@ describe('isHotLead', () => {
     followupStatus: 'open', whatsappState: null, clientMessagedAt: null, result: null,
     priority: null, salesRep: 'u', bucket: 'today',
     createdAtISO: FRESH, clientStage: 'جديد', clientCreatedAtISO: FRESH,
+    campaignDay: null, campaignRepliedAt: null, firstCall: true,
     ...over,
   });
 
@@ -232,5 +235,53 @@ describe('indexClientFollowups', () => {
   it('skips follow-ups with no client link', () => {
     const followups = [followup({ followup_status: 'open', scheduled_datetime: YESTERDAY }, 'a')];
     expect(indexClientFollowups(followups, NOW).size).toBe(0);
+  });
+});
+
+// Operator 2026-10-05: new clients are always the priority until called, and an
+// old campaign lead who replied to the day's message jumps to the same tier.
+describe('call priority for the old-lead campaign', () => {
+  const DAYS = (n: number) => new Date(NOW - n * 24 * 3600 * 1000).toISOString();
+  const task = (over: Partial<FollowupTask> = {}): FollowupTask => ({
+    followupId: 'f', clientId: 'c1', clientName: 'Salem', phone: '+966500000001',
+    typeKey: 'appointment_booking_call', channel: 'call', scheduledISO: EARLIER_TODAY,
+    followupStatus: 'open', whatsappState: null, clientMessagedAt: null, result: null,
+    priority: null, salesRep: 'u', bucket: 'today',
+    createdAtISO: DAYS(2), clientStage: 'جديد', clientCreatedAtISO: DAYS(2),
+    campaignDay: null, campaignRepliedAt: null, firstCall: true,
+    ...over,
+  });
+
+  it('keeps a new client first call on top after the 1-hour hot window', () => {
+    const t = task();
+    expect(isHotLead(t, NOW)).toBe(false);
+    expect(isNewClientCall(t, NOW)).toBe(true);
+    expect(priorityTier(t, NOW)).toBe(1);
+  });
+
+  it('does not treat a retry call as a new client first call', () => {
+    expect(priorityTier(task({ firstCall: false }), NOW)).toBe(4);
+  });
+
+  it('an old campaign lead is not a new client', () => {
+    const t = task({ campaignDay: '2026-06-20', clientCreatedAtISO: DAYS(2) });
+    expect(isNewClientCall(t, NOW)).toBe(false);
+    expect(priorityTier(t, NOW)).toBe(4);
+  });
+
+  it('an old campaign lead who replied goes to the top', () => {
+    const t = task({ campaignDay: '2026-06-20', campaignRepliedAt: EARLIER_TODAY, clientCreatedAtISO: DAYS(90) });
+    expect(isCampaignReplied(t)).toBe(true);
+    expect(priorityTier(t, NOW)).toBe(1);
+  });
+
+  it('reads the campaign fields from the follow-up record', () => {
+    const [t] = buildFollowupTasks([followup({
+      followup_type: ['appointment_booking_call'], followup_status: 'open', scheduled_datetime: EARLIER_TODAY,
+      campaign_day: '2026-06-20', campaign_replied_at: EARLIER_TODAY, followup_number: 1,
+    })], new Map(), NOW);
+    expect(t?.campaignDay).toBe('2026-06-20');
+    expect(t?.campaignRepliedAt).toBe(EARLIER_TODAY);
+    expect(t?.firstCall).toBe(true);
   });
 });

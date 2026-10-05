@@ -99,6 +99,12 @@ export interface FollowupTask {
   clientStage: string | null;
   /** When the CLIENT RECORD itself was created — gates the hot-lead SLA. */
   clientCreatedAtISO: string | null;
+  /** Old-lead campaign day of this call task (YYYY-MM-DD), when it is one. */
+  campaignDay: string | null;
+  /** The old lead replied to the day's message and has not been called yet. */
+  campaignRepliedAt: string | null;
+  /** A first booking call (not a retry, not an escalation). */
+  firstCall: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +114,8 @@ export interface FollowupTask {
 /**
  * Priority tier of a task within the Actions tab. Lower = hotter.
  *  1 hot     — brand-new lead's booking call (client record <1h old): call <5 min.
+ *              Also (2026-10-05): any NEW client's first call until it is made,
+ *              and an old campaign lead who replied to the day's message.
  *  2 replied — customer replied / messaged: ball is in OUR court right now.
  *  3 overdue — scheduled day strictly before today.
  *  4 today   — due today.
@@ -146,8 +154,27 @@ export function isWaitingForCustomer(t: FollowupTask): boolean {
   return t.whatsappState === 'message_sent_waiting_response';
 }
 
+/** How long a new client's first call stays at the top of the list. */
+export const NEW_CLIENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * A NEW client's first booking call (operator, 2026-10-05: new clients are
+ * always the priority, any day, until they are called). Old campaign leads are
+ * not new clients — their calls carry a campaign day.
+ */
+export function isNewClientCall(t: FollowupTask, now: number): boolean {
+  if (t.typeKey !== 'appointment_booking_call' || !t.firstCall || t.campaignDay) return false;
+  const clientCreated = parseMs(t.clientCreatedAtISO);
+  return clientCreated != null && now - clientCreated <= NEW_CLIENT_WINDOW_MS;
+}
+
+/** An old campaign lead replied on WhatsApp and is still waiting for our call. */
+export function isCampaignReplied(t: FollowupTask): boolean {
+  return t.typeKey === 'appointment_booking_call' && !!t.campaignDay && !!t.campaignRepliedAt;
+}
+
 export function priorityTier(t: FollowupTask, now: number): PriorityTier {
-  if (isHotLead(t, now)) return 1;
+  if (isHotLead(t, now) || isNewClientCall(t, now) || isCampaignReplied(t)) return 1;
   if (isCustomerTurn(t)) return 2;
   if (t.bucket === 'late') return 3;
   if (t.typeKey === 'rating_request' || !t.scheduledISO) return 5;
@@ -225,6 +252,9 @@ export function buildFollowupTasks(
       createdAtISO: r.created_at ?? null,
       clientStage: str(cd?.client_stage),
       clientCreatedAtISO: client?.created_at ?? null,
+      campaignDay: str(d.campaign_day),
+      campaignRepliedAt: str(d.campaign_replied_at),
+      firstCall: !str(d.escalation_reason) && !str(d.previous_followup_id) && (Number(d.followup_number ?? 1) || 1) <= 1,
     });
   }
   return out;
@@ -268,6 +298,9 @@ export function buildWaitingTasks(
       createdAtISO: r.created_at ?? null,
       clientStage: str(cd?.client_stage),
       clientCreatedAtISO: client?.created_at ?? null,
+      campaignDay: str(d.campaign_day),
+      campaignRepliedAt: str(d.campaign_replied_at),
+      firstCall: !str(d.escalation_reason) && !str(d.previous_followup_id) && (Number(d.followup_number ?? 1) || 1) <= 1,
     });
   }
   return out.sort((a, b) => {

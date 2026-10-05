@@ -136,6 +136,10 @@ async function applyOne(sb: SupabaseClient, s: SuggestionRow, dryRun: boolean): 
   if (CLOSED_STATUSES.has(String(fdata.followup_status ?? ''))) return retire(`follow-up already ${String(fdata.followup_status)}`);
   const type = readType(fdata.followup_type) ?? s.followup_type ?? '';
   if (s.followup_type && type !== s.followup_type) return skip(`follow-up type changed (${s.followup_type} → ${type})`);
+  // Call results are always set by a human (operator, 2026-10-05). The chat AI
+  // only ever reads WhatsApp tasks now, but a call task must never be closed by
+  // it even if one slipped through.
+  if (type !== 'whatsapp_follow_up') return retire(`a ${type || 'call'} task — call results are set by a person`);
 
   const { data: cl, error: cErr } = await sb.from('records').select('data').eq('id', s.client_id).maybeSingle();
   if (cErr) throw new Error(`client read failed: ${cErr.message}`);

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Phone, MessageCircle, AlertTriangle, Clock, Flame, BellRing } from 'lucide-react';
 import type { FollowupTask, PriorityTier } from '../lib/myWork';
-import { HOT_LEAD_SLA_MS } from '../lib/myWork';
+import { HOT_LEAD_SLA_MS, isCampaignReplied, isHotLead } from '../lib/myWork';
 import { telUrl, whatsappUrl } from '@/lib/phone';
 import { getFollowUpTypeConfig, getOutcome } from '@/lib/salesProcess';
 
@@ -87,6 +87,11 @@ export default function FollowupTaskCard({ task, isAr, returnTo, navigate, onWha
   const stripe = tier ? TIER_STRIPE[tier] : late ? '#B5462F' : isWhatsApp ? '#25D366' : '#B8734F';
   const isHot = tier === 1;
   const isReplied = tier === 2;
+  // Tier 1 has three reasons (2026-10-05): an old campaign lead who replied, a
+  // brand-new lead inside the 5-minute window (countdown), or any new client's
+  // first call that has not been made yet.
+  const oldLeadReplied = isHot && isCampaignReplied(task);
+  const hotWindow = isHot && !oldLeadReplied && isHotLead(task, Date.now());
 
   const statusLabel = FOLLOWUP_STATUS_LABELS[task.followupStatus];
   const waState = task.whatsappState ? WHATSAPP_STATE_LABELS[task.whatsappState] : null;
@@ -138,7 +143,22 @@ export default function FollowupTaskCard({ task, isAr, returnTo, navigate, onWha
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-bold text-chocolate">{task.clientName || (isAr ? 'عميل' : 'Client')}</span>
             <span dir="ltr" className="text-sm text-terracotta">{task.phone}</span>
-            {isHot && (
+            {oldLeadReplied && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#DC2626] px-2 py-0.5 text-xs font-bold text-white">
+                <BellRing size={11} /> {isAr ? 'عميل قديم رد — اتصل الآن' : 'Old lead replied — call now'}
+              </span>
+            )}
+            {isHot && !oldLeadReplied && !hotWindow && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#DC2626] px-2 py-0.5 text-xs font-bold text-white">
+                <Flame size={11} /> {isAr ? 'عميل جديد — اتصل الآن' : 'New client — call now'}
+              </span>
+            )}
+            {task.campaignDay && !oldLeadReplied && (
+              <span className="rounded-full bg-sand px-2 py-0.5 text-xs font-semibold text-charcoal">
+                {isAr ? 'عميل قديم — دفعة الاتصال' : 'Old lead — call batch'}
+              </span>
+            )}
+            {hotWindow && (
               <>
                 <span className="inline-flex items-center gap-1 rounded-full bg-[#DC2626] px-2 py-0.5 text-xs font-bold text-white">
                   <Flame size={11} /> {isAr ? 'عميل جديد — اتصل الآن' : 'HOT — call now'}

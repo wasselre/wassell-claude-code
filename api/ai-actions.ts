@@ -125,9 +125,16 @@ export default async function handler(req: Request): Promise<Response> {
           .eq('chat_wid', a.chat_wid).eq('flow', 'in');
         if (internal.length > 0) lastInQ = lastInQ.not('device_id', 'in', `(${internal.join(',')})`);
         const { data: lastIn } = await lastInQ.order('date', { ascending: false }).limit(1).maybeSingle();
+        // PACED, never a burst (operator 2026-10-05): approving 40 drafts in five
+        // minutes must not send 40 messages in five minutes. ai_send_next_slot
+        // hands out one slot 60–180 s after the previous one, inside 10:00–21:00
+        // Riyadh (an old-lead message also skips Friday/Saturday).
+        const { data: slot, error: slotErr } = await svc.rpc('ai_send_next_slot', { p_old_lead: typeof a.context.campaign === 'string' });
+        if (slotErr) throw new Error(`send slot failed: ${slotErr.message}`);
+        const delaySeconds = Math.max(0, Math.round((Date.parse(String(slot)) - Date.now()) / 1000));
         const r = await enqueueAiReply(svc, {
           chatWid: a.chat_wid, text: a.body, deviceId: (lastIn as { device_id?: string | null } | null)?.device_id ?? null,
-          jobId: 'followup', force: true, reference: a.reference,
+          jobId: 'followup', force: true, reference: a.reference, delaySeconds,
         });
         if (!r.queued) {
           await giveBack('failed', r.error ?? r.reason ?? 'could not queue');
@@ -136,7 +143,7 @@ export default async function handler(req: Request): Promise<Response> {
         const jobId = r.wid?.startsWith('sched:') ? r.wid.slice(6) : null;
         const { error: sErr } = await svc.from('ai_actions').update({ scheduled_job_id: jobId, updated_at: new Date().toISOString() }).eq('id', id);
         if (sErr) console.error(`[ai-actions] queued ${id} but could not store its job id: ${sErr.message}`);
-        return jsonOk({ status: 'sending', job_id: jobId });
+        return jsonOk({ status: 'sending', job_id: jobId, send_at: String(slot) });
       }
 
       // officer_notice — operations line only.

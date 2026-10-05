@@ -19,6 +19,11 @@
  *   4. FOLLOW-UPS (draft for approval): due WhatsApp follow-ups get a message
  *      written by the AI (api/_lib/salesAgent/followupDraft.ts), held in
  *      ai_actions the same way. Capped per day; one draft per follow-up round.
+ *   0. OLD-LEAD CAMPAIGN (2026-10-05): `sales_campaign_tick()` opens today's
+ *      40 old leads after 08:00 Riyadh on a working day (one WhatsApp task
+ *      each; their call tasks were planned at activation). Their messages are
+ *      drafted in their OWN pass before step 4 — never limited by the daily
+ *      cap, and drafted even though the lead has an open call (that is the plan).
  *
  * Nothing here sends a WhatsApp. Sending happens only when the operator
  * approves (/api/ai-actions).
@@ -124,6 +129,13 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     if (!sRow) throw new Error('ai_automation_settings row 1 is missing');
     const settings = sRow as Settings;
     report.settings = settings;
+
+    // ── 0. Old-lead campaign: open today's leads ─────────────────────────────
+    if (!dryRun) {
+      const { data: tick, error: tickErr } = await svc.rpc('sales_campaign_tick');
+      if (tickErr) fail('sales_campaign_tick', tickErr);
+      else report.campaign_tick = tick;
+    }
 
     // ── 1. High interest from the links ──────────────────────────────────────
     if (dryRun) {
@@ -256,34 +268,45 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 
     const draftOut: unknown[] = [];
     if (settings.followup_drafts) {
+      const { data: ai, error: aiErr } = await svc.from('whatsapp_ai_settings').select('agent_model, agent_effort').limit(1).maybeSingle();
+      if (aiErr) throw new Error(`whatsapp_ai_settings read failed: ${aiErr.message}`);
+      const model = ((ai as { agent_model?: string | null } | null)?.agent_model) || 'claude-opus-5-5';
+      const effortRaw = (ai as { agent_effort?: string | null } | null)?.agent_effort;
+      const effort = effortRaw === 'medium' || effortRaw === 'high' ? effortRaw : 'low';
+
+      // Old-lead messages first, then ordinary follow-ups within the daily cap.
+      // The cap counts ordinary drafts only — the campaign's 40 a day are planned.
       const { count, error: cErr } = await svc.from('ai_actions').select('id', { count: 'exact', head: true })
-        .eq('kind', 'followup_message').gte('created_at', riyadhDayStart(new Date()));
+        .eq('kind', 'followup_message').is('context->>campaign', null).gte('created_at', riyadhDayStart(new Date()));
       if (cErr) throw new Error(`daily draft count failed: ${cErr.message}`);
       const room = Math.max(0, settings.followup_drafts_per_day - (count ?? 0));
       report.drafts_today = count ?? 0;
-      if (room > 0) {
-        const { data: cands, error: kErr } = await svc.rpc('ai_followup_candidates', { p_limit: Math.min(room, DRAFTS_PER_TICK) });
+
+      const passes: Array<{ campaign: boolean; limit: number }> = [
+        { campaign: true, limit: DRAFTS_PER_TICK },
+        { campaign: false, limit: Math.min(room, DRAFTS_PER_TICK) },
+      ];
+      for (const pass of passes) {
+        if (pass.limit <= 0) continue;
+        const { data: cands, error: kErr } = await svc.rpc('ai_followup_candidates', { p_limit: pass.limit, p_campaign: pass.campaign });
         if (kErr) throw new Error(`ai_followup_candidates failed: ${kErr.message}`);
-        const candidates = (cands ?? []) as { followup_id: string; client_id: string; chat_wid: string; chat_record_id: string; attempt: number; due_at: string }[];
-        const { data: ai, error: aiErr } = await svc.from('whatsapp_ai_settings').select('agent_model, agent_effort').limit(1).maybeSingle();
-        if (aiErr) throw new Error(`whatsapp_ai_settings read failed: ${aiErr.message}`);
-        const model = ((ai as { agent_model?: string | null } | null)?.agent_model) || 'claude-opus-5-5';
-        const effortRaw = (ai as { agent_effort?: string | null } | null)?.agent_effort;
-        const effort = effortRaw === 'medium' || effortRaw === 'high' ? effortRaw : 'low';
+        const candidates = (cands ?? []) as { followup_id: string; client_id: string; chat_wid: string; chat_record_id: string; attempt: number; due_at: string; campaign: string | null }[];
 
         for (const c of candidates) {
           if (Date.now() - startedAt > TIME_BUDGET_MS) { draftOut.push({ followup: c.followup_id, deferred: 'time budget' }); continue; }
-          if (dryRun) { draftOut.push({ followup: c.followup_id, client: c.client_id, attempt: c.attempt, would: 'draft' }); continue; }
+          if (dryRun) { draftOut.push({ followup: c.followup_id, client: c.client_id, attempt: c.attempt, campaign: c.campaign, would: 'draft' }); continue; }
           const round = String(c.attempt);
           const base = {
             kind: 'followup_message', client_id: c.client_id, chat_wid: c.chat_wid, followup_id: c.followup_id, round_key: round,
             phone: `+${c.chat_wid.split('@')[0]}`,
           };
           try {
-            const d = await draftFollowupMessage(svc, { followupId: c.followup_id, clientId: c.client_id, chatWid: c.chat_wid, attempt: c.attempt, model, effort });
+            const campaign = c.campaign === 'morning' || c.campaign === 'no_answer' ? c.campaign : null;
+            const d = await draftFollowupMessage(svc, { followupId: c.followup_id, clientId: c.client_id, chatWid: c.chat_wid, attempt: c.attempt, model, effort, campaign });
             const context = {
               brief: d.brief, warnings: d.warnings, lang: d.lang, model: d.model, chat_record_id: c.chat_record_id, due_at: c.due_at,
               reason: d.reason, client_said: d.clientSaid, reading: d.reading,
+              ...(campaign ? { campaign } : {}),
             };
             const row = d.body
               ? { ...base, body: d.body, original_body: d.body, reference: `ai:followup:${c.followup_id}:${round}`, context }
@@ -292,14 +315,14 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
               : { ...base, status: 'expired', body: '', original_body: '', error: `AI skipped: ${d.skipReason ?? 'no reason'}`, context };
             const { error: iErr } = await svc.from('ai_actions').insert(row);
             if (iErr && iErr.code !== '23505') throw new Error(`draft insert failed: ${iErr.message}`);
-            draftOut.push({ followup: c.followup_id, drafted: !!d.body, warnings: d.warnings.length, skip: d.skipReason });
+            draftOut.push({ followup: c.followup_id, campaign, drafted: !!d.body, warnings: d.warnings.length, skip: d.skipReason });
           } catch (err) {
             fail(`follow-up draft followup=${c.followup_id}`, err);
             // One failed round is recorded so a broken chat is not re-billed every tick.
             const { error: iErr } = await svc.from('ai_actions').insert({
               ...base, status: 'failed', body: '', original_body: '',
               error: `draft failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500),
-              context: { chat_record_id: c.chat_record_id },
+              context: { chat_record_id: c.chat_record_id, ...(c.campaign ? { campaign: c.campaign } : {}) },
             });
             if (iErr && iErr.code !== '23505') fail(`recording the failed draft followup=${c.followup_id}`, iErr);
           }
