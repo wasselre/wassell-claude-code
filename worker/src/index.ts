@@ -4050,6 +4050,15 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     console.log(`[worker] cv-only machine — ${n} shot loop(s) + 1 analyze loop`);
     loops = [...Array.from({ length: n }, () => cvProcessPollLoop()), cvAnalyzePollLoop()];
   }
+  // These machines have dedicated cores; when the shot queue is short their CPU
+  // sits idle while post reading starves on the throttled shared machines
+  // (measured 2026-10-05: a read 13 s fresh vs 37 s on hot shared CPUs). Let
+  // them claim marketing work too. CV_MARKETING_LOOPS=0 turns it off.
+  const cvMkt = Math.max(0, Math.min(8, Number(process.env.CV_MARKETING_LOOPS ?? 4) || 0));
+  if (env.MARKETING_COLLECTION_ENABLED && cvMkt > 0) {
+    console.log(`[worker] cv machine also runs ${cvMkt} marketing claim loop(s)`);
+    for (let i = 0; i < cvMkt; i++) loops.push(marketingPollLoop(i + 1)); // slot > 0: no duplicate maintenance
+  }
 } else if (env.WORKFLOW_PROOF_ONLY) {
   // LOCAL PROOF MODE ONLY — register ONLY the workflow loop so a local run
   // against a preview endpoint can't claim/process live deck/image/document/
