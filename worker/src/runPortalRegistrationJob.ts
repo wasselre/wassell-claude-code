@@ -333,7 +333,7 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
           contentType: 'application/json', upsert: true,
         });
         if (error) throw new Error(`save_items upload failed: ${error.message}`);
-        log(`saved ${Object.values(payload.pages).reduce((a, p) => a + p.reduce((b, x) => b + x.length, 0), 0)} items → ${path} (${body.length} bytes)`);
+        log(`saved ${key} → ${path} (${body.length} bytes)`);
       },
       saveHtml: async (label: string) => {
         // Evidence for recipe authoring. NOT added to the screenshot list (the

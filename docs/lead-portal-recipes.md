@@ -206,3 +206,22 @@ edited by hand on the client's tab.
   worker parse the JSON first.
 - **Evidence.** Each run keeps its screenshots (private bucket, signed URLs) and
   writes a `portal_lead_registered` activity-log line on the client.
+
+
+### `save_inertia` (added 2026-10-05)
+
+For a Laravel + Inertia portal (Al Ramz). Saves the page JSON (`data-page`) of a
+list page and of every listed record's detail page, inside the same signed-in
+visit, to `portal-registrations/inventory/<portal record id>/<key>.json`.
+
+```json
+{ "do": "save_inertia", "key": "projects",
+  "list_url": "https://brokerportal.alramzre.com/user/projects?page={{page}}",
+  "detail_url": "https://brokerportal.alramzre.com/user/projects/{{id}}",
+  "rows_path": "props.projects.data", "id_key": "id", "optional": true }
+```
+
+`rows_path` may be left out while exploring a portal: the first array of
+objects carrying `id_key` under `props` is used and the path found is saved.
+A page that answers with a login component fails the step (never saved as
+data). Ceilings `max_pages` (10) and `max_details` (60) fail loudly.

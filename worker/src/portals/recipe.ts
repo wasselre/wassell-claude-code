@@ -88,6 +88,7 @@ export type RecipeStep =
    *  so it follows the portal's DATA, not its table markup. */
   | CollectRowsStep
   | SaveItemsStep
+  | SaveInertiaStep
   /** `outcome` turns the stop into a recorded ANSWER instead of a failure —
    *  e.g. the portal says the client is already another broker's. */
   | { do: 'fail'; ar: string; en: string; outcome?: RecipeOutcome }
@@ -126,6 +127,35 @@ export interface SaveItemsStep {
   /** When true, a failure here is LOGGED (run log + worker stderr) and the
    *  recipe carries on — for a step riding on a status check whose own job
    *  (syncing client statuses) must not be lost to an inventory hiccup. */
+  optional?: boolean;
+}
+
+/**
+ * Save the page JSON (the `data-page` attribute) of a Laravel + Inertia
+ * portal's list pages and of each listed record's DETAIL page, all inside the
+ * one signed-in visit (Al Ramz, 2026-10-05: its broker portal sends a sign-in
+ * code every time, so a second visit to follow links would cost a second
+ * code). Fetched in-page with the page's own cookies, like save_items.
+ * Saved as inventory/<portal record id>/<key>.json:
+ *   { saved_at, rows_path, list: [{url, component, props}], details: {<id>: {url, component, props}} }
+ */
+export interface SaveInertiaStep {
+  do: 'save_inertia';
+  key: string;
+  /** List page URL; `{{page}}` = 1, 2, … */
+  list_url: string;
+  /** Dot path to the row array in the page JSON (e.g. `props.projects.data`).
+   *  When absent the FIRST array of objects with an `id_key` under `props`
+   *  (or `props.<x>.data`) is used, and the path found is saved — for
+   *  exploring a portal whose shape is not known yet. */
+  rows_path?: string;
+  /** Detail page URL with `{{id}}`. */
+  detail_url?: string;
+  /** Row key holding the id for detail_url. Default "id". */
+  id_key?: string;
+  /** Ceilings — exceeding them FAILS loudly. Defaults 10 pages / 60 details. */
+  max_pages?: number;
+  max_details?: number;
   optional?: boolean;
 }
 
@@ -169,6 +199,40 @@ export interface CollectRowsStep {
  *  which would otherwise treat `{{page}}` as an unknown path and blank it. */
 export function withPage(url: string, n: number): string {
   return url.replace(/\{\{\s*page\s*\}\}/g, String(n));
+}
+
+/** Runs INSIDE the portal page: fetch an Inertia page with the page's own
+ *  session and return its `data-page` JSON text (DOMParser decodes the
+ *  entities), or null when the page has none. Also returns the final URL so
+ *  a redirect to the sign-in page is visible. */
+export const READ_INERTIA = new Function('a', `
+  return fetch(a.url, { credentials: 'include' }).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' at ' + a.url);
+    var finalUrl = r.url;
+    return r.text().then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var el = doc.querySelector('[data-page]');
+      return { url: finalUrl, page: el ? el.getAttribute('data-page') : null };
+    });
+  });
+`);
+
+/** The row array of an Inertia page: at `path`, or (exploring) the first
+ *  array of objects carrying `idKey` under props / props.<x>.data. */
+export function findInertiaRows(page: unknown, path: string | undefined, idKey: string): { path: string; rows: unknown[] } | null {
+  if (path) {
+    const rows = jsonPath(page, path);
+    return Array.isArray(rows) ? { path, rows } : null;
+  }
+  const props = (page as { props?: Record<string, unknown> })?.props;
+  if (!props || typeof props !== 'object') return null;
+  const isRows = (v: unknown) => Array.isArray(v) && v.length > 0 && v.every((x) => x && typeof x === 'object' && idKey in (x as object));
+  for (const [k, v] of Object.entries(props)) {
+    if (isRows(v)) return { path: `props.${k}`, rows: v as unknown[] };
+    const inner = (v as { data?: unknown } | null)?.data;
+    if (v && typeof v === 'object' && isRows(inner)) return { path: `props.${k}.data`, rows: inner as unknown[] };
+  }
+  return null;
 }
 
 /** Runs INSIDE the portal page: fetch a URL with the page's own session and
@@ -367,6 +431,7 @@ export function renderTemplate(input: string, scope: TemplateScope): string {
 const KNOWN_STEPS = new Set([
   'goto', 'fill', 'type', 'fill_otp', 'click', 'select', 'check', 'press', 'wait', 'wait_for', 'wait_for_url',
   'request_input', 'screenshot', 'save_html', 'assert', 'if_visible', 'phase', 'fail', 'set', 'collect_rows', 'save_items',
+  'save_inertia',
 ]);
 
 /** Parse the `recipe` field (JSON text or an already-parsed array). Throws a
@@ -436,7 +501,7 @@ export interface RecipeRuntime {
   /** Store the page HTML as run evidence (`save_html`). Absent ⇒ the step fails loudly. */
   saveHtml?: (label: string) => Promise<void>;
   /** Store what `save_items` read. Absent ⇒ the step fails loudly. */
-  saveItems?: (key: string, data: { saved_at: string; pages: Record<string, string[][]> }) => Promise<void>;
+  saveItems?: (key: string, data: { saved_at: string } & Record<string, unknown>) => Promise<void>;
   /** Where `collect_rows` puts what it read. Absent on a registration run,
    *  where a `collect_rows` step is a recipe mistake and fails loudly. */
   collected?: CollectedRow[];
@@ -621,6 +686,62 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
         const msg = err instanceof Error ? err.message : String(err);
         rt.log(`save_items (optional) FAILED — the rest of the recipe continues: ${msg}`);
         console.error(`[portal] optional save_items ${step.key} failed: ${msg}`);
+      }
+      return;
+    }
+    case 'save_inertia': {
+      if (!rt.saveItems) throw new RecipeError('حفظ العناصر غير متاح هنا', 'save_inertia is not available here', index);
+      if (!step.key || !step.list_url) {
+        throw new RecipeError('save_inertia يحتاج key و list_url', 'save_inertia needs key and list_url', index);
+      }
+      const maxPages = step.max_pages ?? 10;
+      const maxDetails = step.max_details ?? 60;
+      const idKey = step.id_key ?? 'id';
+      type Saved = { url: string; component: unknown; props: unknown };
+      const read = async (url: string): Promise<Saved> => {
+        const got = (await page.evaluate(READ_INERTIA as (a: { url: string }) => Promise<{ url: string; page: string | null }>, { url })) as { url: string; page: string | null };
+        if (!got.page) throw new RecipeError(`لا توجد بيانات صفحة في ${url}`, `No data-page JSON at ${url} (landed on ${got.url})`, index);
+        const data = JSON.parse(got.page) as { component?: unknown; props?: unknown };
+        if (typeof data.component === 'string' && /login/i.test(data.component)) {
+          throw new RecipeError('انتهت جلسة الدخول قبل الحفظ', `Not signed in — ${url} answered the ${data.component} page`, index);
+        }
+        return { url: got.url, component: data.component ?? null, props: data.props ?? null };
+      };
+      try {
+        const list: Saved[] = [];
+        const ids: string[] = [];
+        let rowsPath: string | null = step.rows_path ?? null;
+        let prevSig = '';
+        for (let n = 1; ; n++) {
+          if (n > maxPages) throw new RecipeError(`أكثر من ${maxPages} صفحة في ${step.list_url}`, `More than ${maxPages} pages at ${step.list_url}; raise max_pages`, index);
+          await rt.checkCancelled();
+          const saved = await read(r(withPage(step.list_url, n)));
+          const found = findInertiaRows(saved, rowsPath ?? undefined, idKey);
+          const pageIds = (found?.rows ?? []).map((x) => String((x as Record<string, unknown>)[idKey]));
+          const sig = pageIds.join('|');
+          if (n === 1 || (pageIds.length && sig !== prevSig)) list.push(saved);
+          if (!found || pageIds.length === 0 || sig === prevSig) break;
+          rowsPath = found.path;
+          prevSig = sig;
+          ids.push(...pageIds);
+          if (!step.list_url.includes('{{page}}')) break;
+        }
+        const details: Record<string, Saved> = {};
+        if (step.detail_url) {
+          const unique = [...new Set(ids)];
+          if (unique.length > maxDetails) throw new RecipeError(`أكثر من ${maxDetails} سجل`, `${unique.length} records — over the ${maxDetails} ceiling; raise max_details`, index);
+          for (const id of unique) {
+            await rt.checkCancelled();
+            details[id] = await read(r(step.detail_url.replace(/\{\{\s*id\s*\}\}/g, encodeURIComponent(id))));
+          }
+        }
+        rt.log(`save_inertia ${step.key}: ${list.length} list page(s), ${ids.length} rows at ${rowsPath ?? '(none found)'}, ${Object.keys(details).length} detail page(s)`);
+        await rt.saveItems(step.key, { saved_at: new Date().toISOString(), rows_path: rowsPath, list, details });
+      } catch (err) {
+        if (!step.optional || err instanceof RecipeCancelledError) throw err;
+        const msg = err instanceof Error ? err.message : String(err);
+        rt.log(`save_inertia (optional) FAILED — the rest of the recipe continues: ${msg}`);
+        console.error(`[portal] optional save_inertia ${step.key} failed: ${msg}`);
       }
       return;
     }

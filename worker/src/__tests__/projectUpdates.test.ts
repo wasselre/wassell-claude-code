@@ -480,3 +480,18 @@ describe('the developer-stated unit type (cited, project level)', () => {
     expect(statedUnitTypeOf({ stated_unit_type: 'شقة', stated_unit_type_source: '  ' })).toBeNull();
   });
 });
+
+describe('recipe engine knows save_inertia', () => {
+  it('parses a recipe with save_inertia', async () => {
+    const { parseRecipe } = await import('../portals/recipe');
+    const steps = parseRecipe(JSON.stringify([{ do: 'save_inertia', key: 'projects', list_url: 'https://x/user/projects?page={{page}}', detail_url: 'https://x/user/projects/{{id}}' }]));
+    expect(steps[0]!.do).toBe('save_inertia');
+  });
+  it('finds the row array at a given path, or the first id array when exploring', async () => {
+    const { findInertiaRows } = await import('../portals/recipe');
+    const page = { component: 'User/Projects', props: { auth: { user: { id: 1 } }, projects: { data: [{ id: 7, name: 'ستون الندى' }, { id: 9 }], last_page: 1 } } };
+    expect(findInertiaRows(page, 'props.projects.data', 'id')!.rows).toHaveLength(2);
+    expect(findInertiaRows(page, undefined, 'id')).toMatchObject({ path: 'props.projects.data' });
+    expect(findInertiaRows({ props: { auth: {} } }, undefined, 'id')).toBeNull();
+  });
+});
