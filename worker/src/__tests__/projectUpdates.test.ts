@@ -561,3 +561,26 @@ describe('a unit number that misses is a NEW unit, not ambiguous', () => {
     expect(r.updates[0]!.patch).toEqual({ unit_status: 'sold' });
   });
 });
+
+describe('guards for lists read as complete', () => {
+  it('a partial reading (20 of 71 for sale) is held instead of selling', async () => {
+    const { partialReadingReason } = await import('../projectUpdates/whatsapp');
+    const crmUnits = Array.from({ length: 71 }, (_, i) => crm(`u${i}`, { building_number: '1', unit_number: String(i + 1) }));
+    const src = Array.from({ length: 20 }, (_, i) => ({ sourceId: null, unitModel: null, buildingNumber: '1', unitNumber: i + 1, status: 'available' as const }));
+    const r = reconcile(crmUnits, src, SHEET, CTX);
+    expect(partialReadingReason(crmUnits, r, SHEET)).toMatch(/matched only 20 of the 71/);
+  });
+  it('a full reading passes', async () => {
+    const { partialReadingReason } = await import('../projectUpdates/whatsapp');
+    const crmUnits = Array.from({ length: 10 }, (_, i) => crm(`u${i}`, { building_number: '1', unit_number: String(i + 1) }));
+    const src = Array.from({ length: 9 }, (_, i) => ({ sourceId: null, unitModel: null, buildingNumber: '1', unitNumber: i + 1, status: 'available' as const }));
+    const r = reconcile(crmUnits, src, SHEET, CTX);
+    expect(partialReadingReason(crmUnits, r, SHEET)).toBeNull();
+  });
+  it('a row without a unit number is never created where units are numbered', () => {
+    const r = reconcile([crm('u1', { building_number: '1', unit_number: '7' })],
+      [{ sourceId: null, unitModel: 'P', status: 'available', price: 1_175_323, area: 85.79, bedrooms: 2, unitType: 'شقة' }], RIVA, CTX);
+    expect(r.creates).toHaveLength(0);
+    expect(r.incomplete[0]!.missing).toContain('unit_number');
+  });
+});

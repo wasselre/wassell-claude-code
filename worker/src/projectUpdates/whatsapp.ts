@@ -27,7 +27,7 @@ import { trackedAnthropic } from '../lib/aiUsage.js';
 import { applyResult, patchRecord, PROJECTS_MODEL_ID, UNIT_UPDATES_MODEL_ID, UNITS_MODEL_ID } from './apply.js';
 import { createProjectFromSource } from './newProject.js';
 import { brakeReason, mapFloor, normUnitKey, num, reconcile, statedUnitTypeOf, toAsciiDigits } from './reconcile.js';
-import type { CrmUnit, ReconcilePolicy, SourceUnit, UnitStatus } from './types.js';
+import type { CrmUnit, ReconcilePolicy, ReconcileResult, SourceUnit, UnitStatus } from './types.js';
 
 const MODEL = 'claude-opus-5-5';
 const MAX_MESSAGES = 80;
@@ -340,6 +340,27 @@ export function mergeListsPerProject(items: ExtractedItem[]): ExtractedItem[] {
     }
   }
   return out;
+}
+
+/** A list read as COMPLETE sells what it does not name — so a reading that
+ *  caught only part of the sheet would sell real stock (replay 2026-10-05: the
+ *  model read 20 of the 67 rows of the ستون الندى sheet → 15 wrong «sold»).
+ *  Before a complete list sells anything, it must have matched at least
+ *  MIN_COMPLETE_MATCH of the units we have for sale in the buildings it covers;
+ *  otherwise the run holds that project for a person. */
+const MIN_COMPLETE_MATCH = 0.6;
+export function partialReadingReason(crm: CrmUnit[], result: ReconcileResult, policy: ReconcilePolicy): string | null {
+  if (policy.absentAvailable !== 'sold') return null;
+  const sells = result.updates.filter((u) => u.patch.unit_status === 'sold' && u.reasons.some((x) => x.includes('not in the source list'))).length;
+  if (sells === 0) return null;
+  const forSale = crm.filter((u) => {
+    const st = String(u.data.unit_status ?? '').toLowerCase();
+    return st !== 'sold' && st !== 'مباع';
+  }).length;
+  if (forSale === 0) return null;
+  const share = result.stats.matched / forSale;
+  if (share >= MIN_COMPLETE_MATCH) return null;
+  return `the list matched only ${result.stats.matched} of the ${forSale} units we have for sale in the buildings it covers (${Math.round(share * 100)}%) — probably a partial reading; it would mark ${sells} sold`;
 }
 
 const OUTRANK_DAYS = 7;
@@ -703,7 +724,7 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
         sourceLabel: `واتساب ${group.label}`, today,
         statedUnitType: reg ? statedUnitTypeOf(reg.data) : null,
       });
-      const brake = brakeReason(result, a.brake);
+      const brake = brakeReason(result, a.brake) ?? partialReadingReason(crm, result, policy);
       Object.assign(r, {
         matched: result.stats.matched, unmatched: src.length - result.stats.matched - result.ambiguous.length,
         ambiguous: result.ambiguous, changes: result.updates.map((u) => ({ unit: u.label, why: u.reasons })),

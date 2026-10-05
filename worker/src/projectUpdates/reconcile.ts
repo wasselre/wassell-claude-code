@@ -204,7 +204,7 @@ export function statedUnitTypeOf(row: Record<string, unknown>): { type: string; 
   return type && source ? { type, source } : null;
 }
 
-export type Essential = 'area' | 'price' | 'bedrooms' | 'unit_type';
+export type Essential = 'area' | 'price' | 'bedrooms' | 'unit_type' | 'unit_number';
 
 /** Which of the four essentials a NEW unit lacks. Bedrooms 0 (a studio) is a
  *  real value; area and price must be positive. */
@@ -218,7 +218,7 @@ export function missingEssentials(s: SourceUnit, mappedType: string | null): Ess
 }
 
 const ESSENTIAL_AR: Record<Essential, string> = {
-  area: 'المساحة', price: 'السعر', bedrooms: 'عدد الغرف', unit_type: 'نوع الوحدة',
+  area: 'المساحة', price: 'السعر', bedrooms: 'عدد الغرف', unit_type: 'نوع الوحدة', unit_number: 'رقم الوحدة',
 };
 
 /** One WhatsApp message to the operator listing the units a run did NOT add
@@ -436,6 +436,11 @@ export function reconcile(
     // without area, price, bedrooms and unit type. Missing any → skipped and
     // reported, so the operator is told what to ask the developer for.
     const missing = missingEssentials(s, t);
+    // Identity: in a project whose CRM units are known by building/block +
+    // unit NUMBER, a source row without a number (or a code) cannot be told
+    // apart from the others — creating it would make a unit nobody can match
+    // again (ستون الملقا replay 2026-10-05: rows read as «P», «J» → 18 junk units).
+    if (s.unitNumber == null && !part(s.unitCode) && (crmKeyKinds.has('gu') || crmKeyKinds.has('bu'))) missing.push('unit_number');
     if (missing.length) { incomplete.push({ unit: label, missing }); continue; }
     if (t) data.unit_type = t;
     if (s.price != null && s.price > 0) {

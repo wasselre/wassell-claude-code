@@ -121,7 +121,7 @@ export interface ReconcileResult {
   priceDiffsNotApplied: Array<{ unit: string; crm: number | null; source: number }>;
   /** New units NOT created because the source lacks one of the four
    *  essentials (area, price, bedrooms, unit type) — reported to the operator. */
-  incomplete: Array<{ unit: string; missing: Array<'area' | 'price' | 'bedrooms' | 'unit_type'> }>;
+  incomplete: Array<{ unit: string; missing: Array<'area' | 'price' | 'bedrooms' | 'unit_type' | 'unit_number'> }>;
   /** Source units that matched more than one CRM unit — skipped, never guessed. */
   ambiguous: string[];
   stats: {
