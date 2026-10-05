@@ -76,6 +76,8 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
         isAr={isAr}
         projectId={projectId}
         projectName={projectName}
+        tracksLinks
+        primaryLabel={L('التالي: الرسالة مع الروابط', 'Next: message with links')}
         onAccept={({ text }) => void acceptText(text)}
         onCancel={onClose}
       />

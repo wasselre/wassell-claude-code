@@ -1,7 +1,7 @@
 # PRD: Tracked Links (per-customer project & unit pages)
 
 **Status:** Live
-**Last updated:** 2026-09-30
+**Last updated:** 2026-10-05 (the project-message preview now says the website link is swapped for this customer's tracked links on continue — the swap always happened on accept, but the preview still showed the old wassel.re link and the button read "Next: files", so reps thought it went out as-is. Measured: no rep or AI message has carried the old link since 2026-09-29.) | 2026-09-30
 **Related PRDs:** [chats.md](chats.md) (project messages, composer, bubbles), [ai-agent.md](ai-agent.md) / the WhatsApp sales agent (sends through the same path), [record-management.md](record-management.md) (project detail + client options)
 
 ## What it is (in plain English)

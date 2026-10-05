@@ -95,6 +95,7 @@ export default function BulkProjectSendFlow({ isAr, projectIds, recipient, onClo
             : L(`تعديل: ${nameOf(currentId)}`, `Editing: ${nameOf(currentId)}`)
         }
         primaryLabel={L('التالي: الملفات', 'Next: files')}
+        tracksLinks
         onAccept={({ text, sendLang }) => {
           setConfigs((c) => ({
             ...c,
