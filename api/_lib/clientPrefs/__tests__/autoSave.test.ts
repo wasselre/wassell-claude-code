@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickSavablePlaces, placementIsSavable } from '../autoSave.js';
+import { dropKnownDoubts, pickSavablePlaces, placementIsSavable } from '../autoSave.js';
 import type { GeoPreference, GeometryRecipe, AnchorToken } from '../../geoPreference/ontology.js';
 
 const D1 = '11111111-1111-4111-8111-111111111111';
@@ -55,5 +55,15 @@ describe('groupAddedByMention — one trail line per thing the customer said', (
     // only what was actually ADDED is listed (D1 was already saved)
     const g2 = groupAddedByMention(e, ['e1', 'e2'], all.filter((i) => (i as { district_id?: string }).district_id !== D1));
     expect(g2.map((x) => [x.label, x.items.length])).toEqual([['شمال الرياض', 1], ['العليا', 1]]);
+  });
+});
+
+describe('dropKnownDoubts — a doubted place is logged once per client', () => {
+  it('skips places already on record and repeats within the same batch', () => {
+    const rows = [{ label: 'الملقا' }, { label: 'النرجس' }, { label: 'النرجس' }, { label: ' ' }, { label: null }];
+    expect(dropKnownDoubts(rows, new Set(['الملقا']))).toEqual([{ label: 'النرجس' }]);
+  });
+  it('keeps everything new', () => {
+    expect(dropKnownDoubts([{ label: 'الملقا' }], new Set())).toEqual([{ label: 'الملقا' }]);
   });
 });

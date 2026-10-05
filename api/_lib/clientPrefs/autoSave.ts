@@ -383,6 +383,32 @@ export interface AutoSavePlacesResult {
   reason?: string;
 }
 
+/**
+ * The doubted places worth logging: one record per client and place. Each chat
+ * read re-proposes what it heard, so without this a place the verifier doubts
+ * is logged again on EVERY read — measured 2026-10-06: «الملقا» 17 times for
+ * one client. The doubt was never saved to the client; the repeats only buried
+ * the AI's real changes in the history and the review cards.
+ */
+export function dropKnownDoubts<T extends { label: string | null }>(rows: readonly T[], known: ReadonlySet<string>): T[] {
+  const seen = new Set(known);
+  return rows.filter((r) => {
+    const k = (r.label ?? '').trim();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+async function newDoubts<T extends { label: string | null }>(sb: SupabaseClient, clientId: string, rows: readonly T[]): Promise<T[]> {
+  const labels = [...new Set(rows.map((r) => (r.label ?? '').trim()).filter(Boolean))];
+  if (!labels.length) return [];
+  const { data, error } = await sb.from('client_ai_changes').select('label')
+    .eq('client_id', clientId).eq('kind', 'place').eq('applied', false).eq('note', 'doubted').in('label', labels);
+  if (error) throw new Error(`client_ai_changes read failed: ${error.message}`);
+  return dropKnownDoubts(rows, new Set(((data ?? []) as { label: string | null }[]).map((r) => (r.label ?? '').trim())));
+}
+
 /** Save ONE pending places proposal onto its client, as the AI. */
 export async function autoSavePlaces(
   sb: SupabaseClient,
@@ -400,9 +426,11 @@ export async function autoSavePlaces(
   const expression = (prop.final_expression ?? prop.proposed_expression) as GeoPreference;
   const { keep, drop } = pickSavablePlaces(expression, prop.verifier);
   const doubtedRows = drop.filter((d) => d.why === 'doubted');
+  // Only doubts not already on record for this client (once per place, not per read).
+  const freshDoubted = await newDoubts(sb, prop.client_id, doubtedRows);
   if (keep.length === 0) {
     // Nothing safe to save: the proposal stays for the rep; the doubts are logged once.
-    await logAiChanges(sb, doubtedRows.map((d) => ({
+    await logAiChanges(sb, freshDoubted.map((d) => ({
       client_id: prop.client_id, kind: 'place' as const, applied: false, note: 'doubted', label: d.label,
       quote: d.reason ?? null, source: a.source, source_ref: a.sourceRef, proposal_id: prop.id,
     })));
@@ -547,7 +575,7 @@ export async function autoSavePlaces(
       source: a.source, source_ref: a.sourceRef, proposal_id: prop.id, profile_id: profileId, profile_name: profileName,
     })),
     ...removedRows,
-    ...doubtedRows.map((d) => ({
+    ...freshDoubted.map((d) => ({
       client_id: prop.client_id, kind: 'place' as const, applied: false, note: 'doubted', label: d.label,
       quote: d.reason ?? null, source: a.source, source_ref: a.sourceRef, proposal_id: prop.id, profile_id: profileId, profile_name: profileName,
     })),
