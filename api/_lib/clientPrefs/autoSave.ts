@@ -79,6 +79,12 @@ export async function loadAutomationSettings(sb: SupabaseClient): Promise<Automa
 export interface SaveTarget {
   profileId: string | null;
   replace?: WishField[];
+  /**
+   * A second wish was filed into its own new profile from the customer's new
+   * messages. The whole-chat proposals mix the two wishes — they are left for
+   * the rep instead of being merged into either profile.
+   */
+  leaveProposals?: boolean;
 }
 
 interface ChangeRow {
@@ -507,9 +513,9 @@ export async function autoSavePlaces(
  * customer-quote guard; savable, undoubted places) — for the router to look at.
  */
 export async function heardFromProposals(
-  sb: SupabaseClient, a: { prefProposalId: string | null; geoProposalId: string | null; conversation: Conversation },
+  sb: SupabaseClient, a: { prefProposalId: string | null; geoProposalId: string | null; conversation: Conversation; newTexts?: string[] },
 ): Promise<Heard> {
-  const heard: Heard = { prefs: {}, places: [] };
+  const heard: Heard = { prefs: {}, places: [], newTexts: a.newTexts ?? [] };
   if (a.prefProposalId) {
     const { data, error } = await sb.from('client_pref_proposals').select('status, suggestions').eq('id', a.prefProposalId).maybeSingle();
     if (error) throw new Error(`proposal read failed: ${error.message}`);
@@ -564,14 +570,46 @@ export async function targetForRoute(
   if (route.kind === 'same') return { profileId: route.profileId };
   if (route.kind === 'changed') return { profileId: route.profileId, replace: route.fields };
   const p = await createAiProfile(sb, { clientId: a.clientId, name: route.profileName, quote: route.quote, source: a.source, sourceRef: a.sourceRef });
-  a.log?.(`[auto-save] client=${a.clientId} new profile «${p.name}» (${p.profileId}) for a second wish`);
-  return { profileId: p.profileId };
+  const written = await fillProfile(sb, { clientId: a.clientId, profileId: p.profileId, profileName: p.name, values: route.values, source: a.source, sourceRef: a.sourceRef });
+  a.log?.(`[auto-save] client=${a.clientId} new profile «${p.name}» (${p.profileId}) for a second wish — filled ${written.join(',') || 'nothing'}`);
+  return { profileId: p.profileId, leaveProposals: true };
+}
+
+/** Write a new profile's values (the second wish's, each quoted), logged per field with Undo. */
+async function fillProfile(
+  sb: SupabaseClient,
+  a: { clientId: string; profileId: string; profileName: string; values: Record<string, { value: unknown; quote: string }>; source: ChangeSource; sourceRef: string | null },
+): Promise<string[]> {
+  const fields = Object.keys(a.values).filter(isPrefSlug);
+  if (!fields.length) return [];
+  const { data: schemaRow, error: sErr } = await sb.from('models').select('schema').eq('name', 'clients').maybeSingle();
+  if (sErr || !schemaRow) throw new Error(`clients schema read failed: ${sErr?.message ?? 'not found'}`);
+  const options = prefOptionsFromSchema(schemaRow.schema);
+  const suggestions: Record<string, PrefSuggestionLike> = Object.fromEntries(fields.map((f) => [f, { slug: f, value: a.values[f]!.value, quote: a.values[f]!.quote, confidence: 80 }]));
+  let patch: Record<string, unknown> = {};
+  let added: Record<string, string[]> = {};
+  await recordSaveWithRetry(sb, {
+    recordId: a.clientId,
+    build: (fresh) => {
+      const target = resolveTarget(fresh, a.profileId);
+      if (!target) throw new Error(`new profile ${a.profileId} is gone or active — not filled`);
+      const r = buildAiPrefPatch(profileValues(fresh, target), suggestions, fields, options, new Set());
+      for (const d of r.dropped) console.error(`[auto-save] new profile ${a.profileId} dropped '${d.value}' for ${d.slug} — not an option of the live clients schema`);
+      patch = r.patch; added = r.added;
+      return Object.keys(patch).length ? writeProfileValues(fresh, target, patch) : null;
+    },
+  });
+  await logAiChanges(sb, Object.keys(patch).map((slug) => ({
+    client_id: a.clientId, kind: 'pref' as const, field: slug, before_value: null, after_value: patch[slug], added: added[slug] ?? null,
+    source: a.source, source_ref: a.sourceRef, quote: a.values[slug]?.quote ?? null, profile_id: a.profileId, profile_name: a.profileName,
+  })));
+  return Object.keys(patch);
 }
 
 /** Route a chat read's two proposals once, before either is saved. */
 export async function routeChatRead(
   sb: SupabaseClient,
-  a: { clientId: string; chatWid: string; conversation: Conversation; geoProposalId: string | null; prefProposalId: string | null; log?: (m: string) => void },
+  a: { clientId: string; chatWid: string; conversation: Conversation; geoProposalId: string | null; prefProposalId: string | null; newTexts?: string[]; log?: (m: string) => void },
 ): Promise<SaveTarget> {
   const heard = await heardFromProposals(sb, a);
   const { data, error } = await sb.from('records').select('data').eq('id', a.clientId).maybeSingle();

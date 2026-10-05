@@ -46,13 +46,27 @@ const WISH_FIELDS: readonly WishField[] = [...Object.keys(SLUG_OF_FIELD) as Wish
 export type WishRoute =
   | { kind: 'same'; profileId: string | null; why: string }
   | { kind: 'changed'; profileId: string | null; fields: WishField[]; quote: string; why: string }
-  | { kind: 'second'; profileName: string; quote: string; why: string };
+  | { kind: 'second'; profileName: string; quote: string; why: string; values: Record<string, { value: unknown; quote: string }> };
 
 export interface Heard {
   /** Verified preference suggestions (the quote guard already passed). */
   prefs: Record<string, { value: unknown; quote: string | null }>;
   /** Places the save would add. */
   places: LocationItem[];
+  /** The customer's messages since the last read — where a new wish shows up first. */
+  newTexts?: string[];
+}
+
+/**
+ * «وكمان», «بعد ابي», «بالإضافة», «لولدي»… in the NEW messages. The chat
+ * reader returns ONE set of wishes for the whole chat, so a second wish can
+ * hide behind the first one's values (live test 2026-10-05: «وكمان ابي شقة
+ * للاستثمار في دبي» came back as the old values) — this cue asks the router
+ * anyway.
+ */
+const SECOND_CUE = /(^|\s)(و?كمان|و?بعد\s+(ابي|أبي|ابغى|أبغى|نبي)|بالإضافة|بالاضافة|غير\s+كذا|ثاني(ة)?\s+(لـ?|ل)|لولدي|لبنتي|لأخوي|لاخوي|لأهلي|لاهلي|also|another\s+one)/i;
+export function hasSecondWishCue(texts: readonly string[]): boolean {
+  return texts.some((t) => SECOND_CUE.test(t));
 }
 
 /**
@@ -114,12 +128,12 @@ function heardLines(heard: Heard): string {
 const SYSTEM = `You file a Saudi real-estate customer's wishes into their CRM. A customer can hold several preference PROFILES, one per property they want (e.g. a villa to live in AND an apartment to invest). You get their profiles, the WhatsApp conversation, and what was just heard. Decide ONE:
 - "same_wish": it refines or adds to one existing profile (give its profile_id). Use this when unsure. Accepting an ALTERNATIVE next to what they wanted is same_wish — both stand: «عادي دور بعد يمشي»، «ما يفرق شقة او دور»، «او بالياسمين»، a raised budget.
 - "changed_mind": the customer DROPPED something they wanted before in that profile and put something else in its place («غيرت رأيي»، «انسى اللي قبل»، «لا خلاص ابي…»، «بدال…»، «ما عاد ابي…»). The earlier value must be given up, not just joined by another. List in "changed" only the fields they changed.
-- "second_wish": they want an ADDITIONAL, SEPARATE property besides one a profile already holds — both still stand («وكمان»، «بعد ابي»، «غير كذا ابي»، «ثاني لولدي»، «بالإضافة»، a second purpose next to the first). Give a short Arabic name for it in "new_profile_name" (e.g. «شقة استثمار - دبي»).
+- "second_wish": they want an ADDITIONAL, SEPARATE property besides one a profile already holds — both still stand («وكمان»، «بعد ابي»، «غير كذا ابي»، «ثاني لولدي»، «بالإضافة»، a second purpose next to the first). Give a short Arabic name for it in "new_profile_name" (e.g. «شقة استثمار - دبي») and fill "values" with what the customer said about THAT second property only — each with the customer's exact words. The "JUST HEARD" list is read from the whole chat and may show the first property's values; trust the NEW MESSAGES.
 A different value alone is NOT a second wish — customers change their minds; a second wish needs them to want both. "quote" = the customer's exact words that show the decision, copied from an «العميل» line. Fields: unit_type, budget, bedrooms, area, readiness, purpose, amenities, location.`;
 
-const SHAPE = '{"decision": "same_wish" | "changed_mind" | "second_wish", "profile_id": "<an id from the list, or null>", "changed": ["unit_type", ...], "new_profile_name": "<Arabic, only for second_wish>", "quote": "<customer words>", "reason": "<one short line>"}';
+const SHAPE = '{"decision": "same_wish" | "changed_mind" | "second_wish", "profile_id": "<an id from the list, or null>", "changed": ["unit_type", ...], "new_profile_name": "<Arabic, only for second_wish>", "values": {"unit_type": {"value": ["شقة"], "quote": "..."}, "budget": {"value": {"min": null, "max": 1000000}, "quote": "..."}, "bedrooms": {"value": {"min": 1, "max": 1}, "quote": "..."}, "area": {"value": {"min": null, "max": null}, "quote": "..."}, "readiness": {"value": ["ready" | "off_plan"], "quote": "..."}, "purpose": {"value": ["investment" | "residential"], "quote": "..."}, "amenities": {"value": [], "quote": "..."}} (only for second_wish, only fields they said), "quote": "<customer words>", "reason": "<one short line>"}';
 
-interface RouterAnswer { decision?: unknown; profile_id?: unknown; changed?: unknown; new_profile_name?: unknown; quote?: unknown; reason?: unknown }
+interface RouterAnswer { decision?: unknown; profile_id?: unknown; changed?: unknown; new_profile_name?: unknown; values?: unknown; quote?: unknown; reason?: unknown }
 
 async function askModel(user: string, clientId: string): Promise<RouterAnswer> {
   let deepseekError: string | null = null;
@@ -170,7 +184,17 @@ export function routeFromAnswer(
   }
   if (ans.decision === 'second_wish' && quoted) {
     const name = typeof ans.new_profile_name === 'string' ? ans.new_profile_name.trim().slice(0, 40) : '';
-    return { kind: 'second', profileName: name, quote, why };
+    // Each value only with the customer's own words behind it.
+    const values: Record<string, { value: unknown; quote: string }> = {};
+    const raw = ans.values && typeof ans.values === 'object' ? (ans.values as Record<string, unknown>) : {};
+    for (const [f, v] of Object.entries(raw)) {
+      const slug = (SLUG_OF_FIELD as Record<string, string>)[f];
+      const o = v && typeof v === 'object' ? (v as { value?: unknown; quote?: unknown }) : null;
+      const q = typeof o?.quote === 'string' ? o.quote.trim() : '';
+      if (!slug || !o || o.value == null || !q || !customerSaidIt(ctx.conversation, q)) continue;
+      values[slug] = { value: o.value, quote: q };
+    }
+    return { kind: 'second', profileName: name, quote, why, values };
   }
   const degraded = (ans.decision === 'changed_mind' || ans.decision === 'second_wish') && !quoted;
   return { kind: 'same', profileId: pid, why: degraded ? `model said ${String(ans.decision)} without a customer quote — merged instead` : why };
@@ -181,9 +205,11 @@ export async function routeWish(
   a: { clientId: string; data: Record<string, unknown>; conversation: Conversation; heard: Heard; log?: (m: string) => void },
 ): Promise<WishRoute> {
   const { profiles, activeId } = readStoredProfiles(a.data);
-  const nothingHeard = !Object.keys(a.heard.prefs).length && !a.heard.places.length;
+  const newTexts = a.heard.newTexts ?? [];
+  const cue = hasSecondWishCue(newTexts);
+  const nothingHeard = !Object.keys(a.heard.prefs).length && !a.heard.places.length && !cue;
   const conflicts = conflictingFields(profileValues(a.data, null), a.heard);
-  if (nothingHeard || (profiles.length === 1 && conflicts.length === 0)) {
+  if (nothingHeard || (profiles.length === 1 && conflicts.length === 0 && !cue)) {
     return { kind: 'same', profileId: null, why: nothingHeard ? 'nothing heard' : 'no conflict with the only profile' };
   }
   const user = [
@@ -193,8 +219,9 @@ export async function routeWish(
     'CONVERSATION (newest last):',
     renderConversation({ ...a.conversation, turns: a.conversation.turns.slice(-40) }),
     '',
-    'JUST HEARD:',
-    heardLines(a.heard),
+    ...(newTexts.length ? ['NEW MESSAGES from the customer (since the last read):', ...newTexts.map((t) => `- ${t}`), ''] : []),
+    'JUST HEARD (read from the whole chat):',
+    heardLines(a.heard) || '- nothing',
     conflicts.length ? `\nDiffers from the active profile in: ${conflicts.join(', ')}` : '',
   ].join('\n');
   const ans = await askModel(user, a.clientId);

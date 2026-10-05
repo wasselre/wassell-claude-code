@@ -75,7 +75,7 @@ export interface ReadChatDeps {
    * Save what this read minted onto the client, as the AI (autoSave.ts).
    * Optional: absent (tests) ⇒ proposals stay pending, exactly as before.
    */
-  autoSave?(a: { clientId: string; chatWid: string; conversation: Conversation; geoProposalId: string | null; prefProposalId: string | null; log: (m: string) => void }): Promise<NonNullable<ReadChatResult['autosave']>>;
+  autoSave?(a: { clientId: string; chatWid: string; conversation: Conversation; geoProposalId: string | null; prefProposalId: string | null; newTexts?: string[]; log: (m: string) => void }): Promise<NonNullable<ReadChatResult['autosave']>>;
 }
 
 export function makeReadChatDeps(sb: SupabaseClient): ReadChatDeps {
@@ -122,12 +122,16 @@ export function makeReadChatDeps(sb: SupabaseClient): ReadChatDeps {
       // it fails nothing is saved and both proposals stay for the rep.
       let target: SaveTarget;
       try {
-        target = await routeChatRead(sb, { clientId: a.clientId, chatWid: a.chatWid, conversation: a.conversation, geoProposalId: a.geoProposalId, prefProposalId: a.prefProposalId, log: a.log });
+        target = await routeChatRead(sb, { clientId: a.clientId, chatWid: a.chatWid, conversation: a.conversation, geoProposalId: a.geoProposalId, prefProposalId: a.prefProposalId, newTexts: a.newTexts, log: a.log });
       } catch (err) {
         console.error(`[chat-read] client=${a.clientId} wish routing failed — nothing auto-saved, proposals left for the rep:`, errMsg(err));
         return { error: `route: ${errMsg(err)}` };
       }
-      out.route = target.replace?.length ? `changed:${target.replace.join(',')}` : target.profileId ? `profile:${target.profileId}` : 'active';
+      out.route = target.leaveProposals ? `second:${target.profileId}` : target.replace?.length ? `changed:${target.replace.join(',')}` : target.profileId ? `profile:${target.profileId}` : 'active';
+      if (target.leaveProposals) {
+        a.log(`[chat-read] client=${a.clientId} second wish filed into profile ${target.profileId} — the whole-chat proposals are left for the rep`);
+        return out;
+      }
       // Each half on its own: a failed places save must not stop the preferences.
       if (a.geoProposalId) {
         try {
@@ -276,7 +280,7 @@ export async function readChatForClient(sb: SupabaseClient, o: ReadChatOptions):
     const prefMinted = prefs.proposalId ?? null;
     if (deps.autoSave && (geoMinted || prefMinted)) {
       try {
-        autosave = await deps.autoSave({ clientId, chatWid, conversation, geoProposalId: geoMinted, prefProposalId: prefMinted, log });
+        autosave = await deps.autoSave({ clientId, chatWid, conversation, geoProposalId: geoMinted, prefProposalId: prefMinted, newTexts: summary.unread.map((u) => u.text), log });
       } catch (err) {
         autosave = { error: errMsg(err) };
         console.error(`[chat-read] client=${clientId} chat=${chatWid} auto-save failed:`, errMsg(err));
