@@ -449,3 +449,14 @@ describe('the four essentials — a unit is never created without area, price, b
     expect(incompleteSignature(items)).toBe(incompleteSignature([...items].reverse()));
   });
 });
+
+describe('brakeReason — an empty source', () => {
+  it('holds when the CRM still has units on sale (a failed page)', () => {
+    const r = reconcile([crm('u1', { unit_model: 'A' })], [], RIVA, CTX);
+    expect(brakeReason(r, { share: 0.5, minUnits: 6 })).toMatch(/no units/);
+  });
+  it('does not hold a sold-out project — nothing would change', () => {
+    const r = reconcile([crm('u1', { unit_model: 'A', unit_status: 'sold' })], [], RIVA, CTX);
+    expect(brakeReason(r, { share: 0.5, minUnits: 6 })).toBeNull();
+  });
+});

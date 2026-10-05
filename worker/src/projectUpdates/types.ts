@@ -110,6 +110,8 @@ export interface ReconcileResult {
   stats: {
     sourceUnits: number;
     crmUnits: number;
+    /** CRM units not yet sold — an empty source only alarms when these exist. */
+    crmUnsold: number;
     matched: number;
     statusChanges: number;
     toSoldOrReserved: number;

@@ -400,6 +400,7 @@ export function reconcile(
     stats: {
       sourceUnits: seenSrc.size,
       crmUnits: crm.length,
+      crmUnsold: crm.filter((u) => crmStatus(u.data) !== 'sold').length,
       matched,
       statusChanges,
       toSoldOrReserved,
@@ -426,7 +427,10 @@ export function brakeReason(
   if (r.stats.matched === 0 && r.stats.crmUnits >= 5 && r.stats.sourceUnits >= 5) {
     return `the source shares no unit with the ${r.stats.crmUnits} units in the CRM — wrong project link or a different numbering`;
   }
-  if (r.stats.sourceUnits === 0 && r.stats.crmUnits > 0) {
+  // Empty source + units still on sale in the CRM = a failed page. Empty
+  // source + every CRM unit already sold = a sold-out project (صفا 83/52 after
+  // 2026-10-05) — nothing would change, so it is not a hold.
+  if (r.stats.sourceUnits === 0 && r.stats.crmUnsold > 0) {
     return 'the source returned no units for a project that has units — a failed page, not an empty project';
   }
   return null;
