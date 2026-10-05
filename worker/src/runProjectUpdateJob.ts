@@ -31,6 +31,7 @@ import {
   UNITS_MODEL_ID,
 } from './projectUpdates/apply.js';
 import { brakeReason, normUnitKey, reconcile, statedUnitTypeOf } from './projectUpdates/reconcile.js';
+import { unlistDroppedRivaProjects } from './projectUpdates/unlist.js';
 import { enrichNewMenacoUnits, fetchMenacoProject, menacoListingId } from './projectUpdates/menaco.js';
 import { createProjectFromSource } from './projectUpdates/newProject.js';
 import { fetchMajdProject, majdProjectId } from './projectUpdates/almajdiah.js';
@@ -307,7 +308,16 @@ async function runRiva(
     await heartbeat();
   }
 
+  // Projects Riva no longer lists leave Our Projects (operator rule 2026-10-05)
+  // — only when BOTH Riva lists agree and the developer has no source.
+  const unlist = await unlistDroppedRivaProjects(supabase, {
+    runId: run.id, dryRun: run.dry_run, today, listedIds, registry: allRegistry, devSourced,
+    loadRecord: (id) => loadRecord(supabase, id),
+  });
+  totalChanges += unlist.unlisted;
+
   const summary = {
+    unlist,
     source: 'riva_broker',
     pages_fetched: portal.pagesFetched,
     parse_errors: portal.parseErrors,

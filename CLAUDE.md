@@ -631,6 +631,13 @@ PRD: `docs/prd/project-updates.md`.
    whose developer has its own enabled WhatsApp group
    (`developerSourcedCompanies`). Al-Ramz units come ONLY from Al-Ramz's group
    — never its broker portal (operator 2026-10-05: not dependable).
+10. **A project Riva stops listing leaves Our Projects** (operator 2026-10-05),
+   unless its developer has its own source. "Stopped listing" = absent from
+   BOTH the broker portal and riva.sa/projects (one list alone is not enough —
+   عبق العارض was off the portal but on the public page on 2026-09-07). It
+   stays in All Projects with its units. Logged as a `delete` in
+   project_update_changes, so project_update_revert restores it. More than 3
+   in one run is held for a person (`worker/src/projectUpdates/unlist.ts`).
 
 ## Office outreach (unanswered requests → WhatsApp to offices) (added 2026-09-28)
 

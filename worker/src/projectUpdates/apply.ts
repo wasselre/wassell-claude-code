@@ -61,11 +61,11 @@ async function notifyIncomplete(
   return typeof data === 'string' ? data : 'unchanged';
 }
 
-async function logChange(
+export async function logChange(
   supabase: SupabaseClient,
   row: {
     run_id: string; project_id: string | null; record_id: string; model: string;
-    action: 'update' | 'create'; before: Record<string, unknown> | null; after: Record<string, unknown>; reason: string;
+    action: 'update' | 'create' | 'delete'; before: Record<string, unknown> | null; after: Record<string, unknown>; reason: string;
   },
 ): Promise<void> {
   // The record is already written; losing its audit row would make the run

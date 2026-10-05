@@ -495,3 +495,29 @@ describe('recipe engine knows save_inertia', () => {
     expect(findInertiaRows({ props: { auth: {} } }, undefined, 'id')).toBeNull();
   });
 });
+
+describe('unlisting what Riva dropped', () => {
+  const base = { listedIds: new Set(['48', '78']), publicSlugs: new Set(['aabk-alaaard', 'ston-alnd']), devSourced: new Set(['ramz']) };
+  it('still on the portal → listed', async () => {
+    const { decideUnlist } = await import('../projectUpdates/unlist');
+    expect(decideUnlist({ ...base, portalId: '48', slug: 'x', developer: null })).toBe('listed');
+  });
+  it('off the portal but on the public list → listed (عبق العارض, 2026-09-07)', async () => {
+    const { decideUnlist } = await import('../projectUpdates/unlist');
+    expect(decideUnlist({ ...base, portalId: '99', slug: 'aabk-alaaard', developer: null })).toBe('listed');
+  });
+  it('off both lists → unlist, unless the developer has its own source', async () => {
+    const { decideUnlist } = await import('../projectUpdates/unlist');
+    expect(decideUnlist({ ...base, portalId: '99', slug: 'shkk-smao', developer: 'abeh' })).toBe('would_unlist');
+    expect(decideUnlist({ ...base, portalId: '99', slug: 'adoar-gdyl', developer: 'ramz' })).toBe('kept_developer_source');
+  });
+  it('no riva.sa page link → reported, never unlisted', async () => {
+    const { decideUnlist } = await import('../projectUpdates/unlist');
+    expect(decideUnlist({ ...base, portalId: '99', slug: null, developer: null })).toBe('no_public_link');
+  });
+  it('reads slugs from the public list', async () => {
+    const { rivaPublicSlugs, rivaSlug } = await import('../projectUpdates/unlist');
+    expect([...rivaPublicSlugs('<a href="https://riva.sa/project/znk-8">x</a><a href="https://riva.sa/project/ZNK-8">')]).toEqual(['znk-8']);
+    expect(rivaSlug('https://riva.sa/project/shkk-smao')).toBe('shkk-smao');
+  });
+});
