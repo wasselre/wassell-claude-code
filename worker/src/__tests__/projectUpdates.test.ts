@@ -521,3 +521,24 @@ describe('unlisting what Riva dropped', () => {
     expect(rivaSlug('https://riva.sa/project/shkk-smao')).toBe('shkk-smao');
   });
 });
+
+describe('a source whose availability sheets are always complete', () => {
+  it('merges a project\u2019s sheets (available + hold) into one list', async () => {
+    const { mergeListsPerProject } = await import('../projectUpdates/whatsapp');
+    const out = mergeListsPerProject([
+      { kind: 'available_list', project_id: 'P', message_ids: ['m1'], units: [{ building: '1', unit_number: 2 }] },
+      { kind: 'units_status', project_id: 'P', message_ids: ['m2'], units: [{ building: '1', unit_number: 9, status: 'reserved' }] },
+      { kind: 'available_list', project_id: 'P', message_ids: ['m3'], units: [{ building: '1', unit_number: 9, status: 'reserved' }] },
+      { kind: 'available_list', project_id: 'Q', message_ids: ['m4'], units: [{ building: '2', unit_number: 1 }] },
+    ]);
+    expect(out).toHaveLength(3);
+    const p = out.find((x) => x.kind === 'available_list' && x.project_id === 'P')!;
+    expect(p.units).toHaveLength(2);
+    expect(p.message_ids).toEqual(['m1', 'm3']);
+  });
+  it('a sheet with available units is complete; a hold-only sheet never is', async () => {
+    const { forcedListScope } = await import('../projectUpdates/whatsapp');
+    expect(forcedListScope({ kind: 'available_list', message_ids: [], units: [{ unit_number: 1 }, { unit_number: 2, status: 'reserved' }] })).toBe('complete');
+    expect(forcedListScope({ kind: 'available_list', message_ids: [], units: [{ unit_number: 2, status: 'reserved' }] })).toBe('partial');
+  });
+});

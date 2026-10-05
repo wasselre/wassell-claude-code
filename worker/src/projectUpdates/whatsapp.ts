@@ -297,6 +297,39 @@ async function loadCandidates(supabase: SupabaseClient, companyIds: string[], de
   return [...out.values()];
 }
 
+/** The scope of a sheet from a source whose sheets are always complete: a
+ *  sheet with at least one AVAILABLE unit is the availability sheet →
+ *  complete. A sheet with none (a «hold» list on its own, possibly sent minutes
+ *  after the available list and so in a separate run) only updates the units
+ *  it names → partial — it must never "sell" the units of the other sheet. */
+export function forcedListScope(it: ExtractedItem): 'complete' | 'partial' {
+  return (it.units ?? []).some((u) => !u.status || u.status === 'available') ? 'complete' : 'partial';
+}
+
+/** Merge every available_list item of the same project into the first one
+ *  (units and cited messages concatenated; buildings_covered unioned). */
+export function mergeListsPerProject(items: ExtractedItem[]): ExtractedItem[] {
+  const out: ExtractedItem[] = [];
+  const firstByProject = new Map<string, ExtractedItem>();
+  for (const it of items) {
+    const key = it.kind === 'available_list' ? (it.project_id ?? null) : null;
+    const first = key ? firstByProject.get(key) : undefined;
+    if (!key) { out.push(it); continue; }
+    if (!first) {
+      const copy: ExtractedItem = { ...it, units: [...(it.units ?? [])], message_ids: [...(it.message_ids ?? [])] };
+      firstByProject.set(key, copy);
+      out.push(copy);
+      continue;
+    }
+    first.units = [...(first.units ?? []), ...(it.units ?? [])];
+    first.message_ids = [...new Set([...(first.message_ids ?? []), ...(it.message_ids ?? [])])];
+    if (first.buildings_covered || it.buildings_covered) {
+      first.buildings_covered = [...new Set([...(first.buildings_covered ?? []), ...(it.buildings_covered ?? [])])];
+    }
+  }
+  return out;
+}
+
 const OUTRANK_DAYS = 7;
 
 /** The label of an enabled chat of the same company with a HIGHER priority
@@ -382,7 +415,7 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
 
   const { data: g, error: gErr } = await supabase.from('project_update_groups').select('*').eq('chat_wid', chatWid).maybeSingle();
   if (gErr || !g) throw new Error(`group ${chatWid}: ${gErr?.message ?? 'not registered'}`);
-  const group = g as { chat_wid: string; label: string; company_ids: string[]; read_through: string | null; priority?: number | null };
+  const group = g as { chat_wid: string; label: string; company_ids: string[]; read_through: string | null; priority?: number | null; lists_are_complete?: boolean | null };
   const backfill = typeof a.params.since === 'string';
   const since = (a.params.since as string | undefined) ?? group.read_through ?? '1970-01-01T00:00:00Z';
   const until = (a.params.until as string | undefined) ?? new Date().toISOString();
@@ -494,7 +527,12 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
       : { absentAvailable: it.list_scope === 'complete' ? 'sold' : 'leave', createMissing: true, updatePrices: true, forwardOnly: false };
 
   // new projects first, so a price list for the same new project lands on it
-  const ordered = [...items].sort((x, y) => (x.kind === 'new_project' ? -1 : 0) - (y.kind === 'new_project' ? -1 : 0));
+  // A source whose sheets are always complete sends a project as SEVERAL
+  // sheets (available + «hold», ستون الملقا 2026-10-05). Each one alone would
+  // "sell" the units on the other, so they are merged into ONE list per project
+  // first. Only for such sources — elsewhere a list keeps its own scope.
+  const merged = group.lists_are_complete ? mergeListsPerProject(items) : items;
+  const ordered = [...merged].sort((x, y) => (x.kind === 'new_project' ? -1 : 0) - (y.kind === 'new_project' ? -1 : 0));
   const createdByName = new Map<string, string>();
 
   // A catch-up run can be limited to some kinds (e.g. only the bookings).
@@ -504,6 +542,15 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
     if (onlyKinds && !onlyKinds.has(it.kind)) { results.push({ kind: it.kind, messages: it.message_ids, skipped: 'not in only_kinds' }); continue; }
     const cited = (it.message_ids ?? []).map((l) => byLabel.get(l)).filter(Boolean) as ChatMessage[];
     const r: Record<string, unknown> = { kind: it.kind, messages: it.message_ids, project: it.project_name_as_written ?? null };
+    // A source whose availability sheets are ALWAYS complete (the Al-Ramz
+    // officer's private chat — operator 2026-10-05): every list counts as
+    // «everything still for sale» in the buildings it names, never left to the
+    // model (it read the same ستون الندى sheet as complete on one run and as
+    // partial on the next). Coverage, crossed-out rows and the brake still apply.
+    if (it.kind === 'available_list' && group.lists_are_complete) {
+      const forced = forcedListScope(it);
+      if (forced !== it.list_scope) { r.list_scope_forced = `${it.list_scope ?? 'unset'} → ${forced}`; it.list_scope = forced; }
+    }
     results.push(r);
     if (cited.length === 0) { r.dropped = 'cites no message of this batch'; continue; }
     const citedTexts = cited.map(msgText);
