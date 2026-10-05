@@ -62,7 +62,7 @@ then available to the recipe as `{{lead.<key>}}`.
 
 ### Projects a portal does not list — `allow_unlisted` (2026-10-05)
 
-On the project field, `"allow_unlisted": true` means the portal accepts a stand-in: a client whose project is not one of the field's `options` is sent under its `default`, and a notes field should name the real project, e.g. `"source": "template:المشروع المطلوب للعميل: {project.project_name}"`. Without it the high-interest path refuses rather than send the client under another project (the strict-project rule). Al Ramz uses it; Safa and Riva do not.
+On the project field, `"allow_unlisted": true` means the portal accepts a stand-in: a client whose project is not one of the field's `options` is sent under its `default`, and a notes field should name the real project, e.g. `"source": "template:المشروع المطلوب للعميل: {project.project_name}"`. Without it the high-interest path refuses rather than send the client under another project (the strict-project rule). All three use it (operator, 2026-10-05). Stand-ins: Al Ramz «تل الربوة 1»; Safa «صفا 101» (Safa id 108); Riva «أكنان 23» — Safa's and Riva's chosen as the project with the most available units that day.
 
 `template:` sources fill `{client.<field>}`, `{project.<field>}` and `{user.<email|name|phone>}`; when every placeholder is empty the field is left empty rather than a bare label.
 
