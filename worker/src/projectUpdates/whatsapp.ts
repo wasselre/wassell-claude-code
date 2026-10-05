@@ -26,7 +26,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { trackedAnthropic } from '../lib/aiUsage.js';
 import { applyResult, patchRecord, PROJECTS_MODEL_ID, UNIT_UPDATES_MODEL_ID, UNITS_MODEL_ID } from './apply.js';
 import { createProjectFromSource } from './newProject.js';
-import { brakeReason, mapFloor, normUnitKey, num, reconcile, toAsciiDigits } from './reconcile.js';
+import { brakeReason, mapFloor, normUnitKey, num, reconcile, statedUnitTypeOf, toAsciiDigits } from './reconcile.js';
 import type { CrmUnit, ReconcilePolicy, SourceUnit, UnitStatus } from './types.js';
 
 const MODEL = 'claude-opus-5-5';
@@ -47,6 +47,9 @@ export interface ChatMessage {
   media_file_id: string | null;
   media_mime: string | null;
   from_phone: string | null;
+  /** Voice notes: the inbound-media lane's transcript (status done/pending/…). */
+  transcript?: string | null;
+  transcript_status?: string | null;
 }
 
 interface CandidateProject {
@@ -196,7 +199,16 @@ export function evidenceHolds(evidence: string | null | undefined, texts: string
 }
 
 function msgText(m: ChatMessage): string {
-  return [m.body, m.media_caption].filter(Boolean).join('\n');
+  // A transcribed voice note is the sender's text (the officer answered the
+  // bedroom question by voice on 2026-10-05 and the reader never saw it).
+  const voice = m.transcript && m.transcript_status === 'done' ? `(رسالة صوتية) ${m.transcript}` : null;
+  return [m.body, m.media_caption, voice].filter(Boolean).join('\n');
+}
+
+/** A voice note still being transcribed. */
+function transcriptPending(m: ChatMessage): boolean {
+  return (m.kind === 'audio' || m.kind === 'ptt' || m.kind === 'voice')
+    && !!m.transcript_status && !['done', 'failed', 'skipped', 'error'].includes(m.transcript_status);
 }
 
 function storagePathFor(m: ChatMessage): string | null {
@@ -421,7 +433,7 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
   const until = (a.params.until as string | undefined) ?? new Date().toISOString();
 
   const { data: msgs, error: mErr } = await supabase.from('chat_messages')
-    .select('id, date, kind, body, media_caption, media_file_id, media_mime, from_phone')
+    .select('id, date, kind, body, media_caption, media_file_id, media_mime, from_phone, transcript, transcript_status')
     .eq('chat_wid', chatWid).eq('flow', 'in').gt('date', since).lte('date', until)
     .order('date', { ascending: true }).limit(MAX_MESSAGES);
   if (mErr) throw new Error(`messages: ${mErr.message}`);
@@ -430,6 +442,14 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
     return { deferred: false, outcome: a.dryRun ? 'dry_run' : 'no_change', summary: { group: group.label, messages: 0 } };
   }
   const readThrough = messages[messages.length - 1]!.date;
+
+  // A voice note still being transcribed holds the run for up to 10 minutes
+  // (same posture as the chat auto-read) — its words may be the update.
+  const pendingVoice = messages.find((m) => transcriptPending(m) && Date.now() - new Date(m.date).getTime() < 10 * 60_000);
+  if (pendingVoice && !a.dryRun) {
+    await a.defer(60, 'waiting for a voice note to be transcribed');
+    return { deferred: true, note: 'waiting for a voice transcript' };
+  }
 
   // ── attachments: PDFs + images, waited for while the media lane saves them
   const labels = new Map<string, string>(); // message id → mN
@@ -681,6 +701,7 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
       const result = reconcile(crm, src, policy, {
         projectId, developerId: project.developerId, projectName: project.name,
         sourceLabel: `واتساب ${group.label}`, today,
+        statedUnitType: reg ? statedUnitTypeOf(reg.data) : null,
       });
       const brake = brakeReason(result, a.brake);
       Object.assign(r, {
