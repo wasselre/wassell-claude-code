@@ -123,7 +123,10 @@ export function dailyQuotaOf(body: string): { quota: string; retryAfterSec: numb
   const quota = /"quotaId":\s*"([^"]*PerDay[^"]*)"/.exec(body)?.[1];
   if (!quota) return null;
   const delay = Number(/"retryDelay":\s*"(\d+(?:\.\d+)?)s"/.exec(body)?.[1]);
-  return { quota, retryAfterSec: Number.isFinite(delay) && delay > 0 ? Math.ceil(delay) : 3600 };
+  // Re-check at least hourly: on 2026-10-05 Google answered a per-day quota with
+  // retryDelay ~23 h, and a refused re-check costs nothing — so never sleep the
+  // whole pipeline for a day on Google's estimate alone.
+  return { quota, retryAfterSec: Number.isFinite(delay) && delay > 0 ? Math.min(Math.ceil(delay), 3600) : 3600 };
 }
 
 /** Seconds to wait, from an error carrying DAILY_QUOTA_MARK; null for any other error. */

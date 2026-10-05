@@ -184,7 +184,7 @@ describe('jpegSize', () => {
 describe('per-day quota (seen live 2026-10-04: the key was on the free tier)', () => {
   const body = JSON.stringify({ error: { code: 429, details: [{ violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '56717s' }] } }, null, 2);
   it('recognises a per-day quota and its retry time', () => {
-    expect(dailyQuotaOf(body)).toEqual({ quota: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', retryAfterSec: 56717 });
+    expect(dailyQuotaOf(body)).toEqual({ quota: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', retryAfterSec: 3600 }); // Google said 56717 s; re-checked hourly (2026-10-05)
     expect(dailyQuotaOf(body.replace('PerDay', 'PerMinute'))).toBeNull();
   });
   it('fails at once instead of retrying, with a message the worker can defer on', async () => {
@@ -192,7 +192,7 @@ describe('per-day quota (seen live 2026-10-04: the key was on the free tier)', (
     const err = await geminiPost('/v1beta/x', {}, { apiKey: 'k', fetch: api as unknown as typeof fetch, sleep: async () => {} }).catch((e: Error) => e);
     expect(api).toHaveBeenCalledTimes(1);
     expect((err as Error).message).toMatch(/^provider:gemini daily_quota_exhausted GenerateRequestsPerDay/);
-    expect(dailyQuotaRetryAfter((err as Error).message)).toBe(56717);
+    expect(dailyQuotaRetryAfter((err as Error).message)).toBe(3600);
     expect(dailyQuotaRetryAfter('provider:gemini HTTP 503')).toBeNull();
   });
   it('still retries a per-minute 429, waiting as long as Google asks', async () => {
