@@ -31,6 +31,7 @@ import {
   UNITS_MODEL_ID,
 } from './projectUpdates/apply.js';
 import { brakeReason, normUnitKey, reconcile, statedUnitTypeOf } from './projectUpdates/reconcile.js';
+import { enrichNewMenacoUnits, fetchMenacoProject, menacoListingId } from './projectUpdates/menaco.js';
 import { createProjectFromSource } from './projectUpdates/newProject.js';
 import { fetchMajdProject, majdProjectId } from './projectUpdates/almajdiah.js';
 import { RivaPortal, rivaProjectIdFromUrl } from './projectUpdates/riva.js';
@@ -323,6 +324,9 @@ export interface ProjectSourceAdapter {
   fetch: (id: string) => Promise<SourceProject>;
   /** May depend on what the fetch found (Safa: is the broker list fresh?). */
   policy: (scope: string, src: SourceProject) => ReconcilePolicy;
+  /** Fill in units the CRM does not have yet, once the CRM side is known
+   *  (Menaco: the card has only the gross area; the unit page has the net). */
+  enrichNew?: (src: SourceProject, crm: CrmUnit[]) => Promise<void>;
 }
 
 async function runPerProject(
@@ -352,6 +356,7 @@ async function runPerProject(
       if (scope === 'off') { entry.status = 'skipped_off'; continue; }
       const src = await adapter.fetch(sourceId);
       const crm = (await loadAll(supabase, UNITS_MODEL_ID, { key: 'project_id', value: projectId })) as CrmUnit[];
+      if (adapter.enrichNew) await adapter.enrichNew(src, crm);
       const developerId = typeof project.data.developer === 'string' ? project.data.developer : null;
       const policy = adapter.policy(scope, src);
       entry.absent_policy = policy.absentAvailable;
@@ -432,6 +437,19 @@ const ALMAJDIAH: ProjectSourceAdapter = {
   policy: (scope) => (scope === 'status_only' ? STATUS_ONLY_POLICY : ALMAJDIAH_POLICY),
 };
 
+/** Menaco lists every unit, sold ones too, so a unit missing from the page
+ *  means nothing (leave it). Unit codes (A01, 3/1) are unique and stable —
+ *  no source-id backfill. */
+const MENACO: ProjectSourceAdapter = {
+  sourceType: 'menaco',
+  label: 'موقع مينا',
+  idFromUrl: menacoListingId,
+  fetch: (id) => fetchMenacoProject(id),
+  policy: (scope) => (scope === 'status_only' ? STATUS_ONLY_POLICY
+    : { absentAvailable: 'leave', createMissing: true, updatePrices: true, recordSourceId: false }),
+  enrichNew: enrichNewMenacoUnits,
+};
+
 /** Stamp the update-list row (and the project's last_source_update). */
 async function stamp(
   supabase: SupabaseClient,
@@ -480,6 +498,8 @@ export async function runProjectUpdateJob(args: {
       return runRiva(supabase, run, settings, scoped, heartbeat);
     case 'developer_api':
       return runPerProject(supabase, run, settings, scoped, heartbeat, ALMAJDIAH);
+    case 'menaco':
+      return runPerProject(supabase, run, settings, scoped, heartbeat, MENACO);
     case 'safa_broker': {
       // The broker cards come from the portal's daily status check (one SMS
       // code a day covers both). Without a fresh file the run still updates
