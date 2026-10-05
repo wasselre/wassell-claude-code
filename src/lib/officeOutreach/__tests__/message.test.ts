@@ -58,4 +58,12 @@ describe('office outreach message', () => {
     expect(containsLink('شوف https://wassel.re/p/1')).toBe(true);
     expect(containsLink('wassel.re')).toBe(true);
   });
+
+  it('says ready / off-plan only when the client wants exactly one', () => {
+    expect(describeAsk({ ...facts, readiness: 'ready' })).toContain('جاهز للسكن');
+    expect(describeAsk({ ...facts, readiness: 'off_plan' })).toContain('على الخارطة');
+    const either = describeAsk({ ...facts, readiness: null });
+    expect(either).not.toContain('جاهز للسكن');
+    expect(either).not.toContain('على الخارطة');
+  });
 });

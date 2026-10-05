@@ -6,6 +6,7 @@
 
 import type { SalesProcessConfig, FollowUpOutcomeConfig, OutcomeRequires } from './types';
 import { getFollowUpTypeConfig, getOutcomeConfig, DEFAULT_SALES_PROCESS } from './config.js';
+import { gapListText, requestPreferenceGaps } from '../clients/requestReadiness.js';
 
 export interface ValidationProblem {
   /** Follow-up field slug the problem concerns (for focus), if any. */
@@ -25,8 +26,9 @@ export interface ValidationContext {
   leavesClientWithoutNextAction?: boolean;
 }
 
-/** Each required-key → the follow-up field slug that satisfies it. */
-const REQUIRE_FIELD: Record<keyof OutcomeRequires, string> = {
+/** Each required-key → the follow-up field slug that satisfies it.
+ *  `client_request_ready` is checked against the CLIENT, not a follow-up field. */
+const REQUIRE_FIELD: Record<Exclude<keyof OutcomeRequires, 'client_request_ready'>, string> = {
   actual_datetime: 'actual_datetime',
   appointment_id: 'appointment_id',
   appointment_created: 'appointment_id', // satisfied once an appointment is created + linked
@@ -64,6 +66,7 @@ export function requiredFieldSlugs(outcome: FollowUpOutcomeConfig): string[] {
   const r = outcome.requires ?? {};
   const out: string[] = [];
   (Object.keys(r) as (keyof OutcomeRequires)[]).forEach((key) => {
+    if (key === 'client_request_ready') return;
     if (r[key]) out.push(REQUIRE_FIELD[key]);
   });
   return [...new Set(out)];
@@ -107,6 +110,12 @@ export interface ValidateFollowUpCompletionInput {
   /** slug → bilingual label, so a missing-required message names the field in
    *  the user's language instead of the raw API slug. */
   fieldLabels?: FieldLabelMap;
+  /**
+   * The client's saved data. Needed by outcomes that require
+   * `client_request_ready` («طلب غير مجاب»). Omitted ⇒ that check FAILS
+   * CLOSED — a request must never open on preferences nobody looked at.
+   */
+  clientData?: Record<string, unknown> | null;
 }
 
 /**
@@ -146,6 +155,27 @@ export function validateFollowUpCompletion(input: ValidateFollowUpCompletionInpu
         message_ar: isAppt ? 'يجب إنشاء موعد وربطه' : `الحقل المطلوب فارغ: ${nameAr}`,
         message_en: isAppt ? 'An appointment must be created and linked' : `Required field is empty: ${nameEn}`,
       });
+    }
+  }
+
+  // «طلب غير مجاب»: the request IS the client's saved preferences, so they must
+  // be filled before the outcome can open one (requestReadiness.ts).
+  if (outcome.requires?.client_request_ready) {
+    if (!input.clientData) {
+      hardErrors.push({
+        field: 'call_result',
+        message_ar: 'تعذّر التحقق من تفضيلات العميل — أعد تحميل الصفحة',
+        message_en: "Could not check the client's preferences — reload the page",
+      });
+    } else {
+      const gaps = requestPreferenceGaps(input.clientData);
+      if (gaps.length > 0) {
+        hardErrors.push({
+          field: 'call_result',
+          message_ar: `أكمل تفضيلات العميل أولاً — الطلب يُبنى منها: ${gapListText(gaps, true)}`,
+          message_en: `Fill the client's preferences first — the request is built from them: ${gapListText(gaps, false)}`,
+        });
+      }
     }
   }
 

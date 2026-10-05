@@ -25,7 +25,10 @@ export interface RequestFacts {
   bedroomsMax?: number | null;
   areaMin?: number | null;
   areaMax?: number | null;
-  /** The rep's own description of the ask («ملاحظات الطلب»). */
+  /** Set only when the client wants exactly one: ready now, or off-plan. */
+  readiness?: 'ready' | 'off_plan' | null;
+  /** An extra line for the office. The SPA no longer passes the rep's request
+   *  notes here (they are internal — 2026-10-05); kept for callers/tests. */
   notes?: string | null;
 }
 
@@ -98,6 +101,8 @@ export function describeAsk(f: RequestFacts): string {
   }
   if (f.city && f.city.trim()) where += where ? ` (${f.city.trim()})` : ` في ${f.city.trim()}`;
   parts.push(`${what}${where}`);
+  if (f.readiness === 'ready') parts.push('جاهز للسكن');
+  else if (f.readiness === 'off_plan') parts.push('على الخارطة');
   const budget = rangeText(f.budgetMin, f.budgetMax, formatAmountAr);
   if (budget) parts.push(`الميزانية ${budget}`);
   const beds = rangeText(f.bedroomsMin, f.bedroomsMax, (n) => String(n));

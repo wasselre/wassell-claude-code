@@ -19,6 +19,7 @@ import Button from '@/components/ui/Button';
 import type { AppRecord } from '@/types';
 import { fetchLineStatus, fetchOutreach, type LineStatus, type OutreachRow } from '@/lib/officeOutreach/client';
 import { describeAsk, formatAmountAr } from '@/lib/officeOutreach/message';
+import { gapListText, requestPreferenceGaps } from '@/lib/clients/requestReadiness';
 import {
   clientOf, daysSince, firstId, isOpenRequest, ownerIdOf, requestFacts,
 } from './requestData';
@@ -310,6 +311,11 @@ export default function UnansweredRequestsSection() {
                   )}
                 </div>
                 <div className="text-sm text-charcoal/80">{describeAsk(facts)}</div>
+                {isOpenRequest(r) && requestPreferenceGaps(cd).length > 0 && (
+                  <div className="text-xs font-semibold text-[#8E4E3A]">
+                    {t(`تفضيلات ناقصة: ${gapListText(requestPreferenceGaps(cd), true)}`, `Incomplete preferences: ${gapListText(requestPreferenceGaps(cd), false)}`)}
+                  </div>
+                )}
                 {typeof d.request_notes === 'string' && d.request_notes.trim() && (
                   <div className="line-clamp-2 text-xs text-charcoal/55">«{d.request_notes.trim()}»</div>
                 )}

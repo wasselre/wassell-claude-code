@@ -94,9 +94,12 @@ function wantsRent(): FollowUpOutcomeConfig {
  * lifecycle 'searching', NOT 'closed', so the client keeps counting as live
  * demand (buildActiveClientDemand excludes 'closed').
  *
- * `outcome_notes` is hard-required because that text IS the search file: the
- * request-creating workflow copies it into `unanswered_requests.request_notes`.
- * An unanswered request with no description of the ask is unworkable.
+ * The search file is the CLIENT'S SAVED PREFERENCES, not free text
+ * (2026-10-05): `client_request_ready` blocks the outcome until the client has a
+ * unit type, an included district and a budget (requestReadiness.ts). The
+ * request-creating workflow still copies `outcome_notes` into
+ * `request_notes`, but only as the rep's internal note — it is never sent to
+ * offices — so notes are no longer hard-required.
  *
  * is_terminal here means "creates no follow-up" — the replacement work is a
  * `sales_tasks` search task, opened by the request-created workflow.
@@ -104,7 +107,7 @@ function wantsRent(): FollowUpOutcomeConfig {
 function unansweredRequest(): FollowUpOutcomeConfig {
   return {
     value: 'unanswered_request',
-    requires: { ...REQ_ACTUAL, outcome_notes: true },
+    requires: { ...REQ_ACTUAL, client_request_ready: true },
     client_update_preview: {
       stage: 'طلب غير مجاب',
       status: 'يتم البحث',

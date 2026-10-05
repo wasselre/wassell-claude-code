@@ -248,6 +248,7 @@ export default function CallResultConfirmHost() {
       currentUserId,
       clientStage: (clientRec?.data.client_stage as string) ?? null,
       clientStatus: (clientRec?.data.client_status as string) ?? null,
+      clientData: clientRec?.data ?? null,
       expectedVersion: isNew ? null : followupRec.version ?? null,
       saveRecord,
       phoneCallsRecords: callsModel ? records[callsModel.id] ?? [] : [],

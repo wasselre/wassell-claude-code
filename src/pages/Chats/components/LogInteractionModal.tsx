@@ -147,6 +147,7 @@ export default function LogInteractionModal({
       selectedOutcome: outcome,
       draft: { ...(openTask && taskAction === 'complete' ? openTask.data : {}), ...completion },
       fieldLabels,
+      clientData: clientData ?? null,
     });
     if (!check.ok) {
       addToast(isAr ? (check.hardErrors[0]?.message_ar ?? 'حقول مطلوبة ناقصة') : (check.hardErrors[0]?.message_en ?? 'Required fields missing'), 'error');

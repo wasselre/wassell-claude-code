@@ -85,6 +85,13 @@ export default function OutcomePanel(props: OutcomePanelProps) {
     () => buildFieldLabels(followupModel.schema.sections.flatMap((s) => s.fields)),
     [followupModel],
   );
+  // «طلب غير مجاب» needs the client's saved preferences (the request is built
+  // from them) — read live, so saving them in the Preferences card unblocks it.
+  const clientData = useAppStore((s) => {
+    if (!clientId) return null;
+    const m = s.models.find((x) => x.name === 'clients');
+    return m ? (s.records[m.id] ?? []).find((r) => r.id === clientId)?.data ?? null : null;
+  });
 
   const typeConfig = getFollowUpTypeConfig(typeKey);
   if (!typeConfig) {
@@ -111,7 +118,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
   const revealed = outcomeKey ? revealedFieldSlugs(typeKey ?? '', outcomeKey) : [];
   const outcomeCfg = outcomeKey ? getOutcomeConfig(typeKey, outcomeKey) : undefined;
   const validation = outcomeKey
-    ? validateFollowUpCompletion({ followupType: typeKey ?? '', selectedOutcome: outcomeKey, draft, fieldLabels })
+    ? validateFollowUpCompletion({ followupType: typeKey ?? '', selectedOutcome: outcomeKey, draft, fieldLabels, clientData })
     : null;
 
   // FOLLOWUP_3: WhatsApp is a two-phase flow — SEND (an action) then RECORD the

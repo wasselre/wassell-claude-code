@@ -35,6 +35,9 @@ export interface CompleteFollowUpArgs {
   /** Client stage/status at completion time — snapshotted for reporting. */
   clientStage?: string | null;
   clientStatus?: string | null;
+  /** The client's saved data — «طلب غير مجاب» is refused until the client's
+   *  preferences can be a request (validateFollowUpCompletion). */
+  clientData?: Record<string, unknown> | null;
   /** Version the caller loaded with, for optimistic concurrency. */
   expectedVersion: number | null;
   saveRecord: SaveRecordFn;
@@ -50,7 +53,7 @@ export type CompleteFollowUpResult =
 export async function completeFollowUp(args: CompleteFollowUpArgs): Promise<CompleteFollowUpResult> {
   const {
     record, model, draft, outcomeKey, typeKey, currentUserId,
-    clientStage, clientStatus, expectedVersion, saveRecord, phoneCallsRecords = [],
+    clientStage, clientStatus, clientData, expectedVersion, saveRecord, phoneCallsRecords = [],
   } = args;
 
   const finalData: Record<string, unknown> = {
@@ -71,6 +74,7 @@ export async function completeFollowUp(args: CompleteFollowUpArgs): Promise<Comp
     selectedOutcome: outcomeKey,
     draft: finalData,
     fieldLabels: buildFieldLabels(model.schema.sections.flatMap((s) => s.fields)),
+    clientData,
   });
   if (!validation.ok) {
     return {

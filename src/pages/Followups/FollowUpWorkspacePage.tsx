@@ -182,6 +182,7 @@ export default function FollowUpWorkspacePage() {
       currentUserId,
       clientStage: (ctx.client?.client_stage as string) ?? null,
       clientStatus: (ctx.client?.client_status as string) ?? null,
+      clientData: ctx.client ?? null,
       expectedVersion: versionRef.current?.version ?? null,
       saveRecord,
       phoneCallsRecords: pcModel ? records[pcModel.id] ?? [] : [],

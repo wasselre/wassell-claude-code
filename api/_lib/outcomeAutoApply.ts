@@ -144,7 +144,9 @@ async function applyOne(sb: SupabaseClient, s: SuggestionRow, dryRun: boolean): 
 
   const nowIso = new Date().toISOString();
   const draft = buildAutoCompletion(fdata, s, client, nowIso);
-  const check = validateFollowUpCompletion({ followupType: type, selectedOutcome: s.suggested_outcome!, draft });
+  // clientData: «طلب غير مجاب» is held for a person unless the client's saved
+  // preferences can be a request (unit type, district, budget).
+  const check = validateFollowUpCompletion({ followupType: type, selectedOutcome: s.suggested_outcome!, draft, clientData: cl ? cdata : null });
   if (!check.ok) return skip(`validation: ${check.hardErrors.map((e) => e.message_en).join('; ')}`);
   if (dryRun) return { suggestion: s.id, applied: false, outcome: s.suggested_outcome, reason: 'dry run (would apply)' };
 

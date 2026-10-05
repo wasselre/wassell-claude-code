@@ -69,6 +69,13 @@ export interface OutcomeRequires {
   new_appointment_datetime?: boolean;
   lost_reason?: boolean;
   outcome_notes?: boolean;
+  /**
+   * The CLIENT's saved preferences must be complete enough to be a search
+   * request (unit type, an included district, a budget — see
+   * `src/lib/clients/requestReadiness.ts`). Not a follow-up field: the
+   * validator checks it against `clientData`.
+   */
+  client_request_ready?: boolean;
 }
 
 /**

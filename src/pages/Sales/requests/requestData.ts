@@ -51,8 +51,8 @@ export function clientOf(request: AppRecord, clientsById: Map<string, AppRecord>
 }
 
 /** The client's included place labels, de-duplicated, in the client's order. */
-export function requestedPlaces(client: AppRecord | null): string[] {
-  const items = (client?.data as Record<string, unknown> | undefined)?.location_items;
+export function requestedPlaces(clientData: Record<string, unknown> | null | undefined): string[] {
+  const items = clientData?.location_items;
   if (!Array.isArray(items)) return [];
   const out: string[] = [];
   for (const it of items) {
@@ -66,23 +66,40 @@ export function requestedPlaces(client: AppRecord | null): string[] {
   return out;
 }
 
-export function requestFacts(request: AppRecord, client: AppRecord | null, store: ProjectStoreSlices): RequestFacts {
-  const c = (client?.data ?? {}) as Record<string, unknown>;
-  const r = request.data as Record<string, unknown>;
-  const types = Array.isArray(c.preferred_unit_type) ? c.preferred_unit_type.filter((x): x is string => typeof x === 'string') : [];
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : typeof v === 'string' && v.trim() ? [v] : [];
+
+/**
+ * The ask, read from the client's SAVED preferences — the request has no text
+ * of its own (2026-10-05). Also used on an unsaved preferences draft, to show
+ * the rep what the request will say before it is opened.
+ *
+ * The rep's `request_notes` are deliberately NOT part of the facts: they are an
+ * internal note (often the follow-up's call notes, copied by the workflow) and
+ * must never reach an office.
+ */
+export function clientRequestFacts(clientData: Record<string, unknown> | null | undefined, store: ProjectStoreSlices): RequestFacts {
+  const c = clientData ?? {};
   const cityId = firstId((c.location as Record<string, unknown> | undefined)?.city ?? null);
   const budget = rangeOf(c.budget);
   const beds = rangeOf(c.preferred_bedrooms);
   const area = rangeOf(c.preferred_area);
+  const readiness = strings(c.preferred_readiness);
   return {
-    unitTypes: types,
-    places: requestedPlaces(client),
+    unitTypes: strings(c.preferred_unit_type),
+    places: requestedPlaces(c),
     city: cityId ? geoName(store, 'cities', cityId) : null,
     budgetMin: budget.min, budgetMax: budget.max,
     bedroomsMin: beds.min, bedroomsMax: beds.max,
     areaMin: area.min, areaMax: area.max,
-    notes: typeof r.request_notes === 'string' ? r.request_notes : null,
+    // Exactly one ticked = a real constraint; both = either is fine.
+    readiness: readiness.length === 1 && (readiness[0] === 'ready' || readiness[0] === 'off_plan') ? readiness[0] : null,
+    notes: null,
   };
+}
+
+export function requestFacts(_request: AppRecord, client: AppRecord | null, store: ProjectStoreSlices): RequestFacts {
+  return clientRequestFacts(client?.data as Record<string, unknown> | undefined, store);
 }
 
 export interface RequestOffering {

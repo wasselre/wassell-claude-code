@@ -64,6 +64,11 @@ export default function CompleteWhatsAppFollowupModal({
   const currentUserId = useAppStore((s) => s.currentUserId);
   const saveRecord = useAppStore((s) => s.saveRecord);
   const addToast = useAppStore((s) => s.addToast);
+  const clientData = useAppStore((s) => {
+    if (!clientId) return null;
+    const m = s.models.find((x) => x.name === 'clients');
+    return m ? (s.records[m.id] ?? []).find((r) => r.id === clientId)?.data ?? null : null;
+  });
   const [saving, setSaving] = useState(false);
 
   const typeKey = readFollowupType(followup.data);
@@ -143,6 +148,7 @@ export default function CompleteWhatsAppFollowupModal({
       selectedOutcome: outcomeKey,
       draft: finalData,
       fieldLabels,
+      clientData,
     });
     if (!result.ok) {
       addToast(isAr ? (result.hardErrors[0]?.message_ar ?? 'حقول مطلوبة ناقصة') : (result.hardErrors[0]?.message_en ?? 'Required fields missing'), 'error');

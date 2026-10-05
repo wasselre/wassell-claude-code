@@ -1,6 +1,7 @@
 /**
  * One unanswered request, worked end to end:
- *   1. the ask (the rep's words + the client's preferences) and the search task;
+ *   1. the ask — the client's SAVED preferences (no free text since 2026-10-05;
+ *      editable here, saved to the client) — and the search task;
  *   2. the real-estate offices of the requested districts — pick, preview, send
  *      (paced by the database: see 2026-09-28_office_outreach.sql);
  *   3. what each office answered;
@@ -9,11 +10,14 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Send, Loader2, ExternalLink, MessageCircle, Plus, XCircle, AlertTriangle, ClipboardList } from 'lucide-react';
+import { Building2, Send, Loader2, ExternalLink, MessageCircle, Plus, XCircle, AlertTriangle, ClipboardList, Pencil, Save } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { usePermission } from '@/hooks/usePermission';
+import { useRecordDraft } from '@/hooks/useRecordDraft';
+import { preferencesDirty, saveClientPreferences } from '@/lib/clients/preferences';
+import { gapListText, requestPreferenceGaps } from '@/lib/clients/requestReadiness';
 import type { AppRecord } from '@/types';
 import {
   cancelOutreach, enqueueOutreach, fetchCandidates, fetchOutreach, outreachErrorText, skipReasonText,
@@ -22,6 +26,7 @@ import {
 import { buildOfficeMessage, containsLink, describeAsk } from '@/lib/officeOutreach/message';
 import { clientOf, firstId, isOpenRequest, offeringsFor, requestFacts } from './requestData';
 import OfficeOfferModal from './OfficeOfferModal';
+import RequestPreferencesForm, { requestPrefFields } from './RequestPreferencesForm';
 
 const PAGE = 100;
 
@@ -42,6 +47,7 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
   const records = useAppStore((s) => s.records);
   const users = useAppStore((s) => s.users);
   const addToast = useAppStore((s) => s.addToast);
+  const saveRecord = useAppStore((s) => s.saveRecord);
   const isAr = useAppStore((s) => s.language) === 'ar';
   const t = (ar: string, en: string) => (isAr ? ar : en);
 
@@ -52,6 +58,7 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
   const projectsModel = models.find((m) => m.name === 'all_projects') ?? null;
   const canCreateUnit = usePermission(unitsModel?.id ?? '', 'create');
   const canCreateProject = usePermission(projectsModel?.id ?? '', 'create');
+  const canEditClient = usePermission(clientsModel?.id ?? '', 'edit');
 
   const request = useMemo<AppRecord | null>(
     () => (requestsModel ? (records[requestsModel.id] ?? []).find((r) => r.id === requestId) ?? null : null),
@@ -65,6 +72,22 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
   const store = useMemo(() => ({ models, records }), [models, records]);
   const facts = useMemo(() => (request ? requestFacts(request, client, store) : null), [request, client, store]);
   const offerings = useMemo(() => offeringsFor(requestId, store), [requestId, store]);
+
+  // ── The ask = the client's SAVED preferences. Editing the request edits them. ──
+  const gaps = requestPreferenceGaps(client?.data as Record<string, unknown> | undefined);
+  const [editingPrefs, setEditingPrefs] = useState(false);
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [editVersion, setEditVersion] = useState<number | null>(null);
+  const { draft: prefDraft, patchDraft: patchPrefDraft, setDraft: setPrefDraft } = useRecordDraft(client);
+  const prefSlugs = useMemo(() => (clientsModel ? requestPrefFields(clientsModel).map((f) => f.name) : []), [clientsModel]);
+  const startEditPrefs = () => {
+    if (!client) return;
+    // Re-seed from the saved client: it may have changed (AI auto-save, another
+    // tab) since this modal mounted.
+    setPrefDraft({ ...client.data });
+    setEditVersion(client.version ?? null);
+    setEditingPrefs(true);
+  };
 
   const openTask = useMemo(() => {
     const rows = (tasksModel ? records[tasksModel.id] ?? [] : []).filter((task) => {
@@ -112,11 +135,28 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
   }, [requestId, addToast, isAr]);
 
   useEffect(() => { void loadCandidates(); }, [loadCandidates]);
+
+  const savePrefs = async () => {
+    if (!client) return;
+    setSavingPrefs(true);
+    const res = await saveClientPreferences({
+      client, draft: prefDraft, slugs: prefSlugs, saveRecord, isAr, expectedVersion: editVersion,
+    });
+    setSavingPrefs(false);
+    addToast(res.message, res.tone);
+    if (!res.ok) return;
+    setEditingPrefs(false);
+    // The districts decide the offices — re-read them from the saved client.
+    void loadCandidates();
+  };
   useEffect(() => { void loadOutreach(); }, [loadOutreach]);
 
   const selectedList = useMemo(() => (candidates ?? []).filter((c) => selected.has(c.office_id)), [candidates, selected]);
   const preview = facts && selectedList[0] ? buildOfficeMessage(facts, selectedList[0].office_name, selectedList[0].office_id) : null;
-  const noteHasLink = !!facts?.notes && containsLink(facts.notes);
+  // The message is built from structured preferences only, but a district or
+  // unit label could still carry a link — never send one from a cold line.
+  const previewHasLink = !!preview && containsLink(preview);
+  const notReady = gaps.length > 0;
 
   const perDay = line?.per_day ?? 0;
   const estDays = perDay > 0 ? Math.ceil((selectedList.length + (line?.today_scheduled ?? 0)) / perDay) : null;
@@ -202,9 +242,51 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
               )}
             </div>
             <div className="rounded-xl border border-sand/60 bg-cream-light p-3 text-sm">
+              <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-charcoal/55">
+                {t('الطلب — من تفضيلات العميل المحفوظة', "The request — from the client's saved preferences")}
+                {client && clientsModel && canEditClient && !editingPrefs && (
+                  <button type="button" onClick={startEditPrefs} className="ms-auto inline-flex items-center gap-1 text-copper hover:underline">
+                    <Pencil size={12} /> {t('تعديل الطلب', 'Edit the request')}
+                  </button>
+                )}
+              </div>
               <div className="font-semibold text-charcoal">{describeAsk(facts)}</div>
-              {facts.notes && <div className="mt-1 text-charcoal/70">«{facts.notes}»</div>}
+              {notReady && (
+                <div className="mt-2 flex items-start gap-1.5 text-xs font-semibold text-[#8E4E3A]">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  <span>
+                    {t(`تفضيلات العميل ناقصة: ${gapListText(gaps, true)} — لا يُرسل الطلب للمكاتب قبل إكمالها.`,
+                       `The client's preferences are incomplete: ${gapListText(gaps, false)} — the request cannot go to offices until they are filled.`)}
+                  </span>
+                </div>
+              )}
+              {typeof d.request_notes === 'string' && d.request_notes.trim() && (
+                <div className="mt-2 border-t border-sand/50 pt-2 text-xs text-charcoal/60">
+                  <span className="font-semibold">{t('ملاحظة داخلية (لا تُرسل للمكاتب): ', 'Internal note (never sent to offices): ')}</span>
+                  {d.request_notes.trim()}
+                </div>
+              )}
             </div>
+            {editingPrefs && client && clientsModel && (
+              <div className="space-y-3 rounded-xl border border-copper/30 p-3">
+                <RequestPreferencesForm
+                  client={client}
+                  clientsModel={clientsModel}
+                  draft={prefDraft}
+                  patchDraft={patchPrefDraft}
+                  isAr={isAr}
+                  disabled={savingPrefs}
+                />
+                <div className="flex justify-end gap-2">
+                  <Button variant="secondary" onClick={() => setEditingPrefs(false)} disabled={savingPrefs} className="px-3 py-1.5 text-sm">
+                    {t('إلغاء', 'Cancel')}
+                  </Button>
+                  <Button onClick={() => void savePrefs()} disabled={savingPrefs || !preferencesDirty(client.data, prefDraft, prefSlugs)} className="px-4 py-1.5 text-sm">
+                    {savingPrefs ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} {t('حفظ في ملف العميل', 'Save to the client')}
+                  </Button>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* 2 — offices */}
@@ -238,7 +320,7 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
               ) : candidates.length === 0 ? (
                 <div className="rounded-lg bg-cream p-3 text-xs text-charcoal/60">
                   {facts.places.length === 0
-                    ? t('لا توجد أحياء محددة في تفضيلات العميل — أضف الأحياء المطلوبة في ملف العميل أولاً.', 'The client has no requested districts — add them on the client profile first.')
+                    ? t('لا توجد أحياء محددة في تفضيلات العميل — أضفها من «تعديل الطلب» أعلاه.', 'The client has no requested districts — add them with «Edit the request» above.')
                     : t('لا توجد مكاتب مسجلة في هذه الأحياء. جرّب «أضف مكاتب نفس المدينة».', 'No offices are registered in these districts. Try «Include offices in the same city».')}
                 </div>
               ) : (
@@ -281,15 +363,15 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
                       <pre className="whitespace-pre-wrap rounded-lg border border-sand/60 bg-cream-light p-3 font-[inherit] text-sm text-charcoal">{preview}</pre>
                     </div>
                   )}
-                  {noteHasLink && (
+                  {previewHasLink && (
                     <div className="rounded-lg bg-red-50 p-2.5 text-xs text-red-700">
-                      {t('ملاحظة الطلب تحتوي رابطاً. الروابط من رقم جديد تؤدي للحظر — احذف الرابط من «ملاحظات الطلب» أولاً.', 'The request note contains a link. Links from a new number get it banned — remove it from the request note first.')}
+                      {t('الرسالة تحتوي رابطاً. الروابط من رقم جديد تؤدي للحظر — صحّح تفضيلات العميل أولاً.', 'The message contains a link. Links from a new number get it banned — fix the client preferences first.')}
                     </div>
                   )}
 
                   {!confirming ? (
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button onClick={() => setConfirming(true)} disabled={selected.size === 0 || sendBlocked || noteHasLink} className="px-4 py-2 text-sm">
+                      <Button onClick={() => setConfirming(true)} disabled={selected.size === 0 || sendBlocked || previewHasLink || notReady} className="px-4 py-2 text-sm">
                         <Send size={15} /> {t(`إرسال الطلب إلى ${selected.size} مكتب`, `Send to ${selected.size} offices`)}
                       </Button>
                       {queuedCount > 0 && (
