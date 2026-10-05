@@ -27,6 +27,8 @@ Daily capture and weekly scheduling remain off until the steps below pass.
 `project_update_enable_binghatti` enforces the final proof requirements. It does
 not relax the safety brake.
 
+The saved `/Authentication/Index` URL is the public landing page. The recipe
+follows its observed `/Authentication/Login` link before filling the sign-in form.
 The live sign-in probe on 2026-10-05 found an email-validated `userId` field.
 The saved phone is rejected before the OTP request is sent. Saudi Arabia (+966)
 was selected on the separate registration page; that page was not submitted.

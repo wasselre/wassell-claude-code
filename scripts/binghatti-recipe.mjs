@@ -11,6 +11,9 @@ const recipe = [
     { do: 'auth_state', reused: true },
   ], else: [
     { do: 'goto', url: '{{portal.login_url}}' },
+    { do: 'if_visible', selector: 'a[href="/Authentication/Login"]', timeout_ms: 1000, then: [
+      { do: 'click', selector: 'a[href="/Authentication/Login"]' },
+    ] },
     { do: 'assert', selector: '#userId', timeout_ms: 30_000,
       error_ar: 'لم تظهر صفحة دخول بن غاطي', error_en: 'Binghatti login page did not load' },
     { do: 'fill', selector: '#userId', value: '{{portal.login_id}}' },
