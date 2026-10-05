@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideAnalyzeMode, computeStale, pruneExpression, laterOf } from '../chatCard.js';
+import { decideAnalyzeMode, computeStale, pruneExpression, laterOf, readingAsOf } from '../chatCard.js';
 import type { GeoPreference, GeometryRecipe } from '../ontology.js';
 
 /**
@@ -45,6 +45,20 @@ describe('decideAnalyzeMode', () => {
   it('read, customer wrote since, but GRADED → review-only (re-extraction would delete the graded rows)', () => {
     expect(decideAnalyzeMode({ hasCheckpoint: true, hasNewerMessage: true, hasProtectedEvidence: true })).toBe('re_review');
     expect(decideAnalyzeMode({ hasCheckpoint: true, hasNewerMessage: false, hasProtectedEvidence: true })).toBe('re_review');
+  });
+});
+
+describe('readingAsOf — a message that lands mid-read is NOT read', () => {
+  // Live 2026-10-04: district list at 14:42:22 (whole seconds), reading saved
+  // 14:42:22.82 but covering messages up to 14:40:43 only.
+  const cp = { created_at: '2026-10-04T14:42:22.820Z', as_of_timestamp: '2026-10-04T14:40:43.161Z' };
+  it('compares to the newest message the reading covered, so the next read extracts', () => {
+    expect(computeStale(readingAsOf(cp), '2026-10-04T14:42:22Z')).toBe(true);
+    expect(computeStale(cp.created_at, '2026-10-04T14:42:22Z')).toBe(false); // the old comparison
+  });
+  it('falls back to the save time when as_of is missing', () => {
+    expect(readingAsOf({ created_at: cp.created_at, as_of_timestamp: null })).toBe(cp.created_at);
+    expect(readingAsOf(null)).toBeNull();
   });
 });
 

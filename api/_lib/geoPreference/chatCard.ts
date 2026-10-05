@@ -142,6 +142,18 @@ export function decideAnalyzeMode(input: {
  * message's date (null = none). No checkpoint ⇒ not stale (it was never read).
  * An unparseable date is treated as "cannot tell" ⇒ not stale.
  */
+/**
+ * The moment a reading is "as of": the newest message it actually read
+ * (`as_of_timestamp`), NOT when it was saved. A customer message that lands
+ * while a read is running is stamped (whole seconds) BEFORE the save time but
+ * was never read — comparing to the save time marked it read, so the next read
+ * only re-reviewed old evidence and the message was lost (live 2026-10-04: a
+ * district list at 14:42:22, reading saved 14:42:22.82 covering up to 14:40:43).
+ */
+export function readingAsOf(cp: { created_at: string; as_of_timestamp?: string | null } | null): string | null {
+  return cp ? (cp.as_of_timestamp || cp.created_at) : null;
+}
+
 export function computeStale(checkpointCreatedAt: string | null, newestCustomerMessageAt: string | null): boolean {
   if (!checkpointCreatedAt || !newestCustomerMessageAt) return false;
   const cp = Date.parse(checkpointCreatedAt);
@@ -224,7 +236,7 @@ export function rowToRelation(r: Row): EvidenceRelation {
 // Supabase reads — every error THROWS
 // ────────────────────────────────────────────────────────────────────────────
 
-interface CheckpointRow { id: string; created_at: string; evidence_visible_so_far: string[] | null }
+interface CheckpointRow { id: string; created_at: string; as_of_timestamp: string | null; evidence_visible_so_far: string[] | null }
 interface ProposalDbRow {
   id: string; status: string; version: number | null; proposed_action: string;
   proposed_expression: GeoPreference; final_expression: GeoPreference | null;
@@ -235,7 +247,7 @@ interface ProposalDbRow {
 async function readCheckpoint(supabase: SupabaseClient, clientId: string, chatWid: string): Promise<CheckpointRow | null> {
   const { data, error } = await supabase
     .from('geo_pref_checkpoints')
-    .select('id, created_at, evidence_visible_so_far')
+    .select('id, created_at, as_of_timestamp, evidence_visible_so_far')
     .eq('conversation_id', chatWid).eq('client_id', clientId).eq('origin_tag', 'model')
     .order('created_at', { ascending: false }).limit(1).maybeSingle();
   if (error) throw new Error(`chat card: checkpoint read failed: ${error.message}`);
@@ -470,7 +482,7 @@ export async function loadChatCard(
     mentions: evRows.map((r) => ({ evidence_id: s(r.id), mention_span: s(r.mention_span), preference_role: s(r.preference_role) })),
     names,
     analyzed_at,
-    stale: computeStale(cp.created_at, newestIn),
+    stale: computeStale(readingAsOf(cp), newestIn),
     graded,
     can_reanalyze: !(since < REANALYZE_COOLDOWN_MS),
     customer_messages,
@@ -535,7 +547,7 @@ export async function analyzeChatConversation(
   const hasProtectedEvidence = cp ? await readIsProtected(supabase, [...evRows.map((r) => s(r.id)), cp.id]) : false;
   const mode = decideAnalyzeMode({
     hasCheckpoint: cp !== null,
-    hasNewerMessage: computeStale(cp?.created_at ?? null, newestIn),
+    hasNewerMessage: computeStale(readingAsOf(cp), newestIn),
     hasProtectedEvidence,
   });
 

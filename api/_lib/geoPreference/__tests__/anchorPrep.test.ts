@@ -809,6 +809,13 @@ describe('P5 — a direction with a referent is read span-first (rules a–f)', 
     expect(q.contexts).toEqual([{ referent_is_road: true }]);
   });
 
+  it('f: a doubled letter in the direction word («شممال») is still the customer saying north', () => {
+    // Live 2026-10-04: «شممال الرياض مناسب» was refused as anchor_not_in_text — north was never saved.
+    const p = prepareMention(ev('شممال الرياض مناسب', [a('direction', 'شممال الرياض', { normalized_token: 'شمال الرياض' })]));
+    expect(asks(p)).toEqual([null]);
+    expect(p.named_places).toEqual([{ kind: 'city', token: 'الرياض' }]);
+  });
+
   it('f: a side the customer never said (only the token has it) asks anchor_not_in_text', () => {
     // Repair round 1: «قريب من الملك فهد» stored as [«الملك فهد» / «غرب الملك فهد»] drew a band WEST of the road.
     expect(asks(prepareMention(ev('ابي قريب من الملك فهد', [a('direction', 'الملك فهد', { normalized_token: 'غرب الملك فهد' })]))))

@@ -796,3 +796,14 @@ describe('resolveAnchor — a venue said as a station (ctx.station)', () => {
     expect(r.status).toBe('needs_confirm');
   });
 });
+
+describe('parseDirection — a doubled letter in the direction word', () => {
+  it('reads «شممال الرياض» as north of الرياض, and leaves other words alone', async () => {
+    const { parseDirection, undoubleDirectionWord } = await import('../resolver.js');
+    expect(parseDirection('شممال الرياض')).toEqual({ zone: 'north', rest: 'الرياض' });
+    expect(parseDirection('الشممال')).toEqual({ zone: 'north', rest: '' });
+    expect(undoubleDirectionWord('الرياض')).toBe('الرياض');
+    expect(undoubleDirectionWord('الملك فهد')).toBe('الملك فهد');
+    expect(undoubleDirectionWord('شمال الرياض')).toBe('شمال الرياض');
+  });
+});

@@ -346,11 +346,25 @@ const DIRECTION_WORDS: Record<string, string> = {
   'northeast': 'northeast', 'northwest': 'northwest', 'southeast': 'southeast', 'southwest': 'southwest',
 };
 
+/**
+ * «شممال الرياض» → «شمال الرياض»: a doubled letter inside the leading direction
+ * word is a typo (no Arabic direction word has one). Only that first word is
+ * touched, and only when collapsing it yields a direction word — the referent
+ * after it is left exactly as written. Live 2026-10-04: «شممال الرياض مناسب»
+ * was refused as "direction not in the customer's words", so north was never saved.
+ */
+export function undoubleDirectionWord(text: string): string {
+  const m = /^(\s*)(\S+)([\s\S]*)$/.exec(String(text ?? ''));
+  if (!m) return String(text ?? '');
+  const w = m[2]!.replace(/(.)\1+/gu, '$1');
+  return w !== m[2] && /^(?:ال)?(?:شمال|جنوب|شرق|غرب|وسط)$/.test(w) ? `${m[1]}${w}${m[3]}` : String(text);
+}
+
 /** Pull a direction zone + the remaining referent text (a city OR a road) out of
- *  a span/token. Tolerates «الشمال» (article on the direction word) and the
- *  extractor's «شمال_الرياض» underscore artifact. */
+ *  a span/token. Tolerates «الشمال» (article on the direction word), a doubled
+ *  letter in it («شممال») and the extractor's «شمال_الرياض» underscore artifact. */
 export function parseDirection(text: string): { zone: string | null; rest: string } {
-  const t = String(text ?? '').replace(/_/g, ' ').replace(/^\s*ال(?=(شمال|جنوب|شرق|غرب|وسط))/, '').trim();
+  const t = undoubleDirectionWord(String(text ?? '').replace(/_/g, ' ')).replace(/^\s*ال(?=(شمال|جنوب|شرق|غرب|وسط))/, '').trim();
   const norm = canonicalPlaceName(t);
   // longest match first (diagonals before cardinals)
   const keys = Object.keys(DIRECTION_WORDS).sort((a, b) => b.length - a.length);

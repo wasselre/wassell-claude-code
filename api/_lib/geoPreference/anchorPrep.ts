@@ -389,8 +389,12 @@ const DIAGONAL_PARTS: Readonly<Record<string, readonly [string, string]>> = {
 
 /** `t` (a folded word) is a word of `zone`: its stem, after an optional «و/ف» + «ب/ل/ك» clitic and the article. */
 function wordOfZone(t: string, zone: string): boolean {
-  const bare = t.replace(/^(و|ف)?(ب|ل|ك)?(ال)?/, '');
-  return (ZONE_STEMS[zone] ?? []).some((s) => t.startsWith(s) || bare.startsWith(s));
+  // «شممال» (a doubled letter — a typo; no direction stem has one) still says north.
+  const forms = [t, t.replace(/(.)\1+/gu, '$1')];
+  return forms.some((w) => {
+    const bare = w.replace(/^(و|ف)?(ب|ل|ك)?(ال)?/, '');
+    return (ZONE_STEMS[zone] ?? []).some((s) => w.startsWith(s) || bare.startsWith(s));
+  });
 }
 
 /**
