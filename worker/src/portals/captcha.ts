@@ -16,8 +16,8 @@ export const READ_CAPTCHA_TOKEN = new Function('selector', `
   });
 `) as (selector: string) => boolean;
 
-/** Browserbase owns solving. Its finished event is observability only: a
- * real response token or a known authenticated page is required to continue. */
+/** Browserbase owns solving. Its finished event is observability only.
+ * Configured page advancement must succeed; standalone checks require a token. */
 export async function waitForAutomaticCaptcha(
   page: Page,
   step: WaitCaptchaStep,
@@ -32,6 +32,7 @@ export async function waitForAutomaticCaptcha(
   if (!Number.isFinite(timeout) || timeout < 1 || timeout > 300) throw new Error('wait_captcha timeout_s must be 1..300');
   const deadline = Date.now() + timeout * 1000;
   let heartbeatAt = -Infinity;
+  const requiresPageAdvancement = Boolean(step.success_selector || step.success_url);
   const urlMatches = step.success_url?.startsWith('re:') ? new RegExp(step.success_url.slice(3)) : null;
   const consoleListener = (message: ConsoleMessage) => {
     const text = message.text();
@@ -62,14 +63,16 @@ export async function waitForAutomaticCaptcha(
         await page.waitForTimeout(250);
         continue;
       }
-      if (token) {
+      if (token && !requiresPageAdvancement) {
         hooks.log('CAPTCHA verified: response token present');
         return;
       }
       await page.waitForTimeout(Math.min(1000, Math.max(1, deadline - Date.now())));
     }
     await hooks.screenshot('captcha-timeout');
-    throw new Error('Browserbase CAPTCHA solving timed out without a response token or verified page advancement');
+    throw new Error(requiresPageAdvancement
+      ? 'Browserbase CAPTCHA solving timed out without the configured page advancement'
+      : 'Browserbase CAPTCHA solving timed out without a response token');
   } finally {
     page.off('console', consoleListener);
   }

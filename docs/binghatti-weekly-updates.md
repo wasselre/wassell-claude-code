@@ -1,8 +1,9 @@
 # Binghatti weekly inventory updates
 
 Updated 2026-10-05. Implementation follows the weekly-update spec with the
-operator's change: Browserbase handles CAPTCHA automatically. The operator
-only supplies the portal's OTP through the existing WhatsApp relay when needed.
+operator's change: Browserbase handles CAPTCHA automatically. The existing
+WhatsApp OTP relay remains the fallback until the Gmail reader is authorized,
+configured and implemented; unattended email reading is not yet available.
 
 ## Configuration
 
@@ -29,16 +30,27 @@ not relax the safety brake.
 
 The saved `/Authentication/Index` URL is the public landing page. The recipe
 follows its observed `/Authentication/Login` link before filling the sign-in form.
-The live sign-in probe on 2026-10-05 found an email-validated `userId` field.
-The saved phone is rejected before the OTP request is sent. Saudi Arabia (+966)
-was selected on the separate registration page; that page was not submitted.
-The phone login route must be established before the first complete capture.
+The sign-in form has an email-validated `userId` field. The operator has now
+saved a Workspace login ID in `login_id` and selected `otp_channel=email`.
+The latest automatic `SendOTP` attempts returned `Captcha validation failed.`
+with reason `recaptcha_confirmed_bot_score`, including a fresh AE proxy session.
+Browserbase Verified session creation returned HTTP 403 for Enterprise
+entitlement. These failures occurred before any OTP dispatch was confirmed,
+so a response token alone is not treated as successful page advancement.
+
+The [dedicated Gmail OAuth setup guide](binghatti-gmail-oauth.md) describes the
+Internal app in the existing Workspace project. OAuth setup awaits the required
+API User Data Policy agreement; there is no OAuth client, Gmail grant or
+mail-reader runtime yet. Actual OTP delivery channel and email format remain
+unconfirmed until a successful fresh delivery. CAPTCHA acceptance and that
+delivery evidence are required before the first complete capture.
 
 ## First capture and activation
 
 1. Deploy the worker and API. Enqueue one capture:
    `select portal_status_check_enqueue('0f828ff1-c3b9-482c-8b1d-215bef4b4d43',null);`
-   Browserbase solves supported CAPTCHA; relay the code if requested.
+   Browserbase handles supported CAPTCHA. If the portal issues an OTP, supply
+   it through the existing relay until unattended email reading is ready.
 2. Confirm the job completed with `inventory_capture` and the private file
    `portal-registrations/inventory/0f828ff1-c3b9-482c-8b1d-215bef4b4d43/units.json`
    contains exactly `totalCount` unique items. A trimmed fixture is never usable

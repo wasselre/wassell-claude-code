@@ -123,6 +123,39 @@ describe('Browserbase automatic CAPTCHA verification', () => {
     expect(page.evaluate).not.toHaveBeenCalled();
   });
 
+  it('rejects a present token while the configured OTP input stays hidden', async () => {
+    const page = captchaPage([true, true]);
+    const h = { ...hooks(), screenshot: vi.fn(async () => undefined) };
+    await expect(waitForAutomaticCaptcha(page, {
+      do: 'wait_captcha', timeout_s: 2, success_selector: '#password:not(.d-none)',
+    }, h)).rejects.toThrow('without the configured page advancement');
+    expect(page.evaluate).toHaveBeenCalledTimes(2);
+    expect(h.heartbeat).toHaveBeenCalled();
+    expect(h.screenshot).toHaveBeenCalledWith('captcha-timeout');
+    expect(page.off).toHaveBeenCalled();
+  });
+
+  it.each(['https://partners.binghatti.com/Inventory', 're:/Inventory$'])(
+    'rejects a present token without the configured success URL %s', async (success_url) => {
+      const page = captchaPage([true, true]);
+      const h = { ...hooks(), screenshot: vi.fn(async () => undefined) };
+      await expect(waitForAutomaticCaptcha(page, {
+        do: 'wait_captcha', timeout_s: 2, success_url,
+      }, h)).rejects.toThrow('without the configured page advancement');
+      expect(h.screenshot).toHaveBeenCalledWith('captcha-timeout');
+    },
+  );
+
+  it.each(['https://partners.binghatti.com/Properties', 're:/Properties$'])(
+    'accepts the configured success URL %s without a token', async (success_url) => {
+      const page = captchaPage([]);
+      const h = { ...hooks(), screenshot: vi.fn(async () => undefined) };
+      await waitForAutomaticCaptcha(page, { do: 'wait_captcha', success_url }, h);
+      expect(page.evaluate).not.toHaveBeenCalled();
+      expect(h.screenshot).not.toHaveBeenCalled();
+    },
+  );
+
   it('a finished event, missing token or unknown CAPTCHA cannot silently advance', async () => {
     const page = captchaPage([]);
     const h = { ...hooks(), screenshot: vi.fn(async () => undefined) };

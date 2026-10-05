@@ -95,7 +95,7 @@ an unescaped dot is parsed as a class and the step fails with a bare
 | `wait_for` | target, `state?`, `timeout_ms?` | Wait until visible (or `hidden` / `attached`). |
 | `wait_for_url` | `pattern` (glob, or `re:` regex) | Wait for navigation. |
 | `request_input` | `key`, `prompt_ar`, `prompt_en`, `kind?` (`otp`/`text`), `length?`, `timeout_s?` | **Pause and ask the rep.** The modal shows the prompt + an input; the answer lands in `{{input.<key>}}`. Default wait 300 s. |
-| `wait_captcha` | `timeout_s?`, `token_selector?`, `success_selector?`, `success_url?` | Wait for Browserbase automatic solving; verify a response token or a known page advance. Default 180 s, maximum 300 s. |
+| `wait_captcha` | `timeout_s?`, `token_selector?`, `success_selector?`, `success_url?` | Wait for Browserbase automatic solving. A configured success selector/URL must advance; standalone waits require a response token. Default 180 s, maximum 300 s. |
 | `auth_state` | `reused` (`true`/`false`) | Record a verified reused login or a new sign-in for an opt-in persistent portal. Put this after an authenticated-page assertion. |
 | `save_json` | `key`, `selector`, `attr`, pagination fields below | Capture a complete authenticated JSON list, with strict counts and unique IDs, into the private inventory bucket. |
 | `screenshot` | `label?`, `full?` | Save a screenshot to the run's evidence (`full: true` = the whole page, not just the viewport). |
@@ -237,8 +237,10 @@ data). Ceilings `max_pages` (10) and `max_details` (60) fail loudly.
 
 Every session explicitly enables Browserbase `solveCaptchas: true`. A
 `wait_captcha` step keeps the job running and heartbeats while Browserbase
-solves the challenge. It continues only when a response field is nonempty or
-the configured `success_selector` is visible / `success_url` matches. The URL
+solves the challenge. When `success_selector` or `success_url` is configured,
+it continues only when the selector is visible or the URL matches; a nonempty
+response token alone is insufficient. Without either advancement condition,
+a nonempty response token is required. The URL
 is exact, or `re:<regular expression>`. Browserbase's solving events are logged
 but a finished event alone is not proof. Missing or unsupported challenges time
 out with a screenshot and a failed job; no CAPTCHA tap is requested.
@@ -246,9 +248,11 @@ out with a screenshot and a failed job; no CAPTCHA tap is requested.
 For invisible reCAPTCHA v3, first click the portal's button that executes the
 challenge, then wait for the portal's next step. Binghatti's current sign-in
 uses the visible OTP input after “send code”, and the inventory attribute after
-“login”, as proof. Its OTP still uses the existing WhatsApp relay. On 2026-10-05
-the current portal rejected the saved phone before sending any code; no OTP
-delivery channel has been verified in the new flow.
+“login”, as proof. Its OTP still uses the existing WhatsApp relay. The saved
+Workspace login ID is email-validated, but on 2026-10-05 the automatic `SendOTP`
+request was rejected with `recaptcha_confirmed_bot_score`; no OTP dispatch or
+actual delivery channel has been confirmed. See the
+[Gmail OAuth setup guide](binghatti-gmail-oauth.md) for the planned email reader.
 
 ```json
 [
@@ -262,8 +266,9 @@ context is stored atomically on the record and sessions load it with
 `browserSettings.context={id, persist:true}`. Jobs are serialized per portal
 and sign-in phone; the worker waits briefly after release for Browserbase to
 save the context. A recipe opens the authenticated page first and uses
-`if_visible` to sign in only if the login form appears. Each branch asserts the
-authenticated page, then records `auth_state` with `reused:false` for a fresh
+`if_visible` to confirm a marker that only appears after sign-in. If that marker
+is absent, it navigates to the login form and signs in again. Each branch proves
+the authenticated page, then records `auth_state` with `reused:false` for a fresh
 sign-in or `reused:true` for retained authentication. The managed timestamps
 and `browserbase_login_survived_s` show how long the login survived. Site logout
 or cookie expiry naturally returns to the sign-in branch.
