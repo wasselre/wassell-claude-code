@@ -625,6 +625,12 @@ PRD: `docs/prd/project-updates.md`.
    The ONE allowed fallback for type: the developer's own project-level
    statement recorded on the `unit_updates` row (`stated_unit_type` + its
    `stated_unit_type_source` link, both required) — a cited fact, not a guess.
+9. **Developer over marketer.** When a project has both its developer's source
+   and a marketer's (Riva markets 21 projects it does not develop), the
+   developer's wins: the marketer's portal and WhatsApp group skip any project
+   whose developer has its own enabled WhatsApp group
+   (`developerSourcedCompanies`). Al-Ramz units come ONLY from Al-Ramz's group
+   — never its broker portal (operator 2026-10-05: not dependable).
 
 ## Office outreach (unanswered requests → WhatsApp to offices) (added 2026-09-28)
 

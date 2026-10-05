@@ -262,16 +262,31 @@ function unitSample(units: Array<{ data: Record<string, unknown> }>): string {
   return pick.join(' / ');
 }
 
-async function loadCandidates(supabase: SupabaseClient, companyIds: string[]): Promise<CandidateProject[]> {
+/** Companies whose OWN source we read: every enabled developer WhatsApp
+ *  group's companies. Operator rule 2026-10-05: when a project has both its
+ *  developer's source and a marketer's, the DEVELOPER's wins — the marketer's
+ *  sources (Riva's portal, Riva's group) leave that project alone. */
+export async function developerSourcedCompanies(supabase: SupabaseClient): Promise<Set<string>> {
+  const { data, error } = await supabase.from('project_update_groups').select('company_ids').eq('is_enabled', true);
+  if (error) throw new Error(`developer-sourced companies: ${error.message}`);
+  return new Set(((data ?? []) as Array<{ company_ids: string[] | null }>).flatMap((g) => g.company_ids ?? []));
+}
+
+async function loadCandidates(supabase: SupabaseClient, companyIds: string[], devSourced: Set<string>): Promise<CandidateProject[]> {
   const out = new Map<string, CandidateProject>();
   for (const cid of companyIds) {
-    for (const q of [
-      supabase.from('records').select('id, data').eq('model_id', PROJECTS_MODEL_ID).filter('data->>developer', 'eq', cid),
-      supabase.from('records').select('id, data').eq('model_id', PROJECTS_MODEL_ID).filter('data->marketer', 'cs', JSON.stringify([cid])),
-    ]) {
+    for (const [asMarketer, q] of [
+      [false, supabase.from('records').select('id, data').eq('model_id', PROJECTS_MODEL_ID).filter('data->>developer', 'eq', cid)],
+      [true, supabase.from('records').select('id, data').eq('model_id', PROJECTS_MODEL_ID).filter('data->marketer', 'cs', JSON.stringify([cid]))],
+    ] as const) {
       const { data, error } = await q.limit(1000);
       if (error) throw new Error(`candidate projects: ${error.message}`);
       for (const r of (data ?? []) as Array<{ id: string; data: Record<string, unknown> }>) {
+        // A project this group only MARKETS, whose developer has its own
+        // group, belongs to the developer's group (أدوار جديل الرمال: Al-Ramz
+        // develops, Riva markets → only Al-Ramz's group may update it).
+        const dev = typeof r.data.developer === 'string' ? r.data.developer : null;
+        if (asMarketer && dev && !companyIds.includes(dev) && devSourced.has(dev)) continue;
         out.set(r.id, {
           id: r.id, name: String(r.data.project_name ?? ''), units: 0, sample: '',
           developerId: typeof r.data.developer === 'string' ? r.data.developer : null, data: r.data,
@@ -400,7 +415,7 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
   await a.heartbeat();
 
   // ── the group's projects (the ONLY ids the model may pick)
-  const candidates = await loadCandidates(supabase, group.company_ids);
+  const candidates = await loadCandidates(supabase, group.company_ids, await developerSourcedCompanies(supabase));
   for (const c of candidates) {
     const units = await loadUnits(supabase, c.id);
     c.units = units.length;

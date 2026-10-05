@@ -36,7 +36,7 @@ import { createProjectFromSource } from './projectUpdates/newProject.js';
 import { fetchMajdProject, majdProjectId } from './projectUpdates/almajdiah.js';
 import { RivaPortal, rivaProjectIdFromUrl } from './projectUpdates/riva.js';
 import { fetchPublic, fetchSafaProject, loadBrokerSnapshot, safaProjectId, type PublicListing } from './projectUpdates/safa.js';
-import { runWhatsAppGroup } from './projectUpdates/whatsapp.js';
+import { developerSourcedCompanies, runWhatsAppGroup } from './projectUpdates/whatsapp.js';
 import type { CrmUnit, ReconcilePolicy, ReconcileResult, SourceProject } from './projectUpdates/types.js';
 
 const LEAD_PORTALS_MODEL_ID = '1ead0000-0000-4000-8000-000000000001';
@@ -133,6 +133,9 @@ function logLine(today: string, label: string, r: ReconcileResult, extra: string
   return `${today} — تحديث تلقائي (${label}): ${changes} تغيير (حالة ${s.statusChanges}، سعر ${s.priceChanges}، جديد ${created})${inc}${extra}`;
 }
 
+/** Riva's own company record — the projects it DEVELOPS are its own source. */
+const RIVA_COMPANY_ID = 'f8e1f1a2-fe39-4406-8b01-e91300fd1157';
+
 const RIVA_POLICY: ReconcilePolicy = { absentAvailable: 'leave', createMissing: true, updatePrices: true };
 /** auto_scope = status_only: the portal is a secondary source for this
  *  project (e.g. ستون الندى — the developer's own price files lead). */
@@ -157,6 +160,7 @@ async function runRiva(
 
   const projects: Array<Record<string, unknown>> = [];
   let applied = 0, held = 0, failed = 0, totalChanges = 0;
+  const devSourced = await developerSourcedCompanies(supabase);
 
   for (const row of registry) {
     const portalId = rivaProjectIdFromUrl(row.data.source_url);
@@ -175,6 +179,14 @@ async function runRiva(
       }
       const scope = typeof row.data.auto_scope === 'string' ? row.data.auto_scope : 'full';
       entry.scope = scope;
+      // Riva's portal is a MARKETER's source. A project whose developer has
+      // its own source is left to the developer (operator rule 2026-10-05).
+      const dev = typeof project.data.developer === 'string' ? project.data.developer : null;
+      if (dev && dev !== RIVA_COMPANY_ID && devSourced.has(dev)) {
+        entry.status = 'skipped_developer_source';
+        entry.note = 'the developer has its own source (WhatsApp group) — Riva only markets this project';
+        continue;
+      }
       if (scope === 'off') {
         entry.status = 'skipped_off';
         continue;
