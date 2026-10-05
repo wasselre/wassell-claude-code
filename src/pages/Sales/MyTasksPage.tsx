@@ -20,7 +20,7 @@ import { useCampaignAgent } from './lib/useCampaignAgent';
 import { useAiChatReviews } from './lib/useAiChatReviews';
 import AiChatReviewSection from './components/AiChatReviewSection';
 
-type Section = 'actions' | 'agent_questions' | 'ai_review' | 'search' | 'appointments' | 'ai_notifications' | 'preferences' | 'other';
+type Section = 'actions' | 'agent_questions' | 'ai_review' | 'search' | 'appointments' | 'preferences' | 'other';
 type ApptBucket = 'today' | 'tomorrow' | 'future' | 'last7' | 'older' | 'no_show';
 
 function ownerIdOf(v: unknown): string | null {
@@ -62,15 +62,6 @@ const APPT_STATUS_STYLE: Record<string, string> = {
   cancelled: 'bg-charcoal/10 text-charcoal/60',
 };
 
-// AI-notification severity → start-edge stripe + badge (mirrors the task-tier
-// stripe idea). warning = a complaint / stop-contact; action = a human must do
-// something; info = FYI.
-const AI_SEVERITY: Record<'info' | 'action' | 'warning', { stripe: string; badge: string; ar: string; en: string }> = {
-  warning: { stripe: '#B5462F', badge: 'bg-terracotta text-white', ar: 'تنبيه', en: 'Warning' },
-  action: { stripe: '#B8734F', badge: 'bg-copper text-white', ar: 'إجراء', en: 'Action' },
-  info: { stripe: '#C09B5F', badge: 'bg-sand/60 text-charcoal', ar: 'معلومة', en: 'Info' },
-};
-
 /**
  * My Tasks — the sales rep's daily work surface (redesigned 2026-07-21,
  * sales-process improvement plan Workstream B):
@@ -95,8 +86,7 @@ export default function MyTasksPage() {
 
   const { openWhatsApp, whatsAppModals } = useClientWhatsApp();
   const {
-    notifications: aiNotifs, unreadCount: aiUnread, loading: aiLoading,
-    markRead: markNotifRead, markAllRead: markAllNotifsRead,
+    notifications: aiNotifs, loading: aiLoading, markRead: markNotifRead,
   } = useAiNotifications();
   const agentQ = useAgentQuestions();
   // A rep sees the questions asked of them plus any with no rep; a manager
@@ -267,23 +257,32 @@ export default function MyTasksPage() {
       + aiApprovals.results.filter((r) => r.suggested_outcome && r.followup_id && open.has(r.followup_id)).length;
   })();
 
+  // Customers waiting on a PERSON (the AI handed the chat over: negotiation,
+  // complaint, out-of-scope, an ad lead it could not place). These used to sit
+  // in an «AI notifications» feed; they are work, so they live with the AI's
+  // other asks (operator, 2026-10-05). Media-only / business-contact / visit
+  // notices are not shown — visits the AI books now become call tasks.
+  const handoffs = aiNotifs.filter((n) => {
+    if (n.read_at || n.source !== 'whatsapp' || n.severity !== 'action') return false;
+    const kind = typeof n.meta?.kind === 'string' ? n.meta.kind : '';
+    return kind !== 'visit_booked' && kind !== 'visit_recorded';
+  });
+  const aiNeedsYou = agentQuestions.length + (canApprove ? pendingApprovals : 0) + handoffs.length;
+
   const ALL_SECTIONS: { id: Section; label: { ar: string; en: string }; count?: number; danger?: boolean }[] = [
-    // «ملعبك / ملعب العميل» — the ball is either in YOUR court or the client's.
-    // One metaphor across both tabs (user-chosen naming, 2026-07-21).
-    { id: 'actions', label: { ar: 'ملعبك', en: 'Your court' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
-    // Questions the WhatsApp AI could not answer — a customer is waiting on each.
-    { id: 'agent_questions', label: { ar: 'المساعد الذكي', en: 'AI' }, count: agentQuestions.length + pendingApprovals, danger: agentQuestions.length + pendingApprovals > 0 },
+    // The three daily jobs first (operator, 2026-10-05): calls, what the AI
+    // needs from a person, and the review of the AI's chats.
+    { id: 'actions', label: { ar: 'المكالمات', en: 'Calls' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
+    { id: 'agent_questions', label: { ar: 'المساعد يحتاجك', en: 'The AI needs you' }, count: aiNeedsYou, danger: aiNeedsYou > 0 },
     { id: 'ai_review', label: { ar: 'مراجعة المساعد', en: 'AI review' }, count: pendingReviews, danger: pendingReviews > 0 },
-    // Section badge counts only the LIVE schedule (today + tomorrow + future +
-    // no-shows) — the stale past buckets shouldn't inflate the headline number.
+    { id: 'appointments', label: { ar: 'المواعيد', en: 'Appointments' }, count: appointments.today.length + appointments.tomorrow.length + appointments.future.length + appointments.no_show.length },
     // Overdue search tasks are flagged: a search nobody has touched is a client
     // waiting on us with no other task anywhere in the system.
     { id: 'search', label: { ar: 'طلبات البحث', en: 'Search requests' }, count: searchTasks.length, danger: searchTasks.some((r) => typeof r.data.due_date === 'string' && Date.parse(r.data.due_date) < now) },
-    { id: 'appointments', label: { ar: 'المواعيد', en: 'Appointments' }, count: appointments.today.length + appointments.tomorrow.length + appointments.future.length + appointments.no_show.length },
-    { id: 'ai_notifications', label: { ar: 'إشعارات الذكاء', en: 'AI notifications' }, count: aiUnread, danger: aiNotifs.some((n) => !n.read_at && n.severity === 'warning') },
     { id: 'preferences', label: { ar: 'تفضيلات ناقصة', en: 'Incomplete Preferences' } },
     { id: 'other', label: { ar: 'مهام أخرى', en: 'Other Tasks' }, count: otherTasks.length },
   ];
+
   // The Other Tasks tab is backed by the `tasks` model — drop it entirely
   // when that model is archived (ARCHIVED_MODULE_MODELS) so the tab's "new
   // task" button can't route into the archived-section notice.
@@ -300,37 +299,6 @@ export default function MyTasksPage() {
 
   const renderActions = () => (
     <>
-      {/* Start of the day: the two WhatsApp jobs a person still has. */}
-      {(pendingApprovals > 0 || pendingReviews > 0) && (
-        <div className="mb-4 grid gap-2 sm:grid-cols-2">
-          {pendingApprovals > 0 && canApprove && (
-            <button
-              type="button"
-              onClick={() => setSection('agent_questions')}
-              className="flex items-center gap-3 rounded-xl border border-copper/40 bg-copper/5 px-4 py-3 text-start hover:bg-copper/10"
-            >
-              <CheckCheck size={18} className="shrink-0 text-copper" />
-              <span className="flex-1">
-                <span className="block font-bold text-chocolate">{isAr ? 'اعتماد رسائل المساعد' : 'Approve AI messages'}</span>
-                <span className="block text-xs text-charcoal/60">{isAr ? `${pendingApprovals} بانتظار اعتمادك` : `${pendingApprovals} waiting for you`}</span>
-              </span>
-            </button>
-          )}
-          {pendingReviews > 0 && (
-            <button
-              type="button"
-              onClick={() => setSection('ai_review')}
-              className="flex items-center gap-3 rounded-xl border border-copper/40 bg-copper/5 px-4 py-3 text-start hover:bg-copper/10"
-            >
-              <Bot size={18} className="shrink-0 text-copper" />
-              <span className="flex-1">
-                <span className="block font-bold text-chocolate">{isAr ? 'مراجعة أداء المساعد في واتساب' : 'Review the AI agent on WhatsApp'}</span>
-                <span className="block text-xs text-charcoal/60">{isAr ? `${pendingReviews} محادثة` : `${pendingReviews} chats`}</span>
-              </span>
-            </button>
-          )}
-        </div>
-      )}
       {actionTasks.length === 0 ? (
         <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">
           {isAr ? 'لا توجد إجراءات مطلوبة الآن — كل شيء تحت السيطرة.' : 'Nothing needs you right now — all clear.'}
@@ -445,82 +413,46 @@ export default function MyTasksPage() {
     );
   };
 
-  const renderAiNotifications = () => (
-    <>
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <p className="text-xs text-charcoal/60">
-          {isAr ? 'إشعارات من الوكيل الذكي على واتساب — يرسلها عند تحويل المحادثة لك أو عند الحاجة لتدخّلك.' : 'Notifications from the WhatsApp AI agent — sent when it hands a chat to you or needs your attention.'}
-        </p>
-        {aiUnread > 0 && (
-          <button
-            type="button"
-            onClick={() => void markAllNotifsRead()}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-charcoal/70 transition-colors hover:bg-cream"
-          >
-            <CheckCheck size={14} /> {isAr ? 'تعليم الكل كمقروء' : 'Mark all read'}
-          </button>
-        )}
-      </div>
-      {aiLoading ? (
-        <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</p>
-      ) : aiNotifs.length === 0 ? (
-        <div className="card flex flex-col items-center gap-3 p-12 text-center">
-          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-copper/10 text-copper">
-            <Bot size={24} />
-          </span>
-          <h2 className="text-lg font-bold text-chocolate">{isAr ? 'لا توجد إشعارات' : 'No notifications'}</h2>
-          <p className="max-w-md text-sm text-charcoal/60">
-            {isAr ? 'عندما يرد الوكيل الذكي على عميل ويحتاج تدخّلك، سيظهر الإشعار هنا.' : 'When the AI agent replies to a customer and needs your attention, its notification appears here.'}
-          </p>
-        </div>
-      ) : (
-        <ul className="space-y-3">
-          {aiNotifs.map((n) => {
-            const sev = AI_SEVERITY[n.severity] ?? AI_SEVERITY.info;
-            const unread = !n.read_at;
-            return (
-              <li key={n.id}>
-                <div
-                  className={`card p-4 transition-opacity ${unread ? '' : 'opacity-70'}`}
-                  style={{ borderInlineStartWidth: 4, borderInlineStartColor: sev.stripe }}
+  const renderHandoffs = () => (aiLoading && handoffs.length === 0 ? null : handoffs.length === 0 ? null : (
+    <section className="mb-6">
+      <h3 className="mb-2 text-sm font-bold text-chocolate">
+        {isAr ? `عملاء ينتظرون شخصًا (${handoffs.length})` : `Customers waiting for a person (${handoffs.length})`}
+      </h3>
+      <ul className="space-y-3">
+        {handoffs.map((n) => (
+          <li key={n.id}>
+            <div className="card p-4" style={{ borderInlineStartWidth: 4, borderInlineStartColor: '#B8734F' }}>
+              <div className="flex flex-wrap items-center gap-2">
+                {n.title && <span className="font-bold text-chocolate">{n.title}</span>}
+                <span className="ms-auto text-xs text-charcoal/50">
+                  {new Date(n.created_at).toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                </span>
+              </div>
+              <p className="mt-1.5 whitespace-pre-wrap text-sm text-charcoal">{n.body}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {n.chat_record_id && (
+                  <button
+                    type="button"
+                    onClick={() => { void markNotifRead(n.id); navigate(`/model/chats/${n.chat_record_id}`); }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white transition-opacity hover:opacity-90"
+                  >
+                    <MessageCircle size={14} /> {isAr ? 'فتح المحادثة' : 'Open chat'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void markNotifRead(n.id)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-charcoal/70 transition-colors hover:bg-cream"
                 >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${sev.badge}`}>{isAr ? sev.ar : sev.en}</span>
-                    {unread && <span className="h-2 w-2 rounded-full bg-copper" title={isAr ? 'غير مقروء' : 'Unread'} />}
-                    {n.title && <span className="font-bold text-chocolate">{n.title}</span>}
-                    <span className="ms-auto text-xs text-charcoal/50">
-                      {new Date(n.created_at).toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' })}
-                    </span>
-                  </div>
-                  <p className="mt-1.5 whitespace-pre-wrap text-sm text-charcoal">{n.body}</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {n.chat_record_id && (
-                      <button
-                        type="button"
-                        onClick={() => { void markNotifRead(n.id); navigate(`/model/chats/${n.chat_record_id}`); }}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#25D366] px-3 py-1.5 text-xs font-bold text-white transition-opacity hover:opacity-90"
-                      >
-                        <MessageCircle size={14} /> {isAr ? 'فتح المحادثة' : 'Open chat'}
-                      </button>
-                    )}
-                    {unread && (
-                      <button
-                        type="button"
-                        onClick={() => void markNotifRead(n.id)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-charcoal/70 transition-colors hover:bg-cream"
-                      >
-                        <CheckCheck size={14} /> {isAr ? 'مقروء' : 'Mark read'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </>
-  );
+                  <CheckCheck size={14} /> {isAr ? 'تم' : 'Done'}
+                </button>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ));
 
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-6">
@@ -556,7 +488,6 @@ export default function MyTasksPage() {
             >
               {s.id === 'ai_review' && <Bot size={13} className="text-copper" />}
               {s.id === 'appointments' && <CalendarDays size={13} />}
-              {s.id === 'ai_notifications' && <Bot size={13} className="text-copper" />}
               {s.id === 'agent_questions' && <HelpCircle size={13} className="text-amber-700" />}
               {isAr ? s.label.ar : s.label.en}
               {s.count != null && s.count > 0 && (
@@ -568,6 +499,7 @@ export default function MyTasksPage() {
       </nav>
 
       {section === 'actions' && renderActions()}
+      {section === 'agent_questions' && renderHandoffs()}
       {section === 'agent_questions' && canApprove && (
         <AiApprovalsSection
           actions={aiApprovals.actions}
@@ -661,7 +593,6 @@ export default function MyTasksPage() {
         </>
       )}
       {section === 'appointments' && renderAppointments()}
-      {section === 'ai_notifications' && renderAiNotifications()}
 
       {section === 'preferences' && (
         <div className="card flex flex-col items-center gap-3 p-12 text-center">

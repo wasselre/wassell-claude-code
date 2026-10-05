@@ -22,10 +22,11 @@ export interface AiNotification {
   chat_record_id: string | null;
   client_record_id: string | null;
   read_at: string | null;
+  meta: Record<string, unknown> | null;
 }
 
 const SELECT_COLS =
-  'id, created_at, source, severity, title, body, chat_wid, chat_record_id, client_record_id, read_at';
+  'id, created_at, source, severity, title, body, chat_wid, chat_record_id, client_record_id, read_at, meta';
 
 export function useAiNotifications() {
   const [notifications, setNotifications] = useState<AiNotification[]>([]);

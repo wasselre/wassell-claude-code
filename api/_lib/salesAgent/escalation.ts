@@ -183,6 +183,41 @@ export function riyadhToday(now = new Date()): string {
 }
 
 /**
+ * 10:00 Riyadh on `day` (+ `offsetDays`) as a UTC ISO string — or now, when
+ * that moment has already passed. Riyadh is UTC+3 all year (no DST).
+ */
+export function riyadhTenAm(day: string, offsetDays: number, now = new Date()): string {
+  const d = new Date(`${day}T07:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return (d.getTime() < now.getTime() ? now : d).toISOString();
+}
+
+/**
+ * A call task for the client's rep — the same shape the browser workflows
+ * create (Appointment booked → confirmation call; Visit → after-visit call).
+ * Those workflows fire only for records saved in the browser; an appointment or
+ * visit the AI saves server-side fires nothing (see the header), so without
+ * this an AI-booked visit had no confirmation call and an AI-recorded visit no
+ * after-visit call (operator, 2026-10-05). A failure here is logged and
+ * reported in the rep alert — the appointment/visit itself is already saved.
+ */
+async function createCallTask(
+  svc: SupabaseClient, ctx: ChatContext, clientId: string,
+  t: { type: 'appointment_confirmation_call' | 'follow_up_call_after_visit'; at: string; link: Record<string, string>; source: string },
+): Promise<boolean> {
+  const { error } = await svc.rpc('record_save', {
+    p_model_id: await modelId(svc, 'followups'), p_id: crypto.randomUUID(),
+    p_data: {
+      client_id: clientId, followup_type: [t.type], followup_status: 'open', scheduled_datetime: t.at,
+      followup_number: 1, ...t.link, ...(ctx.repUserId ? { sales_rep: ctx.repUserId } : {}), creation_source: t.source,
+    },
+    p_expected_version: null,
+  });
+  if (error) { console.error(`[salesAgent] ${t.type} task create failed:`, error.message); return false; }
+  return true;
+}
+
+/**
  * Book the visit the customer agreed to: an ordinary appointment (status
  * «مجدول») for the client, the project and the day, at a rough time. Refuses a
  * day in the past, and the same project + day twice. The rep is alerted; the
@@ -217,8 +252,9 @@ export async function bookVisit(
   const { data: appId, error: idErr } = await svc.rpc('record_assign_auto_id_system', { p_model_name: 'appointments', p_field_name: 'app_id' });
   if (idErr) console.error('[salesAgent] appointment number failed (saving without one):', idErr.message);
 
+  const apptId = crypto.randomUUID();
   const { error } = await svc.rpc('record_save', {
-    p_model_id: apptModel, p_id: crypto.randomUUID(),
+    p_model_id: apptModel, p_id: apptId,
     p_data: {
       ...(typeof appId === 'string' && appId ? { app_id: appId } : {}),
       client_id: clientId, phone_number: ctx.phone, client_name: ctx.clientName ?? ctx.name ?? ctx.phone,
@@ -228,9 +264,13 @@ export async function bookVisit(
     p_expected_version: null,
   });
   if (error) throw new Error(`appointment save failed: ${error.message}`);
+  // The confirmation call: the day before at 10:00 (now, if that has passed).
+  const callOk = await createCallTask(svc, ctx, clientId, {
+    type: 'appointment_confirmation_call', at: riyadhTenAm(a.day, -1), link: { appointment_id: apptId }, source: 'ai_booked_visit',
+  });
   await alertRep(svc, ctx, {
     title: 'موعد زيارة حجزه المساعد الآلي',
-    body: `${a.projectName} — ${a.day} — ${approx}.\nالعميل وافق في المحادثة. أكّد الموعد معه قبلها.${ourProjectId ? '' : '\nالمشروع ليس ضمن مشاريعنا المعتمدة، فسُجّل الموعد بلا مشروع.'}`,
+    body: `${a.projectName} — ${a.day} — ${approx}.\nالعميل وافق في المحادثة. ${callOk ? 'أُضيفت لك مكالمة تأكيد الموعد.' : 'تعذّر إنشاء مكالمة التأكيد — أنشئها يدويًا.'}${ourProjectId ? '' : '\nالمشروع ليس ضمن مشاريعنا المعتمدة، فسُجّل الموعد بلا مشروع.'}`,
     kind: 'visit_booked', dedupe: `agent-visit:${chatWid}:${a.projectId}:${a.day}`,
     meta: { project_id: a.projectId, day: a.day },
   });
@@ -260,8 +300,9 @@ export async function recordVisit(
   if (dErr) throw new Error(`visit check failed: ${dErr.message}`);
   if ((dup ?? []).some((v) => ((v as { data: Record<string, unknown> }).data.project_id ?? null) === ourProjectId)) return { ok: true };
 
+  const visitId = crypto.randomUUID();
   const { error } = await svc.rpc('record_save', {
-    p_model_id: visitsModel, p_id: crypto.randomUUID(),
+    p_model_id: visitsModel, p_id: visitId,
     p_data: {
       client_id: clientId, phone: ctx.phone, name: ctx.clientName ?? ctx.name ?? ctx.phone,
       scheduled_datetime: `${day}T12:00`, ...(ourProjectId ? { project_id: ourProjectId } : {}),
@@ -270,9 +311,13 @@ export async function recordVisit(
     p_expected_version: null,
   });
   if (error) throw new Error(`visit save failed: ${error.message}`);
+  // The after-visit call: the next day at 10:00 (now, for an older visit).
+  const callOk = await createCallTask(svc, ctx, clientId, {
+    type: 'follow_up_call_after_visit', at: riyadhTenAm(riyadhToday(), 1), link: { visit: visitId }, source: 'ai_recorded_visit',
+  });
   await alertRep(svc, ctx, {
     title: 'زيارة سجّلها المساعد الآلي',
-    body: `العميل ذكر في المحادثة أنه زار ${a.projectName} (${day}).${ourProjectId ? '' : ' المشروع ليس ضمن مشاريعنا المعتمدة، فسُجّلت الزيارة بلا مشروع.'}`,
+    body: `العميل ذكر في المحادثة أنه زار ${a.projectName} (${day}). ${callOk ? 'أُضيفت لك مكالمة ما بعد الزيارة.' : 'تعذّر إنشاء مكالمة ما بعد الزيارة — أنشئها يدويًا.'}${ourProjectId ? '' : ' المشروع ليس ضمن مشاريعنا المعتمدة، فسُجّلت الزيارة بلا مشروع.'}`,
     kind: 'visit_recorded', dedupe: `agent-visited:${chatWid}:${a.projectId}:${day}`,
     meta: { project_id: a.projectId, day },
   });
