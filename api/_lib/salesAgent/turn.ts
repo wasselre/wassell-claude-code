@@ -535,6 +535,7 @@ async function runBrainTurn(
     runClientId = (await loadChatContext(svc, chatWid)).clientId;
     saved = await loadSavedProfile(svc, runClientId);
     if (saved?.line) stateLines.push(saved.line);
+    if (saved) stateLines.push(saved.checklist);
   } catch (err) {
     console.error(`[salesAgent] saved profile not loaded chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
   }

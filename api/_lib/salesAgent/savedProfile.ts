@@ -13,6 +13,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { parseLocationItems, type LocationItem } from '../../../src/lib/geo/locationItems.js';
 import { asRangeValue, asSetValue } from '../../../src/lib/clientPrefs/mergePrefs.js';
+import { requestPreferenceGaps } from '../../../src/lib/clients/requestReadiness.js';
 
 export interface SavedProfile {
   clientId: string;
@@ -20,6 +21,8 @@ export interface SavedProfile {
   line: string | null;
   items: LocationItem[];
   placeLabels: string[];
+  /** The specialized-search checklist line (always set for a linked client). */
+  checklist: string;
 }
 
 const PURPOSE_AR: Record<string, string> = { residential: 'سكن', investment: 'استثمار' };
@@ -68,12 +71,33 @@ export function profileLine(d: Record<string, unknown>): { line: string | null; 
   };
 }
 
+/**
+ * PURE — what the CRM still needs before a SPECIALIZED SEARCH (an unanswered
+ * request, worked by the sourcing team with real-estate offices) can open for
+ * this client. Same rule as the request form and the «طلب غير مجاب» outcome
+ * (src/lib/clients/requestReadiness.ts): a unit type, at least one district,
+ * and one of budget / bedrooms / size. The brain's rule 10a uses it to ask the
+ * customer for exactly what is missing — and nothing it already knows.
+ */
+export function requestChecklistLine(d: Record<string, unknown>): string {
+  const gaps = requestPreferenceGaps(d);
+  const mark = (missing: boolean) => (missing ? 'MISSING' : 'known');
+  const status = [
+    `unit type: ${mark(gaps.includes('unit_type'))}`,
+    `at least one district: ${mark(gaps.includes('districts'))}`,
+    `one of budget / bedrooms / size: ${mark(gaps.includes('specs'))}`,
+  ].join(' · ');
+  return gaps.length === 0
+    ? `SPECIALIZED-SEARCH CHECKLIST (rule 10a): ${status} — complete; if nothing fits, a specialized search can open without asking anything.`
+    : `SPECIALIZED-SEARCH CHECKLIST (rule 10a) — saved on the client so far: ${status}. Anything the customer already said in THIS conversation counts as known too; ask only for what is still missing.`;
+}
+
 /** The saved profile of the chat's client. A read error throws. */
 export async function loadSavedProfile(svc: SupabaseClient, clientId: string | null): Promise<SavedProfile | null> {
   if (!clientId) return null;
   const { data, error } = await svc.from('records').select('data').eq('id', clientId).maybeSingle();
   if (error) throw new Error(`saved profile read failed: ${error.message}`);
   if (!data) return null;
-  const p = profileLine(((data as { data?: Record<string, unknown> }).data ?? {}) as Record<string, unknown>);
-  return { clientId, ...p };
+  const d = ((data as { data?: Record<string, unknown> }).data ?? {}) as Record<string, unknown>;
+  return { clientId, ...profileLine(d), checklist: requestChecklistLine(d) };
 }

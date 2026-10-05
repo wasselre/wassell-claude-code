@@ -5,8 +5,9 @@
  * saved preferences (unit type, requested districts, budget, …), the same
  * fields as the client's Preferences tab, rendered by the same schema-bound
  * DynamicField pickers and saved through the same `saveClientPreferences` path.
- * The three a request cannot work without (requestReadiness.ts) are starred and
- * flagged while empty.
+ * What a request cannot work without (requestReadiness.ts) is starred and
+ * flagged while empty: a unit type, a district, and ONE of budget / bedrooms /
+ * size (those three share one star group — any one fills it).
  *
  * Controlled: the host owns the draft (useRecordDraft on the client) and saves.
  */
@@ -28,11 +29,14 @@ export const REQUEST_PREF_SLUGS = [
   'preferred_amenities',
 ] as const;
 
-/** Which gap each field closes (the `location` field carries the districts). */
+/** Which gap each field closes (the `location` field carries the districts;
+ *  budget, bedrooms and size each close the same «one of» gap). */
 const GAP_OF: Partial<Record<string, RequestGap>> = {
   preferred_unit_type: 'unit_type',
   location: 'districts',
-  budget: 'budget',
+  budget: 'specs',
+  preferred_bedrooms: 'specs',
+  preferred_area: 'specs',
 };
 
 const FULL_WIDTH_TYPES = new Set(['location', 'multiselect']);
@@ -92,6 +96,9 @@ export default function RequestPreferencesForm({ client, clientsModel, draft, pa
               <label className={`mb-1 flex items-center gap-1 text-xs font-semibold ${missing ? 'text-terracotta' : 'text-charcoal/60'}`}>
                 {isAr ? field.label_ar : field.label_en}
                 {gap && <span className="text-terracotta">*</span>}
+                {gap === 'specs' && (
+                  <span className="text-[10px] font-normal text-charcoal/45">{L('(واحد من الميزانية / الغرف / المساحة يكفي)', '(budget, bedrooms or size — one is enough)')}</span>
+                )}
               </label>
               <div className={missing ? 'rounded-lg ring-1 ring-[#C09B5F]/60' : ''}>
                 <DynamicField

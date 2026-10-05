@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { profileLine } from '../savedProfile.js';
+import { profileLine, requestChecklistLine } from '../savedProfile.js';
 
 describe('profileLine — the client\'s saved profile, as agent state', () => {
   it('empty profile → no line', () => {
@@ -32,5 +32,27 @@ describe('readinessText — the saved ready / off-plan preference', () => {
     expect(readinessText(['ready', 'off_plan'])).toBe('either');
     expect(readinessText([])).toBeNull();
     expect(profileLine({ preferred_readiness: ['ready'] }).line).toContain('ready or off-plan: ready only');
+  });
+});
+
+describe('requestChecklistLine — what a specialized search still needs (rule 10a)', () => {
+  const district = { id: 'a', kind: 'district', polarity: 'include', district_id: '11111111-1111-4111-8111-111111111111', district_label: 'x' };
+  it('an empty client is missing all three', () => {
+    const l = requestChecklistLine({});
+    expect(l).toContain('unit type: MISSING');
+    expect(l).toContain('at least one district: MISSING');
+    expect(l).toContain('one of budget / bedrooms / size: MISSING');
+    expect(l).toContain('ask only for what is still missing');
+  });
+  it('bedrooms alone satisfy the third item — budget is not required', () => {
+    const l = requestChecklistLine({ preferred_unit_type: ['فيلا'], location_items: [district], preferred_bedrooms: { min: 4 } });
+    expect(l).toContain('complete');
+    expect(l).not.toContain('MISSING');
+  });
+  it('names only the missing piece', () => {
+    const l = requestChecklistLine({ preferred_unit_type: ['دور'], budget: { max: 1200000 } });
+    expect(l).toContain('at least one district: MISSING');
+    expect(l).toContain('unit type: known');
+    expect(l).toContain('one of budget / bedrooms / size: known');
   });
 });

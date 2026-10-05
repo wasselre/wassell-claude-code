@@ -17,8 +17,8 @@ describe('requestPreferenceGaps', () => {
   });
 
   it('an empty profile is missing all three', () => {
-    expect(requestPreferenceGaps({})).toEqual(['unit_type', 'districts', 'budget']);
-    expect(requestPreferenceGaps(null)).toEqual(['unit_type', 'districts', 'budget']);
+    expect(requestPreferenceGaps({})).toEqual(['unit_type', 'districts', 'specs']);
+    expect(requestPreferenceGaps(null)).toEqual(['unit_type', 'districts', 'specs']);
   });
 
   it('an excluded district alone does not count — offices match on included ones', () => {
@@ -31,9 +31,12 @@ describe('requestPreferenceGaps', () => {
     expect(hasRequestedDistrict([{ ...district(''), district_id: '' }])).toBe(false);
   });
 
-  it('a budget needs a positive min or max', () => {
-    expect(requestPreferenceGaps({ ...READY, budget: { min: 0, max: 0 } })).toEqual(['budget']);
-    expect(requestPreferenceGaps({ ...READY, budget: { min: '900000', max: null } })).toEqual([]);
+  it('needs ONE of budget, bedrooms or size — any one is enough', () => {
+    const none = { ...READY, budget: { min: 0, max: 0 } };
+    expect(requestPreferenceGaps(none)).toEqual(['specs']);
+    expect(requestPreferenceGaps({ ...none, budget: { min: '900000', max: null } })).toEqual([]);
+    expect(requestPreferenceGaps({ ...none, preferred_bedrooms: { min: 4, max: null } })).toEqual([]);
+    expect(requestPreferenceGaps({ ...none, preferred_area: { min: null, max: 300 } })).toEqual([]);
   });
 
   it('blank unit types do not count', () => {
@@ -41,8 +44,8 @@ describe('requestPreferenceGaps', () => {
   });
 
   it('lists gaps in the reader’s language', () => {
-    expect(gapListText(['districts', 'budget'], true)).toBe('الأحياء المطلوبة، الميزانية');
-    expect(gapListText(['districts', 'budget'], false)).toBe('Requested districts, Budget');
+    expect(gapListText(['districts', 'specs'], true)).toBe('الأحياء المطلوبة، الميزانية أو عدد الغرف أو المساحة');
+    expect(gapListText(['districts', 'specs'], false)).toBe('Requested districts, Budget, bedrooms or size');
   });
 });
 
