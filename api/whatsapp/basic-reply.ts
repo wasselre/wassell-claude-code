@@ -190,7 +190,8 @@ Actions:
 - "qualify": they want to search for a property but named no specific project → we ask the 3 standard questions (leave reply_ar empty).
 - "project_sheet": they named one of our projects → put the project name in project_name (leave reply_ar empty).
 - "no_service": they ask for rentals / commercial / land (we don't offer these).
-- "handoff": ANYTHING else — negotiation, payment, complaint, a question you can't answer from nothing, or unclear. Default to this when unsure.
+- "not_customer": NOT someone looking to buy a home — a company or person offering THEIR services (cleaning, printing, marketing, design…), a job seeker, a wrong number, spam or an unrelated promotion.
+- "handoff": a real customer with anything else — a question about a project (location, district, price, payment), negotiation, a complaint, or unclear. Default to this when unsure.
 
 Return via the classify tool only.`;
 
@@ -200,7 +201,7 @@ const KIMI_TOOL = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      action: { type: 'string', enum: ['greet', 'qualify', 'project_sheet', 'no_service', 'handoff'] },
+      action: { type: 'string', enum: ['greet', 'qualify', 'project_sheet', 'no_service', 'not_customer', 'handoff'] },
       project_name: { type: 'string', description: 'Only for project_sheet — the project the customer named.' },
       reply_ar: { type: 'string', description: 'Only for greet — a short Arabic greeting.' },
     },
@@ -208,7 +209,7 @@ const KIMI_TOOL = {
   },
 };
 
-async function kimiClassify(message: string): Promise<Decision> {
+export async function kimiClassify(message: string): Promise<Decision> {
   const kimiKey = process.env.KIMI_API_KEY;
   if (!kimiKey) return { action: 'handoff', reason: 'kimi_unconfigured', severity: 'action', holding: HOLDING };
   const client = trackedAnthropic(new Anthropic({ apiKey: kimiKey, baseURL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic' }), { area: 'sales', callSite: 'api/whatsapp/basic-reply', provider: 'moonshot', modelOverride: process.env.KIMI_MODEL || 'kimi-k3' });
@@ -225,12 +226,13 @@ async function kimiClassify(message: string): Promise<Decision> {
     });
     const block = resp.content.find((b) => b.type === 'tool_use');
     if (!block || block.type !== 'tool_use') return { action: 'handoff', reason: 'kimi_no_tool', severity: 'action', holding: HOLDING };
-    const out = block.input as { action?: Action; project_name?: string; reply_ar?: string };
+    const out = block.input as { action?: Action | 'not_customer'; project_name?: string; reply_ar?: string };
     const action = out.action ?? 'handoff';
     if (action === 'greet') return { action: 'greet', reply: (out.reply_ar || '').trim() || undefined };
     if (action === 'project_sheet') return { action: 'project_sheet', projectName: (out.project_name || '').trim() };
     if (action === 'no_service') return { action: 'no_service' };
     if (action === 'qualify') return { action: 'qualify' };
+    if (action === 'not_customer') return { action: 'handoff', reason: 'not_customer', severity: 'action', holding: HOLDING };
     return { action: 'handoff', reason: 'kimi_handoff', severity: 'action', holding: HOLDING };
   } catch (err) {
     console.error('[basic-reply] kimi call failed:', err instanceof Error ? err.message : String(err));
@@ -498,6 +500,20 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     // falls through to the project — a provider error must not silence an ad lead.
     if (d.action === 'kimi') {
       d = await kimiClassify(foldDigits((body.trigger_message ?? '').trim()));
+      // A real customer's QUESTION («فين موقعكم بأي حي», «وين الموقع بالضبط») or
+      // complaint goes to the sales agent, which answers it knowing the ad's
+      // project and hands to a rep itself when it must. Until 2026-10-05 every
+      // such opener got the fixed «بيتواصل معك زميلي» line — 3 real buyers in
+      // 7 days, while the same check correctly held back vendors and job seekers
+      // (now `not_customer`, which keeps the line below).
+      if (d.action === 'handoff' && d.reason === 'kimi_handoff' && agentAllowed && agentScopeAll(agentCfg)) {
+        const adProjectId = body.ad.project_id ?? null;
+        await startAgentConversation(supa, {
+          chatWid, source: adProjectId ? 'ad_project' : 'inbound', adProjectId,
+          text: body.trigger_message ?? '', lang: adLang,
+        });
+        return jsonRes(nodeRes, 200, { ad: true, agent: 'started', source: 'ad_question' });
+      }
       if (d.action === 'no_service' || (d.action === 'handoff' && d.reason !== 'kimi_error')) {
         const text = d.action === 'no_service'
           ? (adLang === 'en' ? NO_SERVICE_EN : NO_SERVICE)
@@ -506,7 +522,9 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           ? await enqueueAiReply(supa, { chatWid, text, deviceId: body.device_id, jobId: 'basic', force: true })
           : null;
         if (d.action === 'handoff') {
-          await notifyHandoff(supa, chatWid, chatRecordId, 'عميل من إعلان أرسل رسالة تحتاج تدخّل بشري (شكوى/استفسار خارج النطاق) — يحتاج متابعة مندوب.');
+          await notifyHandoff(supa, chatWid, chatRecordId, d.reason === 'not_customer'
+            ? 'رسالة من إعلان ليست من عميل (عرض خدمات / توظيف / رقم خاطئ) — للمراجعة.'
+            : 'عميل من إعلان أرسل رسالة تحتاج تدخّل بشري (شكوى/استفسار خارج النطاق) — يحتاج متابعة مندوب.');
         }
         return jsonRes(nodeRes, 200, { ad: true, action: `ad_${d.action}`, sent: res?.queued ?? false, handoff: d.action === 'handoff' });
       }
@@ -623,7 +641,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     severity = d.severity ?? 'action';
     const holdEn = d.reason === 'media' ? MEDIA_HOLDING_EN : HOLDING_EN;
     replyText = d.silent ? null : (lang === 'en' ? holdEn : (d.holding || HOLDING));
-    summary = d.reason === 'b2b'
+    summary = d.reason === 'b2b' || d.reason === 'not_customer'
       ? 'رسالة تسويق/جهة أعمال (ليست عميلاً) — تحتاج مراجعة بشرية.'
       : d.reason === 'media'
         ? 'العميل أرسل وسائط (صوت/صورة/ملف) بدون نص — يحتاج متابعة مندوب.'
