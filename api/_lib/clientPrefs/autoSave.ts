@@ -80,11 +80,16 @@ export interface SaveTarget {
   profileId: string | null;
   replace?: WishField[];
   /**
-   * A second wish was filed into its own new profile from the customer's new
-   * messages. The whole-chat proposals mix the two wishes — they are left for
-   * the rep instead of being merged into either profile.
+   * A second wish got its own new profile. The whole-chat proposals mix the two
+   * wishes, so each value goes by WHERE the customer said it: quoted in the new
+   * messages → the new profile; quoted earlier → `profileId` (the first wish).
    */
-  leaveProposals?: boolean;
+  split?: { profileId: string; newTexts: string[] };
+}
+
+/** The customer's new messages as a conversation, for the quote check. PURE. */
+function newConversation(newTexts: readonly string[]): Conversation {
+  return { channel: 'chat', id: 'new-messages', turns: newTexts.map((text) => ({ speaker: 'client' as const, text })) };
 }
 
 interface ChangeRow {
@@ -220,67 +225,80 @@ export async function autoSavePrefs(
     }
 
     const isCall = prop.source === 'call';
-    let before: Record<string, unknown> = {};
-    let patch: Record<string, unknown> = {};
-    let added: Record<string, string[]> = {};
-    let kept: Array<{ slug: string; current: unknown; heard: unknown }> = [];
+    // One part per profile written (two only for a second wish — see SaveTarget.split).
+    const split = a.target?.split;
+    const splitConv = split ? newConversation(split.newTexts) : null;
+    const newFields = splitConv ? fields.filter((f) => customerSaidIt(splitConv, suggestions[f]?.quote ?? null)) : [];
+    const partSpecs: Array<{ profileId: string | null; fields: string[]; replace: boolean }> = [
+      { profileId: a.target?.profileId ?? null, fields: fields.filter((f) => !newFields.includes(f)), replace: true },
+      ...(split ? [{ profileId: split.profileId, fields: newFields, replace: false }] : []),
+    ].filter((ps) => ps.fields.length > 0);
+    interface PartResult {
+      profileId: string | null; profileName: string | null; before: Record<string, unknown>; patch: Record<string, unknown>;
+      added: Record<string, string[]>; kept: Array<{ slug: string; current: unknown; heard: unknown }>; replaced: string[];
+    }
+    let parts: PartResult[] = [];
     let dropped: Array<{ slug: string; value: string }> = [];
-    let replaced: string[] = [];
-    let profileId: string | null = null;
-    let profileName: string | null = null;
-    if (fields.length) {
+    if (partSpecs.length) {
       await recordSaveWithRetry(sb, {
         recordId: prop.client_id,
         build: (fresh) => {
-          const target = resolveTarget(fresh, a.target?.profileId);
-          if (a.target?.profileId && !target) console.error(`[auto-save] proposal=${prop.id} target profile ${a.target.profileId} is gone or active — writing the active profile`);
+          parts = []; dropped = [];
           const { activeId } = readStoredProfiles(fresh);
-          profileId = recordedProfileId(fresh, target);
-          profileName = targetProfileName(fresh, target);
-          const values = profileValues(fresh, target);
-          before = Object.fromEntries(fields.map((f) => [f, values[f] ?? null]));
-          replaced = [];
-          if (isCall) {
-            const r = buildFillEmptyPatch(values, suggestions, fields, options);
-            patch = r.patch; dropped = r.dropped; kept = []; added = {};
-            for (const [slug, v] of Object.entries(r.patch)) if (PREF_FIELD_KINDS[slug] === 'set') added[slug] = v as string[];
-          } else {
-            const mine = history.filter((h) => rowInProfile(h.profile_id, target, activeId));
-            const lastAi = new Map<string, unknown>();
-            const aiAdded: Record<string, string[]> = {};
-            for (const h of mine) {
-              if (PREF_FIELD_KINDS[h.field] === 'range' && !lastAi.has(h.field)) lastAi.set(h.field, h.after_value);
-              if (PREF_FIELD_KINDS[h.field] === 'set') aiAdded[h.field] = [...(aiAdded[h.field] ?? []), ...asSetValue(h.added)];
+          let data = fresh;
+          for (const ps of partSpecs) {
+            const target = resolveTarget(fresh, ps.profileId);
+            if (ps.profileId && !target) console.error(`[auto-save] proposal=${prop.id} target profile ${ps.profileId} is gone or active — writing the active profile`);
+            const values = profileValues(data, target);
+            const part: PartResult = {
+              profileId: recordedProfileId(fresh, target), profileName: targetProfileName(fresh, target),
+              before: Object.fromEntries(ps.fields.map((f) => [f, values[f] ?? null])), patch: {}, added: {}, kept: [], replaced: [],
+            };
+            if (isCall) {
+              const r = buildFillEmptyPatch(values, suggestions, ps.fields, options);
+              part.patch = r.patch; dropped.push(...r.dropped);
+              for (const [slug, v] of Object.entries(r.patch)) if (PREF_FIELD_KINDS[slug] === 'set') part.added[slug] = v as string[];
+            } else {
+              const mine = history.filter((h) => rowInProfile(h.profile_id, target, activeId));
+              const lastAi = new Map<string, unknown>();
+              const aiAdded: Record<string, string[]> = {};
+              for (const h of mine) {
+                if (PREF_FIELD_KINDS[h.field] === 'range' && !lastAi.has(h.field)) lastAi.set(h.field, h.after_value);
+                if (PREF_FIELD_KINDS[h.field] === 'set') aiAdded[h.field] = [...(aiAdded[h.field] ?? []), ...asSetValue(h.added)];
+              }
+              const owned = new Set([...lastAi].filter(([f, v]) => valueEqual(asRangeValue(values[f]), asRangeValue(v))).map(([f]) => f));
+              const r = buildAiPrefPatch(values, suggestions, ps.fields, options, owned, ps.replace && replaceSlugs.size ? { slugs: replaceSlugs, aiAdded } : undefined);
+              part.patch = r.patch; part.added = r.added; part.kept = r.keptRepValue; part.replaced = r.replaced; dropped.push(...r.dropped);
             }
-            const owned = new Set([...lastAi].filter(([f, v]) => valueEqual(asRangeValue(values[f]), asRangeValue(v))).map(([f]) => f));
-            const r = buildAiPrefPatch(values, suggestions, fields, options, owned, replaceSlugs.size ? { slugs: replaceSlugs, aiAdded } : undefined);
-            patch = r.patch; dropped = r.dropped; kept = r.keptRepValue; added = r.added; replaced = r.replaced;
+            if (Object.keys(part.patch).length) data = writeProfileValues(data, target, part.patch);
+            parts.push(part);
           }
-          return Object.keys(patch).length ? writeProfileValues(fresh, target, patch) : null;
+          return parts.some((pt) => Object.keys(pt.patch).length) ? data : null;
         },
       });
     }
     for (const d of dropped) console.error(`[auto-save] proposal=${prop.id} dropped '${d.value}' for ${d.slug} — not an option of the live clients schema`);
     wroteClient = true;
 
-    const written = Object.keys(patch);
+    const written = parts.flatMap((pt) => Object.keys(pt.patch));
+    const kept = parts.flatMap((pt) => pt.kept);
     const { error: mErr } = await sb.from('client_pref_proposals')
-      .update({ saved_fields: written, after_values: patch }).eq('id', prop.id);
+      .update({ saved_fields: written, after_values: Object.assign({}, ...parts.map((pt) => pt.patch)) }).eq('id', prop.id);
     if (mErr) console.error(`[auto-save] proposal=${prop.id} saved but its saved_fields update failed: ${mErr.message}`);
 
-    await logAiChanges(sb, [
-      ...written.map((slug) => ({
-        client_id: prop.client_id, kind: 'pref' as const, field: slug, before_value: before[slug] ?? null, after_value: patch[slug],
-        added: added[slug] ?? null, source: a.source, source_ref: a.sourceRef, proposal_id: prop.id, quote: suggestions[slug]?.quote ?? null,
-        note: replaced.includes(slug) ? 'replaced' : null, profile_id: profileId, profile_name: profileName,
+    await logAiChanges(sb, parts.flatMap((pt) => [
+      ...Object.keys(pt.patch).map((slug) => ({
+        client_id: prop.client_id, kind: 'pref' as const, field: slug, before_value: pt.before[slug] ?? null, after_value: pt.patch[slug],
+        added: pt.added[slug] ?? null, source: a.source, source_ref: a.sourceRef, proposal_id: prop.id, quote: suggestions[slug]?.quote ?? null,
+        note: pt.replaced.includes(slug) ? 'replaced' : null, profile_id: pt.profileId, profile_name: pt.profileName,
       })),
-      ...kept.map((k) => ({
+      ...pt.kept.map((k) => ({
         client_id: prop.client_id, kind: 'pref' as const, field: k.slug, before_value: k.current, after_value: k.heard, applied: false,
         note: 'kept_rep_value', source: a.source, source_ref: a.sourceRef, proposal_id: prop.id, quote: suggestions[k.slug]?.quote ?? null,
-        profile_id: profileId, profile_name: profileName,
+        profile_id: pt.profileId, profile_name: pt.profileName,
       })),
-    ]);
-    log(`[auto-save] prefs proposal=${prop.id} client=${prop.client_id} wrote=${written.join(',') || '-'} kept_rep=${kept.map((k) => k.slug).join(',') || '-'} unverified=${unverified.join(',') || '-'}`);
+    ]));
+    log(`[auto-save] prefs proposal=${prop.id} client=${prop.client_id} wrote=${written.join(',') || '-'}${split ? ` (new profile: ${newFields.join(',') || '-'})` : ''} kept_rep=${kept.map((k) => k.slug).join(',') || '-'} unverified=${unverified.join(',') || '-'}`);
     return { status: written.length ? 'saved' : 'nothing', written, keptRepValue: kept.map((k) => k.slug), unverified };
   } catch (err) {
     if (wroteClient) {
@@ -407,6 +425,18 @@ export async function autoSavePlaces(
     aiPlaceHistory = (prev ?? []) as typeof aiPlaceHistory;
   }
 
+  // A second wish: the places the customer named in the NEW messages go to its
+  // profile; the rest stay with the first wish.
+  const split = a.target?.split;
+  const splitConv = split ? newConversation(split.newTexts) : null;
+  const newEvidence = splitConv
+    ? keep.filter((id) => (placementsByEvidence(pruned)[id]?.label ?? '').split(' / ').some((span) => span.trim() && customerSaidIt(splitConv, span)))
+    : [];
+  const newSigs = new Set(newEvidence.length
+    ? geoPreferenceToLocationItems(pruneGeoExpression(pruned, keep.filter((id) => !newEvidence.includes(id)))).map(locationItemSignature)
+    : []);
+  let splitAdded: LocationItem[] = [];
+
   let addedItems: LocationItem[] = [];
   let removedItems: LocationItem[] = [];
   let profileId: string | null = null;
@@ -428,7 +458,24 @@ export async function autoSavePlaces(
           const { activeId } = readStoredProfiles(fresh);
           profileId = recordedProfileId(fresh, target);
           profileName = targetProfileName(fresh, target);
-          before = parseLocationItems(profileValues(fresh, target).location_items);
+          // Places for the second wish's profile, written first (the main merge below never sees them).
+          let base0 = fresh;
+          splitAdded = [];
+          const forSplit = split ? its.filter((it) => newSigs.has(locationItemSignature(it))) : [];
+          if (split && forSplit.length) {
+            const splitTarget = resolveTarget(fresh, split.profileId);
+            if (splitTarget) {
+              const cur = parseLocationItems(profileValues(fresh, splitTarget).location_items);
+              const merged = mergeLocationItems(cur, forSplit);
+              const curSigs = new Set(cur.map(locationItemSignature));
+              splitAdded = merged.filter((it) => !curSigs.has(locationItemSignature(it)));
+              base0 = writeProfileValues(fresh, splitTarget, { location_items: merged });
+            } else {
+              console.error(`[auto-save] places proposal=${prop.id} second-wish profile ${split.profileId} is gone or active — its places stay with the first wish`);
+            }
+          }
+          if (split && splitAdded.length) its = its.filter((it) => !newSigs.has(locationItemSignature(it)));
+          before = parseLocationItems(profileValues(base0, target).location_items);
           if (opts.onlyIfNoPlaces) buildGeoApplyData({ location_items: before }, its, opts); // throws CLIENT_HAS_PLACES
           const aiSigs = new Set(aiPlaceHistory
             .filter((h) => rowInProfile(h.profile_id, target, activeId))
@@ -439,7 +486,8 @@ export async function autoSavePlaces(
           const afterSigs = new Set(after.map(locationItemSignature));
           addedItems = after.filter((it) => !beforeSigs.has(locationItemSignature(it)));
           removedItems = before.filter((it) => !afterSigs.has(locationItemSignature(it)));
-          return addedItems.length || removedItems.length ? writeProfileValues(fresh, target, { location_items: after }) : null;
+          if (!addedItems.length && !removedItems.length) return splitAdded.length ? base0 : null;
+          return writeProfileValues(base0, target, { location_items: after });
         },
       });
       return { before, after };
@@ -488,8 +536,13 @@ export async function autoSavePlaces(
     label: [...new Set(removedItems.map(itemLabel).filter(Boolean))].slice(0, 3).join('، '),
     source: a.source, source_ref: a.sourceRef, proposal_id: prop.id, profile_id: profileId, profile_name: profileName,
   }] : [];
+  const splitName = split && splitAdded.length ? (await readProfileName(sb, prop.client_id, split.profileId)) : null;
   await logAiChanges(sb, [
-    ...groupAddedByMention(pruned, keep, addedItems).map((g) => ({
+    ...(split && splitAdded.length ? groupAddedByMention(pruned, newEvidence, splitAdded).map((g) => ({
+      client_id: prop.client_id, kind: 'place' as const, field: 'location_items', added: g.items, label: g.label,
+      source: a.source, source_ref: a.sourceRef, proposal_id: prop.id, profile_id: split.profileId, profile_name: splitName,
+    })) : []),
+    ...groupAddedByMention(pruned, keep.filter((id) => !(splitAdded.length && newEvidence.includes(id))), addedItems).map((g) => ({
       client_id: prop.client_id, kind: 'place' as const, field: 'location_items', added: g.items, label: g.label,
       source: a.source, source_ref: a.sourceRef, proposal_id: prop.id, profile_id: profileId, profile_name: profileName,
     })),
@@ -499,8 +552,16 @@ export async function autoSavePlaces(
       quote: d.reason ?? null, source: a.source, source_ref: a.sourceRef, proposal_id: prop.id, profile_id: profileId, profile_name: profileName,
     })),
   ]);
-  log(`[auto-save] places proposal=${prop.id} client=${prop.client_id} added=${addedItems.length} removed=${removedItems.length} doubted=${doubtedRows.length}`);
-  return { status: addedItems.length || removedItems.length ? 'saved' : 'nothing', added: addedItems.length, doubted: doubtedRows.length };
+  log(`[auto-save] places proposal=${prop.id} client=${prop.client_id} added=${addedItems.length}${split ? ` new-profile=${splitAdded.length}` : ''} removed=${removedItems.length} doubted=${doubtedRows.length}`);
+  return { status: addedItems.length || removedItems.length || splitAdded.length ? 'saved' : 'nothing', added: addedItems.length + splitAdded.length, doubted: doubtedRows.length };
+}
+
+/** A profile's name, for the change trail. */
+async function readProfileName(sb: SupabaseClient, clientId: string, profileId: string): Promise<string | null> {
+  const { data, error } = await sb.from('records').select('data').eq('id', clientId).maybeSingle();
+  if (error) throw new Error(`client read failed: ${error.message}`);
+  const d = (data as { data: Record<string, unknown> } | null)?.data ?? {};
+  return readStoredProfiles(d).profiles.find((p) => p.id === profileId)?.name ?? null;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -564,14 +625,14 @@ export async function createAiProfile(
 
 /** The route as save targets — a second wish becomes a new profile first. */
 export async function targetForRoute(
-  sb: SupabaseClient, route: WishRoute, a: { clientId: string; source: ChangeSource; sourceRef: string | null; log?: (m: string) => void },
+  sb: SupabaseClient, route: WishRoute, a: { clientId: string; source: ChangeSource; sourceRef: string | null; newTexts?: string[]; log?: (m: string) => void },
 ): Promise<SaveTarget> {
   if (route.kind === 'same') return { profileId: route.profileId };
   if (route.kind === 'changed') return { profileId: route.profileId, replace: route.fields };
   const p = await createAiProfile(sb, { clientId: a.clientId, name: route.profileName, quote: route.quote, source: a.source, sourceRef: a.sourceRef });
   const written = await fillProfile(sb, { clientId: a.clientId, profileId: p.profileId, profileName: p.name, values: route.values, source: a.source, sourceRef: a.sourceRef });
   a.log?.(`[auto-save] client=${a.clientId} new profile «${p.name}» (${p.profileId}) for a second wish — filled ${written.join(',') || 'nothing'}`);
-  return { profileId: p.profileId, leaveProposals: true };
+  return { profileId: null, split: { profileId: p.profileId, newTexts: a.newTexts ?? [] } };
 }
 
 /** Write a new profile's values (the second wish's, each quoted), logged per field with Undo. */
@@ -615,7 +676,7 @@ export async function routeChatRead(
   if (error) throw new Error(`client read failed: ${error.message}`);
   if (!data) throw new Error(`client ${a.clientId} not found`);
   const route = await routeWish({ clientId: a.clientId, data: (data as { data: Record<string, unknown> }).data ?? {}, conversation: a.conversation, heard, log: a.log });
-  return targetForRoute(sb, route, { clientId: a.clientId, source: 'chat', sourceRef: a.chatWid, log: a.log });
+  return targetForRoute(sb, route, { clientId: a.clientId, source: 'chat', sourceRef: a.chatWid, newTexts: a.newTexts, log: a.log });
 }
 
 // ────────────────────────────────────────────────────────────────────────────

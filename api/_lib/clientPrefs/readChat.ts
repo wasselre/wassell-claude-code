@@ -127,11 +127,7 @@ export function makeReadChatDeps(sb: SupabaseClient): ReadChatDeps {
         console.error(`[chat-read] client=${a.clientId} wish routing failed — nothing auto-saved, proposals left for the rep:`, errMsg(err));
         return { error: `route: ${errMsg(err)}` };
       }
-      out.route = target.leaveProposals ? `second:${target.profileId}` : target.replace?.length ? `changed:${target.replace.join(',')}` : target.profileId ? `profile:${target.profileId}` : 'active';
-      if (target.leaveProposals) {
-        a.log(`[chat-read] client=${a.clientId} second wish filed into profile ${target.profileId} — the whole-chat proposals are left for the rep`);
-        return out;
-      }
+      out.route = target.split ? `second:${target.split.profileId}` : target.replace?.length ? `changed:${target.replace.join(',')}` : target.profileId ? `profile:${target.profileId}` : 'active';
       // Each half on its own: a failed places save must not stop the preferences.
       if (a.geoProposalId) {
         try {
