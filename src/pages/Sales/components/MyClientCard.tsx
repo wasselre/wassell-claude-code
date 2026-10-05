@@ -1,5 +1,6 @@
-import { Clock, Activity, CalendarCheck, MapPinned, FileText, BadgeDollarSign, Hash } from 'lucide-react';
+import { Clock, Activity, MessagesSquare, CalendarCheck, MapPinned, FileText, BadgeDollarSign, Hash } from 'lucide-react';
 import type { SalesClient } from '../lib/salesClients';
+import { INTERACTION_KIND_LABEL, type LastInteraction } from '../lib/lastInteraction';
 import { formatRelative, nextActionTypeLabel } from '@/pages/Clients/lib/lifecycleDisplay';
 import { getFollowUpTypeConfig, getOutcome } from '@/lib/salesProcess';
 import { HealthBadge, MetaChip, VisitRatingStars, Chip, Dash } from '@/pages/Clients/components/clientChips';
@@ -12,6 +13,9 @@ interface Props {
   returnTo: string;
   onOpen: (clientId: string) => void;
   onWhatsApp: (clientId: string, phone: string | null) => void;
+  /** Newest contact on any channel (follow-up, WhatsApp, call). `null` = never
+   *  contacted; leave it out to hide the line. */
+  lastInteraction?: LastInteraction | null;
 }
 
 /** Left accent color encoding the most important state. */
@@ -50,7 +54,7 @@ function outcomeLabel(result: string | null, isAr: boolean): string | null {
  * A single client in the My Clients sales list — a dense "situational" card so
  * the rep grasps the client's state without opening ten records.
  */
-export default function MyClientCard({ sc, isAr, now, returnTo, onOpen, onWhatsApp }: Props) {
+export default function MyClientCard({ sc, isAr, now, returnTo, onOpen, onWhatsApp, lastInteraction }: Props) {
   const { view: v } = sc;
   const a = accent(sc);
   const latestType = followupTypeLabel(sc.followup.latest?.typeKey ?? null, isAr);
@@ -105,6 +109,22 @@ export default function MyClientCard({ sc, isAr, now, returnTo, onOpen, onWhatsA
 
         {/* Latest + next action */}
         <div className="flex flex-col gap-1.5 text-xs lg:w-64">
+          {lastInteraction !== undefined ? (
+            <div className="flex items-start gap-1.5">
+              <MessagesSquare size={13} className="mt-0.5 shrink-0 text-copper" />
+              <span className="text-charcoal/70">
+                <span className="text-charcoal/50">{isAr ? 'آخر تفاعل: ' : 'Last contact: '}</span>
+                {lastInteraction ? (
+                  <>
+                    <span className="font-semibold text-charcoal">{formatRelative(lastInteraction.at, isAr, now)}</span>
+                    <span className="text-charcoal/60"> · {isAr ? INTERACTION_KIND_LABEL[lastInteraction.kind].ar : INTERACTION_KIND_LABEL[lastInteraction.kind].en}</span>
+                  </>
+                ) : (
+                  <Dash />
+                )}
+              </span>
+            </div>
+          ) : null}
           <div className="flex items-start gap-1.5">
             <Activity size={13} className="mt-0.5 shrink-0 text-charcoal/40" />
             <span className="text-charcoal/70">

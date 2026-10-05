@@ -1,34 +1,25 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users } from 'lucide-react';
+import { Search, Users, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useIsAdmin } from '@/hooks/usePermission';
+import type { AppModel } from '@/types';
 import {
   resolveClientView,
   fieldBySlug,
   type ClientView,
   type ClientViewCtx,
 } from '@/pages/Clients/lib/clientView';
-import {
-  EMPTY_FILTERS,
-  clientMatchesFilters,
-  filtersAreEmpty,
-  type ClientFilters,
-} from '@/pages/Clients/lib/clientFilters';
-import ClientsFilterBar, { type FilterOption, type FilterOptionSources } from '@/pages/Clients/components/ClientsFilterBar';
 import { useClientWhatsApp } from '@/pages/Clients/lib/useClientWhatsApp';
 import { isRetiredClient } from '@/lib/clients/retirement';
 import { indexClientFollowups } from './lib/myWork';
+import { buildRelatedCountsIndex, enrichClients, type SalesClient } from './lib/salesClients';
 import {
-  buildRelatedCountsIndex,
-  enrichClients,
-  matchesSalesTab,
-  computeTabCounts,
-  SALES_TAB_ORDER,
-  SALES_TAB_LABELS,
-  type SalesClient,
-  type SalesClientTab,
-} from './lib/salesClients';
+  buildLastInteractionIndex,
+  inInteractionWindow,
+  type InteractionWindow,
+  type LastInteraction,
+} from './lib/lastInteraction';
 import MyClientCard from './components/MyClientCard';
 
 /** Read an assignee field's user id (scalar, array, or { user_id } shapes). */
@@ -52,10 +43,33 @@ function str(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v : null;
 }
 
+interface FilterOption {
+  value: string;
+  label: string;
+}
+
+function fieldOptions(model: AppModel | null, slug: string, isAr: boolean): FilterOption[] {
+  const f = fieldBySlug(model, slug);
+  return (f?.options ?? []).map((o) => ({ value: o.value, label: (isAr ? o.label_ar : o.label_en) || o.value }));
+}
+
+const NO_REP = '__none__';
+
+const WINDOWS: { key: InteractionWindow; ar: string; en: string }[] = [
+  { key: 'all', ar: 'الكل', en: 'All' },
+  { key: 'today', ar: 'اليوم', en: 'Today' },
+  { key: 'yesterday', ar: 'أمس', en: 'Yesterday' },
+  { key: 'week', ar: 'آخر ٧ أيام', en: 'Last 7 days' },
+  { key: 'none', ar: 'لم نتواصل بعد', en: 'Never contacted' },
+];
+
 /**
- * My Clients — the sales rep's own book of business. Reps see clients they own;
- * managers/admins see everyone and can filter by rep. Tabs slice the list by
- * sales situation (interested / serious / active / late / unqualified).
+ * Clients — one plain list of every client (operator, 2026-10-05: the segment
+ * tabs and the long filter bar were not used). Filters: stage, status, sales
+ * rep, and «last contact» (today / yesterday / 7 days / never) — the newest
+ * moment we were in touch on any channel (a completed follow-up, a WhatsApp
+ * message, a phone call). Sorted by last contact, newest first. Reps see their
+ * own clients; managers see everyone and can pick a rep.
  */
 export default function MyClientsPage() {
   const navigate = useNavigate();
@@ -67,31 +81,30 @@ export default function MyClientsPage() {
   const initialized = useAppStore((s) => s.initialized);
   const isManager = useIsAdmin();
   const isAr = language === 'ar';
+  const L = (ar: string, en: string) => (isAr ? ar : en);
 
   const { openWhatsApp, whatsAppModals } = useClientWhatsApp();
 
   const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
   const ctx: ClientViewCtx = useMemo(() => ({ models, records, users, language }), [models, records, users, language]);
 
-  const [tab, setTab] = useState<SalesClientTab>('all');
-  const [filters, setFilters] = useState<ClientFilters>(EMPTY_FILTERS);
-  // Scope toggle (D14): reps always see their own book; managers can switch
-  // between their own clients and everyone's.
-  const [scope, setScope] = useState<'mine' | 'all'>(isManager ? 'all' : 'mine');
+  const [search, setSearch] = useState('');
+  const [stage, setStage] = useState('');
+  const [status, setStatus] = useState('');
+  const [ownerId, setOwnerId] = useState('');
+  const [win, setWin] = useState<InteractionWindow>('all');
 
   const now = Date.now();
 
-  // Scope the raw client records. Retired clients are excluded everywhere here
-  // (list, tab counts, header) — they reappear only if they message us again.
+  // Retired clients are left out — they come back only if they message us
+  // again. Reps only ever see their own book.
   const scopedRecords = useMemo(() => {
     if (!clientsModel) return [];
     const all = (records[clientsModel.id] ?? []).filter((r) => !isRetiredClient(r));
-    const mineOnly = all.filter((r) => ownerIdOf((r.data as Record<string, unknown>).client_owner) === currentUserId);
-    if (!isManager) return mineOnly; // reps: always their own book
-    return scope === 'all' ? all : mineOnly; // managers can switch
-  }, [clientsModel, records, isManager, currentUserId, scope]);
+    if (isManager) return all;
+    return all.filter((r) => ownerIdOf((r.data as Record<string, unknown>).client_owner) === currentUserId);
+  }, [clientsModel, records, isManager, currentUserId]);
 
-  // Resolve + enrich into SalesClients (views + related counts + follow-up summary).
   const sales: SalesClient[] = useMemo(() => {
     if (!clientsModel) return [];
     const views: ClientView[] = scopedRecords.map((r) => resolveClientView(r, ctx));
@@ -104,141 +117,157 @@ export default function MyClientsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientsModel, scopedRecords, ctx, models, records]);
 
-  // Apply the field filters (search / stage / status / preferences / rep / …),
-  // THEN compute per-tab counts so the badges reflect the current filter context.
-  const fieldFiltered = useMemo(
-    () => sales.filter((sc) => clientMatchesFilters(sc.view, filters, now)),
-    [sales, filters, now],
+  const lastByClient: Map<string, LastInteraction> = useMemo(
+    () => (clientsModel ? buildLastInteractionIndex(models, records, clientsModel.id) : new Map()),
+    [clientsModel, models, records],
   );
-  const tabCounts = useMemo(() => computeTabCounts(fieldFiltered), [fieldFiltered]);
+
+  const ownerById = useMemo(
+    () => new Map(scopedRecords.map((r) => [r.id, ownerIdOf((r.data as Record<string, unknown>).client_owner)])),
+    [scopedRecords],
+  );
 
   const visible = useMemo(() => {
-    const list = fieldFiltered.filter((sc) => matchesSalesTab(sc, tab));
-    // Overdue first, then by soonest scheduled follow-up, then name.
+    const q = search.trim().toLowerCase();
+    const list = sales.filter((sc) => {
+      const v = sc.view;
+      if (stage && v.stage !== stage) return false;
+      if (status && v.status !== status) return false;
+      if (ownerId === NO_REP && ownerById.get(v.id)) return false;
+      if (ownerId && ownerId !== NO_REP && ownerById.get(v.id) !== ownerId) return false;
+      if (!inInteractionWindow(lastByClient.get(v.id), win, now)) return false;
+      if (q) {
+        const hay = [v.name, v.phone, sc.code].filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    // Newest contact first; never-contacted at the bottom, by name.
+    const at = (sc: SalesClient) => {
+      const li = lastByClient.get(sc.view.id);
+      return li ? Date.parse(li.at) : null;
+    };
     return list.sort((a, b) => {
-      if (a.followup.late !== b.followup.late) return a.followup.late ? -1 : 1;
-      const an = a.followup.next?.scheduledISO ? Date.parse(a.followup.next.scheduledISO) : Infinity;
-      const bn = b.followup.next?.scheduledISO ? Date.parse(b.followup.next.scheduledISO) : Infinity;
-      if (an !== bn) return an - bn;
+      const ta = at(a);
+      const tb = at(b);
+      if (ta !== tb) {
+        if (ta === null) return 1;
+        if (tb === null) return -1;
+        return tb - ta;
+      }
       return (a.view.name ?? '').localeCompare(b.view.name ?? '', isAr ? 'ar' : 'en');
     });
-  }, [fieldFiltered, tab, isAr]);
+    // `now` is read fresh each render; re-sorting on every tick is not wanted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sales, search, stage, status, ownerId, win, lastByClient, ownerById, isAr]);
 
-  // Filter dropdown sources, derived from the scoped set.
-  const options: FilterOptionSources = useMemo(() => {
-    const toOpts = (slug: string): FilterOption[] => {
-      const f = fieldBySlug(clientsModel, slug);
-      return (f?.options ?? []).map((o) => ({ value: o.value, label: (isAr ? o.label_ar : o.label_en) || o.value }));
-    };
-    const uniq = (vals: (string | null)[]): FilterOption[] => {
-      const set = new Set<string>();
-      vals.forEach((v) => v && set.add(v));
-      return [...set].sort((a, b) => a.localeCompare(b, isAr ? 'ar' : 'en')).map((v) => ({ value: v, label: v }));
-    };
-    const projMap = new Map<string, string>();
-    const listMap = new Map<string, string>();
-    sales.forEach((sc) => {
-      sc.view.preferredProjects.forEach((p) => projMap.set(p.id, p.name ?? p.id));
-      sc.view.preferredMarketListings.forEach((l) => listMap.set(l.id, l.name ?? l.id));
-    });
-    const fromMap = (m: Map<string, string>): FilterOption[] =>
-      [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], isAr ? 'ar' : 'en')).map(([value, label]) => ({ value, label }));
-    return {
-      owners: users
-        .map((u) => ({ value: u.id, label: (isAr ? u.name_ar : u.name_en) || u.email }))
-        .sort((a, b) => a.label.localeCompare(b.label, isAr ? 'ar' : 'en')),
-      stages: toOpts('client_stage'),
-      statuses: toOpts('client_status'),
-      nextActions: toOpts('next_action_type'),
-      lifecycles: toOpts('lifecycle_health'),
-      unitTypes: toOpts('preferred_unit_type'),
-      cities: uniq(sales.map((sc) => sc.view.preferredCity)),
-      districts: uniq(sales.flatMap((sc) => (sc.view.preferredDistrict ? sc.view.preferredDistrict.split('، ') : []))),
-      projects: fromMap(projMap),
-      listings: fromMap(listMap),
-    };
-  }, [clientsModel, users, sales, isAr]);
+  const stageOptions = useMemo(() => fieldOptions(clientsModel, 'client_stage', isAr), [clientsModel, isAr]);
+  const statusOptions = useMemo(() => fieldOptions(clientsModel, 'client_status', isAr), [clientsModel, isAr]);
+  const ownerOptions: FilterOption[] = useMemo(() => {
+    const owners = new Set([...ownerById.values()].filter((x): x is string => Boolean(x)));
+    return users
+      .filter((u) => owners.has(u.id))
+      .map((u) => ({ value: u.id, label: (isAr ? u.name_ar : u.name_en) || u.email }))
+      .sort((a, b) => a.label.localeCompare(b.label, isAr ? 'ar' : 'en'));
+  }, [users, ownerById, isAr]);
+
+  const hasFilters = Boolean(search || stage || status || ownerId || win !== 'all');
+  const reset = () => {
+    setSearch('');
+    setStage('');
+    setStatus('');
+    setOwnerId('');
+    setWin('all');
+  };
 
   if (!initialized) {
-    return <div className="p-6 text-sm text-charcoal/50">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>;
+    return <div className="p-6 text-sm text-charcoal/50">{L('جارٍ التحميل…', 'Loading…')}</div>;
   }
   if (!clientsModel) {
-    return <div className="p-6 text-terracotta">{isAr ? 'نموذج العملاء غير موجود' : 'Clients model not found'}</div>;
+    return <div className="p-6 text-terracotta">{L('نموذج العملاء غير موجود', 'Clients model not found')}</div>;
   }
+
+  const select = 'input h-9 min-w-[9rem] py-0 text-sm';
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-4 p-4 sm:p-6">
       {whatsAppModals}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="flex items-center gap-2 text-xl font-extrabold text-chocolate">
-          <Users size={22} className="text-copper" />
-          {isAr ? 'عملائي' : 'My Clients'}
-          <span className="text-sm font-semibold text-charcoal/40">({sales.length})</span>
-        </h1>
+      <h1 className="flex items-center gap-2 text-xl font-extrabold text-chocolate">
+        <Users size={22} className="text-copper" />
+        {isManager ? L('العملاء', 'Clients') : L('عملائي', 'My Clients')}
+        <span className="text-sm font-semibold text-charcoal/40">({sales.length})</span>
+      </h1>
+
+      {/* Last contact */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-bold text-charcoal/55">{L('آخر تفاعل:', 'Last contact:')}</span>
+        {WINDOWS.map((w) => (
+          <button
+            key={w.key}
+            type="button"
+            onClick={() => setWin(w.key)}
+            className={`rounded-full border px-3 py-1 text-xs font-bold transition ${
+              win === w.key ? 'border-copper bg-copper text-white' : 'border-sand bg-white text-charcoal/65 hover:border-copper/60'
+            }`}
+          >
+            {isAr ? w.ar : w.en}
+          </button>
+        ))}
+      </div>
+
+      {/* Search + stage / status / rep */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[12rem] flex-1">
+          <Search size={15} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-charcoal/35" />
+          <input
+            className="input h-9 w-full py-0 ps-8 text-sm"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={L('ابحث بالاسم أو الجوال أو الرقم', 'Search by name, phone or number')}
+          />
+        </div>
+        <select className={select} value={stage} onChange={(e) => setStage(e.target.value)} aria-label={L('المرحلة', 'Stage')}>
+          <option value="">{L('كل المراحل', 'All stages')}</option>
+          {stageOptions.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <select className={select} value={status} onChange={(e) => setStatus(e.target.value)} aria-label={L('الحالة', 'Status')}>
+          <option value="">{L('كل الحالات', 'All statuses')}</option>
+          {statusOptions.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
         {isManager && (
-          <div className="inline-flex rounded-lg border border-sand/50 p-0.5 text-xs font-bold">
-            {(['mine', 'all'] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setScope(s)}
-                className={`rounded-md px-2.5 py-1 transition ${scope === s ? 'bg-copper text-white' : 'text-charcoal/55 hover:text-charcoal'}`}
-              >
-                {s === 'mine' ? (isAr ? 'عملائي' : 'Mine') : (isAr ? 'كل العملاء' : 'All clients')}
-              </button>
+          <select className={select} value={ownerId} onChange={(e) => setOwnerId(e.target.value)} aria-label={L('مسؤول المبيعات', 'Sales rep')}>
+            <option value="">{L('كل مسؤولي المبيعات', 'All sales reps')}</option>
+            {ownerOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
             ))}
-          </div>
+            <option value={NO_REP}>{L('بدون مسؤول', 'No rep')}</option>
+          </select>
+        )}
+        {hasFilters && (
+          <button
+            type="button"
+            onClick={reset}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-charcoal/60 hover:text-terracotta"
+          >
+            <X size={13} /> {L('مسح', 'Clear')}
+          </button>
         )}
       </div>
 
-      {/* View tabs */}
-      <div className="flex flex-wrap gap-1 border-b border-sand/40">
-        {SALES_TAB_ORDER.map((t) => {
-          const label = isAr ? SALES_TAB_LABELS[t].ar : SALES_TAB_LABELS[t].en;
-          const n = t === 'all' ? tabCounts.all : tabCounts[t];
-          const danger = t === 'late';
-          return (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={`-mb-px flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-bold transition ${
-                tab === t ? 'border-copper text-copper' : 'border-transparent text-charcoal/50 hover:text-charcoal'
-              }`}
-            >
-              {label}
-              {n > 0 && (
-                <span className={`rounded-full px-1.5 py-0.5 text-xs font-bold ${danger ? 'bg-terracotta text-white' : 'bg-sand/60 text-charcoal'}`}>
-                  {n}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      <ClientsFilterBar
-        filters={filters}
-        onChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
-        onReset={() => setFilters(EMPTY_FILTERS)}
-        options={options}
-        isAr={isAr}
-        hasActiveFilters={!filtersAreEmpty(filters)}
-        hideOwner={!isManager}
-      />
-
-      <div className="flex items-center justify-between text-xs text-charcoal/50">
-        <span>{isAr ? `عرض ${visible.length} من ${sales.length}` : `Showing ${visible.length} of ${sales.length}`}</span>
+      <div className="text-xs text-charcoal/50">
+        {isAr ? `عرض ${visible.length} من ${sales.length}` : `Showing ${visible.length} of ${sales.length}`}
       </div>
 
       {sales.length === 0 ? (
         <div className="card p-10 text-center text-sm text-charcoal/50">
-          {isAr ? 'لا يوجد عملاء مسندون إليك بعد.' : 'No clients are assigned to you yet.'}
+          {L('لا يوجد عملاء مسندون إليك بعد.', 'No clients are assigned to you yet.')}
         </div>
       ) : visible.length === 0 ? (
-        <div className="card p-10 text-center text-sm text-charcoal/50">
-          {isAr ? 'لا يوجد عملاء مطابقون في هذا العرض.' : 'No clients match this view.'}
-        </div>
+        <div className="card p-10 text-center text-sm text-charcoal/50">{L('لا يوجد عملاء مطابقون.', 'No clients match.')}</div>
       ) : (
         <div className="space-y-2">
           {visible.map((sc) => (
@@ -250,6 +279,7 @@ export default function MyClientsPage() {
               returnTo="/sales-workspace/clients"
               onOpen={(id) => navigate(`/model/clients/${id}`)}
               onWhatsApp={openWhatsApp}
+              lastInteraction={lastByClient.get(sc.view.id) ?? null}
             />
           ))}
         </div>
