@@ -51,9 +51,17 @@ async function newestStoredPost(sb: SupabaseClient, accountId: string): Promise<
 function knownExternalIdsFor(sb: SupabaseClient, platform: string) {
   return async (ids: string[]): Promise<Set<string>> => {
     if (ids.length === 0) return new Set();
-    const { data, error } = await sb.from('mkt_content_posts').select('external_id').eq('platform', platform).in('external_id', ids);
-    if (error) throw new ProviderError(`could not check stored posts: ${error.message}`, 'unavailable');
-    return new Set((data ?? []).map((r) => r.external_id as string));
+    // In chunks: the ids travel in the request URL, and a 12-month TikTok
+    // history (1,000+ 19-digit ids) made one request too long to send — it
+    // failed as "fetch failed" AFTER Apify had charged for the run, the job
+    // retried, and each retry re-bought the whole history (~$56 on 2026-10-05).
+    const known = new Set<string>();
+    for (let i = 0; i < ids.length; i += 150) {
+      const { data, error } = await sb.from('mkt_content_posts').select('external_id').eq('platform', platform).in('external_id', ids.slice(i, i + 150));
+      if (error) throw new ProviderError(`could not check stored posts: ${error.message}`, 'unavailable');
+      for (const r of data ?? []) known.add(r.external_id as string);
+    }
+    return known;
   };
 }
 

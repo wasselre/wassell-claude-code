@@ -60,15 +60,24 @@ async function postsAwaitingMedia(sb: SupabaseClient, ingestionRunId: string): P
   if (rErr) throw new Error(`raw ingestions: ${rErr.message}`);
   const ext = [...new Set((raws ?? []).map((r) => r.external_identity as string).filter(Boolean))];
   if (ext.length === 0) return 0;
-  const { data: posts, error: pErr } = await sb.from('mkt_content_posts').select('id')
-    .eq('platform', 'tiktok').in('external_id', ext);
-  if (pErr) throw new Error(`posts: ${pErr.message}`);
-  const postIds = (posts ?? []).map((p) => p.id as string);
+  // In chunks of 150: ids travel in the URL, and a 12-month history run holds
+  // 1,000+ of them — one request was too long to send (2026-10-05). Chunking
+  // also keeps each answer under PostgREST's 1,000-row page.
+  const postIds: string[] = [];
+  for (let i = 0; i < ext.length; i += 150) {
+    const { data: posts, error: pErr } = await sb.from('mkt_content_posts').select('id')
+      .eq('platform', 'tiktok').in('external_id', ext.slice(i, i + 150));
+    if (pErr) throw new Error(`posts: ${pErr.message}`);
+    for (const p of posts ?? []) postIds.push(p.id as string);
+  }
   if (postIds.length === 0) return 0;
-  const { data: media, error: mErr } = await sb.from('mkt_content_media').select('content_post_id')
-    .in('content_post_id', postIds);
-  if (mErr) throw new Error(`media: ${mErr.message}`);
-  const withMedia = new Set((media ?? []).map((m) => m.content_post_id as string));
+  const withMedia = new Set<string>();
+  for (let i = 0; i < postIds.length; i += 150) {
+    const { data: media, error: mErr } = await sb.from('mkt_content_media').select('content_post_id')
+      .in('content_post_id', postIds.slice(i, i + 150)).limit(1000);
+    if (mErr) throw new Error(`media: ${mErr.message}`);
+    for (const m of media ?? []) withMedia.add(m.content_post_id as string);
+  }
   return postIds.filter((id) => !withMedia.has(id)).length;
 }
 
