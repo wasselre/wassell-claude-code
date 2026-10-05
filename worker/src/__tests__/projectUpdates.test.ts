@@ -584,3 +584,18 @@ describe('guards for lists read as complete', () => {
     expect(r.incomplete[0]!.missing).toContain('unit_number');
   });
 });
+
+describe('a layout letter is not a unit identity', () => {
+  it('rows sharing model «A» but with their own unit numbers stay separate units', () => {
+    const crmUnits = [1, 2, 3].map((n) => crm(`u${n}`, { building_number: '1', unit_number: String(n) }));
+    const src = [1, 2, 3].map((n) => ({ sourceId: null, unitModel: null, unitCode: 'A', buildingNumber: '1', unitNumber: n, status: 'available' as const }));
+    const r = reconcile(crmUnits, src, SHEET, CTX);
+    expect(r.stats.matched).toBe(3);
+    expect(r.updates).toHaveLength(0);
+  });
+  it('recognises layout letters', async () => {
+    const { isLayoutLetter } = await import('../projectUpdates/reconcile');
+    expect(['A', 'C1', 'QQ', 'A-1', 'K2'].every(isLayoutLetter)).toBe(true);
+    expect(['SF083-A01-R01-019', 'BWRT-208', '299-C5-4-41'].some(isLayoutLetter)).toBe(false);
+  });
+});

@@ -127,6 +127,22 @@ const NUMBER_MATCH_KEY: [string, KeyFn] = ['unit_number', (x) => {
 }];
 
 /** How a source unit is named in logs: its code, else block/building/floor. */
+/** The key that says "this is the same source unit": its own id, else EVERY
+ *  identity field. The label alone is not enough — a sheet row whose code
+ *  field carried the layout letter («A», «C1») collapsed 67 ستون الندى rows
+ *  into ~20 (2026-10-05). */
+/** A layout / model letter («A», «C1», «QQ», «A-1») — shared by many units,
+ *  never a unit's own code. */
+export function isLayoutLetter(v: string): boolean {
+  return /^[A-Za-z]{1,2}\d?(-\d)?$/.test(v.trim());
+}
+
+export function sourceUnitKey(s: SourceUnit): string {
+  if (s.sourceId) return `id:${s.sourceId}`;
+  return ['l', normUnitKey(sourceLabel(s)), part(s.block) ?? '', part(s.buildingNumber) ?? '',
+    s.unitNumber ?? '', mapFloor(s.floor) ?? ''].join('|');
+}
+
 export function sourceLabel(s: SourceUnit): string {
   if (s.unitModel) return s.unitModel;
   if (s.unitCode) return s.unitCode;
@@ -297,7 +313,7 @@ export function reconcile(
   // unstable pagination must not look like two units sharing a key.
   const distinct = new Map<string, SourceUnit>();
   for (const s of source) {
-    const dk = s.sourceId ? `id:${s.sourceId}` : `l:${normUnitKey(sourceLabel(s))}`;
+    const dk = sourceUnitKey(s);
     if (!distinct.has(dk)) distinct.set(dk, s);
   }
   const srcCount = new Map<string, number>();
@@ -354,7 +370,7 @@ export function reconcile(
   for (const s of source) {
     const label = sourceLabel(s);
     // The same unit listed twice by the source (unstable pagination) → once.
-    const dedupeKey = s.sourceId ? `id:${s.sourceId}` : `l:${normUnitKey(label)}`;
+    const dedupeKey = sourceUnitKey(s);
     if (seenSrc.has(dedupeKey)) continue;
     seenSrc.add(dedupeKey);
 
@@ -402,7 +418,7 @@ export function reconcile(
       }
       // Record the source's own unit id the first time we match by something
       // weaker, so later runs match on it directly.
-      if (policy.recordSourceId !== false && s.unitCode && !/^U-\d+$/i.test(s.unitCode) && !part(u.data.developer_unit_code)) {
+      if (policy.recordSourceId !== false && s.unitCode && !/^U-\d+$/i.test(s.unitCode) && !isLayoutLetter(s.unitCode) && !part(u.data.developer_unit_code)) {
         patch.developer_unit_code = s.unitCode;
         reasons.push('source unit id recorded');
       }

@@ -26,7 +26,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { trackedAnthropic } from '../lib/aiUsage.js';
 import { applyResult, patchRecord, PROJECTS_MODEL_ID, UNIT_UPDATES_MODEL_ID, UNITS_MODEL_ID } from './apply.js';
 import { createProjectFromSource } from './newProject.js';
-import { brakeReason, mapFloor, normUnitKey, num, reconcile, statedUnitTypeOf, toAsciiDigits } from './reconcile.js';
+import { brakeReason, isLayoutLetter, mapFloor, normUnitKey, num, reconcile, statedUnitTypeOf, toAsciiDigits } from './reconcile.js';
 import type { CrmUnit, ReconcilePolicy, ReconcileResult, SourceUnit, UnitStatus } from './types.js';
 
 const MODEL = 'claude-opus-5-5';
@@ -125,7 +125,8 @@ const TOOL: Anthropic.Tool = {
                   building: { type: ['string', 'null'] },
                   floor: { type: ['string', 'null'] },
                   unit_number: { type: ['string', 'number', 'null'] },
-                  unit_code: { type: ['string', 'null'] },
+                  unit_code: { type: ['string', 'null'], description: 'The developer\'s UNIQUE code for this one unit (e.g. «SF083-A01-R01-019», «BWRT-208»). NOT the layout/model letter — that goes in model.' },
+                  model: { type: ['string', 'null'], description: 'The layout / model letter the sheet gives (A, C1, QQ, «النموذج»). Many units share one.' },
                   unit_type: { type: ['string', 'null'], description: 'The unit type as the SOURCE states it: in the row, in the sheet\'s title or column headers (a sheet whose rows are «رقم الفلة» lists villas → فيلا; rows of floors «الدور / الملحق» in a building → دور), or in the sender\'s own words for that sheet. null when nothing states it — never guessed from the area or the price.' },
                   bedrooms: { type: ['number', 'string', 'null'], description: 'Bedrooms of THIS unit as the source states it (0 = studio); null when not stated — never inferred from the area.' },
                   area: { type: ['number', 'string', 'null'] },
@@ -219,6 +220,7 @@ function storagePathFor(m: ChatMessage): string | null {
   return `whatsapp-media/${session}/${m.media_file_id.slice(i + 1)}`;
 }
 
+
 function toSourceUnits(units: ExtractedUnit[] | undefined, statusOverride?: UnitStatus): SourceUnit[] {
   return (units ?? []).map((u) => {
     const price = num(u.price);
@@ -227,7 +229,10 @@ function toSourceUnits(units: ExtractedUnit[] | undefined, statusOverride?: Unit
     return {
       sourceId: null,
       unitModel: null,
-      unitCode: u.unit_code ? String(u.unit_code) : null,
+      // A layout letter put in the code field («A», «C1», «QQ») is not a unit
+      // code when the row has its own unit number — drop it (the model letter
+      // is not an identity on Al-Ramz projects).
+      unitCode: u.unit_code && !(isLayoutLetter(String(u.unit_code)) && num(u.unit_number) != null) ? String(u.unit_code) : null,
       block: u.block ? String(u.block) : null,
       buildingNumber: u.building ? String(u.building) : null,
       floor: u.floor ? String(u.floor) : null,
