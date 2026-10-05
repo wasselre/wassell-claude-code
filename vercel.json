@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["bom1"],
   "ignoreCommand": "git diff --quiet $(git rev-parse -q --verify ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}^{commit} 2>/dev/null || echo HEAD^) HEAD -- . ':!docs/prd/models' ':!docs/prd/workflows'",
   "rewrites": [
     {
