@@ -39,6 +39,7 @@ import {
   RecipeCancelledError,
   RecipeError,
   RecipeInterrupt,
+  countTopLevelPhases,
   type RecipeRuntime,
   type RecipeStep,
 } from './portals/recipe.js';
@@ -66,6 +67,9 @@ interface RunArgs {
   supabase: SupabaseClient;
   env: WorkerEnv;
   job: PortalRegistrationJob;
+  /** True once the worker got SIGTERM (a deploy / scale-down). A run that has
+   *  not reached its submit step then hands itself back to the queue. */
+  isShuttingDown?: () => boolean;
 }
 
 const BUCKET = 'portal-registrations';
@@ -140,7 +144,7 @@ async function releaseSession(env: WorkerEnv, id: string): Promise<void> {
   }
 }
 
-export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs): Promise<Record<string, unknown>> {
+export async function runPortalRegistrationJob({ supabase, env, job, isShuttingDown }: RunArgs): Promise<Record<string, unknown>> {
   if (!env.BROWSERBASE_API_KEY || !env.BROWSERBASE_PROJECT_ID) {
     throw new Error('BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID not set on the worker');
   }
@@ -177,6 +181,17 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
   }
   // Both throw a RecipeError BEFORE we pay for a browser.
   const steps: RecipeStep[] = parseRecipe(isCheck ? pd.status_recipe : pd.recipe);
+
+  // Worker restarts (2026-10-05): a registration's LAST top-level phase is its
+  // submit. Entering it marks the run 'committing' on the row; from then on a
+  // restart must not start it again (the portal may already hold the client).
+  // Before that, a SIGTERM hands the run back to the queue instead of letting
+  // it die and be failed by the watchdog. A status check only reads, so it is
+  // never committing.
+  const totalPhases = countTopLevelPhases(steps);
+  let phaseNo = 0;
+  let committing = false;
+  let handingBack = false;
 
   const portalScope = {
     name: str(pd.name),
@@ -243,6 +258,15 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
   log(`browserbase session=${session.id} live=${session.liveViewUrl ? 'yes' : 'no'}`);
 
   const browser = await chromium.connectOverCDP(session.connectUrl);
+  // On SIGTERM, close the browser: the current step throws at once, and the
+  // catch below hands the run back. Polled because a Playwright step cannot be
+  // interrupted any other way, and Fly kills the machine kill_timeout later.
+  const shutdownWatch = setInterval(() => {
+    if (handingBack || committing || !isShuttingDown?.()) return;
+    handingBack = true;
+    log('worker shutting down before the submit step — handing the run back to the queue');
+    void browser.close().catch(() => {});
+  }, 500);
   let shotIndex = 0;
   let cancelled = false;
   try {
@@ -287,6 +311,7 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       let polls = 0;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, INPUT_POLL_MS));
+        if (handingBack) throw new RecipeCancelledError();
         const row = await readRow();
         if (!row || row.status === 'cancelled' || row.status === 'failed') throw new RecipeCancelledError();
         if (row.status === 'awaiting_input' && row.input_value != null && row.input_value !== '') {
@@ -317,7 +342,11 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
         vars: {},
       },
       log,
-      phase: (ar, en) => progress('step', ar, en).then(() => undefined),
+      phase: async (ar, en) => {
+        phaseNo += 1;
+        if (!isCheck && totalPhases > 1 && phaseNo >= totalPhases) committing = true;
+        await progress(committing ? 'committing' : 'step', ar, en);
+      },
       screenshot,
       requestInput,
       checkCancelled: assertLive,
@@ -371,7 +400,8 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
       return { outcome: 'status_check', portal_name: portalScope.name, ...sum };
     }
 
-    await progress('finishing', 'جارٍ حفظ الإثبات…', 'Saving the proof…');
+    // Still past the submit: keep the row 'committing' so a restart now is never retried.
+    await progress(isCheck ? 'finishing' : 'committing', 'جارٍ حفظ الإثبات…', 'Saving the proof…');
     await screenshot('done');
     const result = {
       outcome: 'done',
@@ -402,6 +432,15 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
 
     return result;
   } catch (err) {
+    if (handingBack) {
+      const { data: hb, error: hbErr } = await supabase.rpc('portal_registration_job_handback', { p_job_id: job.id });
+      if (hbErr) throw new Error(`portal_registration_job_handback failed: ${hbErr.message}`);
+      log(`handed back → ${String(hb)}`);
+      // 'committing' would mean the row reached the submit after we decided —
+      // then this is a real failure a person must check, not a restart.
+      if (hb === 'committing') throw err;
+      return { outcome: 'handed_back', handback: hb };
+    }
     if (err instanceof RecipeCancelledError) {
       cancelled = true;
       log('cancelled by the rep (or swept) — closing the browser');
@@ -475,6 +514,7 @@ export async function runPortalRegistrationJob({ supabase, env, job }: RunArgs):
     }
     throw err;
   } finally {
+    clearInterval(shutdownWatch);
     await browser.close().catch(() => {});
     await releaseSession(env, session.id);
     if (cancelled) log('browser closed after cancel');

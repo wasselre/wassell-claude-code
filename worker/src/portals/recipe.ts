@@ -892,6 +892,14 @@ async function runOne(step: RecipeStep, index: number, rt: RecipeRuntime): Promi
 }
 
 /** Run a step list in order. Cancellation is checked before every step. */
+/** Top-level `phase` steps in a recipe. A registration's LAST phase is its
+ *  submit — the point after which the portal may already hold the client, so
+ *  a worker restart must not start the run again (see the 'committing' phase
+ *  in runPortalRegistrationJob and portal_registration_job_handback). */
+export function countTopLevelPhases(steps: RecipeStep[]): number {
+  return steps.filter((s) => s.do === 'phase').length;
+}
+
 export async function runSteps(steps: RecipeStep[], rt: RecipeRuntime): Promise<void> {
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i]!;

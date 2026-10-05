@@ -5,6 +5,11 @@
 
 app = 'wassel-deck-worker'
 primary_region = 'sin'
+# Seconds between SIGTERM and SIGKILL on a deploy / scale-down (Fly default 5).
+# The worker drains for up to 60 s; with 5 s, a portal run waiting for a code
+# was killed mid-run and lost (2026-10-05). 30 s lets it hand itself back to the
+# queue and lets short jobs on other lanes finish.
+kill_timeout = 30
 
 [build]
 

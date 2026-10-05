@@ -2619,7 +2619,12 @@ async function claimAndRunOnePortal(): Promise<boolean> {
   );
 
   try {
-    const result = await runPortalRegistrationJob({ supabase, env, job });
+    const result = await runPortalRegistrationJob({ supabase, env, job, isShuttingDown: () => shuttingDown });
+    if ((result as { outcome?: string }).outcome === 'handed_back') {
+      // Already back in the queue (or failed at its restart cap) via portal_registration_job_handback.
+      console.log(`[worker] portal job=${job.id} handed back on shutdown → ${String((result as { handback?: unknown }).handback)}`);
+      return true;
+    }
     if ((result as { outcome?: string }).outcome === 'parked') {
       // Already re-queued with parked_at (or failed) by portal_registration_job_park.
       console.log(`[worker] portal job=${job.id} parked → ${String((result as { park_result?: unknown }).park_result)}`);

@@ -11,6 +11,7 @@ import {
   toCollectedRow,
   withPage,
   READ_TABLE_ROWS,
+  countTopLevelPhases,
 } from '../recipe';
 
 // Every locator is "visible" so an if_visible takes its `then` branch — the
@@ -185,3 +186,18 @@ describe('READ_TABLE_ROWS (runs inside the portal page)', () => {
   });
 });
 
+
+describe('countTopLevelPhases (worker restarts)', () => {
+  it('counts only top-level phase steps, so the LAST one is the submit', () => {
+    // Shape of Riva / Al Ramz / Safa: sign in → open form → fill → submit.
+    const steps = [
+      { do: 'phase', ar: 'دخول', en: 'Signing in' },
+      { do: 'if_visible', selector: 'x', then: [{ do: 'phase', ar: 'داخلي', en: 'nested — not counted' }] },
+      { do: 'phase', ar: 'فتح', en: 'Opening the form' },
+      { do: 'phase', ar: 'تعبئة', en: 'Filling' },
+      { do: 'phase', ar: 'إرسال', en: 'Submitting' },
+      { do: 'click', text: 'إرسال' },
+    ] as RecipeStep[];
+    expect(countTopLevelPhases(steps)).toBe(4);
+  });
+});
