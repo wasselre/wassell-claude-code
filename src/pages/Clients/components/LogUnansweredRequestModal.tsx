@@ -206,7 +206,7 @@ export default function LogUnansweredRequestModal({ clientId, isAr, onClose, onC
 
         {client && gaps.length === 0 && (
           <div className="rounded-xl border border-sand/60 bg-cream-light p-3 text-sm">
-            <div className="mb-1 text-xs font-semibold text-charcoal/55">{L('الطلب كما سيصل للمكاتب', 'The request as offices will read it')}</div>
+            <div className="mb-1 text-xs font-semibold text-charcoal/55">{L('ملخص الطلب', 'The request in one line')}</div>
             <div className="font-semibold text-charcoal">{askLine}</div>
           </div>
         )}

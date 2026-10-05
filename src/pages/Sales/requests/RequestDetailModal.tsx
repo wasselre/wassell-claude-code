@@ -152,7 +152,9 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
   useEffect(() => { void loadOutreach(); }, [loadOutreach]);
 
   const selectedList = useMemo(() => (candidates ?? []).filter((c) => selected.has(c.office_id)), [candidates, selected]);
-  const preview = facts && selectedList[0] ? buildOfficeMessage(facts, selectedList[0].office_name, selectedList[0].office_id) : null;
+  // Each office reads its OWN district first when it was matched on it.
+  const officeTarget = (c: OutreachCandidate) => ({ district: c.match_kind === 'district' ? c.district_name : null });
+  const preview = facts && selectedList[0] ? buildOfficeMessage(facts, officeTarget(selectedList[0]), selectedList[0].office_id) : null;
   // The message is built from structured preferences only, but a district or
   // unit label could still carry a link — never send one from a cold line.
   const previewHasLink = !!preview && containsLink(preview);
@@ -165,7 +167,7 @@ export default function RequestDetailModal({ requestId, line, onClose, onOutreac
   const send = async () => {
     if (!facts || selectedList.length === 0) return;
     setSending(true);
-    const messages = selectedList.map((c) => ({ office_id: c.office_id, body: buildOfficeMessage(facts, c.office_name, c.office_id) }));
+    const messages = selectedList.map((c) => ({ office_id: c.office_id, body: buildOfficeMessage(facts, officeTarget(c), c.office_id) }));
     const res = await enqueueOutreach(requestId, messages);
     setSending(false);
     setConfirming(false);
