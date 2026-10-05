@@ -246,6 +246,7 @@ export function buildDetailedClientPrefChips(
   // location_items above, not as its own chip.)
   const joined: Array<{ slug: string; kind: ClientPrefDetailChip['kind']; prefix: boolean }> = [
     { slug: 'preferred_amenities', kind: 'amenities', prefix: false },
+    { slug: 'preferred_readiness', kind: 'setting', prefix: false },
     { slug: 'purchase_objective', kind: 'objective', prefix: true },
     { slug: 'location_priority', kind: 'setting', prefix: true },
     { slug: 'preferred_language', kind: 'setting', prefix: true },

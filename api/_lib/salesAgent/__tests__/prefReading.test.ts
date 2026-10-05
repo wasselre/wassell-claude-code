@@ -37,3 +37,19 @@ describe('applyCustomerReading — the reader is authoritative for the fields it
     expect(applyCustomerReading({ bedrooms_min: 2 }, null)).toEqual({ criteria: { bedrooms_min: 2 }, overrides: [] });
   });
 });
+
+describe('ready / off-plan (2026-10-05)', () => {
+  it('one value said → searched with it, and in the state line', () => {
+    const r = readingFromSuggestions({ preferred_readiness: s('preferred_readiness', ['ready']) }, 'm');
+    expect(r.readiness).toBe('ready');
+    expect(r.line).toContain('ready only');
+    const a = applyCustomerReading({ readiness: 'off_plan' }, r);
+    expect(a.criteria.readiness).toBe('ready');
+    expect(a.overrides).toContain('readiness off_plan→ready');
+  });
+  it('both said → no readiness filter (either is fine)', () => {
+    const r = readingFromSuggestions({ preferred_readiness: s('preferred_readiness', ['ready', 'off_plan']) }, 'm');
+    expect(r.readiness).toBeNull();
+    expect(applyCustomerReading({ readiness: null }, r).criteria.readiness).toBeNull();
+  });
+});

@@ -23,3 +23,14 @@ describe('profileLine — the client\'s saved profile, as agent state', () => {
     expect(r.items).toHaveLength(2);
   });
 });
+
+describe('readinessText — the saved ready / off-plan preference', () => {
+  it('reads one, both, or none', async () => {
+    const { readinessText, profileLine } = await import('../savedProfile.js');
+    expect(readinessText(['ready'])).toMatch(/^ready only/);
+    expect(readinessText(['off_plan'])).toMatch(/^off-plan only/);
+    expect(readinessText(['ready', 'off_plan'])).toBe('either');
+    expect(readinessText([])).toBeNull();
+    expect(profileLine({ preferred_readiness: ['ready'] }).line).toContain('ready or off-plan: ready only');
+  });
+});

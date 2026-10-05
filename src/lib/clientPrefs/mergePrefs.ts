@@ -16,6 +16,7 @@ export type PrefFieldKind = 'set' | 'range';
 export const PREF_FIELD_KINDS: Readonly<Record<string, PrefFieldKind>> = {
   preferred_unit_type: 'set',
   purchase_objective: 'set',
+  preferred_readiness: 'set',
   preferred_amenities: 'set',
   budget: 'range',
   preferred_area: 'range',
@@ -24,7 +25,7 @@ export const PREF_FIELD_KINDS: Readonly<Record<string, PrefFieldKind>> = {
 
 /** The order the card lists the fields in. */
 export const PREF_SLUG_ORDER: readonly string[] = [
-  'preferred_unit_type', 'budget', 'preferred_area', 'preferred_bedrooms', 'purchase_objective', 'preferred_amenities',
+  'preferred_unit_type', 'preferred_readiness', 'budget', 'preferred_area', 'preferred_bedrooms', 'purchase_objective', 'preferred_amenities',
 ];
 
 export function isPrefSlug(slug: string): boolean {

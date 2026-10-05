@@ -49,7 +49,7 @@ function ProvenanceBadge({ meta, isAr }: { meta: FieldMeta | undefined; isAr: bo
 // as multiselect, preference_notes as a textarea. Slugs missing from the live model
 // are skipped. Mirrors the Finder's editable set (unit age + amenities included) so
 // the Workspace captures every preference the matching engine can use.
-const PREF_SLUGS = ['location', 'preferred_unit_type', 'preferred_max_unit_age', 'preferred_area', 'preferred_bedrooms', 'budget', 'preferred_amenities', 'purchase_objective', 'preference_notes'] as const;
+const PREF_SLUGS = ['location', 'preferred_unit_type', 'preferred_readiness', 'preferred_max_unit_age', 'preferred_area', 'preferred_bedrooms', 'budget', 'preferred_amenities', 'purchase_objective', 'preference_notes'] as const;
 
 /** Inline-editable client preferences — unit type, budget, location, direction. */
 export default function PreferenceSummary({ clientId, onEditFull, draft: draftProp, onFieldChange, meta }: PreferenceSummaryProps) {

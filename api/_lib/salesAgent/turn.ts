@@ -786,7 +786,7 @@ async function runBrainTurn(
   await recordAgentRun(svc, {
     chat_wid: chatWid, client_id: runClientId, kind: 'brain', model: outcome.model, ms: Date.now() - turnStartedAt,
     customer_text: a.newCustomerText || null,
-    reading: customerReading ? { unit_types: customerReading.unit_types, budget_max: customerReading.budget_max, bedrooms_min: customerReading.bedrooms_min, area_min: customerReading.area_min, purpose: customerReading.purpose, amenities: customerReading.amenities, model: customerReading.model } : null,
+    reading: customerReading ? { unit_types: customerReading.unit_types, budget_max: customerReading.budget_max, bedrooms_min: customerReading.bedrooms_min, area_min: customerReading.area_min, purpose: customerReading.purpose, readiness: customerReading.readiness, amenities: customerReading.amenities, model: customerReading.model } : null,
     searches: outcome.searchLog,
     actions: {
       ...(outcome.sent ? { sent_project: { id: outcome.sent.projectId, name: outcome.sent.name } } : {}),

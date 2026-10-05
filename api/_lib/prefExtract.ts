@@ -66,6 +66,8 @@ export type PrefChannel = 'chat' | 'call';
 export const PREF_FIELDS = {
   preferred_unit_type: { kind: 'set', options: ['استوديو', 'تاون هاوس', 'دبلكس', 'دور', 'شقة', 'فيلا', 'ملحق'] },
   purchase_objective:  { kind: 'set', options: ['investment', 'residential'] },
+  /** Ready or off-plan (2026-10-05). Both = either is fine. */
+  preferred_readiness: { kind: 'set', options: ['ready', 'off_plan'] },
   preferred_amenities: { kind: 'set', options: ['حوش', 'سطح', 'غرفة خادمة', 'غرفة سائق', 'مجلس', 'مسبح', 'مصعد'] },
   budget:              { kind: 'range' },
   preferred_area:      { kind: 'range' },
@@ -129,7 +131,8 @@ export function buildExtractSystemPrompt(channel: PrefChannel): string {
   return `${PROMPT_INTRO[channel]}
 
 القواعد:
-- استخدم القيم العربية الحرفية من القوائم أدناه فقط، لا تترجمها للإنجليزية (عدا purchase_objective الذي قيمه investment/residential).
+- استخدم القيم العربية الحرفية من القوائم أدناه فقط، لا تترجمها للإنجليزية (عدا purchase_objective الذي قيمه investment/residential، وpreferred_readiness الذي قيمه ready/off_plan).
+- preferred_readiness: «جاهز»، «جاهزة»، «أبي أسكن على طول»، «تسليم فوري» = ["ready"]. «على الخارطة»، «تحت الإنشاء»، «أوف بلان» = ["off_plan"]. «ما يفرق»، «الاثنين»، «جاهز أو على الخارطة» = ["ready", "off_plan"]. جواب العميل على سؤال المندوب («تبيها جاهزة ولا على الخارطة؟» ← «جاهزه») يُسجَّل، والـ quote هو كلمة العميل نفسها.
 - المهم ما يريده العميل ويوافق عليه، لا ما يقترحه المندوب.
 - إذا لم يُذكر شيء عن حقل ما إطلاقًا، اترك قيمته null.
 - لكن إذا ذكر العميل تفضيلًا ولو بشكل عابر أو غير مؤكد، سجّله. «فيلا أكيد يعني» = ["فيلا"]، «أي شي عادي بس شقة» = ["شقة"]، «ما يتجاوز الثلاثة مليون» = budget.max 3000000، «حوالي ميتين متر» = area حول 200. لا تتردد في تسجيل ما قاله العميل فعلًا.
@@ -140,6 +143,7 @@ export function buildExtractSystemPrompt(channel: PrefChannel): string {
 الحقول والقيم المسموحة (استخدم القيم حرفيًا):
 - preferred_unit_type: مصفوفة من [${setOptions('preferred_unit_type').join(', ')}]
 - purchase_objective: مصفوفة من [investment, residential]
+- preferred_readiness: مصفوفة من [ready, off_plan]
 - preferred_amenities: مصفوفة من [${setOptions('preferred_amenities').join(', ')}]
 - budget: {"min": رقم أو null, "max": رقم أو null} بالريال
 - preferred_area: {"min": رقم أو null, "max": رقم أو null} بالمتر المربع
@@ -150,6 +154,7 @@ export function buildExtractSystemPrompt(channel: PrefChannel): string {
 {
   "preferred_unit_type": {"value": [], "quote": "", "confidence": 0} أو null,
   "purchase_objective": null,
+  "preferred_readiness": null,
   "preferred_amenities": null,
   "budget": {"value": {"min": null, "max": null}, "quote": "", "confidence": 0} أو null,
   "preferred_area": null,

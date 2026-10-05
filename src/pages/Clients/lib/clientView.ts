@@ -69,6 +69,7 @@ export function isDerivedReadOnly(slug: string): boolean {
  */
 export const PREFERENCE_EDIT_SLUGS = [
   'preferred_unit_type',
+  'preferred_readiness',
   'budget',
   'preferred_bedrooms',
   'preferred_area',

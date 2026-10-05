@@ -30,6 +30,8 @@ export interface CustomerReading {
   bedrooms_min: number | null;
   area_min: number | null;
   purpose: string[] | null;
+  /** Exactly one of ready / off_plan; null when unsaid or both. */
+  readiness: 'ready' | 'off_plan' | null;
   amenities: string[] | null;
   /** One English state line for the agent; null when nothing was read. */
   line: string | null;
@@ -37,7 +39,7 @@ export interface CustomerReading {
 }
 
 const EMPTY = (model: string): CustomerReading => ({
-  unit_types: null, budget_max: null, bedrooms_min: null, area_min: null, purpose: null, amenities: null, line: null, model,
+  unit_types: null, budget_max: null, bedrooms_min: null, area_min: null, purpose: null, readiness: null, amenities: null, line: null, model,
 });
 
 const PURPOSE_AR: Record<string, string> = { residential: 'سكن', investment: 'استثمار' };
@@ -56,6 +58,8 @@ export function readingFromSuggestions(suggestions: Record<string, PrefSuggestio
   if (area) r.area_min = area.min ?? area.max ?? null;
   const purpose = asSetValue(suggestions.purchase_objective?.value);
   if (purpose.length) r.purpose = purpose;
+  const ready = asSetValue(suggestions.preferred_readiness?.value).filter((v) => v === 'ready' || v === 'off_plan');
+  if (ready.length === 1) r.readiness = ready[0] as 'ready' | 'off_plan';
   const amen = asSetValue(suggestions.preferred_amenities?.value);
   if (amen.length) r.amenities = amen;
 
@@ -64,6 +68,7 @@ export function readingFromSuggestions(suggestions: Record<string, PrefSuggestio
     r.budget_max ? `budget: up to ${fmt(r.budget_max)} SAR` : budget?.min ? `budget: from ${fmt(budget.min)} SAR` : null,
     r.bedrooms_min ? `bedrooms: ${r.bedrooms_min}+` : null,
     r.area_min ? `size: ${fmt(r.area_min)}+ m²` : null,
+    r.readiness ? `${r.readiness === 'ready' ? 'ready only (جاهز)' : 'off-plan only (على الخارطة)'}` : null,
     r.purpose ? `purpose: ${r.purpose.map((p) => PURPOSE_AR[p] ?? p).join('/')}` : null,
     r.amenities ? `wants: ${r.amenities.join('، ')}` : null,
   ].filter(Boolean);
@@ -74,7 +79,8 @@ export function readingFromSuggestions(suggestions: Record<string, PrefSuggestio
 }
 
 /**
- * PURE — the reading is AUTHORITATIVE for the four fields it fills: a value the
+ * PURE — the reading is AUTHORITATIVE for the fields it fills (unit type,
+ * budget, bedrooms, size, and ready/off-plan when exactly one was said): a value the
  * reader found replaces what the agent typed (so both sides read the customer
  * the same way); a field the reader left empty keeps the agent's value (e.g.
  * from the saved profile). Returns the criteria and the overrides, for the trace.
@@ -87,6 +93,10 @@ export function applyCustomerReading(c: SearchCriteria, r: CustomerReading | nul
     const same = (c.unit_types ?? []).length === r.unit_types.length && r.unit_types.every((t) => (c.unit_types ?? []).includes(t));
     if (!same) overrides.push(`unit_types ${JSON.stringify(c.unit_types ?? [])}→${JSON.stringify(r.unit_types)}`);
     out.unit_types = r.unit_types;
+  }
+  if (r.readiness) {
+    if (c.readiness !== r.readiness) overrides.push(`readiness ${c.readiness ?? '-'}→${r.readiness}`);
+    out.readiness = r.readiness;
   }
   for (const k of ['budget_max', 'bedrooms_min', 'area_min'] as const) {
     const v = r[k];

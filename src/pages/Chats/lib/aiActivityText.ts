@@ -19,6 +19,7 @@ export function readingChips(r: AgentRunReading | null | undefined, t: TFunction
   if (r.bedrooms_min != null) out.push(t('chats.ai_act.c_bedrooms', { n: num(r.bedrooms_min, isAr) }));
   if (r.budget_max != null) out.push(t('chats.ai_act.c_budget', { v: money(r.budget_max, isAr) }));
   if (r.area_min != null) out.push(t('chats.ai_act.c_area', { n: num(r.area_min, isAr) }));
+  if (r.readiness) out.push(t(`chats.ai_act.ready_${r.readiness}`));
   for (const p of r.purpose ?? []) out.push(t(`chats.ai_act.purpose_${p === 'investment' ? 'investment' : 'residential'}`));
   if (r.amenities?.length) out.push(r.amenities.join('، '));
   return out;

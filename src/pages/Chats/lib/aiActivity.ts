@@ -21,6 +21,7 @@ export interface AgentRunReading {
   bedrooms_min?: number | null;
   area_min?: number | null;
   purpose?: string[] | null;
+  readiness?: 'ready' | 'off_plan' | null;
   amenities?: string[] | null;
 }
 

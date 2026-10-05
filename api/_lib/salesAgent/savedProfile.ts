@@ -38,6 +38,12 @@ function rangeText(v: unknown, unit = ''): string | null {
   return `from ${fmt(r.min!)}${unit}`;
 }
 
+/** ['ready'] → «ready only», ['off_plan'] → «off-plan only», both → «either»; null when unset. */
+export function readinessText(v: string[]): string | null {
+  const r = v.includes('ready'), o = v.includes('off_plan');
+  return r && o ? 'either' : r ? 'ready only (جاهز)' : o ? 'off-plan only (على الخارطة)' : null;
+}
+
 /** PURE — the profile line from a client's data (exported for tests). */
 export function profileLine(d: Record<string, unknown>): { line: string | null; items: LocationItem[]; placeLabels: string[] } {
   const items = parseLocationItems(d.location_items);
@@ -48,6 +54,7 @@ export function profileLine(d: Record<string, unknown>): { line: string | null; 
     rangeText(d.budget) ? `budget: ${rangeText(d.budget)} SAR` : null,
     rangeText(d.preferred_bedrooms) ? `bedrooms: ${rangeText(d.preferred_bedrooms)}` : null,
     rangeText(d.preferred_area) ? `size: ${rangeText(d.preferred_area, ' m²')}` : null,
+    readinessText(asSetValue(d.preferred_readiness)) ? `ready or off-plan: ${readinessText(asSetValue(d.preferred_readiness))}` : null,
     asSetValue(d.purchase_objective).length ? `purpose: ${asSetValue(d.purchase_objective).map((p) => PURPOSE_AR[p] ?? p).join('/')}` : null,
     asSetValue(d.preferred_amenities).length ? `wants: ${asSetValue(d.preferred_amenities).join('، ')}` : null,
     wanted.length ? `places: ${wanted.slice(0, 8).join('، ')}` : null,
