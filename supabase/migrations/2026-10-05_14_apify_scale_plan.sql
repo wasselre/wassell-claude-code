@@ -1,6 +1,6 @@
 -- 2026-10-05: Apify upgraded to the Scale plan by the operator ($199/month of
 -- included usage, then pay-as-you-go; 128 concurrent runs; Silver discount).
--- The monthly usage limit was set to $300 through the Apify API (steady
+-- The monthly usage limit was set to $300 through the Apify API, then raised to $500 by the operator in the console (steady
 -- collection ~ $80/month + the two TikTok histories ~ $7; the cap stays as a
 -- brake against a runaway like the $56 re-buy earlier today).
 --
