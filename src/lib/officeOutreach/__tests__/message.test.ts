@@ -44,6 +44,10 @@ describe('office outreach message', () => {
     expect(m).toContain('التفاصيل والسعر');
   });
 
+  it('never says «يدور دور» for a floor, whatever the wording', () => {
+    for (let i = 0; i < 40; i++) expect(buildOfficeMessage(ramroma, { district: 'حي الملز' }, `o-${i}`)).not.toContain('يدور');
+  });
+
   it('never names the office, never greets by time of day, never carries the rep note', () => {
     for (let i = 0; i < 40; i++) {
       const m = buildOfficeMessage(facts, { district: null }, `office-${i}`);
