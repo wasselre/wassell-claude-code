@@ -78,6 +78,10 @@ export interface UnitFit {
   area_from: number | null;
   area_to: number | null;
   bedrooms: number[];
+  /** Cheapest fitting unit per bedroom count ({"2": 1040000, "3": 1348000}).
+   *  Live test 2026-10-05: «تبدأ من مليون و40 (غرفتين و3 غرف)» quoted a
+   *  2-room price to a 3-room buyer — the 3-room units started at 1,348,000. */
+  from_by_bedrooms: Record<string, number>;
 }
 
 /** One available unit, as much as the search needs. */
@@ -166,7 +170,18 @@ export function fitOf(us: UnitLite[], f: FitCheck): UnitFit {
     area_from: areas.length ? Math.round(Math.min(...areas)) : null,
     area_to: areas.length ? Math.round(Math.max(...areas)) : null,
     bedrooms: [...new Set(m.map((u) => u.bedrooms).filter((x): x is number => x !== null))].sort((a, b) => a - b),
+    from_by_bedrooms: fromByBedrooms(m),
   };
+}
+
+function fromByBedrooms(us: UnitLite[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const u of us) {
+    if (u.bedrooms === null || u.price === null) continue;
+    const k = String(u.bedrooms);
+    if (out[k] === undefined || u.price < out[k]!) out[k] = u.price;
+  }
+  return out;
 }
 
 const AVAILABLE_UNIT = new Set(['available', 'متاح', 'متاحة', 'متوفر', 'متوفرة']);

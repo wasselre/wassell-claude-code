@@ -29,6 +29,12 @@ describe('unit-level catalog fit', () => {
     expect(unitFits({ type: null, bedrooms: 3, price: 900_000, area: 120 }, check({ types: ['شقة'] }))).toBe(false);
   });
 
+  it('gives the cheapest price per room count, so a 2-room price is never quoted for 3 rooms', () => {
+    const fit = fitOf(units, check({ checkType: false, budgetMax: 1_300_000 }));
+    expect(fit.price_from).toBe(559_000);
+    expect(fit.from_by_bedrooms).toEqual({ '1': 559_000, '3': 1_250_000 });
+  });
+
   it('a relaxed rung (type not checked) matches any type', () => {
     expect(fitOf(units, check({ types: ['فيلا'], checkType: false, budgetMax: 1_300_000 })).units).toBe(3);
   });
