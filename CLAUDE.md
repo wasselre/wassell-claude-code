@@ -1091,6 +1091,12 @@ rule for telling them apart is what question each answers:
   daily cap `content.reader_daily_budget_usd`, quota pause
   `content.reader_paused_until`. Nothing is written before the answer passes
   the checker, so a failed re-read never erases a post's previous decision.
+  **Image posts also get a DESIGN read (2026-10-05)** in the same job:
+  `geminiDesign.ts` → `visual_design_reads` (one `slide` row per image + one
+  `post` row, existing SlideRead/PostRead validators, gemini-embedding-2 vector
+  per image). Never fold it into the post-read call: the project decision must
+  not wait on, or be retried because of, a design read. Backfill via
+  `mkt_design_read_due` (sweep, `mode:'design_only'`, max 3 attempts).
 - **Visual Intelligence (CV)** — *"what does this footage look like, shot by shot?"*
   Queue `mkt_cv_jobs`, lanes `cvProcessPollLoop` + `cvAnalyzePollLoop`, gated by
   THREE independent switches: `CV_LANES_ENABLED` (env), `GEMINI_API_KEY` present

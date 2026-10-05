@@ -14,6 +14,7 @@ import { jsonOk, jsonError } from '../../auth.js';
 import { cStr, requireSvc, type CreativeCtx } from './wake.js';
 
 const READ_SUBJECT_KINDS = new Set(['competitor_media', 'competitor_post', 'wassel_file', 'wassel_content']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BACKFILL_KINDS = new Set(['design_reads', 'asset_meta', 'asset_enrich']);
 
 export async function designReadGet(ctx: CreativeCtx): Promise<Response> {
@@ -25,9 +26,14 @@ export async function designReadGet(ctx: CreativeCtx): Promise<Response> {
     return jsonError(400, 'subject_kind must be competitor_media | competitor_post | wassel_file | wassel_content');
   }
   if (!subjectId) return jsonError(400, 'subject_id is required');
-  const res = await svc.from('visual_design_reads').select('*')
-    .eq('subject_kind', subjectKind).eq('subject_id', subjectId)
-    .order('created_at', { ascending: false }).limit(50);
+  if (!UUID.test(subjectId)) return jsonError(400, 'subject_id must be a uuid');
+  // A competitor post's read comes with its per-image (slide) reads, so the
+  // Library can show how each image is designed, not only the whole post.
+  const q = subjectKind === 'competitor_post'
+    ? svc.from('visual_design_reads').select('*').in('subject_kind', ['competitor_post', 'competitor_media'])
+      .or(`subject_id.eq.${subjectId},post_id.eq.${subjectId}`)
+    : svc.from('visual_design_reads').select('*').eq('subject_kind', subjectKind).eq('subject_id', subjectId);
+  const res = await q.order('created_at', { ascending: false }).limit(50);
   if (res.error) {
     console.error('[creative] design_read_get failed', res.error.code, res.error.message);
     return jsonError(500, res.error.message);

@@ -9,6 +9,7 @@ import { setDesignExample } from '@/lib/marketingOS/creativeClient';
 import ShotDetailDrawer from './ShotDetailDrawer';
 import VideoFilmstrip from './VideoFilmstrip';
 import VisualLibrarySurface from './VisualLibrarySurface';
+import DesignReadPanel from './DesignReadPanel';
 import type { PostRead, SlideRead, VisualDesignReadRow } from '@/lib/creative/contracts';
 import { useAppStore } from '@/stores/appStore';
 import { resolveEffectiveProfile } from '@/lib/permissions';
@@ -415,7 +416,8 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPa
     (row.caption && row.caption.length > 0)
     || (row.selling_points && row.selling_points.length)
     || (row.amenities && row.amenities.length)
-    || row.has_transcript,
+    || row.has_transcript
+    || (row.media && row.media.length > 0),
   );
 
   return (
@@ -597,23 +599,7 @@ function Entry({ row, isAr, isAdmin, open, onToggle, onOrg, projectChoices, onPa
                 : 'A spoken transcript exists for this clip (full text shown in a coming update).'}
             </div>
           )}
-          {reads && reads.length > 0 && (
-            <div className="cw-dblock">
-              <div className="cw-k">{isAr ? 'قراءة التصميم' : 'Design read'}</div>
-              {reads.map((r) => (
-                <div key={r.id} className="cw-v" dir="auto" style={{ marginBottom: 4 }}>
-                  <b>{r.level === 'slide' ? (isAr ? 'شريحة' : 'Slide') : (isAr ? 'منشور' : 'Post')}: </b>
-                  {designReadSummary(r, isAr)}
-                  {r.level === 'post' && (r.read as PostRead).summary && (
-                    <div style={{ marginTop: 2 }}>{(r.read as PostRead).summary}</div>
-                  )}
-                  {r.level === 'slide' && (r.read as SlideRead).notes && (
-                    <div style={{ marginTop: 2 }}>{(r.read as SlideRead).notes}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          {reads && reads.length > 0 && <DesignReadPanel reads={reads} isAr={isAr} />}
           {readFailed && (
             <div className="cw-txnote">{isAr ? `تعذّر جلب قراءة التصميم: ${readFailed}` : `Design read unavailable: ${readFailed}`}</div>
           )}

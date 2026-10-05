@@ -44,7 +44,7 @@ import { repairFileMediaMeta } from '../../repairFileMediaMeta.js';
 import { backfillContentEtags } from '../../backfillContentEtags.js';
 import { contentReader, readerPausedUntil } from './geminiEnrich.js';
 
-export interface SweepStats { reader: string; gemini_reads: number; gemini_rereads: number; reader_spend_today_usd: number; reader_over_budget: boolean; media_recover: number; visual_ocr: number; frame_jobs: number; frame_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { reader: string; gemini_reads: number; gemini_rereads: number; design_reads: number; reader_spend_today_usd: number; reader_over_budget: boolean; media_recover: number; visual_ocr: number; frame_jobs: number; frame_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
 /** Stage 5 ceilings. A cv_process job is a multi-minute GPU run on Modal, so
  *  the re-enqueue is deliberately small per tick; anything it does not reach
@@ -138,6 +138,8 @@ const MAX_ENRICH_JOBS_PER_TICK = 10;
  *  ~1,200 posts an hour. The daily budget below still bounds the spend. */
 const MAX_GEMINI_READS_PER_TICK = 300;
 const MAX_GEMINI_REREADS_PER_TICK = 200;
+/** Image posts read before design reads existed (2026-10-05) get a design-only pass. */
+const MAX_DESIGN_READS_PER_TICK = 150;
 /** Daily ceiling on Gemini reader spend unless mkt_settings
  *  `content.reader_daily_budget_usd` says otherwise. At ~$0.004 an image post
  *  and ~$0.014 a video (60-post test, 2026-10-04) $25 is ~2,000 posts a day. */
@@ -216,7 +218,7 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { reader: 'runner', gemini_reads: 0, gemini_rereads: 0, reader_spend_today_usd: 0, reader_over_budget: false, media_recover: 0, visual_ocr: 0, frame_jobs: 0, frame_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, etags_filled: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { reader: 'runner', gemini_reads: 0, gemini_rereads: 0, design_reads: 0, reader_spend_today_usd: 0, reader_over_budget: false, media_recover: 0, visual_ocr: 0, frame_jobs: 0, frame_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, etags_filled: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
 
@@ -507,6 +509,16 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
       inFlight.add(r.content_post_id);
       stats.gemini_rereads++;
     }
+    // Design reads for image posts read before 2026-10-05, and retries of a
+    // failed design read (the RPC stops offering a post after 3 attempts).
+    const { data: due, error: dueErr } = await sb.rpc('mkt_design_read_due', { p_limit: MAX_DESIGN_READS_PER_TICK * 2 });
+    if (dueErr) throw new Error(`sweep: design read scan failed: ${dueErr.message}`);
+    for (const d of ((due ?? []) as Array<{ content_post_id: string }>).filter((x) => !inFlight.has(x.content_post_id)).slice(0, MAX_DESIGN_READS_PER_TICK)) {
+      const { error } = await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: d.content_post_id, mode: 'design_only', from: 'sweep-design' }, p_priority: 75, p_requested_by: null, p_fallback_of: null });
+      if (error) throw new Error(`sweep: design read enqueue failed: ${error.message}`);
+      inFlight.add(d.content_post_id);
+      stats.design_reads++;
+    }
   }
   const { count: enrichQueued } = reader === 'runner'
     ? await sb.from('claude_jobs')
@@ -646,13 +658,13 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
 }
 
 
-/** Gemini reader spend since Riyadh midnight, from the ai_usage ledger. */
+/** Gemini reader spend (post reads + image design reads) since Riyadh midnight, from the ai_usage ledger. */
 async function readerSpendToday(sb: SupabaseClient): Promise<number> {
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const since = new Date(`${day}T00:00:00+03:00`).toISOString();
   const rows = await pageAll<{ cost_usd: number | null }>(
     (from, to) => sb.from('ai_usage').select('cost_usd')
-      .eq('call_site', 'worker/marketing/geminiRead').gte('created_at', since)
+      .in('call_site', ['worker/marketing/geminiRead', 'worker/marketing/geminiDesign']).gte('created_at', since)
       .order('id', { ascending: true }).range(from, to),
     200_000, 'reader spend scan');
   return rows.reduce((sum, r) => sum + (Number(r.cost_usd) || 0), 0);

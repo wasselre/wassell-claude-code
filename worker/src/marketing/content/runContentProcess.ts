@@ -22,6 +22,7 @@ import { runFramesOnly, stageVideoFrames } from './videoFrames.js';
 import { contentReader, isGeminiRead, pauseReader, readAndDecide, readerPausedUntil, redecideFromStored, type ContentReader } from './geminiEnrich.js';
 import { dailyQuotaRetryAfter } from '../../ai/providers/geminiHttp.js';
 import { GEMINI_RULE_VERSION } from './geminiRead.js';
+import { designReadStoredPost } from './geminiDesign.js';
 
 export interface ContentProcessStats {
   post_id: string; media_total: number; media_stored: number; media_failed: number;
@@ -71,6 +72,12 @@ export interface ContentProcessOptions {
    * posts are left untouched.
    */
   narrowOnly?: boolean;
+  /**
+   * Design-only pass (2026-10-05): read the DESIGN of an already-read image post
+   * (geminiDesign.ts → visual_design_reads). Downloads only its stored images,
+   * leaves the project decision and processing_status alone.
+   */
+  designOnly?: boolean;
 }
 
 export async function runContentProcess(sb: SupabaseClient, contentPostId: string, opts: ContentProcessOptions = {}): Promise<ContentProcessStats> {
@@ -96,6 +103,24 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   // this job, or the Claude runner via 'awaiting_intelligence' (rollback path).
   const reader: ContentReader = opts.mediaOnly || opts.framesOnly ? 'runner' : await contentReader(sb);
   if (opts.narrowOnly) return narrowOnlyPass(sb, contentPostId, post as PostRow, stats, reader);
+  if (opts.designOnly) {
+    if (Date.now() < await readerPausedUntil(sb)) { stats.status = 'reader_paused'; return stats; }
+    try {
+      const d = await designReadStoredPost(sb, contentPostId);
+      mark('design_read');
+      stats.cost_usd += d.costUsd;
+      stats.images_analyzed = d.images;
+      stats.status = d.failure ? 'design_failed' : 'design_read';
+      if (d.failure) stats.errors.push(`design: ${d.failure.slice(0, 200)}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const quotaWait = dailyQuotaRetryAfter(msg);
+      if (quotaWait === null) throw e;
+      await pauseReader(sb, quotaWait, msg);
+      stats.status = 'reader_paused';
+    }
+    return stats;
+  }
   if (reader === 'gemini') {
     // Already read by Gemini: a full pass would only re-pay for the same answer.
     const { data: enr0, error: enr0Err } = await sb.from('mkt_content_enrichment').select('model, status').eq('content_post_id', contentPostId).maybeSingle();
@@ -408,6 +433,24 @@ ${transcriptText}`.trim(), 160) };
       stats.primary_project = out.primaryProjectId;
       stats.attributions = out.candidates;
       if (out.rejected) stats.errors.push(`attribution_rejected: ${out.rejected}`);
+      // An image post also gets its DESIGN read (videos are read shot by shot).
+      // The project decision is already stored: a failure here is recorded on
+      // the design row (or pauses on a quota) and the sweep's design pass
+      // retries it — it never fails or repeats the paid read above.
+      if (out.imagesRead > 0 && out.videosRead === 0) {
+        try {
+          const d = await designReadStoredPost(sb, contentPostId);
+          mark('design_read');
+          stats.cost_usd += d.costUsd;
+          if (d.failure) stats.errors.push(`design: ${d.failure.slice(0, 200)}`);
+        } catch (de) {
+          const dmsg = de instanceof Error ? de.message : String(de);
+          const wait = dailyQuotaRetryAfter(dmsg);
+          if (wait !== null) await pauseReader(sb, wait, dmsg);
+          else console.error(`[content] post=${contentPostId} design read failed (the sweep retries it): ${dmsg}`);
+          stats.errors.push(`design: ${dmsg.slice(0, 200)}`);
+        }
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.startsWith('permanent:')) { stats.fatal_errors.push(`reader: ${msg}`); return failPost(); }
