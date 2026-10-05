@@ -32,6 +32,7 @@ const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Numbe
 export function criteriaChips(s: AgentRunSearch, t: TFunction, isAr: boolean): string[] {
   const c = s.criteria ?? {};
   const out: string[] = [];
+  if (s.profile_name) out.push(t('chats.ai_act.for_profile', { name: s.profile_name }));
   const types = strArr(c.unit_types);
   if (types.length) out.push(types.join(' / '));
   if (typeof c.zone === 'string' && ZONES.has(c.zone)) out.push(t(`chats.ai_act.zone_${c.zone}`));

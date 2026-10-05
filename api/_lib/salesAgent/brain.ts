@@ -60,6 +60,8 @@ export interface BrainContext {
   instruction?: string | null;
   /** The customer's wants read by the SHARED preference extractor (prefReading.ts); applied to every search_projects. */
   customerReading?: CustomerReading | null;
+  /** The client's preference profiles (one per property they want); search_projects.profile_id names one. */
+  profiles?: Array<{ id: string; name: string }>;
 }
 
 export interface BrainHooks {
@@ -80,7 +82,8 @@ export interface BrainHooks {
    *  agent: the projects inside it (null = not understood) and what was understood. */
   readArea(): Promise<GeoReading>;
   /** The client's SAVED places (the CRM profile) → the projects inside them; null = no client / nothing saved. */
-  savedArea(): Promise<GeoReading | null>;
+  /** A saved profile's places (null id / unknown id = the active profile). */
+  savedArea(profileId?: string | null): Promise<GeoReading | null>;
 }
 
 /** One search_projects call, as the chat's AI cards show it. */
@@ -90,6 +93,9 @@ export interface AgentSearchLog {
   relaxed: string | null;
   area_understood: Array<{ place: string; wanted: boolean }> | null;
   overrides: string[];
+  /** Which saved profile the search was for (a client with several). */
+  profile_id?: string | null;
+  profile_name?: string | null;
   top: Array<{ id: string; name: string; district: string | null; price_from: number | null }>;
   /** Nothing fit: the closest options, each missing one condition (see CatalogSearch.alternatives). */
   alternatives?: Array<{ without: string; top: Array<{ id: string; name: string; district: string | null; price_from: number | null }> }>;
@@ -142,6 +148,7 @@ HOW YOU WORK
 6e. PLACES («قريب من الرياض بارك», «على طريق الملك سلمان», «قريب من محطة مترو», «جنب الجامعة»): pass near to search_projects with the place as they named it (or category for «محطة مترو»/«مول» in general) and their distance; if they gave none use 1 km for a metro station, 1.5 km for a road, 3 km for a mall/landmark/university, and say it («خلال 3 كيلو تقريباً»). Quote the real distance from distances_km («يبعد 1.4 كيلو عن الرياض بارك»). Several places → one condition each (all must hold). If a place comes back in unresolved_places, it is either not on our map or the name fits several places (a mall with branches, a university with two campuses) — ask which one (the branch, campus or district) in one short line — NEVER guess districts around a place. relaxed="distance" means nothing is within their distance; say so and give the nearest real distance.
 6f. AREA IN THEIR OWN WORDS — a side of a road («غرب طريق الملك فهد», «شمال طريق الملك سلمان»), a district on one side of a road («النرجس شمال طريق الملك سلمان»), a distance from a road or place they gave themselves, or several areas at once: call search_projects with area_from_chat true (zone and districts empty; a place they want to be NEAR — «قريب من مترو» — still goes in near, on top of the area) — the geography reader turns the WHOLE chat into a map area. Say back what it understood in a few words from area_understood («تمام، غرب طريق الملك فهد»). area_status "not_understood" → ask ONE short question that pins the place down (which district, which side, how far) — never guess districts. A plain district or region they said («النرجس», «شمال الرياض») ALSO goes through area_from_chat — never type a district name yourself into districts (that is only for narrowing with a previous search's facet names).
 6g. THE SAVED PROFILE. The state may carry a SAVED CLIENT PROFILE (unit type, budget, bedrooms, places…) from earlier conversations, calls and the rep. Use it from the first search: pass its unit type / budget / bedrooms, and saved_area=true for its places, unless they say something different NOW (then follow them). Never ask for something the profile already answers; you may confirm it in passing («لازلت تبحث بالنرجس؟»).
+6h. SEVERAL PROFILES. When the state lists SAVED CLIENT PROFILES, the customer wants more than one property (e.g. a villa to live in AND an apartment for their son). Each search is for ONE of them: pass its profile_id and that profile's values (saved_area=true uses its places). Never put one profile's type, budget or area into another's search. When they talk about both, search each separately and answer each in its own short line; when it is unclear which one they mean, ask in a few words («تقصد الفيلا ولا شقة ولدك؟»).
 6b. The customer NAMES a project («مهتم بصفا 78», «عندكم أكنان 25؟») → find_project. If it is ours and not already sent, send_project it right away (unless they asked to see specific units — rule 6a) and add one short line; answer any question they asked with its facts. If ambiguous, ask which one (one line, their names). If it is not ours, say so plainly and ask what they're after so you can offer something similar — never pretend.
 7. Questions about a project (price, payment plan, down payment, sizes, handover, how many options) → use get_project_facts / the search results and answer with the real numbers. "colleague_answers" in the facts are answers our reps gave before — use them like any other fact.
 7a. YOU DON'T KNOW. When the facts and tools do not answer the question (a discount policy, a specific finish, a fee, a date we don't have…): call ask_rep with the question as the customer meant it, then tell the customer in one short line that you'll check and get back («بتأكد لك وأرد عليك»). Never guess, and don't hand the whole chat over for a question. Ask each question once — if the state says it is still with a colleague, say you're still checking.
@@ -187,7 +194,8 @@ const TOOLS: Anthropic.Tool[] = [
         city: { type: 'string', description: 'City, default الرياض.' },
         zone: { type: 'string', enum: ZONES, description: 'Riyadh region: north/south/east/west/center.' },
         districts: { type: 'array', items: { type: 'string' }, description: 'ONLY to narrow a previous search: district names exactly as that search\'s facets listed them. A district the customer NAMED goes through area_from_chat, never here.' },
-        saved_area: { type: 'boolean', description: 'Use the places SAVED on the client (SAVED CLIENT PROFILE in the state) as the area, when they have not described a different area in this conversation.' },
+        saved_area: { type: 'boolean', description: 'Use the places SAVED on the client (SAVED CLIENT PROFILE in the state) as the area, when they have not described a different area in this conversation. With profile_id: that profile\'s places.' },
+        profile_id: { type: 'string', description: 'When the state lists several SAVED CLIENT PROFILES: the profile_id this search is for (one property at a time).' },
         area_from_chat: { type: 'boolean', description: 'Use the AREA the customer described in their own words — any district or region they named («النرجس», «شمال الرياض»), a side of a road («غرب طريق الملك فهد»), a district on one side of a road («النرجس شمال طريق الملك سلمان»), a distance they gave from a road or place («قريب من طريق الملك فهد بـ 2 كيلو»), several districts or areas together. Our geography reader turns their words into a map area. When true, leave zone and districts empty; near STILL applies on top of the area («فيلا في النرجس قريبة من مترو» → area_from_chat true + near metro).' },
         unit_types: { type: 'array', items: { type: 'string', enum: ['شقة', 'دور', 'فيلا', 'تاون هاوس', 'دبلكس'] } },
         bedrooms_min: { type: 'integer', minimum: 1, maximum: 10 },
@@ -465,14 +473,23 @@ export async function runBrain(
         case 'search_projects': {
           // The shared preference reader is authoritative for type / budget /
           // bedrooms / size (the same reading that fills the CRM profile).
-          const applied = applyCustomerReading(toCriteria(input), ctx.customerReading ?? null);
+          // With several profiles the whole-chat reading mixes the customer's
+          // wishes (a villa AND their son's apartment) — the agent's own
+          // per-profile reading stands; the reader is skipped.
+          const profiles = ctx.profiles ?? [];
+          const profile = typeof input.profile_id === 'string' ? profiles.find((p) => p.id === input.profile_id) ?? null : null;
+          if (typeof input.profile_id === 'string' && !profile) toolTrace.push(`profile_id ${String(input.profile_id)} unknown — searching without a profile`);
+          const applied = profiles.length > 1
+            ? { criteria: toCriteria(input), overrides: [] as string[] }
+            : applyCustomerReading(toCriteria(input), ctx.customerReading ?? null);
           const criteria = applied.criteria;
+          if (profiles.length > 1 && ctx.customerReading?.line) toolTrace.push('reader skipped (several profiles)');
           if (applied.overrides.length) toolTrace.push(`reader → ${applied.overrides.join(', ')}`);
           // The customer's described area → the projects inside it. Not
           // understood ⇒ say so and ask; never guess districts around it.
           let areaUnderstood: GeoReading['understood'] | null = null;
           if (input.saved_area === true && input.area_from_chat !== true) {
-            const saved = await hooks.savedArea();
+            const saved = await hooks.savedArea(profile?.id ?? null);
             if (!saved || !saved.ids) {
               toolTrace.push('saved area → none usable');
               const view = { area_status: 'no_saved_places', next: 'The client has no usable saved places. Search with what they said, or ask where.' };
@@ -510,6 +527,7 @@ export async function runBrain(
             total: r.total, relaxed: r.relaxed,
             area_understood: areaUnderstood ? areaUnderstood.map((u) => ({ place: u.place, wanted: u.wanted })) : null,
             overrides: applied.overrides,
+            ...(profile ? { profile_id: profile.id, profile_name: profile.name } : {}),
             top: r.projects.slice(0, 5).map((p) => ({ id: p.project_id, name: p.name, district: p.district, price_from: p.fit?.price_from ?? p.price_from })),
             ...(r.alternatives ? {
               alternatives: r.alternatives.map((a) => ({
@@ -518,7 +536,7 @@ export async function runBrain(
               })),
             } : {}),
           });
-          toolTrace.push(`search ${JSON.stringify(shown)} → ${r.total}${r.relaxed ? ` (${r.relaxed})` : ''}${r.alternatives ? ` · alternatives ${r.alternatives.map((a) => `without ${a.without}: ${a.projects.map((p) => p.name).join(', ')}`).join(' / ')}` : ''}`);
+          toolTrace.push(`search${profile ? ` [«${profile.name}»]` : ''} ${JSON.stringify(shown)} → ${r.total}${r.relaxed ? ` (${r.relaxed})` : ''}${r.alternatives ? ` · alternatives ${r.alternatives.map((a) => `without ${a.without}: ${a.projects.map((p) => p.name).join(', ')}`).join(' / ')}` : ''}`);
           return { content: JSON.stringify(view) };
         }
         case 'find_project': {

@@ -12,6 +12,9 @@ export interface AgentRunSearch {
   relaxed: string | null;
   area_understood: Array<{ place: string; wanted: boolean }> | null;
   overrides: string[];
+  /** The saved profile the search was for (a client with several). */
+  profile_id?: string | null;
+  profile_name?: string | null;
   top: AgentFoundProject[];
   /** Nothing fit: the closest options, each missing one condition. */
   alternatives?: Array<{ without: 'near' | 'readiness' | 'near_and_readiness' | 'area'; top: AgentFoundProject[] }>;

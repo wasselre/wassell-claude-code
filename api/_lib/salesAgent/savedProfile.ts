@@ -14,15 +14,28 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { parseLocationItems, type LocationItem } from '../../../src/lib/geo/locationItems.js';
 import { asRangeValue, asSetValue } from '../../../src/lib/clientPrefs/mergePrefs.js';
 import { requestPreferenceGaps } from '../../../src/lib/clients/requestReadiness.js';
+import { readStoredProfiles } from '../clientPrefs/profileTarget.js';
+
+/** One of the client's preference profiles — one per property they want. */
+export interface SavedProfileEntry {
+  id: string;
+  name: string;
+  active: boolean;
+  items: LocationItem[];
+  placeLabels: string[];
+}
 
 export interface SavedProfile {
   clientId: string;
   /** One English state line for the agent (empty profile ⇒ null). */
   line: string | null;
+  /** The ACTIVE profile's places (a search with saved_area and no profile_id). */
   items: LocationItem[];
   placeLabels: string[];
   /** The specialized-search checklist line (always set for a linked client). */
   checklist: string;
+  /** Every profile (one when the client never had several). */
+  profiles: SavedProfileEntry[];
 }
 
 const PURPOSE_AR: Record<string, string> = { residential: 'سكن', investment: 'استثمار' };
@@ -49,6 +62,33 @@ export function readinessText(v: string[]): string | null {
 
 /** PURE — the profile line from a client's data (exported for tests). */
 export function profileLine(d: Record<string, unknown>): { line: string | null; items: LocationItem[]; placeLabels: string[] } {
+  const { parts, items, placeLabels } = profileParts(d);
+  if (!parts.length) return { line: null, items, placeLabels };
+  return {
+    line: `SAVED CLIENT PROFILE (from the CRM — reps and our chat/call readers fill it; it may be older than this conversation): ${parts.join(' · ')}. Use it: search with it when they haven't said otherwise (saved_area=true searches the saved places), don't ask what it already answers, and follow what they say NOW when it differs.`,
+    items,
+    placeLabels,
+  };
+}
+
+/**
+ * PURE — the state line for a client with SEVERAL profiles (one per property
+ * they want; the AI files a separate second wish into its own profile —
+ * wishRouter.ts). Each is listed with its id so a search can name the one it
+ * is for (search_projects.profile_id). null when the client has one profile.
+ */
+export function profilesLine(d: Record<string, unknown>): string | null {
+  const { profiles, activeId } = readStoredProfiles(d);
+  if (profiles.length < 2) return null;
+  const rows = profiles.map((p) => {
+    const values = p.id === activeId ? d : p.data;
+    const { parts } = profileParts(values);
+    return `[profile_id=${p.id}] «${p.name}»${p.id === activeId ? ' (active)' : ''}: ${parts.length ? parts.join(' · ') : 'nothing saved yet'}`;
+  });
+  return `SAVED CLIENT PROFILES — the customer wants ${profiles.length} SEPARATE properties, one profile each (from the CRM; may be older than this conversation): ${rows.join(' | ')}. Work out which one they are talking about NOW and search for ONLY that one (profile_id + its values; saved_area=true uses its places). Never mix two profiles' wishes in one search or one message. If they ask for something none of them covers, follow what they say.`;
+}
+
+function profileParts(d: Record<string, unknown>): { parts: string[]; items: LocationItem[]; placeLabels: string[] } {
   const items = parseLocationItems(d.location_items);
   const wanted = items.filter((i) => i.polarity !== 'exclude').map(itemLabel).filter(Boolean);
   const avoided = items.filter((i) => i.polarity === 'exclude').map(itemLabel).filter(Boolean);
@@ -62,13 +102,8 @@ export function profileLine(d: Record<string, unknown>): { line: string | null; 
     asSetValue(d.preferred_amenities).length ? `wants: ${asSetValue(d.preferred_amenities).join('، ')}` : null,
     wanted.length ? `places: ${wanted.slice(0, 8).join('، ')}` : null,
     avoided.length ? `avoids: ${avoided.slice(0, 5).join('، ')}` : null,
-  ].filter(Boolean);
-  if (!parts.length) return { line: null, items, placeLabels: wanted };
-  return {
-    line: `SAVED CLIENT PROFILE (from the CRM — reps and our chat/call readers fill it; it may be older than this conversation): ${parts.join(' · ')}. Use it: search with it when they haven't said otherwise (saved_area=true searches the saved places), don't ask what it already answers, and follow what they say NOW when it differs.`,
-    items,
-    placeLabels: wanted,
-  };
+  ].filter((x): x is string => !!x);
+  return { parts, items, placeLabels: wanted };
 }
 
 /**
@@ -99,5 +134,12 @@ export async function loadSavedProfile(svc: SupabaseClient, clientId: string | n
   if (error) throw new Error(`saved profile read failed: ${error.message}`);
   if (!data) return null;
   const d = ((data as { data?: Record<string, unknown> }).data ?? {}) as Record<string, unknown>;
-  return { clientId, ...profileLine(d), checklist: requestChecklistLine(d) };
+  const { profiles, activeId } = readStoredProfiles(d);
+  const entries: SavedProfileEntry[] = profiles.map((p) => {
+    const { items, placeLabels } = profileParts(p.id === activeId ? d : p.data);
+    return { id: p.id, name: p.name, active: p.id === activeId, items, placeLabels };
+  });
+  const single = profileLine(d);
+  const several = profilesLine(d);
+  return { clientId, ...single, line: several ?? single.line, checklist: requestChecklistLine(d), profiles: entries };
 }

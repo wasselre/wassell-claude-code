@@ -540,7 +540,10 @@ async function runBrainTurn(
     console.error(`[salesAgent] saved profile not loaded chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
   }
   const customerReading = await readingP;
-  if (customerReading?.line) stateLines.push(customerReading.line);
+  // Several profiles: the whole-chat reading mixes the customer's separate
+  // wishes, so it is not shown as "what they want" (brain.ts skips it too).
+  const severalProfiles = (saved?.profiles.length ?? 0) > 1;
+  if (customerReading?.line && !severalProfiles) stateLines.push(customerReading.line);
   if (slots.gender === 'f') stateLines.push('The customer is a woman — use feminine forms.');
   if (slots.handed_off_at) stateLines.push(`Already handed to a colleague at ${slots.handed_off_at} — don't promise that again.`);
   for (const p of a.pending) stateLines.push(`A colleague ANSWERED the question you asked («${p.question}»): «${p.answer}» — pass it on now.`);
@@ -574,6 +577,7 @@ async function runBrainTurn(
       // The conversation started ~5 min before created_at (the message that started it).
       conversationStartedAt: new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString(),
       excludeProjectIds: exclude, knownProjectIds: knownIds, narrowTurns: slots.narrow_turns ?? 0, customerReading,
+      profiles: saved?.profiles.map((p) => ({ id: p.id, name: p.name })) ?? [],
       instruction: a.hasNew ? null : 'There is NO new customer message. A colleague answered the question you asked (see the state): pass the answer on to the customer now, in your own short voice, numbers exactly as given.',
     },
     {
@@ -656,7 +660,10 @@ async function runBrainTurn(
       // turns (cached per text). The whole chat history piled up every place
       // ever named — old visits, «الجنوب», «الفرسان بعيد» — and the "area"
       // covered ~16,000 records, i.e. nothing was narrowed (2026-10-04).
-      savedArea: async () => (saved && saved.items.length ? matchSavedPlaces(svc, saved.items, saved.placeLabels) : null),
+      savedArea: async (profileId) => {
+        const p = saved ? (profileId ? saved.profiles.find((x) => x.id === profileId) : null) ?? saved.profiles.find((x) => x.active) ?? null : null;
+        return p && p.items.length ? matchSavedPlaces(svc, p.items, p.placeLabels) : null;
+      },
       readArea: () => {
         const startedAt = new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString();
         const current = a.turns.filter((t) => !t.at || t.at >= startedAt);

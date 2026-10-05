@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { profileLine, requestChecklistLine } from '../savedProfile.js';
+import { profileLine, profilesLine, requestChecklistLine } from '../savedProfile.js';
 
 describe('profileLine — the client\'s saved profile, as agent state', () => {
   it('empty profile → no line', () => {
@@ -54,5 +54,24 @@ describe('requestChecklistLine — what a specialized search still needs (rule 1
     expect(l).toContain('at least one district: MISSING');
     expect(l).toContain('unit type: known');
     expect(l).toContain('one of budget / bedrooms / size: known');
+  });
+});
+
+describe('profilesLine — a client with several profiles (one per property)', () => {
+  it('one profile → no extra line (the single-profile line stands)', () => {
+    expect(profilesLine({ preferred_unit_type: ['فيلا'] })).toBeNull();
+  });
+  it('lists each profile with its id; the active one from the flat fields, the others from their snapshot', () => {
+    const line = profilesLine({
+      preferred_unit_type: ['فيلا'], budget: { max: 3000000 },
+      active_profile_id: 'default',
+      preference_profiles: [
+        { id: 'default', name: 'التفضيل الرئيسي', created_at: '', data: {} },
+        { id: 'p-son', name: 'شقة لولدي - الياسمين', created_at: '', data: { preferred_unit_type: ['شقة'], budget: { max: 900000 } } },
+      ],
+    })!;
+    expect(line).toContain('[profile_id=default] «التفضيل الرئيسي» (active): unit type: فيلا');
+    expect(line).toContain('[profile_id=p-son] «شقة لولدي - الياسمين»: unit type: شقة · budget: up to 900,000 SAR');
+    expect(line).toContain('2 SEPARATE properties');
   });
 });

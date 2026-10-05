@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { dateTimeShort, money, num } from '@/pages/Marketing/lib/format';
-import { useAiActivity, type AgentFoundProject, type AgentRun } from '../lib/aiActivity';
+import { useAiActivity, type AgentFoundProject, type AgentRun, type AgentRunSearch } from '../lib/aiActivity';
 import { buildAiEvents, criteriaChips, readingChips, relaxedLabel, type AiEvent } from '../lib/aiActivityText';
 import { usePrefFieldFormat } from '../lib/usePrefFieldFormat';
 import AiChangesSection from './AiChangesSection';
@@ -57,6 +57,25 @@ function Chips({ items }: { items: string[] }) {
 
 function Empty({ text }: { text: string }) {
   return <p className="text-[10.5px] text-charcoal/45">{text}</p>;
+}
+
+/** One search's result: what fit, else the closest alternatives, else nothing. */
+function FoundBlock({ search, sent, isAr }: { search: AgentRunSearch; sent: ReadonlyMap<string, string>; isAr: boolean }) {
+  const { t } = useTranslation();
+  if (search.top.length) return <FoundList items={search.top} sent={sent} isAr={isAr} />;
+  if (search.alternatives?.length) {
+    return (
+      <div className="space-y-1.5">
+        {search.alternatives.map((a) => (
+          <div key={a.without}>
+            <p className="text-[10px] text-amber-700">{t(`chats.ai_act.alt_without_${a.without}`)}</p>
+            <FoundList items={a.top} sent={sent} isAr={isAr} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <Empty text={t('chats.ai_act.nothing_found')} />;
 }
 
 function FoundList({ items, sent, isAr }: { items: AgentFoundProject[]; sent: ReadonlyMap<string, string>; isAr: boolean }) {
@@ -140,6 +159,19 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, p
   const latestReading = data?.runs.find((r) => r.reading && readingChips(r.reading, t, isAr).length > 0) ?? null;
   // Newest first: runs come newest first, a run's own searches oldest first.
   const searches = useMemo(() => (data?.runs ?? []).flatMap((r) => [...r.searches].reverse().map((s) => ({ s, at: r.created_at }))), [data]);
+  // A client with several profiles: the newest search for each profile the
+  // agent searched recently, so each wish shows what was found for it.
+  const foundByProfile = useMemo(() => {
+    const recent = searches.slice(0, 20);
+    if (!recent.some(({ s }) => s.profile_id)) return [];
+    const seen = new Set<string>();
+    return recent.filter(({ s }) => {
+      const k = s.profile_id ?? '';
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [searches]);
   const sent = useMemo(() => {
     const out = new Map<string, string>();
     for (const r of data?.runs ?? []) {
@@ -241,18 +273,16 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, p
           </Card>
 
           <Card icon={<Building2 size={12} />} title={t('chats.ai_act.card_found')}>
-            {searches[0]?.s.top.length ? (
-              <FoundList items={searches[0].s.top} sent={sent} isAr={isAr} />
-            ) : searches[0]?.s.alternatives?.length ? (
-              <div className="space-y-1.5">
-                {searches[0].s.alternatives.map((a) => (
-                  <div key={a.without}>
-                    <p className="text-[10px] text-amber-700">{t(`chats.ai_act.alt_without_${a.without}`)}</p>
-                    <FoundList items={a.top} sent={sent} isAr={isAr} />
+            {foundByProfile.length > 1 ? (
+              <div className="space-y-2">
+                {foundByProfile.map(({ s: q }) => (
+                  <div key={q.profile_id ?? ''}>
+                    <p className="mb-0.5 text-[10.5px] font-semibold text-chocolate">{q.profile_name ?? t('chats.ai_act.no_profile')}</p>
+                    <FoundBlock search={q} sent={sent} isAr={isAr} />
                   </div>
                 ))}
               </div>
-            ) : <Empty text={t('chats.ai_act.nothing_found')} />}
+            ) : searches[0] ? <FoundBlock search={searches[0].s} sent={sent} isAr={isAr} /> : <Empty text={t('chats.ai_act.nothing_found')} />}
           </Card>
 
           <Card icon={<ListChecks size={12} />} title={t('chats.ai_act.card_done')} wide>
