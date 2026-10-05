@@ -165,6 +165,14 @@ export function mapFloor(raw: unknown): string | null {
 
 const SIBLING_COPY_KEYS = ['unit_components', 'facade', 'parking_space', 'elevator_status'] as const;
 
+/** The project-level unit type from a `unit_updates` row: a known type AND a
+ *  cited source, or nothing. A type without a source is ignored. */
+export function statedUnitTypeOf(row: Record<string, unknown>): { type: string; source: string } | null {
+  const type = mapUnitType(typeof row.stated_unit_type === 'string' ? row.stated_unit_type : null);
+  const source = typeof row.stated_unit_type_source === 'string' ? row.stated_unit_type_source.trim() : '';
+  return type && source ? { type, source } : null;
+}
+
 export type Essential = 'area' | 'price' | 'bedrooms' | 'unit_type';
 
 /** Which of the four essentials a NEW unit lacks. Bedrooms 0 (a studio) is a
@@ -229,7 +237,14 @@ export function reconcile(
   crm: CrmUnit[],
   source: SourceUnit[],
   policy: ReconcilePolicy,
-  ctx: { projectId: string; developerId: string | null; projectName: string; sourceLabel: string; today: string },
+  ctx: {
+    projectId: string; developerId: string | null; projectName: string; sourceLabel: string; today: string;
+    /** The unit type the DEVELOPER states for the whole project (e.g. Sakani
+     *  lists every model of صفا 101 as «شقة»), recorded by a person on the
+     *  update-list row with its source. Used only when a unit's own data says
+     *  nothing — a stated fact with a citation, never a guess. */
+    statedUnitType?: { type: string; source: string } | null;
+  },
 ): ReconcileResult {
   // A unit code on our side is U-n; a source quoting one matches it too.
   const byCrmCode = new Map<string, CrmUnit>();
@@ -352,7 +367,8 @@ export function reconcile(
     if (s.unitNumber != null) data.unit_number = s.unitNumber;
     // The type comes from the SOURCE only. A sibling is picked by closest area,
     // so borrowing its type would be a guess dressed up as data.
-    const t = mapUnitType(s.unitType ?? null);
+    const ownType = mapUnitType(s.unitType ?? null);
+    const t = ownType ?? ctx.statedUnitType?.type ?? null;
     // The four essentials (operator rule, 2026-10-05): a unit is NEVER created
     // without area, price, bedrooms and unit type. Missing any → skipped and
     // reported, so the operator is told what to ask the developer for.
@@ -367,6 +383,7 @@ export function reconcile(
     if (fl) data.floor = fl;
     const noteLines = [`${label} — ${ctx.projectName} (${ctx.sourceLabel}، ${ctx.today} — وحدة جديدة/مُفرجة، أُضيفت تلقائياً)`];
     if (s.description) noteLines.push(`مواصفات المصدر: ${s.description}`);
+    if (!ownType && ctx.statedUnitType) noteLines.push(`نوع الوحدة «${ctx.statedUnitType.type}» حسب تصريح المطوّر للمشروع: ${ctx.statedUnitType.source}`);
     if (sib) {
       for (const k of SIBLING_COPY_KEYS) if (sib.data[k] != null) data[k] = sib.data[k];
       if (data.bathrooms == null && sib.data.bathrooms != null) data.bathrooms = sib.data.bathrooms;

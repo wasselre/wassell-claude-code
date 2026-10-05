@@ -460,3 +460,23 @@ describe('brakeReason — an empty source', () => {
     expect(brakeReason(r, { share: 0.5, minUnits: 6 })).toBeNull();
   });
 });
+
+describe('the developer-stated unit type (cited, project level)', () => {
+  const noType = { status: 'available' as const, price: 900_000, area: 120, bedrooms: 3 };
+  it('fills a unit whose own data has no type, and says where it came from', async () => {
+    const { statedUnitTypeOf } = await import('../projectUpdates/reconcile');
+    const stated = statedUnitTypeOf({ stated_unit_type: 'شقة', stated_unit_type_source: 'https://sakani.sa/app/offplan-projects/1445' });
+    const r = reconcile([], [src('299-C5-4-41', noType)], RIVA, { ...CTX, statedUnitType: stated });
+    expect(r.creates[0]!.data.unit_type).toBe('شقة');
+    expect(String(r.creates[0]!.data.notes)).toContain('sakani.sa');
+  });
+  it('the unit\u2019s own type wins over the project statement', () => {
+    const r = reconcile([], [src('V1', { ...noType, unitType: 'فيلا' })], RIVA, { ...CTX, statedUnitType: { type: 'شقة', source: 'x' } });
+    expect(r.creates[0]!.data.unit_type).toBe('فيلا');
+  });
+  it('a stated type without a source is ignored', async () => {
+    const { statedUnitTypeOf } = await import('../projectUpdates/reconcile');
+    expect(statedUnitTypeOf({ stated_unit_type: 'شقة' })).toBeNull();
+    expect(statedUnitTypeOf({ stated_unit_type: 'شقة', stated_unit_type_source: '  ' })).toBeNull();
+  });
+});

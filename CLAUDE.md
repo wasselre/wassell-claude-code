@@ -622,6 +622,9 @@ PRD: `docs/prd/project-updates.md`.
    `project_update_notify_incomplete`). Never fill a gap by guessing — no type
    borrowed from a "similar" unit, no area from a layout name. Enforced twice:
    `reconcile` (`result.incomplete`) and `hasEssentials` before the write.
+   The ONE allowed fallback for type: the developer's own project-level
+   statement recorded on the `unit_updates` row (`stated_unit_type` + its
+   `stated_unit_type_source` link, both required) — a cited fact, not a guess.
 
 ## Office outreach (unanswered requests → WhatsApp to offices) (added 2026-09-28)
 

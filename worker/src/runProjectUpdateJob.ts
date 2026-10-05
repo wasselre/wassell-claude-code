@@ -30,7 +30,7 @@ import {
   UNIT_UPDATES_MODEL_ID,
   UNITS_MODEL_ID,
 } from './projectUpdates/apply.js';
-import { brakeReason, normUnitKey, reconcile } from './projectUpdates/reconcile.js';
+import { brakeReason, normUnitKey, reconcile, statedUnitTypeOf } from './projectUpdates/reconcile.js';
 import { createProjectFromSource } from './projectUpdates/newProject.js';
 import { fetchMajdProject, majdProjectId } from './projectUpdates/almajdiah.js';
 import { RivaPortal, rivaProjectIdFromUrl } from './projectUpdates/riva.js';
@@ -183,7 +183,7 @@ async function runRiva(
       const crm = (await loadAll(supabase, UNITS_MODEL_ID, { key: 'project_id', value: projectId })) as CrmUnit[];
       const developerId = typeof project.data.developer === 'string' ? project.data.developer : null;
       const result = reconcile(crm, src.units, policy, {
-        projectId, developerId, projectName, sourceLabel: 'بوابة وسطاء ريفا', today,
+        projectId, developerId, projectName, sourceLabel: 'بوابة وسطاء ريفا', today, statedUnitType: statedUnitTypeOf(row.data),
       });
       const brake = brakeReason(result, { share: settings.brake_share, minUnits: settings.brake_min_units });
       Object.assign(entry, {
@@ -357,7 +357,7 @@ async function runPerProject(
       entry.absent_policy = policy.absentAvailable;
       if (src.meta) entry.source_meta = src.meta;
       const result = reconcile(crm, src.units, policy, {
-        projectId, developerId, projectName, sourceLabel: adapter.label, today,
+        projectId, developerId, projectName, sourceLabel: adapter.label, today, statedUnitType: statedUnitTypeOf(row.data),
       });
       const brake = brakeReason(result, { share: settings.brake_share, minUnits: settings.brake_min_units });
       Object.assign(entry, {
