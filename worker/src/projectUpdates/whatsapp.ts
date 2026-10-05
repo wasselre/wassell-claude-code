@@ -599,7 +599,15 @@ export async function runWhatsAppGroup(a: WhatsAppRunArgs): Promise<WhatsAppRunR
         creates: result.creates.map((c) => c.label),
         incomplete: result.incomplete,
       });
-      if (brake) { r.held = brake; held++; if (!a.dryRun) await appendLog(supabase, projectId, `${today} — ⛔ تحديث واتساب موقوف: ${brake}`, today); continue; }
+      // The operator can confirm a held project for ONE run (params.override_brake
+      // = project ids) — same mechanism as the portal runs; recorded on the log.
+      const overridden = !!brake && Array.isArray(a.params.override_brake)
+        && (a.params.override_brake as unknown[]).includes(projectId);
+      if (brake && !overridden) { r.held = brake; held++; if (!a.dryRun) await appendLog(supabase, projectId, `${today} — ⛔ تحديث واتساب موقوف: ${brake}`, today); continue; }
+      if (overridden) {
+        r.brake_overridden = brake;
+        if (!a.dryRun) await appendLog(supabase, projectId, `${today} — ✅ أكّد المشغّل التغيير رغم إيقاف الأمان (${brake}).`, today);
+      }
       if (a.dryRun) continue;
       const out = await applyResult(supabase, { runId: a.runId, projectId, projectName: project.name, result, heartbeat: a.heartbeat, sourceLabel: `واتساب ${group.label}` });
       r.written = out;
