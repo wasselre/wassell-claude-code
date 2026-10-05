@@ -364,6 +364,8 @@ async function runPerProject(
         updates: result.updates.map((u) => ({ unit: u.label, why: u.reasons })),
         creates: result.creates.map((c) => ({ unit: c.label, status: c.data.unit_status, price: c.data.total_price ?? null, plan: !!c.source.planUrl })),
         missing_from_source: result.missingFromSource.length,
+        price_diffs_not_applied: result.priceDiffsNotApplied.length,
+        price_diffs_sample: result.priceDiffsNotApplied.slice(0, 20),
         missing_sample: result.missingFromSource.slice(0, 15),
         ambiguous: result.ambiguous,
       });
@@ -484,7 +486,11 @@ export async function runProjectUpdateJob(args: {
         fetch: (id) => fetchSafaProject(id, broker, pubs.get(id) ?? { units: [], comingSoon: false }, publicHealthy),
         policy: (scope, src) => scope === 'status_only'
           ? STATUS_ONLY_POLICY
-          : { absentAvailable: src.meta?.absent_means_sold ? 'sold' : 'leave', createMissing: true, updatePrices: true, keepReserved: true },
+          // updatePrices: false — the broker card's price is not on one basis
+          // with ours (صفا 80: card = ours +5% on 28 of 31 units, صفا 85: equal;
+          // 2026-10-05). Differences are REPORTED (price_diffs) until a person
+          // settles which price we store. New units still take the card price.
+          : { absentAvailable: src.meta?.absent_means_sold ? 'sold' : 'leave', createMissing: true, updatePrices: false, keepReserved: true },
       });
     }
     case 'whatsapp_group': {

@@ -78,27 +78,38 @@ export function parsePublicCard(html: string, comingSoon: boolean): SourceUnit |
 }
 
 /**
- * One BROKER card (`div.unit_details`). The broker card also shows the
- * commission, so the price is the largest amount on the card — the commission
- * is a few thousand or a percentage, the unit price six or seven digits.
+ * One BROKER card (`div.unit_details`), read field by field — the layout was
+ * taken from the real saved cards (2026-10-05):
+ *   .unit-title            the unit code, in EITHER format: «SF085-A01-F01-001-APT»
+ *                          or the newer projects' «299-C5-4-41» (صفا 101 / 102)
+ *   .space span            «165.58 م²»
+ *   .price-item            «السعر: 756,000» — the unit price
+ *   .badge                 «مبلغ العمولة: 7,560» — the commission, NEVER the price
+ *   .icons span × 3        bedrooms, bathrooms, floor («RF» = roof)
+ *   href /property/<id>    the portal's own unit id
  */
 export function parseBrokerCard(html: string): SourceUnit | null {
-  const text = strip(html);
-  const code = CODE_RE.exec(text)?.[0] ?? CODE_RE.exec(html)?.[0] ?? null;
+  const title = html.match(/class="unit-title"[^>]*>\s*([^<]+?)\s*</)?.[1]?.trim();
+  const code = title || CODE_RE.exec(strip(html))?.[0] || null;
   if (!code) return null;
-  const amounts = [...text.matchAll(/(\d{1,3}(?:,\d{3})+|\d{5,})(?:\.\d+)?/g)]
-    .map((m) => num(m[1]))
-    .filter((n): n is number => n != null && n >= 100_000);
-  const price = amounts.length ? Math.max(...amounts) : null;
-  const area = num(text.match(/([\d.]+)\s*(?:م²|م2|متر)/)?.[1]);
+  const priceItem = html.match(/class="price-item"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? '';
+  const price = num(strip(priceItem).match(/[\d,]{4,}/)?.[0]);
+  const area = num(html.match(/class="space[^"]*"[\s\S]*?([\d.,]+)\s*م²/)?.[1]);
+  const icons = html.match(/class="icons[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? '';
+  const spans = [...icons.matchAll(/<span[^>]*>([\s\S]*?)<\/span>/g)].map((m) => strip(m[1]!));
   return {
-    sourceId: html.match(/property\/(\d+)/)?.[1] ?? null,
+    sourceId: html.match(/property\/(\d+)/)?.[1] ?? html.match(/data-id="(\d+)"/)?.[1] ?? null,
     unitCode: code,
     unitModel: code,
-    unitType: typeOf(code, text),
-    status: 'available',
-    price,
+    unitType: typeOf(code, strip(html)),
+    // A unit the portal lists WITHOUT a price cannot be bought yet («قريباً»
+    // projects — صفا 96 lists all 58 units unpriced); it is not «available».
+    status: (price != null && price > 0 ? 'available' : 'under_construction') as UnitStatus,
+    price: price != null && price > 0 ? price : null,
     area,
+    bedrooms: num(spans[0]),
+    bathrooms: num(spans[1]),
+    floor: spans[2] || null,
   };
 }
 

@@ -142,13 +142,23 @@ const FLOOR_WORDS: Array<[RegExp, string]> = [
 /** Map a source floor ("2", "الدور الأول", "Ground") to a units.floor option. */
 export function mapFloor(raw: unknown): string | null {
   if (raw == null || raw === '') return null;
-  const s = toAsciiDigits(String(raw));
-  const n = s.match(/^\s*(\d{1,2})\s*$/);
+  // Vowel marks out («سَطح» → «سطح»), Arabic digits to ASCII.
+  const s = toAsciiDigits(String(raw)).replace(/[ً-ْٰ]/g, '').trim();
+  const n = s.match(/^(\d{1,2})\s*F?$/i);            // «3», and Safa's «4F» … «7F»
   if (n) {
     const v = parseInt(n[1]!, 10);
     if (v === 0) return 'ارضي';
     return v >= 1 && v <= 23 ? String(v) : null;
   }
+  // Safa broker cards (counted on the real snapshot, 2026-10-05): GF / FF / SF /
+  // TF / RF — 205 of 448 cards came out floorless before these were mapped.
+  const code: Record<string, string> = { G: 'ارضي', GF: 'ارضي', FF: 'اول', SF: 'ثاني', TF: 'ثالث', RF: 'الروف', ROOF: 'الروف' };
+  if (code[s.toUpperCase()]) return code[s.toUpperCase()]!;
+  if (/^R\d*$/i.test(s)) return 'الروف';
+  const ordinals: Array<[RegExp, string]> = [
+    [/الرابع/, '4'], [/الخامس/, '5'], [/السادس/, '6'], [/السابع/, '7'], [/الثامن/, '8'], [/التاسع/, '9'], [/العاشر/, '10'],
+  ];
+  for (const [re, val] of ordinals) if (re.test(s)) return val;
   for (const [re, val] of FLOOR_WORDS) if (re.test(s)) return val;
   return null;
 }
@@ -228,6 +238,7 @@ export function reconcile(
   const matchedIds = new Set<string>();
   const seenSrc = new Set<string>();
   let statusChanges = 0, toSoldOrReserved = 0, priceChanges = 0, matched = 0;
+  const priceDiffsNotApplied: ReconcileResult['priceDiffsNotApplied'] = [];
 
   for (const s of source) {
     const label = sourceLabel(s);
@@ -255,12 +266,16 @@ export function reconcile(
         statusChanges++;
         if ((s.status === 'sold' || s.status === 'reserved') && cur === 'available') toSoldOrReserved++;
       }
-      if (policy.updatePrices && s.price != null && s.price > 0) {
+      if (s.price != null && s.price > 0) {
         const curPrice = num(u.data.total_price);
         if (curPrice == null || Math.abs(curPrice - s.price) >= 1) {
-          patch.total_price = s.price;
-          reasons.push(`price ${curPrice ?? '∅'} → ${s.price}`);
-          priceChanges++;
+          if (policy.updatePrices) {
+            patch.total_price = s.price;
+            reasons.push(`price ${curPrice ?? '∅'} → ${s.price}`);
+            priceChanges++;
+          } else {
+            priceDiffsNotApplied.push({ unit: String(u.data.unit_model ?? u.data.unit_code ?? u.id), crm: curPrice, source: s.price });
+          }
         }
       }
       // Record the source's own unit id the first time we match by something
@@ -328,6 +343,7 @@ export function reconcile(
     updates,
     creates,
     missingFromSource,
+    priceDiffsNotApplied,
     ambiguous,
     stats: {
       sourceUnits: seenSrc.size,

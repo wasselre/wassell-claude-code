@@ -99,6 +99,9 @@ export interface ReconcileResult {
   creates: UnitCreate[];
   /** CRM units the source did not list (left untouched under 'leave'). */
   missingFromSource: string[];
+  /** Prices the source shows that differ from ours but were NOT written
+   *  (policy.updatePrices = false) — reported for a person to judge. */
+  priceDiffsNotApplied: Array<{ unit: string; crm: number | null; source: number }>;
   /** Source units that matched more than one CRM unit — skipped, never guessed. */
   ambiguous: string[];
   stats: {

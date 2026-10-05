@@ -344,7 +344,7 @@ describe('Safa adapter', () => {
   });
   it('a broker card: the code incl. roof units (-R01-), the unit price not the commission', async () => {
     const { parseBrokerCard } = await import('../projectUpdates/safa');
-    const u = parseBrokerCard('<div class="unit_details"><span>SF083-A01-R01-019-APT</span><span>142.5 م²</span><span>السعر 1,195,000 ر.س</span><span>عمولتك 23,900 ر.س</span><a href="/property/5521">عرض المزيد</a></div>')!;
+    const u = parseBrokerCard('<div class="unit_details"><span class="unit-title">SF083-A01-R01-019-APT</span><div class="space"><span>142.5 م²</span></div><div class="price"><div class="price-item"><span>السعر: </span><span> 1,195,000 </span></div><div class="badge"><span>مبلغ العمولة: </span><span> 23,900 </span></div></div><a href="/property/5521">عرض المزيد</a></div>')!;
     expect(u).toMatchObject({ unitModel: 'SF083-A01-R01-019-APT', price: 1_195_000, area: 142.5, sourceId: '5521' });
   });
   it('union: the broker price wins; a public-only unit carries no price', async () => {
@@ -369,5 +369,29 @@ describe('recipe engine knows save_items', () => {
     const { parseRecipe } = await import('../portals/recipe');
     const steps = parseRecipe(JSON.stringify([{ do: 'goto', url: 'https://x' }, { do: 'save_items', key: 'units', item_selector: 'div.unit_details', urls: ['https://x/p/1?page={{page}}'] }]));
     expect(steps[1]!.do).toBe('save_items');
+  });
+});
+
+describe('Safa broker cards — the real layout (saved 2026-10-05)', () => {
+  // Trimmed from a real card of صفا 101 (portal project 108): new code format,
+  // price line vs commission line, SVG icon before every value, «RF» floor.
+  const card = `<div class="unit_details p-3 pt-4"> <div class="unit_info d-flex unitCard" data-id="10197"> <div class="title"> <span class="unit-title" style="font-size: 15px">299-C5-4-41</span> <div class="info"> <div class="location"> <svg><path/></svg> <span class=""> الرياض </span> </div> <div class="space d-flex align-items-center mx-3"> <svg><path/></svg> <span class="">165.58 م²</span> </div> </div> </div> <div class="price"> <div class="price-item"> <span class="mx-1">السعر: </span> <span> 756,000 <img src="riyal.svg" width="14"> </span> </div> <div class="mt-2 badge badge--new"> <span class="mx-1">مبلغ العمولة: </span> <span> 7,560 <img src="riyal.svg"> </span> </div> <div class="icons d-flex align-items-center mt-3"> <span> <svg><mask id="m"><path/></mask></svg> 3 </span> <span class="mx-3"> <svg><path/></svg> 4 </span> <span> <svg><path/></svg> RF </span> </div> </div> </div> <div class="btns"> <a class="mainBtn unitCard" href="https://broker.safainv.sa/property/10197"> عرض المزيد </a> </div> </div>`;
+  it('reads code (any format), price (not commission), area, beds, baths, floor, portal id', async () => {
+    const { parseBrokerCard } = await import('../projectUpdates/safa');
+    expect(parseBrokerCard(card)).toMatchObject({ unitModel: '299-C5-4-41', price: 756000, area: 165.58, bedrooms: 3, bathrooms: 4, floor: 'RF', sourceId: '10197', status: 'available' });
+  });
+  it('a card with no price is under construction, not available', async () => {
+    const { parseBrokerCard } = await import('../projectUpdates/safa');
+    expect(parseBrokerCard(card.replace('756,000', ''))!.status).toBe('under_construction');
+  });
+  it('maps every floor form found on the 448 real cards', () => {
+    const cases: Array<[string, string]> = [['GF', 'ارضي'], ['FF', 'اول'], ['SF', 'ثاني'], ['TF', 'ثالث'], ['RF', 'الروف'], ['4F', '4'], ['7F', '7'], ['سَطح', 'الروف'], ['الرابع', '4'], ['الأرضي', 'ارضي'], ['الثالث', 'ثالث']];
+    for (const [raw, want] of cases) expect([raw, mapFloor(raw)]).toEqual([raw, want]);
+  });
+  it('report-only prices: a different source price is listed, not written', () => {
+    const r = reconcile([crm('u1', { unit_model: 'A', total_price: 1_521_879 })], [src('A', { status: 'available', price: 1_598_000 })],
+      { absentAvailable: 'leave', createMissing: true, updatePrices: false }, CTX);
+    expect(r.updates).toHaveLength(0);
+    expect(r.priceDiffsNotApplied).toEqual([{ unit: 'A', crm: 1_521_879, source: 1_598_000 }]);
   });
 });
