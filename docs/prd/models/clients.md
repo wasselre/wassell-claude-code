@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-27
+**Last updated (from DB):** 2026-10-05
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **4** (2 base, 2 non-base)
-- Fields: **23**
+- Fields: **24**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -132,6 +132,7 @@
 | `budget` | Budget / الميزانية | Range | no | half | no | 500000–10000000 |
 | `preferred_bedrooms` | Preferred Bedrooms / عدد غرف النوم المفضل | Range | no | half | no | 1–10 |
 | `preference_notes` | Preference Notes / ملاحظات التفضيلات | Text area | no | full | no |  |
+| `preferred_readiness` | Ready or off-plan / جاهز أو على الخارطة | Multi-select | no | half | no | 2 options · multi |
 
 **Field details:**
 
@@ -167,6 +168,9 @@
   - selectable values (191): 500,000 … 10,000,000 step 50,000
 - **Preferred Bedrooms / عدد غرف النوم المفضل** (`preferred_bedrooms`, type `range`):
   - 1 to 10 step 1 rooms
+- **Ready or off-plan / جاهز أو على الخارطة** (`preferred_readiness`, type `multiselect`) — multi-value. Options:
+  - API value `ready` → "Ready" / "جاهز" · color `#10B981`
+  - API value `off_plan` → "Off-plan" / "على الخارطة" · color `#F59E0B`
 
 ### 3. WhatsApp History / سجل واتساب  _(color #25D366)_
 

@@ -16,7 +16,7 @@
 | [Create Unresponded Requests](create-unresponded-requests-28dae81e.md) | update | Follow-ups | yes | 1 | 1 | 2026-09-20 |
 | [Financing Status Updated](financing-status-updated-fcff0ba0.md) | update | Financing | yes | 3 | 4 | 2026-06-17 |
 | [First Follow-up (Clients - Follow-ups)](first-follow-up-clients-follow-ups-a336e134.md) | create | Clients | yes | 1 | 1 | 2026-08-31 |
-| [Follow-ups - Booking Call](follow-ups-booking-call-d997425a.md) | update | Follow-ups | yes | 6 | 9 | 2026-09-20 |
+| [Follow-ups - Booking Call](follow-ups-booking-call-d997425a.md) | update | Follow-ups | yes | 6 | 9 | 2026-10-05 |
 | [No-Show Recovery](no-show-recovery-f7864a0d.md) | update | Appointments | yes | 1 | 2 | 2026-06-17 |
 | [Offer Created → Offer Follow-up](offer-created-offer-follow-up-278823ff.md) | create | Offer Prices | yes | 1 | 2 | 2026-06-17 |
 | [Offer Follow-up Completed](offer-follow-up-completed-9966776a.md) | update | Follow-ups | yes | 6 | 10 | 2026-07-30 |

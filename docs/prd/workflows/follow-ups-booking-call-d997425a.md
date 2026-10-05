@@ -5,7 +5,7 @@
 # Workflow: Follow-ups - Booking Call / المتابعات - إتصال حجز موعد
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-20
+**Last updated (from DB):** 2026-10-05
 **Workflow id:** `d997425a-0c8d-48c4-afef-b5792792cfae`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated
@@ -43,6 +43,7 @@ _Match: ALL must pass (AND)_
 - Actual Follow-up (`actual_datetime`) is not empty
 - Follow-up Number (`followup_number`) less than 10
 - Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
+- `campaign_day` (unknown field) is empty
 
 **Actions (run in order):**
 

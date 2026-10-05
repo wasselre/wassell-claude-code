@@ -16,7 +16,7 @@
 | [Chats](chats.md) | `chats` | JSONB | — | 1 | 15 | yes | 2026-10-04 |
 | [Cities](cities.md) | `cities` | frozen `cities` | Geography | 1 | 12 | no | 2026-07-30 |
 | [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-10-04 |
-| [Clients](clients.md) | `clients` | JSONB | — | 4 | 23 | no | 2026-09-27 |
+| [Clients](clients.md) | `clients` | JSONB | — | 4 | 24 | no | 2026-10-05 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-08-20 |
 | [Contacts](contacts.md) | `contacts` | JSONB | — | 1 | 6 | no | 2026-08-10 |
 | [Countries](countries.md) | `countries` | JSONB | Geography | 1 | 5 | no | 2026-06-28 |
@@ -29,7 +29,7 @@
 | [Follow-ups](followups.md) | `followups` | JSONB | — | 3 | 44 | no | 2026-10-04 |
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-09-20 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
-| [Lead portals](lead-portals.md) | `lead_portals` | JSONB | — | 2 | 17 | no | 2026-09-29 |
+| [Lead portals](lead-portals.md) | `lead_portals` | JSONB | — | 2 | 25 | no | 2026-10-05 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 86 | no | 2026-09-20 |
 | [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-09-20 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | — | 1 | 9 | no | 2026-10-04 |
@@ -48,6 +48,6 @@
 | [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 1 | 7 | no | 2026-09-20 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Unanswered Requests](unanswered-requests.md) | `unanswered_requests` | JSONB | Unresponded Requests | 3 | 13 | no | 2026-10-04 |
-| [Unit Updates](unit-updates.md) | `unit_updates` | JSONB | Projects | 1 | 10 | no | 2026-10-04 |
+| [Unit Updates](unit-updates.md) | `unit_updates` | JSONB | Projects | 1 | 12 | no | 2026-10-05 |
 | [Units](units.md) | `units` | JSONB | Projects | 8 | 52 | no | 2026-09-29 |
 | [Visits](visits.md) | `visits` | JSONB | — | 1 | 13 | no | 2026-10-04 |
