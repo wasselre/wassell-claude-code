@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { MessageCircle, RefreshCw, Star, Wrench, Eye, EyeOff, Check, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -61,30 +61,43 @@ export default function WhatsAppNumbersPage() {
   // overlay wins for friendly_name / default / active.
   const merged = useMemo(() => mergeDevicesAndOverlay(waDevicesLive, waDevices), [waDevicesLive, waDevices]);
 
-  // Every ACTIVE WAHA session gets its own live-status / re-pair card. Each
-  // number is an independent linked device on the gateway, so a single card is
-  // wrong the moment there's more than one (sales + ops). Deduped by session,
-  // default first. Falls back to the deployed default when the overlay is empty.
-  const wahaSessions = useMemo(() => {
-    const seen = new Set<string>();
-    const rows = waDevices
-      .filter((d) => d.provider === 'waha' && d.session_name && d.is_active)
-      .sort((a, b) => (a.is_default === b.is_default ? 0 : a.is_default ? -1 : 1))
-      .map((d) => {
-        const session = d.session_name!;
-        if (seen.has(session)) return null;
-        seen.add(session);
-        return {
-          session,
-          label: isAr
-            ? (d.friendly_name_ar || d.friendly_name_en || d.phone)
-            : (d.friendly_name_en || d.friendly_name_ar || d.phone),
-          phone: d.phone,
-        };
-      })
-      .filter((x): x is { session: string; label: string; phone: string } => x !== null);
-    return rows.length > 0 ? rows : [{ session: 'wassel_main', label: '', phone: '' }];
-  }, [waDevices, isAr]);
+  // One number = one card (2026-10-05). An active number on a WAHA session is
+  // drawn as its live connection card (status, restart, re-pair) with the
+  // number's own controls inside it; anything else (a legacy Haberchat device,
+  // a number with no session) keeps the plain row. Hidden numbers — e.g. the
+  // main line's pre-July session `wassel_main`, kept so its old chats still
+  // carry a name — fold away under a toggle instead of reading as a 4th line.
+  const sessionByDevice = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of waDevices) {
+      if (d.provider === 'waha' && d.session_name) m.set(d.device_id, d.session_name);
+    }
+    return m;
+  }, [waDevices]);
+  const activeRows = useMemo(() => merged.filter((r) => r.is_active), [merged]);
+  const hiddenRows = useMemo(() => merged.filter((r) => !r.is_active), [merged]);
+  const [showHidden, setShowHidden] = useState(false);
+
+  const usedSessions = new Set<string>();
+  const renderRow = (row: MergedRow) => {
+    const session = row.is_active ? sessionByDevice.get(row.device_id) : undefined;
+    const controls = <NumberControls row={row} isAr={isAr} onSave={saveWhatsAppNumber} />;
+    if (session && !usedSessions.has(session)) {
+      usedSessions.add(session);
+      return (
+        <WahaConnectionCard
+          key={row.device_id}
+          session={session}
+          label={rowLabel(row, isAr)}
+          phone={row.phone || undefined}
+          highlight={row.is_default}
+        >
+          {controls}
+        </WahaConnectionCard>
+      );
+    }
+    return <NumberRow key={row.device_id} row={row} isAr={isAr}>{controls}</NumberRow>;
+  };
 
   return (
     <div className={embedded ? 'max-w-5xl' : 'p-6 md:p-8 max-w-5xl mx-auto'}>
@@ -113,9 +126,9 @@ export default function WhatsAppNumbersPage() {
         </Button>
       </div>
 
-      {wahaSessions.map((s) => (
-        <WahaConnectionCard key={s.session} session={s.session} label={s.label || undefined} phone={s.phone || undefined} />
-      ))}
+      {/* No overlay rows at all (fresh install): still offer the default
+          session's connection card so the first number can be paired. */}
+      {merged.length === 0 && !refreshing && <WahaConnectionCard session="wassel_main" />}
 
       {refreshError && (
         <div className="card p-4 mb-4 border-red-300 bg-red-50">
@@ -145,16 +158,20 @@ export default function WhatsAppNumbersPage() {
         </div>
       )}
 
-      {merged.length > 0 && (
-        <div className="space-y-3">
-          {merged.map((row) => (
-            <NumberRow
-              key={row.device_id}
-              row={row}
-              isAr={isAr}
-              onSave={saveWhatsAppNumber}
-            />
-          ))}
+      {activeRows.map(renderRow)}
+
+      {hiddenRows.length > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setShowHidden((v) => !v)}
+            className="text-sm text-charcoal/50 hover:text-charcoal transition-colors"
+          >
+            {showHidden
+              ? (isAr ? 'إخفاء الأرقام المخفية' : 'Hide hidden numbers')
+              : (isAr ? `أرقام مخفية (${hiddenRows.length})` : `Hidden numbers (${hiddenRows.length})`)}
+          </button>
+          {showHidden && <div className="mt-3">{hiddenRows.map(renderRow)}</div>}
         </div>
       )}
     </div>
@@ -178,7 +195,36 @@ interface MergedRow {
   overlay_created_at: string | null;
 }
 
-function NumberRow({
+function rowLabel(row: MergedRow, isAr: boolean): string {
+  return isAr
+    ? (row.friendly_name_ar || row.friendly_name_en || row.live_name || row.phone)
+    : (row.friendly_name_en || row.friendly_name_ar || row.live_name || row.phone);
+}
+
+/** A number with no live WAHA session card (legacy device, or hidden). */
+function NumberRow({ row, isAr, children }: { row: MergedRow; isAr: boolean; children: ReactNode }) {
+  const statusColor = statusBadge(row.live_status);
+  return (
+    <div className={`card p-4 mb-4 ${row.is_default ? 'border-copper' : ''} ${!row.is_active ? 'opacity-60' : ''}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <h3 className="font-bold text-charcoal truncate">{rowLabel(row, isAr)}</h3>
+        {row.live_status && (
+          <span
+            className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full"
+            style={{ backgroundColor: `${statusColor}14`, color: statusColor }}
+          >
+            {statusLabel(row.live_status, isAr)}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-charcoal/50 mt-1 font-mono" dir="ltr">{row.phone}</p>
+      <div className="mt-3 pt-3 border-t border-sand/40">{children}</div>
+    </div>
+  );
+}
+
+/** The number's own settings: role badges, rename, default, operations, hide. */
+function NumberControls({
   row,
   isAr,
   onSave,
@@ -191,12 +237,6 @@ function NumberRow({
   const [nameAr, setNameAr] = useState(row.friendly_name_ar ?? '');
   const [nameEn, setNameEn] = useState(row.friendly_name_en ?? '');
   const [saving, setSaving] = useState(false);
-
-  const label = isAr
-    ? (row.friendly_name_ar || row.friendly_name_en || row.live_name || row.phone)
-    : (row.friendly_name_en || row.friendly_name_ar || row.live_name || row.phone);
-
-  const statusColor = statusBadge(row.live_status);
 
   const persist = async (patch: Partial<WhatsAppNumber>) => {
     setSaving(true);
@@ -234,143 +274,116 @@ function NumberRow({
     setEditing(false);
   };
 
-  return (
-    <div
-      className={`card p-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center ${
-        row.is_default ? 'border-copper' : ''
-      } ${!row.is_active ? 'opacity-60' : ''}`}
-    >
-      {/* Left: number + status */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          {!editing ? (
-            <>
-              <h3 className="font-bold text-charcoal truncate">{label}</h3>
-              {row.is_default && (
-                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-copper/10 text-copper">
-                  <Star size={12} fill="currentColor" />
-                  {isAr ? 'افتراضي' : 'Default'}
-                </span>
-              )}
-              {row.is_operations && (
-                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-terracotta/10 text-terracotta">
-                  <Wrench size={12} />
-                  {isAr ? 'العمليات' : 'Operations'}
-                </span>
-              )}
-              {row.live_status && (
-                <span
-                  className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full"
-                  style={{ backgroundColor: `${statusColor}14`, color: statusColor }}
-                >
-                  {statusLabel(row.live_status, isAr)}
-                </span>
-              )}
-            </>
-          ) : (
-            <div className="flex flex-col sm:flex-row gap-2 flex-1 w-full">
-              <input
-                type="text"
-                dir="rtl"
-                placeholder={isAr ? 'اسم عربي' : 'Arabic name'}
-                value={nameAr}
-                onChange={(e) => setNameAr(e.target.value)}
-                className="input flex-1 text-sm"
-                disabled={saving}
-              />
-              <input
-                type="text"
-                dir="ltr"
-                placeholder={isAr ? 'اسم إنجليزي' : 'English name'}
-                value={nameEn}
-                onChange={(e) => setNameEn(e.target.value)}
-                className="input flex-1 text-sm"
-                disabled={saving}
-              />
-              <Button
-                variant="secondary"
-                onClick={saveNames}
-                disabled={saving}
-                className="!px-3"
-                title={isAr ? 'حفظ' : 'Save'}
-              >
-                <Check size={16} />
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={cancelNames}
-                disabled={saving}
-                className="!px-3"
-                title={isAr ? 'إلغاء' : 'Cancel'}
-              >
-                <X size={16} />
-              </Button>
-            </div>
-          )}
-        </div>
-        {!editing && (
-          <p className="text-xs text-charcoal/50 mt-1 font-mono" dir="ltr">
-            {row.phone}
-          </p>
-        )}
+  if (editing) {
+    return (
+      <div className="flex flex-col sm:flex-row gap-2 flex-1 w-full">
+        <input
+          type="text"
+          dir="rtl"
+          placeholder={isAr ? 'اسم عربي' : 'Arabic name'}
+          value={nameAr}
+          onChange={(e) => setNameAr(e.target.value)}
+          className="input flex-1 text-sm"
+          disabled={saving}
+        />
+        <input
+          type="text"
+          dir="ltr"
+          placeholder={isAr ? 'اسم إنجليزي' : 'English name'}
+          value={nameEn}
+          onChange={(e) => setNameEn(e.target.value)}
+          className="input flex-1 text-sm"
+          disabled={saving}
+        />
+        <Button
+          variant="secondary"
+          onClick={saveNames}
+          disabled={saving}
+          className="!px-3"
+          title={isAr ? 'حفظ' : 'Save'}
+        >
+          <Check size={16} />
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={cancelNames}
+          disabled={saving}
+          className="!px-3"
+          title={isAr ? 'إلغاء' : 'Cancel'}
+        >
+          <X size={16} />
+        </Button>
       </div>
+    );
+  }
 
-      {/* Right: action buttons — only shown when not editing names */}
-      {!editing && (
-        <div className="flex flex-wrap gap-2 shrink-0">
-          <Button
-            variant="secondary"
-            onClick={() => setEditing(true)}
-            className="!px-3 !text-xs"
-            disabled={saving}
-          >
-            {isAr ? 'تعديل الاسم' : 'Rename'}
-          </Button>
-          {!row.is_default && (
-            <Button
-              variant="secondary"
-              onClick={() => persist({ is_default: true, is_operations: false })}
-              className="!px-3 !text-xs"
-              disabled={saving || !row.is_active}
-              title={!row.is_active ? (isAr ? 'يجب التفعيل أولاً' : 'Activate first') : undefined}
-            >
-              <Star size={12} />
-              {isAr ? 'اجعله افتراضي' : 'Set default'}
-            </Button>
-          )}
-          {/* Operations line — internal outreach (project officers). A number can't
-              be both the sales default and the operations line. */}
-          <Button
-            variant="secondary"
-            onClick={() => persist({ is_operations: !row.is_operations })}
-            className="!px-3 !text-xs"
-            disabled={saving || !row.is_active || (!row.is_operations && row.is_default)}
-            title={
-              row.is_default
-                ? (isAr ? 'الرقم الافتراضي للمبيعات لا يصلح لخط العمليات' : "The sales default can't also be the operations line")
-                : !row.is_active
-                  ? (isAr ? 'يجب التفعيل أولاً' : 'Activate first')
-                  : (isAr ? 'استخدمه لإشعار مسؤولي المشاريع' : 'Use it to notify project officers')
-            }
-          >
-            <Wrench size={12} />
-            {row.is_operations
-              ? (isAr ? 'إلغاء العمليات' : 'Unset operations')
-              : (isAr ? 'اجعله للعمليات' : 'Set as operations')}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => persist({ is_active: !row.is_active, is_default: row.is_active ? false : row.is_default })}
-            className="!px-3 !text-xs"
-            disabled={saving}
-          >
-            {row.is_active ? <EyeOff size={12} /> : <Eye size={12} />}
-            {row.is_active
-              ? (isAr ? 'إخفاء' : 'Hide')
-              : (isAr ? 'تفعيل' : 'Activate')}
-          </Button>
-        </div>
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {row.is_default && (
+        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-copper/10 text-copper">
+          <Star size={12} fill="currentColor" />
+          {isAr ? 'افتراضي' : 'Default'}
+        </span>
       )}
+      {row.is_operations && (
+        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-terracotta/10 text-terracotta">
+          <Wrench size={12} />
+          {isAr ? 'العمليات' : 'Operations'}
+        </span>
+      )}
+      <div className="flex flex-wrap gap-2 ms-auto">
+        <Button
+          variant="secondary"
+          onClick={() => setEditing(true)}
+          className="!px-3 !text-xs"
+          disabled={saving}
+        >
+          {isAr ? 'تعديل الاسم' : 'Rename'}
+        </Button>
+        {!row.is_default && (
+          <Button
+            variant="secondary"
+            onClick={() => persist({ is_default: true, is_operations: false })}
+            className="!px-3 !text-xs"
+            disabled={saving || !row.is_active}
+            title={!row.is_active ? (isAr ? 'يجب التفعيل أولاً' : 'Activate first') : undefined}
+          >
+            <Star size={12} />
+            {isAr ? 'اجعله افتراضي' : 'Set default'}
+          </Button>
+        )}
+        {/* Operations line — internal outreach (project officers). A number can't
+            be both the sales default and the operations line. */}
+        <Button
+          variant="secondary"
+          onClick={() => persist({ is_operations: !row.is_operations })}
+          className="!px-3 !text-xs"
+          disabled={saving || !row.is_active || (!row.is_operations && row.is_default)}
+          title={
+            row.is_default
+              ? (isAr ? 'الرقم الافتراضي للمبيعات لا يصلح لخط العمليات' : "The sales default can't also be the operations line")
+              : !row.is_active
+                ? (isAr ? 'يجب التفعيل أولاً' : 'Activate first')
+                : (isAr ? 'استخدمه لإشعار مسؤولي المشاريع' : 'Use it to notify project officers')
+          }
+        >
+          <Wrench size={12} />
+          {row.is_operations
+            ? (isAr ? 'إلغاء العمليات' : 'Unset operations')
+            : (isAr ? 'اجعله للعمليات' : 'Set as operations')}
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => persist({ is_active: !row.is_active, is_default: row.is_active ? false : row.is_default })}
+          className="!px-3 !text-xs"
+          disabled={saving}
+        >
+          {row.is_active ? <EyeOff size={12} /> : <Eye size={12} />}
+          {row.is_active
+            ? (isAr ? 'إخفاء' : 'Hide')
+            : (isAr ? 'تفعيل' : 'Activate')}
+        </Button>
+      </div>
     </div>
   );
 }

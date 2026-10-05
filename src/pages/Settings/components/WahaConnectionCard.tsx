@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { QrCode, RefreshCw, Wifi, WifiOff, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -20,8 +20,21 @@ import { getWahaSessionState, restartWahaSession, getWahaQrBlob, type WahaSessio
  * Polling: 5s while a pairing attempt is active, 20s when idle. The QR blob
  * is fetched with the auth header (the endpoint is admin-only), so a plain
  * <img src> can't be used — object URLs are created and revoked here.
+ *
+ * Since 2026-10-05 this IS the number's card on Settings › WhatsApp numbers:
+ * `children` carries the number's own controls (default / operations badges,
+ * rename, hide), so one number is one card instead of a status card plus a
+ * settings row. `highlight` outlines the default number.
  */
-export default function WahaConnectionCard({ session, label, phone }: { session: string; label?: string; phone?: string }) {
+export default function WahaConnectionCard({
+  session, label, phone, highlight = false, children,
+}: {
+  session: string;
+  label?: string;
+  phone?: string;
+  highlight?: boolean;
+  children?: ReactNode;
+}) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
 
@@ -162,7 +175,7 @@ export default function WahaConnectionCard({ session, label, phone }: { session:
   const scanning = pairing && status === 'SCAN_QR_CODE' && !!qrUrl;
 
   return (
-    <div className="card p-5 mb-4">
+    <div className={`card p-5 mb-4 ${highlight ? 'border-copper' : ''}`}>
       <div className="flex items-start gap-3 flex-wrap">
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${working ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
           {working ? <Wifi size={20} className="text-green-600" /> : <WifiOff size={20} className="text-red-500" />}
@@ -170,9 +183,7 @@ export default function WahaConnectionCard({ session, label, phone }: { session:
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="font-bold text-charcoal">
-              {label
-                ? (isAr ? `اتصال واتساب — ${label}` : `WhatsApp — ${label}`)
-                : (isAr ? 'اتصال واتساب (الخادم)' : 'WhatsApp Connection (server)')}
+              {label || (isAr ? 'اتصال واتساب (الخادم)' : 'WhatsApp Connection (server)')}
             </h3>
             <StatusPill status={status} error={error} isAr={isAr} />
           </div>
@@ -209,6 +220,8 @@ export default function WahaConnectionCard({ session, label, phone }: { session:
           )}
         </div>
       </div>
+
+      {children && <div className="mt-4 pt-4 border-t border-sand/40">{children}</div>}
 
       {pairing && (
         <div className="mt-4 flex flex-col sm:flex-row items-center gap-4 rounded-xl bg-cream/60 p-4">
