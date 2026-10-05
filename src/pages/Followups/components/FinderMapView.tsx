@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import { markActivity } from '@/lib/perf/freezeDetector';
-import { buildColoredPinIcon } from '@/lib/locationUtils';
+import { cachedPillIcon } from '@/lib/locationUtils';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
 import BaseMapView, { type MapPin } from '@/components/map/BaseMapView';
 import type { LocationItem } from '@/lib/geo/locationItems';
@@ -53,14 +53,10 @@ const asCoord = (v: unknown): number | null => {
 };
 
 export default function FinderMapView({ matches, isAr, onOpenDetails, renderSelectedCard, focus, heightClass = 'h-[70vh]', areaItems }: Props) {
-  // One pin icon per source color, reused across every marker (a dense tab has
-  // thousands of pins — re-encoding an identical SVG data-URI per marker was the
-  // main-thread stall when opening the map on a large result set).
-  const iconBySource = useMemo(() => ({
-    our_projects: buildColoredPinIcon(SOURCE_COLOR.our_projects) as google.maps.Icon | undefined,
-    market_listings: buildColoredPinIcon(SOURCE_COLOR.market_listings) as google.maps.Icon | undefined,
-    all_projects: buildColoredPinIcon(SOURCE_COLOR.all_projects) as google.maps.Icon | undefined,
-  }), []);
+  // Each pin is a PILL carrying the project's name in its source color
+  // (operator, 2026-10-05: «pins should have the project name, not just a pin»).
+  // Icons are memoized per (name, color) in locationUtils, so a re-render of a
+  // dense tab never re-measures / re-encodes the same SVG.
 
   // Only matches with real coordinates can be plotted. Keyed by project_id, colored
   // by source; our projects are "solo" pins (never clustered) and sit on top.
@@ -85,7 +81,7 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
         id: m.project_id,
         lat,
         lng,
-        icon: iconBySource[m.source],
+        icon: cachedPillIcon(m.project_name, SOURCE_COLOR[m.source]) as google.maps.Icon | undefined,
         title: `${m.project_name}${extId}`,
         // Our projects sit on top so they're never hidden under a market pin.
         zIndex: m.source === 'our_projects' ? 1000 : undefined,
@@ -94,7 +90,7 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
       });
     }
     return out;
-  }, [matches, iconBySource]);
+  }, [matches]);
 
   const missingCount = matches.length - pins.length;
 

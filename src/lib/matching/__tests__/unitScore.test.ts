@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scoreUnit, rankUnits } from '../unitScore';
+import { scoreUnit, rankUnits, matchingUnits } from '../unitScore';
 import type { UnitView } from '@/lib/projects/unitView';
 import type { AppRecord } from '@/types';
 import type { OptionView } from '@/lib/projects/projectView';
@@ -107,5 +107,30 @@ describe('rankUnits', () => {
     ];
     const ranked = rankUnits(units, { property_types: ['فيلا'], budget_max: 1_000_000 }, 3);
     expect(ranked[0]!.unit.id).toBe('fit_villa');
+  });
+});
+
+
+describe('matchingUnits — only fully-matching AVAILABLE units', () => {
+  const apt = opt('apartment', 'شقة', 'Apartment');
+  const req = { property_types: ['شقة'], bedrooms: 3, budget_max: 1_500_000 };
+  it('drops reserved / sold units and partial fits, cheapest first', () => {
+    const out = matchingUnits([
+      u({ id: 'ok-expensive', type: apt, bedrooms: 3, totalPrice: 1_400_000 }),
+      u({ id: 'ok-cheap', type: apt, bedrooms: 4, totalPrice: 1_100_000 }),
+      u({ id: 'reserved', type: apt, bedrooms: 3, totalPrice: 1_000_000, status: opt('reserved', 'محجوز', 'Reserved') }),
+      u({ id: 'sold', type: apt, bedrooms: 3, totalPrice: 900_000, status: opt('sold', 'مباع', 'Sold') }),
+      u({ id: 'two-bed', type: apt, bedrooms: 2, totalPrice: 800_000 }),
+      u({ id: 'over-budget', type: apt, bedrooms: 3, totalPrice: 1_600_000 }),
+      u({ id: 'no-price', type: apt, bedrooms: 3 }),
+      u({ id: 'villa', type: opt('villa', 'فيلا', 'Villa'), bedrooms: 3, totalPrice: 1_200_000 }),
+    ], req);
+    expect(out.map((x) => x.id)).toEqual(['ok-cheap', 'ok-expensive']);
+  });
+  it('with no requirements, every available unit matches', () => {
+    const out = matchingUnits([
+      u({ id: 'a', totalPrice: 2 }), u({ id: 'b', totalPrice: 1 }), u({ id: 'r', status: opt('reserved') }),
+    ], {});
+    expect(out.map((x) => x.id)).toEqual(['b', 'a']);
   });
 });

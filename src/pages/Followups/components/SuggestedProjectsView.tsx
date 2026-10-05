@@ -36,10 +36,12 @@ import ProjectWhatsAppFlow from './ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import LeaveWithoutSavingModal from '@/components/matching/LeaveWithoutSavingModal';
 
-/** List / map results-view toggle. Lives in the ALWAYS-VISIBLE bottom bar so the
- *  rep can switch views no matter how the refine controls above are collapsed
- *  (moved out of FinderRefinementBar for exactly that — user report 2026-08-24:
- *  "the list and map view buttons should be below so they are always shown"). */
+/** List / map results-view toggle. Lives in the ALWAYS-VISIBLE strip at the TOP
+ *  of the results (beside Collapse/Expand), so the rep can switch views no matter
+ *  how the refine controls are folded. History: moved out of FinderRefinementBar
+ *  to an always-visible BOTTOM bar (2026-08-24, "should be below so they are
+ *  always shown"), then to the top strip (operator, 2026-10-05: "they should be
+ *  at the top") — still never hidden by the collapse. */
 function ViewToggle({ viewMode, onViewMode, isAr }: { viewMode: FinderViewMode; onViewMode: (m: FinderViewMode) => void; isAr: boolean }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   return (
@@ -1155,6 +1157,7 @@ export default function SuggestedProjectsView({
                     : `${L('التطابق ≥', 'Match ≥')} ${scoreThreshold}% · ${isAr ? DISPLAY_TAB_LABELS[activeTab].ar : DISPLAY_TAB_LABELS[activeTab].en} (${ourProjects.length + tabView.tabs[activeTab].length})`}
                 </span>
               </div>
+              <ViewToggle viewMode={viewMode} onViewMode={setViewMode} isAr={isAr} />
               <button
                 type="button"
                 onClick={() => setShowControls((v) => !v)}
@@ -1324,6 +1327,7 @@ export default function SuggestedProjectsView({
               renderSelectedCard={(item) => (
                 <FinderCard
                   item={item}
+                  quick
                   isAr={isAr}
                   onOpenDetails={onOpenDetails}
                   selected={selected.has(item.project_id)}
@@ -1352,6 +1356,7 @@ export default function SuggestedProjectsView({
                   <FinderCard
                     key={`our-${item.project_id}`}
                     item={item}
+                    quick
                     isAr={isAr}
                     onOpenDetails={onOpenDetails}
                     selected={selected.has(item.project_id)}
@@ -1382,6 +1387,7 @@ export default function SuggestedProjectsView({
                   <FinderCard
                     key={item.project_id}
                     item={item}
+                    quick
                     isAr={isAr}
                     onOpenDetails={onOpenDetails}
                     selected={selected.has(item.project_id)}
@@ -1413,14 +1419,11 @@ export default function SuggestedProjectsView({
         </div>
       </div>
 
-      {/* Footer — ALWAYS-VISIBLE list/map toggle + the selection summary (the
-          Save-options action lives in the header). The view toggle sits here, not
-          in the collapsible refine toolbar, so switching views is always one click
-          away regardless of how the controls above are folded. */}
-      {!loading && !error && fetchedTotal > 0 && (
+      {/* Footer — the selection summary (the Save-options action lives in the
+          header; the list/map toggle lives in the top strip). */}
+      {!loading && !error && fetchedTotal > 0 && clientRec && (
         <div className="border-t border-sand/40 bg-white">
           <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-2 sm:px-6">
-            <ViewToggle viewMode={viewMode} onViewMode={setViewMode} isAr={isAr} />
             {clientRec && (
               <div className="flex min-w-0 items-center gap-3">
                 <span className="shrink-0 text-xs text-charcoal/60">

@@ -191,6 +191,21 @@ export function scoreUnit(unit: UnitView, req: MatchRequirementsInput): UnitScor
  * excluded (not offerable). Ties break toward availability, then best value
  * (cheapest price/m²), then cheapest price, then largest area — deterministic.
  */
+/**
+ * The units that FULLY match the request: status AVAILABLE (sold and reserved
+ * never count) and every requested dimension satisfied — i.e. a 100 score, since
+ * availability always weighs in and an unconfirmable (missing-data) requirement
+ * scores 0. Cheapest first, unknown price last. What a finder card offers the
+ * client (operator, 2026-10-05: a «reserved unit at 60%» must never appear).
+ */
+export function matchingUnits(units: UnitView[], req: MatchRequirementsInput): UnitView[] {
+  const nn = (v: number | null, fb: number) => (v == null ? fb : v);
+  return units
+    .filter((u) => u.status?.value === 'available')
+    .filter((u) => scoreUnit(u, req).score === 100)
+    .sort((a, b) => nn(a.totalPrice, Infinity) - nn(b.totalPrice, Infinity));
+}
+
 export function rankUnits(units: UnitView[], req: MatchRequirementsInput, limit = 3): UnitScore[] {
   const availRank = (s: string | null) =>
     s === 'available' ? 0 : s === 'reserved' ? 1 : s === 'under_construction' ? 2 : 3;

@@ -3,7 +3,7 @@ import {
   ExternalLink, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
   CheckSquare, Square, Send, LayoutGrid,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import ProjectUnitsModal from './ProjectUnitsModal';
 import SuggestedUnits from './SuggestedUnits';
 import DeliveryPill from '@/components/matching/DeliveryPill';
@@ -69,6 +69,14 @@ interface Props {
    *  project's units against them and shows the best 3 inline (catalog projects
    *  only). Absent → no suggested-units section. */
   requirements?: MatchRequirementsInput;
+  /** The Quick Finder's slimmed card (2026-10-05, operator): only the two badges
+   *  a rep needs — inside / outside the requested area, and ready / off-plan
+   *  (with the handover date) — no source / geo-verification / confidence /
+   *  distance / budget pills, no data gaps, no «Why this project?». */
+  quick?: boolean;
+  /** Replaces the «Suggested units» block (the Quick Finder passes the units
+   *  that FULLY match the request, available only). */
+  unitsSlot?: ReactNode;
 }
 
 const fmtNum = (n: number) => n.toLocaleString('en-US');
@@ -128,7 +136,7 @@ const asCoord = (v: unknown): number | null => {
 
 export default function FinderCard({
   item, isAr, onOpenDetails, selected, onToggleSelect, saveState, existingStatus,
-  onSetStatus, onSendToClient, onShowOnMap, hideClientActions, chatPdf, clientId, requirements,
+  onSetStatus, onSendToClient, onShowOnMap, hideClientActions, chatPdf, clientId, requirements, quick = false, unitsSlot,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
@@ -220,6 +228,12 @@ export default function FinderCard({
 
       <div className="space-y-2.5 p-3">
         {/* Match type + geography verification + distance */}
+        {quick ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <QuickLocationPill fit={item.our_fit ?? null} matchType={item.match_type} distanceKm={item.distance_km} isAr={isAr} />
+            <DeliveryPill facts={f} isMarketListing={item.source === 'market_listings'} isAr={isAr} />
+          </div>
+        ) : (
         <div className="flex flex-wrap items-center gap-1.5">
           {/* Our portfolio is matched LOOSELY, so it shows an honest fit summary
               (location/budget/size) instead of the generic match-type pill. */}
@@ -270,6 +284,7 @@ export default function FinderCard({
           )}
           {item.deal && <DealPill deal={item.deal} isAr={isAr} />}
         </div>
+        )}
 
         {/* Deterministic explanation — HIDDEN for now (2026-08-23): the sentence
             just restates the badges + specs grid below (location/distance, price,
@@ -277,7 +292,7 @@ export default function FinderCard({
             item.explanation; re-render this line to bring it back. */}
 
         {/* Mismatch warnings */}
-        {item.mismatch_warnings.length > 0 && (
+        {!quick && item.mismatch_warnings.length > 0 && (
           <div className="space-y-1">
             {item.mismatch_warnings.map((w, i) => (
               <div key={i} className="flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700">
@@ -301,7 +316,8 @@ export default function FinderCard({
         {/* Suggested units — the project's best-fitting units for this search,
             ranked against the client requirements (catalog projects only; a market
             listing is itself a single unit). */}
-        {hasUnits && requirements && (
+        {unitsSlot}
+        {!unitsSlot && hasUnits && requirements && (
           <SuggestedUnits
             item={item}
             requirements={requirements}
@@ -311,7 +327,7 @@ export default function FinderCard({
         )}
 
         {/* Data gaps */}
-        {item.data_gaps.length > 0 && (
+        {!quick && item.data_gaps.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {item.data_gaps.map((g) => (
               <span key={g} className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">
@@ -322,11 +338,13 @@ export default function FinderCard({
         )}
 
         {/* Why (deterministic score breakdown) */}
+        {!quick && (
         <button type="button" onClick={() => setShowWhy((v) => !v)} className="inline-flex items-center gap-1 text-[11px] font-semibold text-copper hover:underline">
           <HelpCircle size={12} /> {L('لماذا هذا المشروع؟', 'Why this project?')}
           <ChevronDown size={12} className={`transition ${showWhy ? 'rotate-180' : ''}`} />
         </button>
-        {showWhy && (
+        )}
+        {!quick && showWhy && (
           <div className="space-y-1 rounded-lg border border-sand/40 bg-cream/30 p-2.5">
             {Object.entries(item.score_breakdown).filter(([, v]) => v != null).map(([k, v]) => (
               <div key={k} className="flex items-center justify-between text-[11px]">
@@ -478,6 +496,21 @@ function BandBadge({ band, score, isAr }: { band: FinderBand; score: number; isA
  * badges), so the rep sees every real matching project of ours and judges the
  * stretch. Green = on-target, amber = a stretch worth showing, gray = neutral.
  */
+/** Slim card: inside or outside the requested area — nothing else. Our projects
+ *  carry the honest fit summary; other catalog projects use the Finder's own
+ *  match type (exact = inside the requested district / area). */
+function QuickLocationPill({ fit, matchType, distanceKm, isAr }: { fit: OurFit | null; matchType: FinderMatchType; distanceKm: number | null; isAr: boolean }) {
+  const inside = fit ? fit.location === 'in_area' : matchType === 'exact';
+  const dist = fit ? fit.distance_km : distanceKm;
+  const km = !inside && dist != null ? (isAr ? ` · ~${dist} كم` : ` · ~${dist} km`) : '';
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${inside ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+      <MapPin size={11} className="opacity-60" />
+      {inside ? (isAr ? 'داخل المنطقة المطلوبة' : 'Inside the requested area') : (isAr ? 'خارج المنطقة المطلوبة' : 'Outside the requested area')}{km}
+    </span>
+  );
+}
+
 function OurFitBadges({ fit, isAr }: { fit: OurFit; isAr: boolean }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const green = 'border-emerald-200 bg-emerald-50 text-emerald-700';

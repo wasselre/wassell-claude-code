@@ -603,6 +603,7 @@ export default function ProjectFinderPage() {
     <FinderCard
       key={key}
       item={item}
+      quick
       isAr={isAr}
       onOpenDetails={onOpenDetails}
       selected={selectedClientId ? selected.has(item.project_id) : false}

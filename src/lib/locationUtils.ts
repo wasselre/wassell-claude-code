@@ -442,6 +442,19 @@ export function buildPillIcon(label: string, color: string): GoogleMapsIcon | un
   };
 }
 
+/** {@link buildPillIcon}, memoized per (label, color) — a results map re-renders
+ *  its pins often, and measuring + encoding the same pill SVG per render is the
+ *  kind of main-thread work the Finder map was stalling on. */
+const _pillCache = new Map<string, GoogleMapsIcon | undefined>();
+export function cachedPillIcon(label: string, color: string): GoogleMapsIcon | undefined {
+  const key = `${color}|${label}`;
+  if (_pillCache.has(key)) return _pillCache.get(key);
+  const icon = buildPillIcon(label, color);
+  // Only cache a real icon: before Google Maps loads the builder returns undefined.
+  if (icon) _pillCache.set(key, icon);
+  return icon;
+}
+
 /**
  * Build a circular cluster marker icon — copper-filled circle with the cluster
  * count in white. Diameter scales mildly with count so 100+ clusters read as
