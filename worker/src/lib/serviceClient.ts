@@ -20,7 +20,11 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from '../env.js';
 
-export function makeServiceClient(env: WorkerEnv, serviceName = 'worker'): SupabaseClient {
+export function makeServiceClient(
+  env: WorkerEnv,
+  serviceName = 'worker',
+  opts: { requestTimeoutMs?: number } = {},
+): SupabaseClient {
   return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
     global: {
@@ -29,6 +33,19 @@ export function makeServiceClient(env: WorkerEnv, serviceName = 'worker'): Supab
         'x-wassel-build': process.env.FLY_IMAGE_REF ?? 'unknown',
         'x-wassel-instance': process.env.FLY_MACHINE_ID ?? env.WORKER_ID,
       },
+      ...(opts.requestTimeoutMs ? { fetch: timedFetch(opts.requestTimeoutMs) } : {}),
     },
   });
+}
+
+/** fetch that gives up after `ms`. supabase-js has no request timeout of its
+ *  own: on 2026-10-05 one project-update request never answered, the run sat
+ *  silent for 15 minutes with a unit saved but its change-log row unwritten.
+ *  A timed-out request rejects with an AbortError the caller sees and reports. */
+export function timedFetch(ms: number): typeof fetch {
+  return (input, init) => {
+    const timeout = AbortSignal.timeout(ms);
+    const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    return fetch(input, { ...init, signal });
+  };
 }

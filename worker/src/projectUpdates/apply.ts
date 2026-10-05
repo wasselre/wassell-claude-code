@@ -68,10 +68,22 @@ async function logChange(
     action: 'update' | 'create'; before: Record<string, unknown> | null; after: Record<string, unknown>; reason: string;
   },
 ): Promise<void> {
-  const { error } = await supabase.from('project_update_changes').insert(row);
   // The record is already written; losing its audit row would make the run
-  // un-revertable for that record — surface it as a failure, don't swallow it.
-  if (error) throw new Error(`change log insert failed for ${row.record_id}: ${error.message}`);
+  // un-revertable for that record. Retry (a timed-out request is the usual
+  // cause — 2026-10-05), then surface it naming the record, never swallow it.
+  let last = '';
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { error } = await supabase.from('project_update_changes').insert(row);
+      if (!error) return;
+      last = error.message;
+    } catch (err) {
+      last = (err as Error).message;
+    }
+    console.error(`[project-update] change log insert attempt ${attempt}/3 failed for ${row.record_id}: ${last}`);
+    if (attempt < 3) await new Promise((r) => setTimeout(r, 2000 * attempt));
+  }
+  throw new Error(`UNLOGGED ${row.model} ${row.record_id} — change log insert failed: ${last}`);
 }
 
 /** Patch one record; returns the before-values it replaced, or null if the

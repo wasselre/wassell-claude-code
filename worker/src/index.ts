@@ -76,6 +76,10 @@ const env = loadEnv();
 // x-wassel-instance=FLY_MACHINE_ID) so a worker storm/loop is attributable
 // in Postgres logs. Shared by all poll loops in this process.
 const supabase: SupabaseClient = makeServiceClient(env, 'worker');
+/** The project-update lane's own client: every request is capped at 60 s
+ *  (see timedFetch). A hung request must fail the step loudly, not freeze the
+ *  run between a unit's save and its change-log row. */
+const projectUpdateSupabase: SupabaseClient = makeServiceClient(env, 'worker-project-updates', { requestTimeoutMs: 60_000 });
 
 // WAHA send config (scheduled_whatsapp_jobs) — null until both WAHA secrets are
 // set, which gates the scheduled-WhatsApp + WAHA-session-watchdog loops below.
@@ -2719,7 +2723,7 @@ async function claimAndRunOneProjectUpdate(): Promise<boolean> {
   const run = rows[0]!;
   console.log(`[worker] claimed project-update run=${run.id} source=${run.source_type} dry=${run.dry_run} attempts=${run.attempts}`);
   try {
-    const result = await runProjectUpdateJob({ supabase, run: { ...run, params: run.params ?? {} } });
+    const result = await runProjectUpdateJob({ supabase: projectUpdateSupabase, run: { ...run, params: run.params ?? {} } });
     if (result.deferred) {
       // Back in the queue (a file in the batch is still being saved) — not finished.
       console.log(`[worker] project-update run=${run.id} deferred: ${String(result.summary.deferred ?? '')}`);
