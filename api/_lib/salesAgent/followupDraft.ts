@@ -64,7 +64,7 @@ const clip = (t: string, n: number): string => (t.length > n ? `${t.slice(0, n)}
 
 /** PURE — does a follow-up open with a greeting? (operator, 2026-10-06: «no hello no thing?») */
 export function startsWithGreeting(message: string): boolean {
-  return /^\s*(صباح|مساك|مسا|مسيت|السلام|هلا|اهلا|أهلا|حياك|يا هلا|Good (morning|afternoon|evening)|Hi|Hello)/i.test(message);
+  return /^\s*(صباح|مساك|مسا|مسيت|السلام|هلا|اهلا|أهلا|حياك|يا هلا|Good (morning|afternoon|evening)|Hi\b|Hello\b)/i.test(message);
 }
 
 /** PURE — the client's language from their own text: English only if they wrote Latin and no Arabic. */
