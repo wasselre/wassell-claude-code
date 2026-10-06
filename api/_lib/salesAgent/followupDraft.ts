@@ -22,6 +22,8 @@ import { trackedAnthropic } from '../aiUsage.js';
 import { checkReply, groundedNumbers } from './guard.js';
 import { resolveProjectDelivery } from '../../../src/lib/projectMessage/delivery.js';
 import { hatifWordsToTurns } from '../geoPreference/hatifDialogue.js';
+import { requestPreferenceGaps } from '../../../src/lib/clients/requestReadiness.js';
+import { choosePlan, findNewProject, gapLabels, DEAD_OPTION, type FollowupFocus, type NewProject } from './followupPlan.js';
 
 const CALL_SITE = 'api/_lib/salesAgent/followupDraft';
 const MESSAGE_WINDOW = 60;
@@ -43,6 +45,9 @@ export interface FollowupDraft {
   reading: string | null;
   lang: 'ar' | 'en';
   model: string;
+  /** What this follow-up is about (followupPlan.ts) — stored on the draft so the
+   *  NEXT follow-up knows whether this one asked about a project. */
+  focus: FollowupFocus;
 }
 
 interface MsgRow { flow: string | null; kind: string | null; body: string | null; media_caption: string | null; transcript: string | null; send_source: string | null; date: string | null }
@@ -77,7 +82,8 @@ RE-ENTRY (never skip)
 - The client went quiet after we answered → a light check-in on the last real topic: «ناسبك المشروع؟», «وش رأيك في صفا 82؟», «لازلت مهتم؟».
 - The thread is stale (a week or more) and continuing would need real work → a check-in first («مساك الله بالخير، لازلت مهتم بشراء وحدة سكنية؟»), not a delivery.
 - You may ask which day suits them to visit; never confirm a time.
-- Use the file: the client's saved preferences, their visits, and each project's status in their options. Ask about the MAIN project or one they showed interest in; never bring up a project marked not_interested / eliminated / closed. After a visit, ask how it went before offering anything new.
+- Use the file: the client's saved preferences, their visits, and each project's status in their options. Never bring up a project marked not_interested / eliminated / closed. After a visit, ask how it went before offering anything new.
+- «خطة هذه المتابعة» at the top of the file decides WHAT the message is about — follow it exactly: ask about the project it names, OR suggest the new project it names, OR (no project) say that if the projects we sent didn't suit them we have other options, and ask for the missing preferences it lists, saying you need them to send the best fit. Don't swap in another project.
 
 VOICE (the reps' measured style)
 - Najdi colloquial, warm, brief. One idea, ONE closing question. 1–2 short lines, ideally under 80 characters, never over 200.
@@ -256,6 +262,72 @@ export async function draftFollowupMessage(
     }
   }
 
+  // ── What this follow-up is about (followupPlan.ts) ─────────────────────────
+  // The interest score per project (link engagement + asked/wants/appointment/
+  // visit), the projects the client turned down, and what the previous AI
+  // follow-up to this client asked about.
+  const deadIds = new Set(((optRes.data ?? []) as { data: Record<string, unknown> }[])
+    .filter((o) => DEAD_OPTION.has(s(o.data.status))).map((o) => s(o.data.source_id)).filter(Boolean));
+  const { data: lastActs, error: laErr } = await svc.from('ai_actions').select('context')
+    .eq('client_id', args.clientId).eq('kind', 'followup_message').in('status', ['sent', 'sending'])
+    .order('created_at', { ascending: false }).limit(1);
+  if (laErr) throw new Error(`previous follow-up read failed: ${laErr.message}`);
+  const lastFocusRaw = ((lastActs ?? [])[0] as { context?: Record<string, unknown> } | undefined)?.context?.focus;
+  const lastFocus = lastFocusRaw && typeof lastFocusRaw === 'object' ? (lastFocusRaw as FollowupFocus) : null;
+  const choice = choosePlan({
+    candidates: [...interestOf.values()].map((r) => ({ projectId: r.project_id, score: Number(r.score) || 0 })),
+    deadIds, lastFocus, gaps: requestPreferenceGaps(client),
+  });
+
+  // Facts for a project the plan names that we never sent (so the guard can
+  // ground its numbers and the writer states «جاهز / على الخارطة» right).
+  const factLineFor = async (projectId: string): Promise<{ name: string; line: string } | null> => {
+    const { data: pr, error: prErr } = await svc.from('records').select('data').eq('id', projectId).maybeSingle();
+    if (prErr) throw new Error(`plan project read failed: ${prErr.message}`);
+    const pd = (pr as { data?: Record<string, unknown> } | null)?.data;
+    const name = pd ? s(pd.project_name) || s(pd.name) : '';
+    if (!pd || !name) return null;
+    const dk = resolveProjectDelivery(pd).kind;
+    const price = rangeText(pd.available_price_range);
+    return { name, line: `- ${name} | ${dk === 'off_plan' ? 'على الخارطة' : dk === 'ready' ? 'جاهز' : 'غير محدد'}${s(pd.district) ? ` | ${s(pd.district)}` : ''}${price ? ` | الأسعار المتاحة ${price}` : ''}` };
+  };
+
+  let focus: FollowupFocus;
+  let planLines: string[];
+  if (choice.mode === 'project') {
+    const f = await factLineFor(choice.projectId);
+    if (f && !projectFacts.some((l) => l.startsWith(`- ${f.name} |`))) projectFacts.push(f.line);
+    focus = { mode: 'project', project_id: choice.projectId, project_name: f?.name ?? null };
+    planLines = [`اسأله عن مشروع «${f?.name ?? '—'}» — أعلى اهتمام عنده (${choice.score}/100). سؤال واحد خفيف عنه (ناسبك؟ شفت التفاصيل؟ تحب تزوره؟).`];
+  } else {
+    // Step 3: a new project when the saved needs are complete enough to search.
+    let found: NewProject | null = null;
+    if (choice.mode === 'search') {
+      const exclude = [...new Set([...sentIds, ...interestOf.keys(), ...deadIds,
+        ...((optRes.data ?? []) as { data: Record<string, unknown> }[]).map((o) => s(o.data.source_id)).filter(Boolean),
+        ...(lastFocus?.project_id ? [lastFocus.project_id] : [])])];
+      try {
+        found = await findNewProject(svc, client, exclude);
+      } catch (err) {
+        // A failed search must not read as «nothing fits» — fall back to the
+        // preferences message, which promises nothing, and say why in the log.
+        console.error(`[followupDraft] followup=${args.followupId} new-project search failed — asking for preferences instead:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+    if (found) {
+      const f = await factLineFor(found.projectId);
+      if (f) projectFacts.push(f.line);
+      focus = { mode: 'new_project', project_id: found.projectId, project_name: found.name };
+      planLines = [`اقترح عليه مشروعاً جديداً يناسب تفضيلاته المحفوظة: «${found.name}»${found.district ? ` في ${found.district}` : ''}. سطر واحد: الاسم و«جاهز / على الخارطة» وسعر البداية من الحقائق، ثم سؤال واحد: تحب أرسلك تفاصيله؟`];
+    } else {
+      const gaps = choice.mode === 'preferences' ? choice.gaps : [];
+      focus = { mode: 'preferences' };
+      planLines = gaps.length
+        ? [`لا تسأل عن مشروع بعينه. قل: إذا ما ناسبتك المشاريع اللي أرسلناها عندنا خيارات ثانية، واطلب منه بسؤال واحد ما ينقصنا لنرسل له الأنسب: ${gapLabels(gaps).join('، ')}. قل إنك تحتاجها عشان ترسل له الأنسب.`]
+        : ['لا تسأل عن مشروع بعينه. قل: إذا ما ناسبتك المشاريع اللي أرسلناها عندنا خيارات ثانية، واسأله سؤالاً واحداً: وش اللي تبيه يتغير (الحي، الميزانية، النوع) عشان أرسلك الأنسب؟'];
+    }
+  }
+
   const transcript = rows.map((m) => {
     const text = (m.body?.trim() || m.media_caption?.trim() || (m.transcript ? `[رسالة صوتية] ${m.transcript.trim()}` : '') || (m.kind ? `[${m.kind}]` : '')).trim();
     const who = m.flow === 'in' ? 'العميل' : m.send_source === 'ai' ? 'المساعد الآلي' : 'المندوب';
@@ -283,6 +355,9 @@ export async function draftFollowupMessage(
   const escalation = s(followup.escalation_reason);
 
   const file = [
+    'خطة هذه المتابعة (اتبعها):',
+    ...planLines.map((l) => `- ${l}`),
+    '',
     `اسم العميل: ${s(client.client_name) || '—'}`,
     `مرحلة العميل: ${s(client.client_stage) || '—'} | حالته: ${s(client.client_status) || '—'}`,
     `هذه المتابعة: واتساب، المحاولة ${args.attempt}${escalation === 'whatsapp_no_response_24h' ? ' (لم يرد على رسالتنا السابقة)' : ''}`,
@@ -318,6 +393,7 @@ export async function draftFollowupMessage(
   const brief = [
     ...(args.campaign === 'morning' ? ['Old-lead batch — the call is today'] : args.campaign === 'no_answer' ? ['Old lead — no answer on today’s call'] : []),
     `Attempt ${args.attempt}${escalation ? ` (${escalation})` : ''} · last message ${hoursSilent ?? '?'} h ago${lastIn?.date ? ` · client last wrote ${riyadh(lastIn.date)}` : ''}`,
+    `Plan: ${focus.mode === 'project' ? `ask about ${focus.project_name ?? 'a project'}` : focus.mode === 'new_project' ? `suggest ${focus.project_name ?? 'a new project'}` : 'other options + missing preferences'}${lastFocus?.mode === 'project' && focus.mode !== 'project' ? ' (last follow-up asked about a project)' : ''}`,
     ...(projectFacts.length ? [`Projects sent: ${projectFacts.length}`] : []),
     ...(past[0] ? [`Last outcome: ${past[0].slice(2)}`] : []),
     ...(callTexts.length ? [`Calls read: ${callTexts.length}`] : []),
@@ -360,13 +436,13 @@ export async function draftFollowupMessage(
     }
     const message = typeof parsed.message === 'string' ? parsed.message.trim() : '';
     if (!message) {
-      return { body: null, skipReason: s(parsed.skip_reason) || 'the AI judged no follow-up should be sent', warnings: [], brief, lang, model: args.model, reason: s(parsed.reason) || null, clientSaid, reading: readingText };
+      return { body: null, skipReason: s(parsed.skip_reason) || 'the AI judged no follow-up should be sent', warnings: [], brief, lang, model: args.model, reason: s(parsed.reason) || null, clientSaid, reading: readingText, focus };
     }
     const verdict = checkReply(message, { lang, grounded });
     const extra = message.length > 200 ? [`too long for a follow-up: ${message.length} characters (max 200)`] : [];
     warnings = [...verdict.problems, ...extra];
     if (warnings.length === 0 || attempt === 1) {
-      return { body: message, skipReason: null, warnings, brief, lang, model: args.model, reason: s(parsed.reason) || null, clientSaid, reading: readingText };
+      return { body: message, skipReason: null, warnings, brief, lang, model: args.model, reason: s(parsed.reason) || null, clientSaid, reading: readingText, focus };
     }
     messages.push({ role: 'assistant', content: res.content });
     messages.push({ role: 'user', content: `That message has problems. Fix them and reply with the same JSON shape:\n- ${warnings.join('\n- ')}` });

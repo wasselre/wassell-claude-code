@@ -325,7 +325,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
             const d = await draftFollowupMessage(svc, { followupId: c.followup_id, clientId: c.client_id, chatWid: c.chat_wid, attempt: c.attempt, model, effort, campaign });
             const context = {
               brief: d.brief, warnings: d.warnings, lang: d.lang, model: d.model, chat_record_id: c.chat_record_id, due_at: c.due_at,
-              reason: d.reason, client_said: d.clientSaid, reading: d.reading,
+              reason: d.reason, client_said: d.clientSaid, reading: d.reading, focus: d.focus,
               ...(campaign ? { campaign } : {}),
             };
             const row = d.body
