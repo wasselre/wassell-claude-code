@@ -23,7 +23,7 @@
 | [Data Migration](data-migration.md) | `data_migration` | JSONB | — | 1 | 5 | yes | 2026-09-20 |
 | [Decks](decks.md) | `decks` | JSONB | — | 1 | 11 | yes | 2026-09-20 |
 | [Templates Library](design-templates.md) | `design_templates` | JSONB | Designs | 1 | 7 | yes | 2026-08-20 |
-| [Companies](developers.md) | `developers` | JSONB | Projects | 1 | 7 | no | 2026-09-29 |
+| [Companies](developers.md) | `developers` | JSONB | Projects | 2 | 11 | no | 2026-10-06 |
 | [Districts](districts.md) | `districts` | frozen `districts` | Geography | 1 | 28 | no | 2026-07-30 |
 | [Financing](financing.md) | `financing` | JSONB | — | 1 | 9 | no | 2026-10-04 |
 | [Follow-ups](followups.md) | `followups` | JSONB | — | 3 | 44 | no | 2026-10-04 |
