@@ -35,6 +35,7 @@ import { resolveProjectSheet } from '../_lib/projectSheet.js';
 import { hasDirectionWord } from '../_lib/salesAgent/decide.js';
 import { agentAllowedFor, startAgentConversation, enqueueAgentTurn, activeAgentConversation, loadAgentSettings, agentScopeAll, agentMayStart, chatIsClient } from '../_lib/salesAgent/conversation.js';
 import { uuidV5FromWidSync } from '../_lib/chatIngest.js';
+import { ensureClientForChat } from '../_lib/salesAgent/escalation.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 30 };
 
@@ -386,6 +387,54 @@ async function answerAdClick(
   return { action: 'ad_project_failed', sent: res.queued, handoff: true, error: flow.error ?? flow.reason };
 }
 
+/** Interest a new number's message shows: our project named, a property asked for, a website unit code. PURE. */
+export function showsInterest(d: Decision): boolean {
+  return d.action === 'project_sheet' || d.action === 'qualify' || d.action === 'unit_sheet';
+}
+
+/**
+ * A message NOT from an ad, from a number that is not a client and not a
+ * contact / project officer / advertiser / real-estate office, that names one
+ * of our projects or clearly looks for a home → create the client and let the
+ * sales agent answer (operator, 2026-10-06). Before this such a number only
+ * ever got the basic bot (the agent takes clients only), and became a client
+ * by hand or never. A unit code also creates the client, but the bot still
+ * sends that unit's PDF; the agent takes the chat from the next message.
+ * Returns the decision it made (so the caller never classifies twice).
+ */
+async function onboardInterestedNewNumber(
+  supa: SupabaseClient,
+  a: { chatWid: string; chatRecordId: string; text: string },
+): Promise<{ decision: Decision; clientId?: string; startAgent?: boolean; skipped?: string }> {
+  let decision = classify(a.text);
+  if (decision.action === 'kimi') decision = await kimiClassify(foldDigits(a.text.trim()));
+  if (!showsInterest(decision)) return { decision, skipped: 'no_interest' };
+  const digits = a.chatWid.split('@')[0] ?? '';
+  if (!/^\d{8,15}$/.test(digits)) return { decision, skipped: 'no_phone' };
+  const { data: known, error: kErr } = await supa.rpc('wa_phone_known_party', { p_phone: `+${digits}` });
+  // Fails closed: without knowing who the number is, no client is created.
+  if (kErr) { console.error('[basic-reply] known-party check failed (not onboarding):', kErr.message); return { decision, skipped: 'known_check_failed' }; }
+  if (typeof known === 'string' && known) return { decision, skipped: `known_${known}` };
+  // A rep talking to this number right now keeps the chat.
+  const { data: gate, error: gErr } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: a.chatWid });
+  if (gErr) { console.error('[basic-reply] gate check failed (not onboarding):', gErr.message); return { decision, skipped: 'gate_check_failed' }; }
+  const reason = String((Array.isArray(gate) ? gate[0] : gate)?.reason ?? '');
+  if (reason === 'human_active' || reason.startsWith('disabled')) return { decision, skipped: reason };
+  const clientId = await ensureClientForChat(supa, a.chatWid);
+  const { error: nErr } = await supa.from('ai_notifications').insert({
+    source: 'whatsapp', severity: 'info', title: null,
+    body: decision.action === 'project_sheet'
+      ? `رقم جديد سأل عن مشروع «${decision.projectName ?? ''}» — أُنشئ له ملف عميل تلقائيًا ويرد عليه المساعد.`
+      : decision.action === 'unit_sheet'
+        ? `رقم جديد طلب الوحدة «${decision.unitCode ?? ''}» — أُنشئ له ملف عميل تلقائيًا.`
+        : 'رقم جديد يبحث عن عقار — أُنشئ له ملف عميل تلقائيًا ويرد عليه المساعد.',
+    chat_wid: a.chatWid, chat_record_id: a.chatRecordId,
+  });
+  if (nErr) console.error('[basic-reply] new-client notice failed:', nErr.message);
+  console.log(`[basic-reply] new number onboarded chat=${a.chatWid} client=${clientId} action=${decision.action}`);
+  return { decision, clientId, startAgent: decision.action !== 'unit_sheet' };
+}
+
 export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
   if (nodeReq.method === 'GET') return jsonRes(nodeRes, 200, { ok: true, hint: 'POST { chat_wid, trigger_message } with x-wassel-ai-secret' });
   if (nodeReq.method !== 'POST') return jsonRes(nodeRes, 405, { error: 'Method not allowed' });
@@ -431,7 +480,22 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   const agentCfg = await loadAgentSettings(supa);
   // Clients only: a contact, a project officer, an advertiser or an unknown
   // number never gets the agent (they keep the basic bot's handling below).
-  const agentAllowed = agentAllowedFor(agentCfg, body.phone) && await chatIsClient(supa, chatWid);
+  const phoneAllowed = agentAllowedFor(agentCfg, body.phone);
+  const agentAllowed = phoneAllowed && await chatIsClient(supa, chatWid);
+  // A NEW number (not an ad, not a client, nobody we know) that shows interest
+  // becomes a client and the agent answers it (onboardInterestedNewNumber).
+  let early: Decision | null = null;
+  if (!agentAllowed && phoneAllowed && agentCfg && agentScopeAll(agentCfg) && !body.ad) {
+    const ob = await onboardInterestedNewNumber(supa, { chatWid, chatRecordId, text: body.trigger_message ?? '' });
+    early = ob.decision;
+    if (ob.startAgent && await agentMayStart(supa, chatWid, agentCfg)) {
+      await startAgentConversation(supa, {
+        chatWid, source: 'inbound', adProjectId: null,
+        text: body.trigger_message ?? '', lang: detectLang(body.trigger_message),
+      });
+      return jsonRes(nodeRes, 200, { agent: 'started', source: 'new_number_interest', client_id: ob.clientId });
+    }
+  }
   if (agentAllowed && await activeAgentConversation(supa, chatWid)) {
     await enqueueAgentTurn(supa, chatWid);
     return jsonRes(nodeRes, 200, { agent: 'turn_queued' });
@@ -474,7 +538,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   // Decide FIRST (deterministic, no LLM) so the gate can special-case a named
   // project. classify() only returns 'kimi' for the ambiguous tail — resolved
   // AFTER the gate, so we never pay for a Kimi call on a blocked message.
-  let d = classify(body.trigger_message);
+  let d = early ?? classify(body.trigger_message);
 
   // Gate: kill switch, working-hours, human-active, reply cap.
   const { data: gate } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });

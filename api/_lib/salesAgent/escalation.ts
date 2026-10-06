@@ -145,6 +145,11 @@ export async function askRep(
   return id;
 }
 
+/** The client record for a chat, created from its phone when there is none (new numbers that show interest — basic-reply.ts). */
+export async function ensureClientForChat(svc: SupabaseClient, chatWid: string): Promise<string> {
+  return ensureClient(svc, await loadChatContext(svc, chatWid));
+}
+
 /** The client record for this chat, created from the phone when there is none. */
 async function ensureClient(svc: SupabaseClient, ctx: ChatContext): Promise<string> {
   if (ctx.clientId) return ctx.clientId;
