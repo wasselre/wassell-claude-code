@@ -14,7 +14,7 @@ import { fetchCompanyRoster, type CompanyRoster, type CompanyRow, type CompanyAc
 import { useSurface, num, fmtDateTime, daysAgo } from './surfaceData';
 import CompanyDetail from './CompanyDetail';
 
-type TypeFilter = 'all' | 'developer' | 'marketer';
+type TypeFilter = 'all' | 'developer' | 'marketer' | 'visual';
 type SortKey = 'active' | 'posts' | 'recent' | 'name';
 
 const PURPOSES: Array<{ key: PurposeKey; ar: string; en: string; cls: string }> = [
@@ -31,6 +31,7 @@ const PLATFORM_SHORT: Record<string, string> = { instagram: 'IG', tiktok: 'TT', 
 function typeLabel(t: string | null, isAr: boolean): string {
   if (t === 'developer') return isAr ? 'مطوّر' : 'Developer';
   if (t === 'marketer' || t === 'agency') return isAr ? 'مسوّق' : 'Marketer';
+  if (t === 'visual_reference') return isAr ? 'مرجع بصري' : 'Visual reference';
   return t ?? '—';
 }
 
@@ -102,6 +103,9 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
     const needle = q.trim().toLowerCase();
     const filtered = all.filter((c) => {
       const isMkt = c.org_type === 'marketer' || c.org_type === 'agency';
+      // Visual references are not competitors: only their own filter shows them.
+      const isVisual = c.org_type === 'visual_reference';
+      if ((type === 'visual') !== isVisual) return false;
       if (type === 'developer' && c.org_type !== 'developer') return false;
       if (type === 'marketer' && !isMkt) return false;
       if (!needle) return true;
@@ -125,9 +129,10 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
   if (pageId) return <CompanyDetail key={pageId} orgId={pageId} isAr={isAr} onBack={() => setPageId(null)} />;
 
   const counts = {
-    all: data.companies.length,
+    all: data.companies.filter((c) => c.org_type !== 'visual_reference').length,
     developer: data.companies.filter((c) => c.org_type === 'developer').length,
     marketer: data.companies.filter((c) => c.org_type === 'marketer' || c.org_type === 'agency').length,
+    visual: data.companies.filter((c) => c.org_type === 'visual_reference').length,
   };
 
   return (
@@ -137,7 +142,7 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
           <Search size={15} />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={isAr ? 'ابحث بالشركة أو الحساب أو المشروع…' : 'Search company, handle or project…'} />
         </div>
-        {([['all', isAr ? 'الكل' : 'All'], ['developer', isAr ? 'مطوّر' : 'Developers'], ['marketer', isAr ? 'مسوّق' : 'Marketers']] as const).map(([k, label]) => (
+        {([['all', isAr ? 'الكل' : 'All'], ['developer', isAr ? 'مطوّر' : 'Developers'], ['marketer', isAr ? 'مسوّق' : 'Marketers'], ['visual', isAr ? 'مراجع بصرية' : 'Visual references']] as const).map(([k, label]) => (
           <button key={k} className={`cw-chip ${type === k ? 'on' : ''}`} onClick={() => setType(k as TypeFilter)}>
             {label} <span className="cw-mono">{num(counts[k as TypeFilter])}</span>
           </button>
@@ -187,7 +192,7 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
                           {isAr ? 'صفحة الشركة ←' : 'Company page →'}
                         </button>
                       </td>
-                      <td><span className={`cw-typebadge ${co.org_type === 'developer' ? 'dev' : 'mkt'}`}>{typeLabel(co.org_type, isAr)}</span></td>
+                      <td><span className={`cw-typebadge ${co.org_type === 'developer' ? 'dev' : co.org_type === 'visual_reference' ? 'vis' : 'mkt'}`}>{typeLabel(co.org_type, isAr)}</span></td>
                       <td>
                         <span className="cw-plats">
                           {(co.account_list ?? []).map((a, i) => (

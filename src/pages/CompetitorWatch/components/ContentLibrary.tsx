@@ -46,8 +46,13 @@ function fmtDate(iso: string | null, isAr: boolean): string {
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString(isAr ? 'ar-SA' : 'en-GB', { year: 'numeric', month: 'short', day: 'numeric' });
 }
+/** Not a purpose shelf: the posts of visual-reference companies (org_type
+ *  'visual_reference'), which the Library shows only here or on their own page. */
+const VISUAL_SHELF = 'visual_reference';
+
 function shelfLabel(key: string, isAr: boolean): string {
   if (key === '') return isAr ? 'غير مصنّف' : 'Unclassified';
+  if (key === VISUAL_SHELF) return isAr ? 'مراجع بصرية' : 'Visual references';
   const s = SHELF_MAP.get(key);
   return s ? (isAr ? s.ar : s.en) : key;
 }
@@ -200,6 +205,17 @@ export default function ContentLibrary({ isAr, presetOrg }: { isAr: boolean; pre
             ? 'هذه الرفوف هي قراءة الذكاء لغرض كل منشور — مثبتة مسبقاً على كل المنشورات.'
             : "These shelves are the AI's own read of what each post is for — already stamped on every post."}
         </div>
+        <div className="cw-cap" style={{ marginTop: 12 }}>{isAr ? 'للتعلّم من التصميم فقط' : 'For design learning only'}</div>
+        <button
+          type="button"
+          className={`cw-shelf${shelf === VISUAL_SHELF ? ' on' : ''}`}
+          onClick={() => setShelf(VISUAL_SHELF)}
+          title={isAr ? 'جهات ليست منافسة نتابعها لجودة تصاميمها — لا يُقرأ نصّها ولا تُربط بمشاريع' : 'Non-competitors followed for their visuals — their text is never read or matched to projects'}
+        >
+          <span className="cw-sw" style={{ background: 'var(--cw-gold)' }} />
+          <span className="cw-t">{isAr ? 'مراجع بصرية' : 'Visual references'}</span>
+          {shelf === VISUAL_SHELF && <span className="cw-n">{(data?.total ?? 0).toLocaleString()}</span>}
+        </button>
       </aside>
 
       <div className="cw-main">

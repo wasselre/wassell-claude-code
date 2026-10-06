@@ -103,8 +103,10 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   // this job, or the Claude runner via 'awaiting_intelligence' (rollback path).
   const reader: ContentReader = opts.mediaOnly || opts.framesOnly ? 'runner' : await contentReader(sb);
   if (opts.narrowOnly) return narrowOnlyPass(sb, contentPostId, post as PostRow, stats, reader);
-  if (opts.designOnly) {
-    if (Date.now() < await readerPausedUntil(sb)) { stats.status = 'reader_paused'; return stats; }
+  // Read one post's image design (no project decision). Shared by the
+  // design-only pass and by visual-reference companies.
+  const designStep = async (): Promise<void> => {
+    if (Date.now() < await readerPausedUntil(sb)) { stats.status = 'reader_paused'; return; }
     try {
       const d = await designReadStoredPost(sb, contentPostId);
       mark('design_read');
@@ -119,9 +121,15 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
       await pauseReader(sb, quotaWait, msg);
       stats.status = 'reader_paused';
     }
-    return stats;
-  }
-  if (isModelReader(reader)) {
+  };
+  if (opts.designOnly) { await designStep(); return stats; }
+  // A visual-reference company (car brands, entertainment, …) is followed for
+  // how its posts LOOK, never for what they say: no project matching, no
+  // caption reading, no transcription. Its posts are stored, its videos go to
+  // shots and its images get a design read — nothing else.
+  const visualRef = await isVisualReferenceOrg(sb, post.organization_id as string | null);
+  if (visualRef && opts.narrowOnly) { stats.status = 'visual_reference'; return stats; }
+  if (isModelReader(reader) && !visualRef) {
     // Already read by Gemini: a full pass would only re-pay for the same answer.
     const { data: enr0, error: enr0Err } = await sb.from('mkt_content_enrichment').select('model, status').eq('content_post_id', contentPostId).maybeSingle();
     if (enr0Err) throw new Error(`load enrichment: ${enr0Err.message}`);
@@ -268,6 +276,19 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   }
 
   mark('cv_enqueue');
+  if (visualRef) {
+    const hasImage = storedRefs.some((r) => r.kind === 'image' && r.bytes);
+    const hasVideo = storedRefs.some((r) => r.kind === 'video');
+    if (!storedRefs.some((r) => r.bytes)) { stats.fatal_errors.push('no media stored — nothing to process'); return failPost(); }
+    const { error: stErr } = await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'processed', p_media_count: stats.media_stored });
+    if (stErr) throw new Error(`mark visual-reference post ${contentPostId} processed failed: ${stErr.message}`);
+    stats.status = 'visual_reference';
+    // A paused or failed design read is picked up again by the sweep
+    // (mkt_design_read_due lists visual-reference image posts without a read).
+    if (hasImage && !hasVideo) await designStep();
+    stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;
+    return stats;
+  }
   // ── videos: audio → transcribe; sample frames for vision ──
   const visionInputs: Array<{ mediaId: string; source: 'image' | 'frame' | 'thumbnail'; frameTsMs: number | null; buffer: Buffer; mime: string | null }> = [];
   let transcriptText = '';
@@ -627,4 +648,12 @@ async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: P
   stats.enriched = true;
   stats.status = 'renarrowed';
   return stats;
+}
+
+/** Is this post's company followed only for its visuals (org_type 'visual_reference')? */
+export async function isVisualReferenceOrg(sb: SupabaseClient, orgId: string | null): Promise<boolean> {
+  if (!orgId) return false;
+  const { data, error } = await sb.from('mkt_organizations').select('org_type').eq('id', orgId).maybeSingle();
+  if (error) throw new Error(`load company ${orgId} type failed: ${error.message}`);
+  return (data as { org_type?: string } | null)?.org_type === 'visual_reference';
 }

@@ -59,7 +59,9 @@ export default function CompanyDetail({ orgId, isAr, onBack }: { orgId: string; 
         <div>
           <h2 className="cw-coh2" dir="auto">{name}</h2>
           <div className="cw-mutedmono">
-            {o.org_type === 'developer' ? (isAr ? 'مطوّر' : 'Developer') : (isAr ? 'مسوّق' : 'Marketer')}
+            {o.org_type === 'developer' ? (isAr ? 'مطوّر' : 'Developer')
+              : o.org_type === 'visual_reference' ? (isAr ? 'مرجع بصري — للتصميم فقط' : 'Visual reference — design only')
+              : (isAr ? 'مسوّق' : 'Marketer')}
             {o.hq_city ? ` · ${o.hq_city}` : ''}
             {o.website && <> · <a href={o.website} target="_blank" rel="noreferrer" dir="ltr">{o.website.replace(/^https?:\/\//, '')}</a></>}
             {o.developer_record_id && (

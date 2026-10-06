@@ -1107,6 +1107,14 @@ rule for telling them apart is what question each answers:
   read (`isModelRead`: `gemini…` / `gpt-…`) — never let one engine re-read the
   other's posts. Chosen by blind bake-offs (30 posts / 15 posts × 83 images);
   video shots and every embedding stay on Gemini.
+  **Visual-reference companies (2026-10-06):** `org_type = 'visual_reference'`
+  marks a NON-competitor followed only for its visuals (car brands etc.). The
+  worker stores media, offers videos to shots and design-reads images, but
+  NEVER runs the project reader on them (`isVisualReferenceOrg` in
+  `runContentProcess`) — no enrichment row, no transcription. Never let their
+  posts reach a content/writing surface: views that require an enrichment row
+  exclude them already; anything new that reads posts WITHOUT that join must
+  fence `org_type <> 'visual_reference'` (see `2026-10-06_02_…`).
 - **Visual Intelligence (CV)** — *"what does this footage look like, shot by shot?"*
   Queue `mkt_cv_jobs`, lanes `cvProcessPollLoop` + `cvAnalyzePollLoop`, gated by
   THREE independent switches: `CV_LANES_ENABLED` (env), `GEMINI_API_KEY` present
