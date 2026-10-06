@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { choosePlan, criteriaFromClient, gapLabels } from '../followupPlan.js';
-import { clientLang } from '../followupDraft.js';
+import { clientLang, startsWithGreeting } from '../followupDraft.js';
 
 const none = new Set<string>();
 
@@ -66,5 +66,14 @@ describe('clientLang — the follow-up language', () => {
   });
   it('mixed → Arabic', () => {
     expect(clientLang('ok تمام')).toBe('ar');
+  });
+});
+
+describe('startsWithGreeting — every follow-up opens with a greeting', () => {
+  it('accepts the greetings reps use', () => {
+    for (const m of ['صباح الخير، لازلت مهتم؟', 'مساك الله بالخير أبو خالد', 'مسيتي بالخير', 'Good morning, still looking?']) expect(startsWithGreeting(m)).toBe(true);
+  });
+  it('rejects a message that opens with the question', () => {
+    for (const m of ['وإذا ما ناسبتك المشاريع…', 'إذا ما ناسبك تل الربوة…', 'لازلت مهتم؟']) expect(startsWithGreeting(m)).toBe(false);
   });
 });

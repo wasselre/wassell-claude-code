@@ -62,6 +62,11 @@ const riyadh = (iso: string | null): string => {
 const s = (v: unknown): string => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
 const clip = (t: string, n: number): string => (t.length > n ? `${t.slice(0, n)}…` : t);
 
+/** PURE — does a follow-up open with a greeting? (operator, 2026-10-06: «no hello no thing?») */
+export function startsWithGreeting(message: string): boolean {
+  return /^\s*(صباح|مساك|مسا|مسيت|السلام|هلا|اهلا|أهلا|حياك|يا هلا|Good (morning|afternoon|evening)|Hi|Hello)/i.test(message);
+}
+
 /** PURE — the client's language from their own text: English only if they wrote Latin and no Arabic. */
 export function clientLang(text: string): 'ar' | 'en' {
   if (/[؀-ۿ]/.test(text)) return 'ar';
@@ -83,7 +88,7 @@ WHAT THE MESSAGE IS FOR
 The sales process scheduled this check-in: the client went quiet after we talked or sent projects. Re-open the conversation and move them one step toward a visit. Read the WHOLE thread and the file first — never reply to the last line alone.
 
 RE-ENTRY (never skip)
-- A day or more since the last message → open with a greeting: «مساك الله بالخير» (feminine «مسيتي بالخير»), or «صباح الخير» in the morning.
+- ALWAYS open with a greeting — every follow-up starts a new contact: «صباح الخير» in the morning, «مساك الله بالخير» (feminine «مسيتي بالخير») after noon. Never open with «وإذا» / «إذا» or the question itself.
 - WE went quiet (the client asked something and got no answer, or we promised something and never sent it) → greeting + «المعذرة على التأخير», then the answer or a promise with a deadline («بتأكد لك وأرد عليك اليوم»). Otherwise NO apology.
 - The client went quiet after we answered → a light check-in on the last real topic: «ناسبك المشروع؟», «وش رأيك في صفا 82؟», «لازلت مهتم؟».
 - The thread is stale (a week or more) and continuing would need real work → a check-in first («مساك الله بالخير، لازلت مهتم بشراء وحدة سكنية؟»), not a delivery.
@@ -450,7 +455,10 @@ export async function draftFollowupMessage(
       return { body: null, skipReason: s(parsed.skip_reason) || 'the AI judged no follow-up should be sent', warnings: [], brief, lang, model: args.model, reason: s(parsed.reason) || null, clientSaid, reading: readingText, focus };
     }
     const verdict = checkReply(message, { lang, grounded });
-    const extra = message.length > 200 ? [`too long for a follow-up: ${message.length} characters (max 200)`] : [];
+    const extra = [
+      ...(message.length > 200 ? [`too long for a follow-up: ${message.length} characters (max 200)`] : []),
+      ...(startsWithGreeting(message) ? [] : ['it must open with a greeting («صباح الخير» / «مساك الله بالخير» / «مسيتي بالخير», or Good morning / Good evening in English)']),
+    ];
     warnings = [...verdict.problems, ...extra];
     if (warnings.length === 0 || attempt === 1) {
       return { body: message, skipReason: null, warnings, brief, lang, model: args.model, reason: s(parsed.reason) || null, clientSaid, reading: readingText, focus };
