@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { choosePlan, criteriaFromClient, gapLabels } from '../followupPlan.js';
+import { clientLang } from '../followupDraft.js';
 
 const none = new Set<string>();
 
@@ -51,5 +52,19 @@ describe('criteriaFromClient', () => {
 describe('gapLabels', () => {
   it('names each missing preference', () => {
     expect(gapLabels(['unit_type', 'districts', 'specs'])).toHaveLength(3);
+  });
+});
+
+describe('clientLang — the follow-up language', () => {
+  it('Arabic text → Arabic; English text → English', () => {
+    expect(clientLang('السلام عليكم')).toBe('ar');
+    expect(clientLang('Hi, is it still available?')).toBe('en');
+  });
+  it('no text at all (only voice notes / images) → Arabic, not English', () => {
+    expect(clientLang('')).toBe('ar');
+    expect(clientLang('   ')).toBe('ar');
+  });
+  it('mixed → Arabic', () => {
+    expect(clientLang('ok تمام')).toBe('ar');
   });
 });

@@ -62,6 +62,12 @@ const riyadh = (iso: string | null): string => {
 const s = (v: unknown): string => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
 const clip = (t: string, n: number): string => (t.length > n ? `${t.slice(0, n)}…` : t);
 
+/** PURE — the client's language from their own text: English only if they wrote Latin and no Arabic. */
+export function clientLang(text: string): 'ar' | 'en' {
+  if (/[؀-ۿ]/.test(text)) return 'ar';
+  return /[A-Za-z]{2,}/.test(text) ? 'en' : 'ar';
+}
+
 function rangeText(v: unknown): string {
   if (!v || typeof v !== 'object') return '';
   const r = v as { min?: unknown; max?: unknown };
@@ -350,7 +356,11 @@ export async function draftFollowupMessage(
     .map((m) => ({ at: m.at, text: clip(m.text, 300) }));
   const readingText = reading?.summary?.trim() ? clip(reading.summary.trim(), 400) : null;
   const lastAny = rows[rows.length - 1]!;
-  const lang: 'ar' | 'en' = /[؀-ۿ]/.test(rows.filter((m) => m.flow === 'in').map((m) => m.body ?? m.transcript ?? '').join(' ')) || !lastIn ? 'ar' : 'en';
+  // English only when the client WROTE English (Latin letters, no Arabic).
+  // A client who only sent voice notes / media has no text to judge — that is
+  // Arabic, our default: on 5 Oct an Arabic client who had sent one untranscribed
+  // voice note got «Good evening, sorry for the delay…».
+  const lang: 'ar' | 'en' = clientLang(rows.filter((m) => m.flow === 'in').map((m) => m.body ?? m.transcript ?? m.media_caption ?? '').join(' '));
   const hoursSilent = lastAny.date ? Math.round((Date.now() - Date.parse(lastAny.date)) / 3600_000) : null;
   const escalation = s(followup.escalation_reason);
 
