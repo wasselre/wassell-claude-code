@@ -8,6 +8,7 @@ import type { AppRecord } from '@/types';
 import { computeManagerMetrics, type Distribution } from './lib/salesMetrics';
 import { computeNoNextAction } from './lib/queueViews';
 import { activeClientsOnly, retiredClientIdSet } from '@/lib/clients/retirement';
+import DailyActivityPanel from './components/DailyActivityPanel';
 
 /** Admin manager view — the sales-operation health metrics (Part 13, "views
  *  first"). Read-only, computed in-memory from the store. Headline: active
@@ -102,6 +103,9 @@ export default function SalesManagerPage() {
           </p>
         </div>
       </header>
+
+      {/* What happened on a day (default yesterday): calls, answer rate, WhatsApp, results, bookings. */}
+      <DailyActivityPanel />
 
       {/* headline stats */}
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
