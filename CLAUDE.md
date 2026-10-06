@@ -1115,6 +1115,13 @@ rule for telling them apart is what question each answers:
   posts reach a content/writing surface: views that require an enrichment row
   exclude them already; anything new that reads posts WITHOUT that join must
   fence `org_type <> 'visual_reference'` (see `2026-10-06_02_…`).
+  **`org_type` is the ONE visual-reference marker** — a second one (a
+  `watch_role` column) was built the same day and folded in by `2026-10-06_04`.
+  For a company in the CRM Companies list, set it on the record's «سبب المتابعة»
+  field (`data.watch_role`); the company sync trigger turns it into the org type.
+  The same «تقييم التسويق» section holds the writing / visual grades (a|b|c|skip),
+  copied to `mkt_organizations.writing_grade` / `visual_grade` — edit them on the
+  record, never on `mkt_organizations` (the next record save overwrites it).
 - **Visual Intelligence (CV)** — *"what does this footage look like, shot by shot?"*
   Queue `mkt_cv_jobs`, lanes `cvProcessPollLoop` + `cvAnalyzePollLoop`, gated by
   THREE independent switches: `CV_LANES_ENABLED` (env), `GEMINI_API_KEY` present
