@@ -19,7 +19,7 @@ import { loadAttributionContext, publisherProjects, scopedIndex } from './attrib
 import { sha256Hex } from '../adIntel.js';
 import { cvEnabled } from '../cv/settings.js';
 import { runFramesOnly, stageVideoFrames } from './videoFrames.js';
-import { contentReader, isGeminiRead, pauseReader, readAndDecide, readerPausedUntil, redecideFromStored, type ContentReader } from './geminiEnrich.js';
+import { contentReader, isModelRead, isModelReader, pauseReader, readAndDecide, readerPausedUntil, redecideFromStored, type ContentReader } from './geminiEnrich.js';
 import { dailyQuotaRetryAfter } from '../../ai/providers/geminiHttp.js';
 import { GEMINI_RULE_VERSION } from './geminiRead.js';
 import { designReadStoredPost } from './geminiDesign.js';
@@ -121,11 +121,11 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     }
     return stats;
   }
-  if (reader === 'gemini') {
+  if (isModelReader(reader)) {
     // Already read by Gemini: a full pass would only re-pay for the same answer.
     const { data: enr0, error: enr0Err } = await sb.from('mkt_content_enrichment').select('model, status').eq('content_post_id', contentPostId).maybeSingle();
     if (enr0Err) throw new Error(`load enrichment: ${enr0Err.message}`);
-    if (isGeminiRead(enr0 as { model: string | null; status: string | null } | null)) {
+    if (isModelRead(enr0 as { model: string | null; status: string | null } | null)) {
       // A re-collected post can have been put back to 'collected'; it is read,
       // so say so — otherwise the sweep offers it again on every tick.
       if (post.processing_status !== 'processed' && post.processing_status !== 'partial') {
@@ -332,7 +332,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   const { data: existingVt } = reader === 'runner'
     ? await sb.from('mkt_visual_text').select('text, content_media_id, source').eq('content_post_id', contentPostId)
     : { data: [] as Array<{ text: string | null; content_media_id: string; source: string }> };
-  if (reader === 'gemini') {
+  if (isModelReader(reader)) {
     // nothing here: the Gemini reader below reads every image and the whole video
   } else if (existingVt && existingVt.length > 0) {
     visualTextBlob = existingVt.map((v) => (v.text as string) ?? '').filter(Boolean).join(' ');
@@ -417,14 +417,14 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     stats.fatal_errors.push('no media stored — nothing to process');
     return failPost();
   }
-  if (reader === 'gemini') {
+  if (isModelReader(reader)) {
     // Gemini reads the media, decides the project (proof-checked) and the post
     // ends processed / partial in this same job — no runner hand-off.
     const pending = { account_identity: await accountIdentity(sb, post.social_account_id as string | null), deterministic_partial: deterministicPartial, snippet: headByCodePoints(`${post.caption ?? ''}
 ${transcriptText}`.trim(), 160) };
     try {
       const out = await readAndDecide(sb, { id: contentPostId, organization_id: post.organization_id as string | null, caption: (post.caption as string | null) ?? null },
-        storedRefs.map((r) => ({ mediaId: r.mediaId, kind: r.kind, bytes: r.bytes, durationMs: r.durationMs })), transcriptText, pending);
+        storedRefs.map((r) => ({ mediaId: r.mediaId, kind: r.kind, bytes: r.bytes, durationMs: r.durationMs })), transcriptText, pending, reader);
       mark('read_and_decide');
       stats.cost_usd += out.costUsd;
       stats.images_analyzed = out.imagesRead;
@@ -612,8 +612,8 @@ async function narrowOnlyPass(sb: SupabaseClient, contentPostId: string, post: P
   // Gemini path: a post Gemini already read is re-decided right here from its
   // stored words (text only, no media). One read by an older reader is handed
   // to the sweep instead, which gives it a full Gemini read.
-  if (reader === 'gemini' && isGeminiRead(enr as { model: string | null; status: string | null } | null)) {
-    const out = await redecideFromStored(sb, { id: contentPostId, organization_id: post.organization_id, caption: post.caption }, candidates, result);
+  if (isModelReader(reader) && isModelRead(enr as { model: string | null; status: string | null } | null)) {
+    const out = await redecideFromStored(sb, { id: contentPostId, organization_id: post.organization_id, caption: post.caption }, candidates, result, reader);
     stats.cost_usd += out.costUsd;
     stats.primary_project = out.primaryProjectId;
     stats.enriched = true;

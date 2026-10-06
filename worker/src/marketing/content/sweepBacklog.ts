@@ -42,7 +42,7 @@ import { repairMediaDimensions } from '../../repairMediaDimensions.js';
 import { sweepApifyStorage } from '../apifyStorageSweep.js';
 import { repairFileMediaMeta } from '../../repairFileMediaMeta.js';
 import { backfillContentEtags } from '../../backfillContentEtags.js';
-import { contentReader, readerPausedUntil } from './geminiEnrich.js';
+import { contentReader, isModelReader, readerPausedUntil } from './geminiEnrich.js';
 
 export interface SweepStats { reader: string; gemini_reads: number; gemini_rereads: number; design_reads: number; reader_spend_today_usd: number; reader_over_budget: boolean; media_recover: number; visual_ocr: number; frame_jobs: number; frame_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
@@ -227,7 +227,7 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   const reader = await contentReader(sb);
   stats.reader = reader;
   let readerBudgetOk = true;
-  if (reader === 'gemini') {
+  if (isModelReader(reader)) {
     const spend = await readerSpendToday(sb);
     const budget = await readerBudgetUsd(sb);
     stats.reader_spend_today_usd = Math.round(spend * 100) / 100;
@@ -451,8 +451,8 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   // Under the Gemini reader a post is ready as soon as its media is stored —
   // Gemini reads the images itself, there is no OCR lane to wait for.
   const readyForFull = postIds.filter((id) =>
-    storedAny.has(id) && !inFlight.has(id) && (reader === 'gemini' || hasVisualText.has(id) || !storedImagey.has(id)));
-  const processCap = reader === 'gemini' ? (readerBudgetOk ? MAX_PROCESS_ENQUEUE : 0) : MAX_PROCESS_ENQUEUE;
+    storedAny.has(id) && !inFlight.has(id) && (isModelReader(reader) || hasVisualText.has(id) || !storedImagey.has(id)));
+  const processCap = isModelReader(reader) ? (readerBudgetOk ? MAX_PROCESS_ENQUEUE : 0) : MAX_PROCESS_ENQUEUE;
   for (const id of readyForFull.slice(0, processCap)) {
     await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: id, from: 'sweep' }, p_priority: 40, p_requested_by: null, p_fallback_of: null });
     stats.content_process++;
@@ -481,7 +481,7 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   // tightly bounded: it tops the queue up to ENRICH_QUEUE_HIGH_WATER and stops.
   // The lane is a singleton, drains at its own pace, and parks itself on a
   // subscription limit (claude_job_block) rather than hammering.
-  if (reader === 'gemini' && readerBudgetOk) {
+  if (isModelReader(reader) && readerBudgetOk) {
     // Posts left waiting for the runner, and posts an older reader decided,
     // get a full Gemini read (content_process re-uses stored media and
     // transcripts; only the read itself is new).
@@ -500,7 +500,7 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
     // needed — order by id keeps the walk stable across ticks.
     const olderReads = await pageAll<{ content_post_id: string }>(
       (from, to) => sb.from('mkt_content_enrichment').select('content_post_id')
-        .eq('status', 'done').or('model.is.null,model.not.like.gemini*')
+        .eq('status', 'done').or('model.is.null,and(model.not.like.gemini*,model.not.like.gpt-*)')
         .order('content_post_id', { ascending: true }).range(from, to),
       MAX_GEMINI_REREADS_PER_TICK * 4, 'reread scan');
     for (const r of olderReads.filter((x) => !inFlight.has(x.content_post_id)).slice(0, MAX_GEMINI_REREADS_PER_TICK)) {
@@ -664,7 +664,7 @@ async function readerSpendToday(sb: SupabaseClient): Promise<number> {
   const since = new Date(`${day}T00:00:00+03:00`).toISOString();
   const rows = await pageAll<{ cost_usd: number | null }>(
     (from, to) => sb.from('ai_usage').select('cost_usd')
-      .in('call_site', ['worker/marketing/geminiRead', 'worker/marketing/geminiDesign']).gte('created_at', since)
+      .in('call_site', ['worker/marketing/geminiRead', 'worker/marketing/openaiRead', 'worker/marketing/geminiDesign', 'worker/marketing/openaiDesign']).gte('created_at', since)
       .order('id', { ascending: true }).range(from, to),
     200_000, 'reader spend scan');
   return rows.reduce((sum, r) => sum + (Number(r.cost_usd) || 0), 0);

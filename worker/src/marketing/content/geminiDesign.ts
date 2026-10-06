@@ -17,9 +17,17 @@
 //
 // A failed read is STORED as status 'failed' with its reason and an attempt
 // count (raw.attempts); the sweep retries it at most MAX_ATTEMPTS times.
+//
+// ENGINE (2026-10-06): mkt_settings `content.design_reader` = 'gemini' (default)
+// | 'openai'. 'openai' reads with gpt-6.1-sol through the same prompt, schema
+// (in OpenAI strict form) and validators. Chosen by a 15-post / 83-image blind
+// bake-off: layout claims 8.2 vs 6.7 (gpt-6-luna) and 6.1 (Claude Sonnet 5.5),
+// 0.9 false statements per post vs 2.4 / 2.5, at $0.015 per image. Gemini was
+// not in that bake-off (capped); its one stored read was comparable.
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { flashCostUsd, geminiPost, type GeminiUsage } from '../../ai/providers/geminiHttp.js';
+import { openaiChatJson, openaiCostUsd, openaiStrictSchema } from '../../ai/providers/openaiHttp.js';
 import { embed } from '../../ai/index.js';
 import { recordAiUsage } from '../../lib/aiUsage.js';
 import { POST_READ_SCHEMA, SLIDE_READ_SCHEMA, postReadProblems, slideReadProblems } from '../../creative/designRead/schemas.js';
@@ -32,6 +40,20 @@ export const DESIGN_MODEL = 'gemini-3.8-flash';
 /** visual_design_reads.model_used for these rows. */
 export const DESIGN_MODEL_USED = `gemini:${DESIGN_MODEL}`;
 export const DESIGN_RULE_VERSION = 'gemini-v1';
+
+export type DesignEngine = 'gemini' | 'openai';
+export interface EngineConfig { engine: DesignEngine; model: string; modelUsed: string; ruleVersion: string; callSite: string }
+export const DESIGN_ENGINES: Record<DesignEngine, EngineConfig> = {
+  gemini: { engine: 'gemini', model: DESIGN_MODEL, modelUsed: DESIGN_MODEL_USED, ruleVersion: DESIGN_RULE_VERSION, callSite: 'worker/marketing/geminiDesign' },
+  openai: { engine: 'openai', model: 'gpt-6.1-sol', modelUsed: 'openai:gpt-6.1-sol', ruleVersion: 'openai-v1', callSite: 'worker/marketing/openaiDesign' },
+};
+
+/** mkt_settings `content.design_reader`; anything but 'openai' is Gemini. */
+export async function designEngine(sb: SupabaseClient): Promise<EngineConfig> {
+  const { data, error } = await sb.from('mkt_settings').select('value').eq('key', 'content.design_reader').maybeSingle();
+  if (error) throw new Error(`content.design_reader setting read failed: ${error.message}`);
+  return (data as { value?: unknown } | null)?.value === 'openai' ? DESIGN_ENGINES.openai : DESIGN_ENGINES.gemini;
+}
 /** A carousel is read up to this many slides (the rest are rare and repeat the template). */
 export const MAX_SLIDES = 10;
 export const MAX_ATTEMPTS = 3;
@@ -172,11 +194,46 @@ async function callGemini(postId: string, images: DesignImage[], ctx: { platform
   }
 }
 
+let strictDesignSchema: unknown = null;
+
+/** The one OpenAI call. Recorded in ai_usage either way; throws on any failure. */
+async function callOpenAI(cfg: EngineConfig, postId: string, images: DesignImage[], ctx: { platform?: string | null; org?: string | null }): Promise<{ obj: Json; costUsd: number }> {
+  const started = Date.now();
+  const track = { area: 'competitors' as const, callSite: cfg.callSite, operation: 'design_read', provider: 'openai' as const, model: cfg.model, entityKind: 'mkt_content_post', entityId: postId };
+  const meta = { images: images.length };
+  strictDesignSchema ??= openaiStrictSchema(designSchema());
+  let replied = false;
+  try {
+    const parts: unknown[] = images.map((im) => ({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${im.jpeg.toString('base64')}`, detail: 'high' } }));
+    parts.push({ type: 'text', text: buildDesignPrompt(images.length, ctx) });
+    const r = await openaiChatJson(cfg.model, parts, 'design_read', strictDesignSchema);
+    const costUsd = openaiCostUsd(cfg.model, r.usage) ?? 0;
+    let fail: string | null = r.finishReason !== 'stop' ? `provider:openai_compat finished with ${r.finishReason}` : null;
+    let obj: Json | null = null;
+    if (!fail) {
+      try {
+        const parsed: unknown = JSON.parse(r.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) obj = parsed as Json;
+        else fail = 'provider:openai_compat design reply is not a JSON object';
+      } catch (e) {
+        fail = `provider:openai_compat returned unparseable JSON (${(e as Error).message})`;
+      }
+    }
+    replied = true;
+    await recordAiUsage({ ...track, status: fail ? 'error' : 'ok', error: fail, inputTokens: Number(r.usage.prompt_tokens ?? 0), outputTokens: Number(r.usage.completion_tokens ?? 0), costUsd, latencyMs: Date.now() - started, units: images.length, unitKind: null, meta });
+    if (fail || !obj) throw new Error(fail ?? 'provider:openai_compat design reply was empty');
+    return { obj, costUsd };
+  } catch (e) {
+    if (!replied) await recordAiUsage({ ...track, status: 'error', error: e instanceof Error ? e.message : String(e), latencyMs: Date.now() - started, meta });
+    throw e;
+  }
+}
+
 /** Previous failed attempts on this post's post-level Gemini read. */
-async function priorAttempts(sb: SupabaseClient, postId: string): Promise<number> {
+async function priorAttempts(sb: SupabaseClient, postId: string, cfg: EngineConfig): Promise<number> {
   const { data, error } = await sb.from('visual_design_reads').select('raw, status')
     .eq('subject_kind', 'competitor_post').eq('subject_id', postId).eq('level', 'post')
-    .eq('model_used', DESIGN_MODEL_USED).eq('rule_version', DESIGN_RULE_VERSION).maybeSingle();
+    .eq('model_used', cfg.modelUsed).eq('rule_version', cfg.ruleVersion).maybeSingle();
   if (error) throw new Error(`design read attempts lookup failed for ${postId}: ${error.message}`);
   const row = data as { raw?: { attempts?: unknown } | null; status?: string } | null;
   return row && row.status === 'failed' ? Number(row.raw?.attempts ?? 1) || 1 : 0;
@@ -208,18 +265,20 @@ export async function designReadPost(
   sb: SupabaseClient,
   post: { id: string; organization_id: string | null; platform: string | null; org_name?: string | null },
   images: DesignImage[],
+  cfg: EngineConfig = DESIGN_ENGINES.gemini,
 ): Promise<DesignOutcome> {
   const outcome: DesignOutcome = { slidesStored: 0, slidesFailed: 0, postStored: false, costUsd: 0, failure: null };
   if (images.length === 0) return outcome;
-  const attempts = (await priorAttempts(sb, post.id)) + 1;
-  const base = { post_id: post.id, organization_id: post.organization_id, model_used: DESIGN_MODEL_USED, rule_version: DESIGN_RULE_VERSION } as const;
+  const attempts = (await priorAttempts(sb, post.id, cfg)) + 1;
+  const base = { post_id: post.id, organization_id: post.organization_id, model_used: cfg.modelUsed, rule_version: cfg.ruleVersion } as const;
   const storePostFailure = async (reason: string): Promise<void> => {
     await upsertDesignRead(sb, { ...base, subject_kind: 'competitor_post', subject_id: post.id, level: 'post', slide_index: null, model_task: 'design_read_post', read: {}, status: 'failed', failure: reason.slice(0, 500), raw: { attempts }, cost_usd: outcome.costUsd });
   };
 
   let obj: Json;
   try {
-    const r = await callGemini(post.id, images, { platform: post.platform, org: post.org_name ?? null });
+    const ctx = { platform: post.platform, org: post.org_name ?? null };
+    const r = cfg.engine === 'openai' ? await callOpenAI(cfg, post.id, images, ctx) : await callGemini(post.id, images, ctx);
     obj = r.obj;
     outcome.costUsd = r.costUsd;
   } catch (e) {
@@ -275,6 +334,6 @@ export async function designReadStoredPost(sb: SupabaseClient, postId: string): 
   if (!post) throw new Error(`permanent: content post not found: ${postId}`);
   const p = post as { id: string; organization_id: string | null; platform: string | null; mkt_organizations?: { name_ar?: string | null; name_en?: string | null } | null };
   const images = await loadPostImages(sb, postId);
-  const out = await designReadPost(sb, { id: p.id, organization_id: p.organization_id, platform: p.platform, org_name: p.mkt_organizations?.name_ar ?? p.mkt_organizations?.name_en ?? null }, images);
+  const out = await designReadPost(sb, { id: p.id, organization_id: p.organization_id, platform: p.platform, org_name: p.mkt_organizations?.name_ar ?? p.mkt_organizations?.name_en ?? null }, images, await designEngine(sb));
   return { ...out, images: images.length };
 }

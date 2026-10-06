@@ -39,6 +39,7 @@ Regenerate both with `bash scripts/secrets/seal.sh`. Do not hand-edit.
 - `CLAUDE_ROUTINE_URL`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
+- `GEMINI_API_KEY`
 - `HABERCHAT_TOKEN`
 - `HABERCHAT_WEBHOOK_SECRET`
 - `HATIF_CLIENT_ID`
@@ -53,6 +54,7 @@ Regenerate both with `bash scripts/secrets/seal.sh`. Do not hand-edit.
 - `META_PAGE_ID`
 - `META_SYSTEM_USER_TOKEN`
 - `NX_DAEMON`
+- `OPENAI_API_KEY`
 - `PASEET_CONTEXT_ID`
 - `PASEET_EMAIL`
 - `PASEET_PASSWORD`

@@ -48,7 +48,7 @@ Exactly the fields of `SlideRead` in `contracts.ts`. Enumerations:
 - `hierarchy`: free strings, ordered most- to least-dominant (e.g.
   `["headline","price","logo","cta"]`).
 - `typography.arabic_style`: `naskh` | `kufi` | `modern_sans` | `calligraphic` | `mixed` | `none`
-- `typography.size_levels`: integer ≥ 1 — distinct type sizes in use.
+- `typography.size_levels`: integer ≥ 0 — distinct type sizes in use (0 when the image has no text; was ≥ 1 until 2026-10-06, which rejected every correct read of a text-free image).
 - `typography.weight_contrast`: `low` | `high`
 - `typography.latin_present`: boolean
 - `typography.numerals`: `arabic_indic` (٠١٢٣) | `western` (0123) | `mixed` | `none`

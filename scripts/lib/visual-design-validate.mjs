@@ -54,7 +54,7 @@ export function slideReadProblems(read, path) {
   if (!t || typeof t !== 'object') errs.push(`${path}.typography: missing`);
   else {
     enumErr(errs, `${path}.typography.arabic_style`, t.arabic_style, ARABIC_STYLES);
-    if (!isInt(t.size_levels, 1)) errs.push(`${path}.typography.size_levels: must be int ≥ 1`);
+    if (!isInt(t.size_levels, 0)) errs.push(`${path}.typography.size_levels: must be int ≥ 0 (0 = no text)`);
     enumErr(errs, `${path}.typography.weight_contrast`, t.weight_contrast, WEIGHT_CONTRASTS);
     if (!isBool(t.latin_present)) errs.push(`${path}.typography.latin_present: must be boolean`);
     enumErr(errs, `${path}.typography.numerals`, t.numerals, NUMERALS);

@@ -41,7 +41,7 @@ where `read` has EXACTLY these fields (enum values snake_case, EXACTLY as writte
 - `density`: `low|medium|high`
 - `hierarchy`: string[] most-dominant first (e.g. `["headline","price","logo"]`)
 - `typography`: `{ "arabic_style": "naskh|kufi|modern_sans|calligraphic|mixed|none",
-  "size_levels": int ≥ 1, "weight_contrast": "low|high",
+  "size_levels": int ≥ 0 (0 when the image has no text), "weight_contrast": "low|high",
   "latin_present": bool, "numerals": "arabic_indic|western|mixed|none" }`
 - `palette`: 3–6 entries `{ "hex": "#RRGGBB", "role": "background|text|accent|logo|band|other", "share": 0..1 }`
 - `palette_family`: `warm|cool|neutral|high_contrast`

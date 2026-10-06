@@ -1097,6 +1097,16 @@ rule for telling them apart is what question each answers:
   per image). Never fold it into the post-read call: the project decision must
   not wait on, or be retried because of, a design read. Backfill via
   `mkt_design_read_due` (sweep, `mode:'design_only'`, max 3 attempts).
+  **OpenAI is a second engine for both (2026-10-06, SHIPPED DARK):**
+  `content.reader = 'openai'` reads posts with **gpt-6-luna**
+  (`openaiRead.ts`; a video goes in as 8 still frames — OpenAI takes no video)
+  and `content.design_reader = 'openai'` reads designs with **gpt-6.1-sol**.
+  Same prompts, candidates, proof checker, validators and persistence;
+  `openaiHttp.ts` pauses (DAILY_QUOTA_MARK + `OPENAI_QUOTA`) on an empty
+  balance and never retries it. A decision by EITHER model reader counts as
+  read (`isModelRead`: `gemini…` / `gpt-…`) — never let one engine re-read the
+  other's posts. Chosen by blind bake-offs (30 posts / 15 posts × 83 images);
+  video shots and every embedding stay on Gemini.
 - **Visual Intelligence (CV)** — *"what does this footage look like, shot by shot?"*
   Queue `mkt_cv_jobs`, lanes `cvProcessPollLoop` + `cvAnalyzePollLoop`, gated by
   THREE independent switches: `CV_LANES_ENABLED` (env), `GEMINI_API_KEY` present

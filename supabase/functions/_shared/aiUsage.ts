@@ -16,7 +16,7 @@
  */
 
 export type AiArea = 'sales' | 'translation' | 'marketing' | 'competitors' | 'internal' | 'website';
-export type AiProvider = 'anthropic' | 'deepseek' | 'moonshot' | 'fal' | 'modal' | 'gemini' | 'runner';
+export type AiProvider = 'anthropic' | 'deepseek' | 'moonshot' | 'fal' | 'modal' | 'gemini' | 'openai' | 'runner';
 
 export interface AiUsageInput {
   area: AiArea;

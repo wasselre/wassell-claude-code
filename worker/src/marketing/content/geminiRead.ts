@@ -211,7 +211,7 @@ async function generate(parts: unknown[], schema: unknown, operation: string, po
   }
 }
 
-function toAnswer(postId: string, o: Record<string, unknown>): EnrichAnswer {
+export function toAnswer(postId: string, o: Record<string, unknown>): EnrichAnswer {
   const idx = Number(o.primary_project_index);
   return { ...o, post_id: postId, primary_project_index: Number.isInteger(idx) ? idx : -1 };
 }

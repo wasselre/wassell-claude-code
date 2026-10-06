@@ -61,7 +61,7 @@ export const SLIDE_READ_SCHEMA: JSONSchema = {
       type: 'object', additionalProperties: false,
       properties: {
         arabic_style: { type: 'string', enum: ARABIC_STYLES },
-        size_levels: { type: 'integer', minimum: 1 },
+        size_levels: { type: 'integer', minimum: 0 },
         weight_contrast: { type: 'string', enum: WEIGHT_CONTRASTS },
         latin_present: { type: 'boolean' },
         numerals: { type: 'string', enum: NUMERALS },
@@ -246,7 +246,7 @@ export function slideReadProblems(read: unknown, path = 'read'): string[] {
   if (!isObj(t)) errs.push(`${path}.typography: missing`);
   else {
     if (!oneOf(t.arabic_style, ARABIC_STYLES)) errs.push(`${path}.typography.arabic_style: invalid enum value`);
-    if (!isInt(t.size_levels, 1)) errs.push(`${path}.typography.size_levels: must be int ≥ 1`);
+    if (!isInt(t.size_levels, 0)) errs.push(`${path}.typography.size_levels: must be int ≥ 0 (0 = no text)`);
     if (!oneOf(t.weight_contrast, WEIGHT_CONTRASTS)) errs.push(`${path}.typography.weight_contrast: invalid enum value`);
     if (typeof t.latin_present !== 'boolean') errs.push(`${path}.typography.latin_present: must be boolean`);
     if (!oneOf(t.numerals, NUMERALS)) errs.push(`${path}.typography.numerals: invalid enum value`);

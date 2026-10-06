@@ -3,7 +3,7 @@ import { validateEnrichmentResults as validateTs, attributionRejection as reject
 // @ts-expect-error — plain .mjs from the scripts package, no type declarations
 import { validateEnrichmentResults as validateMjs, attributionRejection as rejectMjs, normalizeText as normMjs, GENERIC_TOKENS as GEN_MJS } from '../../../../../scripts/lib/mkt-enrichment-validate.mjs';
 import { buildDecidePrompt, buildReadPrompt, ENRICH_RULES } from '../geminiRead.js';
-import { candidateFingerprint, isGeminiRead } from '../geminiEnrich.js';
+import { candidateFingerprint, isModelRead } from '../geminiEnrich.js';
 
 const cand = (projectId: string, nameAr: string, strength: string, extra: Record<string, unknown> = {}) => ({ projectId, nameAr, nameEn: '', strength, confidence: 0.9, matchedAliases: [] as string[], ...extra });
 
@@ -66,11 +66,11 @@ describe('reader helpers', () => {
       .toBe(candidateFingerprint([{ projectId: 'a', strength: 'full_name' }, { projectId: 'b', strength: 'word' }]));
     expect(candidateFingerprint([{ projectId: 'a', strength: 'word' }])).not.toBe(candidateFingerprint([{ projectId: 'a', strength: 'full_name' }]));
   });
-  it('only a done Gemini decision counts as already read', () => {
-    expect(isGeminiRead({ model: 'gemini-3.8-flash', status: 'done' })).toBe(true);
-    expect(isGeminiRead({ model: 'claude-runner:content-enrichment', status: 'done' })).toBe(false);
-    expect(isGeminiRead({ model: 'gemini-3.8-flash', status: 'pending' })).toBe(false);
-    expect(isGeminiRead(null)).toBe(false);
+  it('only a done model-reader decision counts as already read', () => {
+    expect(isModelRead({ model: 'gemini-3.8-flash', status: 'done' })).toBe(true);
+    expect(isModelRead({ model: 'claude-runner:content-enrichment', status: 'done' })).toBe(false);
+    expect(isModelRead({ model: 'gemini-3.8-flash', status: 'pending' })).toBe(false);
+    expect(isModelRead(null)).toBe(false);
   });
 });
 

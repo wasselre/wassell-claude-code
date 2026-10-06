@@ -12,7 +12,9 @@
 //   5. persisted exactly as the runner did: enrichment row, attribution,
 //      stale-attribution demotion, secondary candidates, processed / partial
 //
-// Switch: mkt_settings `content.reader` = 'gemini' | 'runner' (missing = runner).
+// Switch: mkt_settings `content.reader` = 'gemini' | 'openai' | 'runner'
+// (missing = runner). 'openai' reads with gpt-6-luna (openaiRead.ts, 2026-10-06):
+// same prompt, candidates, checker and persistence; a video arrives as frames.
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { narrowProjects, type NarrowedCandidate } from './enrich.js';
@@ -22,8 +24,15 @@ import { silentCopy, probeVideo } from '../cv/gemini/media.js';
 import { validateEnrichmentResults, type EnrichAnswer, type EnrichCandidate, type EnrichEvidence, type ValidEnrichment } from './enrichmentValidate.js';
 import { decidePostWithGemini, readPostWithGemini, GEMINI_RULE_VERSION, READER_MODEL, type PostContext, type ReadMedia } from './geminiRead.js';
 import { CREDITS_DEPLETED, MONTHLY_CAP } from '../../ai/providers/geminiHttp.js';
+import { OPENAI_QUOTA } from '../../ai/providers/openaiHttp.js';
+import { decidePostWithOpenAI, readPostWithOpenAI, FRAMES_PER_VIDEO, OPENAI_READER_MODEL, type OpenAiReadMedia } from './openaiRead.js';
+import { sampleFrames } from './ffmpegMedia.js';
 
-export type ContentReader = 'gemini' | 'runner';
+export type ContentReader = 'gemini' | 'openai' | 'runner';
+/** The readers that decide inside content_process (everything but the runner hand-off). */
+export type ModelReader = 'gemini' | 'openai';
+export const isModelReader = (r: ContentReader): r is ModelReader => r === 'gemini' || r === 'openai';
+export const readerModel = (r: ModelReader): string => (r === 'openai' ? OPENAI_READER_MODEL : READER_MODEL);
 /** Longest stretch of a video the reader watches (same ceiling as the shot pipeline). */
 const MAX_VIDEO_MS = 15 * 60_000;
 
@@ -46,10 +55,14 @@ export async function pauseReader(sb: SupabaseClient, retryAfterSec: number, rea
   const { error } = await sb.from('mkt_settings').upsert({ key: 'content.reader_paused_until', value: until, updated_at: new Date().toISOString() }, { onConflict: 'key' });
   if (error) throw new Error(`pausing the reader failed: ${error.message}`);
   const day = new Date().toISOString().slice(0, 10);
-  const broke = reason.includes(CREDITS_DEPLETED) || reason.includes(MONTHLY_CAP);
+  const broke = reason.includes(CREDITS_DEPLETED) || reason.includes(MONTHLY_CAP) || reason.includes(OPENAI_QUOTA);
   const { error: alertErr } = await sb.rpc('mkt_alert_emit', {
     p_kind: 'content_reader_quota', p_dedup_key: `content_reader_quota:${broke ? 'credits:' : ''}${day}`,
-    p_title: broke ? (reason.includes(MONTHLY_CAP) ? 'Competitor post reading paused: Gemini monthly spending cap reached (Tier 1 = $250/month)' : 'Competitor post reading paused: Gemini prepaid balance is empty — top up AI Studio') : 'Competitor post reading paused: Gemini daily quota reached',
+    p_title: broke
+      ? (reason.includes(OPENAI_QUOTA) ? 'Competitor post reading paused: the OpenAI balance is empty — top up platform.openai.com'
+        : reason.includes(MONTHLY_CAP) ? 'Competitor post reading paused: Gemini monthly spending cap reached (Tier 1 = $250/month)'
+        : 'Competitor post reading paused: Gemini prepaid balance is empty — top up AI Studio')
+      : 'Competitor post reading paused: Gemini daily quota reached',
     p_severity: broke ? 'critical' : 'warning',
     p_subject_type: 'content', p_subject_id: day,
     p_body: `Gemini refused with a per-day quota; reading resumes by itself at ${until}. A *FreeTier* quota means the key's Google project has no paid balance left (top up the prepay balance). ${reason.slice(0, 300)}`,
@@ -62,7 +75,7 @@ export async function contentReader(sb: SupabaseClient): Promise<ContentReader> 
   const { data, error } = await sb.from('mkt_settings').select('value').eq('key', 'content.reader').maybeSingle();
   if (error) throw new Error(`content.reader setting read failed: ${error.message}`);
   const v = (data as { value?: unknown } | null)?.value;
-  return v === 'gemini' ? 'gemini' : 'runner';
+  return v === 'gemini' || v === 'openai' ? v : 'runner';
 }
 
 /** Stable identity of a short list, so a re-read that finds nothing new costs no second call. */
@@ -127,7 +140,9 @@ export async function readAndDecide(
   stored: StoredMediaForReader[],
   transcriptText: string,
   pendingResult: Record<string, unknown>,
+  reader: ModelReader = 'gemini',
 ): Promise<ReaderOutcome> {
+  const model = readerModel(reader);
   // 1. short list from the words we already have
   const firstWords = `${post.caption ?? ''}\n${transcriptText}`.trim();
   const first = await shortList(sb, post.organization_id, firstWords);
@@ -141,21 +156,30 @@ export async function readAndDecide(
   const images = stored.filter((m) => (m.kind === 'image' || (m.kind === 'thumbnail' && videos.length === 0)) && m.bytes);
   const temps: string[] = [];
   const media: ReadMedia[] = [];
+  const oaMedia: OpenAiReadMedia[] = [];
   let outcome: ReaderOutcome;
   try {
     for (const v of videos) {
       const tmp = await toTempFile(v.bytes as Buffer, 'mp4');
       temps.push(tmp.dir);
       const probe = await probeVideo(tmp.path);
+      if (reader === 'openai') {
+        // OpenAI takes no video: evenly spaced frames, in time order.
+        const frames = await sampleFrames(tmp.path, Math.min(probe.durationMs, MAX_VIDEO_MS), FRAMES_PER_VIDEO);
+        oaMedia.push({ mediaId: v.mediaId, kind: 'video', jpegs: frames.map((f) => f.jpeg) });
+        continue;
+      }
       const copy = await silentCopy(tmp.path, tmp.dir, Math.min(probe.durationMs, MAX_VIDEO_MS));
       media.push({ kind: 'video', path: copy.path, bytes: copy.bytes, mediaId: v.mediaId });
     }
     for (const im of images) {
-      media.push({ kind: 'image', bytes: await imageToBoundedJpeg(im.bytes as Buffer, 'img'), mime: 'image/jpeg', mediaId: im.mediaId });
+      const jpeg = await imageToBoundedJpeg(im.bytes as Buffer, 'img');
+      if (reader === 'openai') oaMedia.push({ mediaId: im.mediaId, kind: 'image', jpegs: [jpeg] });
+      else media.push({ kind: 'image', bytes: jpeg, mime: 'image/jpeg', mediaId: im.mediaId });
     }
-    if (media.length === 0) throw new Error('permanent: post has no readable media bytes');
+    if (media.length === 0 && oaMedia.every((m) => m.jpegs.length === 0)) throw new Error('permanent: post has no readable media bytes');
 
-    const read = await readPostWithGemini(ev, media);
+    const read = reader === 'openai' ? await readPostWithOpenAI(ev, oaMedia) : await readPostWithGemini(ev, media);
     let cost = read.costUsd;
     const ocrText = read.mediaText.map((m) => m.lines.join('\n')).filter(Boolean).join(' | ');
 
@@ -167,7 +191,9 @@ export async function readAndDecide(
     if (candidateFingerprint(second) !== candidateFingerprint(first)) {
       finalCands = second;
       secondCall = true;
-      const d = await decidePostWithGemini({ ...ev, candidates: second as EnrichCandidate[], ocr_text: ocrText });
+      const d = reader === 'openai'
+        ? await decidePostWithOpenAI({ ...ev, candidates: second as EnrichCandidate[], ocr_text: ocrText })
+        : await decidePostWithGemini({ ...ev, candidates: second as EnrichCandidate[], ocr_text: ocrText });
       answer = d.answer;
       cost += d.costUsd;
     }
@@ -179,21 +205,23 @@ export async function readAndDecide(
     if (!v) throw new Error(`provider:gemini answer failed validation: ${errors.join('; ').slice(0, 300)}`);
 
     // 5. the screen text replaces whatever an older reader stored for this post
-    const share = media.length > 0 ? Math.round((read.costUsd / media.length) * 1e6) / 1e6 : 0;
+    const items = reader === 'openai' ? oaMedia.length : media.length;
+    const share = items > 0 ? Math.round((read.costUsd / items) * 1e6) / 1e6 : 0;
     for (const m of read.mediaText) {
       const { error } = await sb.rpc('mkt_visual_text_upsert', {
-        p_media: m.mediaId, p_post: post.id, p_source: 'gemini', p_frame_ts_ms: null, p_model: READER_MODEL,
+        p_media: m.mediaId, p_post: post.id, p_source: reader, p_frame_ts_ms: null, p_model: model,
         p_text: m.lines.join('\n'), p_structured: { lines: m.lines }, p_confidence: null, p_cost: share, p_status: 'done', p_failure: null, p_raw: null,
       });
       if (error) throw new Error(`mkt_visual_text_upsert failed for media ${m.mediaId}: ${error.message}`);
     }
-    const { error: delErr } = await sb.from('mkt_visual_text').delete().eq('content_post_id', post.id).neq('model', READER_MODEL);
+    const { error: delErr } = await sb.from('mkt_visual_text').delete().eq('content_post_id', post.id).neq('model', model);
     if (delErr) throw new Error(`removing older screen text for post ${post.id} failed: ${delErr.message}`);
 
-    await persistDecision(sb, post, v, { ...pendingResult, reader_cost_usd: Math.round(cost * 1e6) / 1e6, reader_second_call: secondCall });
+    await persistDecision(sb, post, v, { ...pendingResult, reader_cost_usd: Math.round(cost * 1e6) / 1e6, reader_second_call: secondCall }, model);
     outcome = {
       primaryProjectId: v.primaryProjectId, candidates: finalCands.length,
-      imagesRead: media.filter((m) => m.kind === 'image').length, videosRead: media.filter((m) => m.kind === 'video').length,
+      imagesRead: reader === 'openai' ? oaMedia.filter((m) => m.kind === 'image').length : media.filter((m) => m.kind === 'image').length,
+      videosRead: reader === 'openai' ? oaMedia.filter((m) => m.kind === 'video').length : media.filter((m) => m.kind === 'video').length,
       costUsd: cost, secondCall, rejected: (v.result.attribution_rejected as string | undefined) ?? null,
     };
   } finally {
@@ -206,13 +234,13 @@ export async function readAndDecide(
  * Text-only re-decision from stored evidence (caption + transcript + the screen
  * text Gemini stored). Used by the re-check when a project is added/renamed.
  */
-export async function redecideFromStored(sb: SupabaseClient, post: PostForReader, candidates: NarrowedCandidate[], pendingResult: Record<string, unknown>): Promise<ReaderOutcome> {
+export async function redecideFromStored(sb: SupabaseClient, post: PostForReader, candidates: NarrowedCandidate[], pendingResult: Record<string, unknown>, reader: ModelReader = 'gemini'): Promise<ReaderOutcome> {
   const ev = { ...(await loadEvidence(sb, post.id)), candidates: candidates as EnrichCandidate[], deterministic_partial: pendingResult.deterministic_partial === true };
-  const d = await decidePostWithGemini(ev);
+  const d = reader === 'openai' ? await decidePostWithOpenAI(ev) : await decidePostWithGemini(ev);
   const { valid, errors } = validateEnrichmentResults([d.answer], [ev]);
   const v = valid[0];
   if (!v) throw new Error(`provider:gemini answer failed validation: ${errors.join('; ').slice(0, 300)}`);
-  await persistDecision(sb, post, v, { ...pendingResult, reader_cost_usd: d.costUsd, reader_second_call: false });
+  await persistDecision(sb, post, v, { ...pendingResult, reader_cost_usd: d.costUsd, reader_second_call: false }, readerModel(reader));
   return { primaryProjectId: v.primaryProjectId, candidates: candidates.length, imagesRead: 0, videosRead: 0, costUsd: d.costUsd, secondCall: false, rejected: (v.result.attribution_rejected as string | undefined) ?? null };
 }
 
@@ -226,12 +254,12 @@ async function writeEnrichment(sb: SupabaseClient, post: PostForReader, candidat
 }
 
 /** The runner's persistence (scripts/claude-study-runner.mjs handleMktContentEnrichment), for one post. */
-async function persistDecision(sb: SupabaseClient, post: PostForReader, v: ValidEnrichment, extra: Record<string, unknown>): Promise<void> {
-  await writeEnrichment(sb, post, v.candidates as NarrowedCandidate[], v.primaryProjectId, { ...extra, ...v.result }, 'done', READER_MODEL);
+async function persistDecision(sb: SupabaseClient, post: PostForReader, v: ValidEnrichment, extra: Record<string, unknown>, model: string): Promise<void> {
+  await writeEnrichment(sb, post, v.candidates as NarrowedCandidate[], v.primaryProjectId, { ...extra, ...v.result }, 'done', model);
   // A human-locked post keeps its project: the upsert RPC preserved the pointer,
   // and no competing machine attribution may be added.
   if (!v.locked && v.primaryProjectId) {
-    const { error } = await sb.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: v.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: { matched: READER_MODEL, quote: v.evidenceQuote }, p_matched_aliases: [], p_auto_accept: true });
+    const { error } = await sb.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: v.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: { matched: model, quote: v.evidenceQuote }, p_matched_aliases: [], p_auto_accept: true });
     if (error) throw new Error(`mkt_attribution_upsert failed for post ${v.postId}: ${error.message}`);
   }
   if (!v.locked) {
@@ -248,8 +276,13 @@ async function persistDecision(sb: SupabaseClient, post: PostForReader, v: Valid
   if (stErr) throw new Error(`mkt_content_set_status failed for post ${v.postId}: ${stErr.message}`);
 }
 
-/** Exported for content_process's skip check. */
-export function isGeminiRead(enr: { model?: string | null; status?: string | null } | null | undefined): boolean {
-  return !!enr && enr.status === 'done' && typeof enr.model === 'string' && enr.model.startsWith('gemini');
+/**
+ * A decision already made by a model reader (Gemini or OpenAI) — re-reading it
+ * would only re-pay for the same answer. Exported for content_process's skip
+ * check; the sweep's re-read filter (sweepBacklog.ts) uses the same prefixes.
+ */
+export const MODEL_READER_PREFIXES = ['gemini', 'gpt-'] as const;
+export function isModelRead(enr: { model?: string | null; status?: string | null } | null | undefined): boolean {
+  return !!enr && enr.status === 'done' && typeof enr.model === 'string' && MODEL_READER_PREFIXES.some((p) => (enr.model as string).startsWith(p));
 }
 

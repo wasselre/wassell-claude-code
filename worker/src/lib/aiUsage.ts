@@ -53,6 +53,7 @@ export type AiProvider =
   | 'fal'
   | 'modal'
   | 'gemini'
+  | 'openai'
   | 'runner';
 
 /**
