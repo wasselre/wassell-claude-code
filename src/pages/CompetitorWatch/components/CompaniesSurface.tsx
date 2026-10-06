@@ -9,13 +9,31 @@
  *  collection numbers kept, but demoted to where they belong.
  */
 import { Fragment, useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import { ExternalLink, Search } from 'lucide-react';
 import { fetchCompanyRoster, type CompanyRoster, type CompanyRow, type CompanyAccount, type PurposeKey } from '@/lib/competitorWatch/client';
 import { useSurface, num, fmtDateTime, daysAgo } from './surfaceData';
 import CompanyDetail from './CompanyDetail';
+import { CompanyGrades, GRADE_LONG } from './grades';
 
 type TypeFilter = 'all' | 'developer' | 'marketer' | 'visual';
 type SortKey = 'active' | 'posts' | 'recent' | 'name';
+/** learn_* = graded A or B on that axis; skip = "don't learn" on either. */
+type GradeFilter = 'all' | 'graded' | 'ungraded' | 'learn_writing' | 'learn_visual' | 'skip';
+
+function matchesGrade(c: CompanyRow, f: GradeFilter): boolean {
+  const learn = (g: string | null) => g === 'a' || g === 'b';
+  // A visual reference has no writing grade by design: it counts as graded on visuals alone.
+  const visualOnly = c.org_type === 'visual_reference';
+  const writingOpen = !visualOnly && !c.writing_grade;
+  switch (f) {
+    case 'graded': return !writingOpen && !!c.visual_grade;
+    case 'ungraded': return writingOpen || !c.visual_grade;
+    case 'learn_writing': return !visualOnly && learn(c.writing_grade);
+    case 'learn_visual': return learn(c.visual_grade);
+    case 'skip': return c.writing_grade === 'skip' || c.visual_grade === 'skip';
+    default: return true;
+  }
+}
 
 const PURPOSES: Array<{ key: PurposeKey; ar: string; en: string; cls: string }> = [
   { key: 'project_launch', ar: 'إطلاق مشروع', en: 'Launch', cls: 'p1' },
@@ -95,6 +113,7 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
   const [type, setType] = useState<TypeFilter>('all');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortKey>('active');
+  const [grade, setGrade] = useState<GradeFilter>('all');
   /** The company whose full page is open (null = the list). */
   const [pageId, setPageId] = useState<string | null>(null);
 
@@ -108,6 +127,7 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
       if ((type === 'visual') !== isVisual) return false;
       if (type === 'developer' && c.org_type !== 'developer') return false;
       if (type === 'marketer' && !isMkt) return false;
+      if (!matchesGrade(c, grade)) return false;
       if (!needle) return true;
       const hay = [c.name, c.name_en, ...(c.top_projects ?? []).map((p) => p.name), ...(c.account_list ?? []).map((a) => a.handle)]
         .filter(Boolean).join(' ').toLowerCase();
@@ -120,7 +140,7 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
       if (sort === 'recent') return (b.last_post ?? '').localeCompare(a.last_post ?? '');
       return b.posts_90d - a.posts_90d || b.posts - a.posts;
     });
-  }, [data, type, q, sort, isAr]);
+  }, [data, type, grade, q, sort, isAr]);
 
   if (loading) return <div className="cw-count">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>;
   if (error) return <div className="cw-error">{isAr ? 'تعذّر التحميل: ' : 'Failed to load: '}{error}</div>;
@@ -135,6 +155,7 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
     visual: data.companies.filter((c) => c.org_type === 'visual_reference').length,
   };
 
+
   return (
     <div className="cw-surface">
       <div className="cw-filters">
@@ -147,6 +168,14 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
             {label} <span className="cw-mono">{num(counts[k as TypeFilter])}</span>
           </button>
         ))}
+        <select className="cw-select" value={grade} onChange={(e) => setGrade(e.target.value as GradeFilter)} aria-label={isAr ? 'التقييم' : 'Grade'}>
+          <option value="all">{isAr ? 'كل التقييمات' : 'Any grade'}</option>
+          <option value="ungraded">{isAr ? 'لم تُقيَّم بعد' : 'Not graded yet'}</option>
+          <option value="graded">{isAr ? 'مُقيَّمة' : 'Graded'}</option>
+          <option value="learn_writing">{isAr ? 'نتعلم من كتابتها (أ/ب)' : 'Learn writing (A/B)'}</option>
+          <option value="learn_visual">{isAr ? 'نتعلم من تصميمها (أ/ب)' : 'Learn visuals (A/B)'}</option>
+          <option value="skip">{isAr ? 'لا نتعلم منها' : 'Do not learn from'}</option>
+        </select>
         <select className="cw-select" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
           <option value="active">{isAr ? 'الأنشط (٩٠ يومًا)' : 'Most active (90d)'}</option>
           <option value="posts">{isAr ? 'الأكثر منشورات' : 'Most posts'}</option>
@@ -167,6 +196,7 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
               <tr>
                 <th>{isAr ? 'الشركة' : 'Company'}</th>
                 <th>{isAr ? 'النوع' : 'Type'}</th>
+                <th>{isAr ? 'التقييم' : 'Grades'}</th>
                 <th>{isAr ? 'القنوات' : 'Channels'}</th>
                 <th className="cw-r">{isAr ? 'نشر ٩٠ يومًا' : 'Posts 90d'}</th>
                 <th className="cw-r">{isAr ? 'أسبوعيًا' : 'Per week'}</th>
@@ -193,6 +223,7 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
                         </button>
                       </td>
                       <td><span className={`cw-typebadge ${co.org_type === 'developer' ? 'dev' : co.org_type === 'visual_reference' ? 'vis' : 'mkt'}`}>{typeLabel(co.org_type, isAr)}</span></td>
+                      <td><CompanyGrades visualOnly={co.org_type === 'visual_reference'} writing={co.writing_grade} visual={co.visual_grade} isAr={isAr} /></td>
                       <td>
                         <span className="cw-plats">
                           {(co.account_list ?? []).map((a, i) => (
@@ -223,7 +254,23 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
 
                     {open && (
                       <tr className="cw-detrow">
-                        <td colSpan={9}>
+                        <td colSpan={10}>
+                          <div className="cw-offerbox" style={{ marginBottom: 10 }}>
+                            <span className="cw-tag mute">{isAr ? 'التقييم' : 'Grading'}</span>
+                            <span>
+                              {co.org_type === 'visual_reference'
+                                ? (isAr ? 'مرجع بصري — نتعلم من تصميمه فقط، لا من كتابته' : 'Visual reference — we learn from its design only, never its writing')
+                                : `${isAr ? 'الكتابة' : 'Writing'}: ${co.writing_grade ? (isAr ? GRADE_LONG[co.writing_grade].ar : GRADE_LONG[co.writing_grade].en) : (isAr ? 'لم تُقيَّم' : 'not graded')}`}
+                              {` · ${isAr ? 'التصميم' : 'Visual'}: ${co.visual_grade ? (isAr ? GRADE_LONG[co.visual_grade].ar : GRADE_LONG[co.visual_grade].en) : (isAr ? 'لم يُقيَّم' : 'not graded')}`}
+                            </span>
+                            {co.grade_note && <span dir="auto" className="cw-muted">{co.grade_note}</span>}
+                            {co.graded_at && <span className="cw-mutedmono">{fmtDateTime(co.graded_at, isAr)}</span>}
+                            {co.developer_record_id && (
+                              <a className="cw-link" href={`/model/developers/${co.developer_record_id}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                                {isAr ? 'تعديل التقييم' : 'Edit grades'} <ExternalLink size={11} />
+                              </a>
+                            )}
+                          </div>
                           <div className="cw-cogrid">
                             <div className="cw-cocard">
                               <div className="cw-accthead">{isAr ? 'ماذا ينشرون' : 'What they publish'}</div>
@@ -315,7 +362,7 @@ export default function CompaniesSurface({ isAr }: { isAr: boolean }) {
                 );
               })}
               {rows.length === 0 && (
-                <tr><td colSpan={9} className="cw-muted" style={{ padding: 18 }}>{isAr ? 'لا شركة تطابق البحث' : 'No company matches'}</td></tr>
+                <tr><td colSpan={10} className="cw-muted" style={{ padding: 18 }}>{isAr ? 'لا شركة تطابق البحث' : 'No company matches'}</td></tr>
               )}
             </tbody>
           </table>

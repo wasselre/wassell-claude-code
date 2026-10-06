@@ -14,6 +14,7 @@ import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer,
 import { fetchCompanyProfile, type CompanyProfile, type ProfileTopPost } from '@/lib/competitorWatch/client';
 import { useSurface, num, fmtDateTime, daysAgo } from './surfaceData';
 import ContentLibrary, { PostNumbers } from './ContentLibrary';
+import { CompanyGrades } from './grades';
 
 const PURPOSE_LABEL: Record<string, { ar: string; en: string }> = {
   project_launch: { ar: 'إطلاق مشروع', en: 'Launch' }, offer: { ar: 'عرض', en: 'Offer' }, walkthrough: { ar: 'جولة', en: 'Walkthrough' },
@@ -67,6 +68,10 @@ export default function CompanyDetail({ orgId, isAr, onBack }: { orgId: string; 
             {o.developer_record_id && (
               <> · <a href={`/model/developers/${o.developer_record_id}`} target="_blank" rel="noreferrer">{isAr ? 'سجل الشركة' : 'Company record'} <ExternalLink size={11} /></a></>
             )}
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+            <CompanyGrades visualOnly={o.org_type === 'visual_reference'} writing={o.writing_grade} visual={o.visual_grade} isAr={isAr} />
+            {o.grade_note && <span className="cw-muted" dir="auto">{o.grade_note}</span>}
           </div>
         </div>
       </div>

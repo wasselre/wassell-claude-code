@@ -160,8 +160,19 @@ export interface CompanyAccount {
 }
 /** One of the 7 content purposes the enrichment already stamps on every post. */
 export type PurposeKey = 'brand' | 'project_launch' | 'offer' | 'teaser' | 'walkthrough' | 'event' | 'testimonial';
-export interface CompanyRow {
+/** a | b | c | skip ("don't learn from it"); null = not graded. Set on the CRM Companies record. */
+export type MarketingGrade = 'a' | 'b' | 'c' | 'skip';
+/** The marketing grades on a company, copied from its Companies record. */
+export interface CompanyGrading {
+  writing_grade: MarketingGrade | null;
+  visual_grade: MarketingGrade | null;
+  grade_note: string | null;
+  graded_at: string | null;
+}
+export interface CompanyRow extends CompanyGrading {
   id: string; name: string | null; name_en: string | null; org_type: string | null; website: string | null;
+  /** The company's CRM Companies record — where its grades are edited. */
+  developer_record_id: string | null;
   facts: number; accounts: number;
   posts: number; posts_90d: number; posts_30d: number;
   /** Their publishing, not our collecting. */
@@ -193,7 +204,7 @@ export interface ProfileTopPost {
   vs_usual: number | null; likely_paid: boolean | null; thumb_url: string | null;
 }
 export interface CompanyProfile {
-  organization: { id: string; name_ar: string | null; name_en: string | null; org_type: string | null; developer_record_id: string | null; website: string | null; hq_city: string | null; status: string | null };
+  organization: CompanyGrading & { id: string; name_ar: string | null; name_en: string | null; org_type: string | null; developer_record_id: string | null; website: string | null; hq_city: string | null; status: string | null };
   totals: { posts: number; posts_12m: number; posts_30d: number; first_post_at: string | null; last_post_at: string | null; avg_views_12m: number | null; avg_likes_12m: number | null };
   accounts: ProfileAccount[];
   weeks: Array<{ week: string; posts: number }>;

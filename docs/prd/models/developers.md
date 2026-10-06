@@ -5,7 +5,7 @@
 # Model: Companies / الشركات  `developers`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-29
+**Last updated (from DB):** 2026-10-06
 **Model id:** `11bade2c-7da9-4d00-b045-eaab37153da2`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -13,8 +13,8 @@
 **Icon:** `briefcase`   ·   **Color:** `#8E4E3A`
 
 ## Overview
-- Sections: **1** (1 base, 0 non-base)
-- Fields: **7**
+- Sections: **2** (2 base, 0 non-base)
+- Fields: **11**
 - Section-selector field: none
 - Duplicate-check field: Company Name (`name`)
 - Custom buttons: 0
@@ -46,3 +46,29 @@
   - API value `marketer` → "Marketer" / "مسوّق" · color `#C09B5F`
 - **Phone / رقم الهاتف** (`phone`, type `phone`):
   - default country code `+966`
+
+### 2. Marketing grading / تقييم التسويق  _(base, color #C09B5F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `watch_role` | Why we watch them / سبب المتابعة | Dropdown | yes | half | yes | 2 options |
+| `writing_grade` | Writing grade / تقييم المحتوى المكتوب | Dropdown | no | half | yes | 4 options |
+| `visual_grade` | Visual design grade / تقييم التصميم البصري | Dropdown | no | half | yes | 4 options |
+| `grade_note` | Grading notes / ملاحظات التقييم | Text area | no | full | no |  |
+
+**Field details:**
+
+- **Why we watch them / سبب المتابعة** (`watch_role`, type `dropdown`) — options:
+  - API value `competitor` → "Competitor" / "منافس" · color `#B8734F`
+  - API value `visual_reference` → "Visual reference only" / "مرجع بصري فقط" · color `#8E4E3A`
+- **Writing grade / تقييم المحتوى المكتوب** (`writing_grade`, type `dropdown`) — options:
+  - API value `a` → "A — Excellent, learn from it" / "أ — ممتاز، نتعلم منه" · color `#3E7D4F`
+  - API value `b` → "B — Good" / "ب — جيد" · color `#C09B5F`
+  - API value `c` → "C — Weak" / "ج — ضعيف" · color `#8E4E3A`
+  - API value `skip` → "Don't learn from it" / "لا نتعلم منه" · color `#4A4E54`
+  - shown only when Why we watch them (`watch_role`) is one of: `competitor`
+- **Visual design grade / تقييم التصميم البصري** (`visual_grade`, type `dropdown`) — options:
+  - API value `a` → "A — Excellent, learn from it" / "أ — ممتاز، نتعلم منه" · color `#3E7D4F`
+  - API value `b` → "B — Good" / "ب — جيد" · color `#C09B5F`
+  - API value `c` → "C — Weak" / "ج — ضعيف" · color `#8E4E3A`
+  - API value `skip` → "Don't learn from it" / "لا نتعلم منه" · color `#4A4E54`
