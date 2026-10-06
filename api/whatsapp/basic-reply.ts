@@ -415,11 +415,19 @@ async function onboardInterestedNewNumber(
   // Fails closed: without knowing who the number is, no client is created.
   if (kErr) { console.error('[basic-reply] known-party check failed (not onboarding):', kErr.message); return { decision, skipped: 'known_check_failed' }; }
   if (typeof known === 'string' && known) return { decision, skipped: `known_${known}` };
-  // A rep talking to this number right now keeps the chat.
-  const { data: gate, error: gErr } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: a.chatWid });
-  if (gErr) { console.error('[basic-reply] gate check failed (not onboarding):', gErr.message); return { decision, skipped: 'gate_check_failed' }; }
-  const reason = String((Array.isArray(gate) ? gate[0] : gate)?.reason ?? '');
-  if (reason === 'human_active' || reason.startsWith('disabled')) return { decision, skipped: reason };
+  // A rep talking to this number RIGHT NOW keeps the chat: a person's message
+  // in the last `human_quiet_hours`. NOT the basic bot's gate — that one stops
+  // forever after any human message (stop_forever_after_human), while the agent
+  // takes every chat a rep has not paused (agentMayStart). Live test 2026-10-06:
+  // a chat whose last human message was a week old was refused by the gate.
+  const { data: cfg, error: cErr } = await supa.from('whatsapp_ai_settings').select('human_quiet_hours').limit(1).maybeSingle();
+  if (cErr) { console.error('[basic-reply] settings read failed (not onboarding):', cErr.message); return { decision, skipped: 'settings_read_failed' }; }
+  const quietHours = Number((cfg as { human_quiet_hours?: unknown } | null)?.human_quiet_hours ?? 6) || 6;
+  const { data: human, error: hErr } = await supa.from('chat_messages').select('date')
+    .eq('chat_wid', a.chatWid).eq('flow', 'out').or('send_source.is.null,send_source.neq.ai')
+    .gte('date', new Date(Date.now() - quietHours * 3600_000).toISOString()).limit(1);
+  if (hErr) { console.error('[basic-reply] recent-rep check failed (not onboarding):', hErr.message); return { decision, skipped: 'rep_check_failed' }; }
+  if ((human ?? []).length > 0) return { decision, skipped: 'rep_active' };
   const clientId = await ensureClientForChat(supa, a.chatWid);
   const { error: nErr } = await supa.from('ai_notifications').insert({
     source: 'whatsapp', severity: 'info', title: null,
