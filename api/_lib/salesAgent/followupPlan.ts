@@ -109,6 +109,22 @@ export async function findNewProject(
   return { projectId: p.project_id, name: p.name, district: p.district, readiness: p.readiness === 'ready' || p.readiness === 'off_plan' ? p.readiness : null, priceFrom: p.price_from };
 }
 
+/**
+ * The ONE missing preference to ask for (operator, 2026-10-06: «ask only the
+ * most important one» — three in one question reads like a form). Order: where
+ * they want to live narrows the search most, then what kind of home, then the
+ * budget (the «specs» gap is asked as the budget alone).
+ */
+export const GAP_PRIORITY: readonly RequestGap[] = ['districts', 'unit_type', 'specs'];
+export function primaryGap(gaps: readonly RequestGap[]): RequestGap | null {
+  return GAP_PRIORITY.find((g) => gaps.includes(g)) ?? null;
+}
+
+/** The question for one missing preference, in the reps' words. */
+export function gapQuestion(gap: RequestGap): string {
+  return gap === 'districts' ? 'وش الحي أو المنطقة اللي تبيها؟' : gap === 'unit_type' ? 'وش النوع اللي تبيه — شقة، دور، تاون هاوس ولا فيلا؟' : 'كم ميزانيتك تقريباً؟';
+}
+
 /** Arabic names of the missing preferences, for the writer. */
 export function gapLabels(gaps: readonly RequestGap[]): string[] {
   return gaps.map((g) => (g === 'unit_type' ? 'نوع الوحدة (شقة / فيلا / دور / تاون هاوس)' : g === 'districts' ? 'الحي أو المنطقة' : 'الميزانية أو عدد الغرف أو المساحة'));

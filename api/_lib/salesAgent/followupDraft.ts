@@ -23,7 +23,7 @@ import { checkReply, groundedNumbers } from './guard.js';
 import { resolveProjectDelivery } from '../../../src/lib/projectMessage/delivery.js';
 import { hatifWordsToTurns } from '../geoPreference/hatifDialogue.js';
 import { requestPreferenceGaps } from '../../../src/lib/clients/requestReadiness.js';
-import { choosePlan, findNewProject, gapLabels, DEAD_OPTION, type FollowupFocus, type NewProject } from './followupPlan.js';
+import { choosePlan, findNewProject, gapQuestion, primaryGap, DEAD_OPTION, type FollowupFocus, type NewProject } from './followupPlan.js';
 
 const CALL_SITE = 'api/_lib/salesAgent/followupDraft';
 const MESSAGE_WINDOW = 60;
@@ -334,9 +334,10 @@ export async function draftFollowupMessage(
     } else {
       const gaps = choice.mode === 'preferences' ? choice.gaps : [];
       focus = { mode: 'preferences' };
-      planLines = gaps.length
-        ? [`لا تسأل عن مشروع بعينه. قل: إذا ما ناسبتك المشاريع اللي أرسلناها عندنا خيارات ثانية، واطلب منه بسؤال واحد ما ينقصنا لنرسل له الأنسب: ${gapLabels(gaps).join('، ')}. قل إنك تحتاجها عشان ترسل له الأنسب.`]
-        : ['لا تسأل عن مشروع بعينه. قل: إذا ما ناسبتك المشاريع اللي أرسلناها عندنا خيارات ثانية، واسأله سؤالاً واحداً: وش اللي تبيه يتغير (الحي، الميزانية، النوع) عشان أرسلك الأنسب؟'];
+      const gap = primaryGap(gaps);
+      planLines = gap
+        ? [`لا تسأل عن مشروع بعينه. قل: إذا ما ناسبتك المشاريع اللي أرسلناها عندنا خيارات ثانية، ثم اسأل عن شيء واحد فقط — ${gapQuestion(gap)} — عشان ترسل له الأنسب. لا تسأل عن أي تفضيل آخر في هذه الرسالة. اختم بعلامة «؟».`]
+        : ['لا تسأل عن مشروع بعينه. قل: إذا ما ناسبتك المشاريع اللي أرسلناها عندنا خيارات ثانية، ثم سؤال واحد مفتوح فقط: «وش أهم شي تبيه يتغير عشان أرسلك الأنسب؟» — لا تعدّد له خيارات (الحي/الميزانية/النوع).'];
     }
   }
 

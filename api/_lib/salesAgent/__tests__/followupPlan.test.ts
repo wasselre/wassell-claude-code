@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { choosePlan, criteriaFromClient, gapLabels } from '../followupPlan.js';
+import { choosePlan, criteriaFromClient, gapLabels, gapQuestion, primaryGap } from '../followupPlan.js';
 import { clientLang, startsWithGreeting } from '../followupDraft.js';
 
 const none = new Set<string>();
@@ -75,5 +75,17 @@ describe('startsWithGreeting — every follow-up opens with a greeting', () => {
   });
   it('rejects a message that opens with the question', () => {
     for (const m of ['وإذا ما ناسبتك المشاريع…', 'إذا ما ناسبك تل الربوة…', 'لازلت مهتم؟']) expect(startsWithGreeting(m)).toBe(false);
+  });
+});
+
+describe('primaryGap — ask for ONE missing preference', () => {
+  it('district first, then unit type, then budget', () => {
+    expect(primaryGap(['unit_type', 'districts', 'specs'])).toBe('districts');
+    expect(primaryGap(['specs', 'unit_type'])).toBe('unit_type');
+    expect(primaryGap(['specs'])).toBe('specs');
+    expect(primaryGap([])).toBeNull();
+  });
+  it('the budget gap is asked as the budget alone', () => {
+    expect(gapQuestion('specs')).toContain('ميزانيتك');
   });
 });
