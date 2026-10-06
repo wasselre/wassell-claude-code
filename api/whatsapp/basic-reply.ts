@@ -429,6 +429,12 @@ async function onboardInterestedNewNumber(
   if (hErr) { console.error('[basic-reply] recent-rep check failed (not onboarding):', hErr.message); return { decision, skipped: 'rep_check_failed' }; }
   if ((human ?? []).length > 0) return { decision, skipped: 'rep_active' };
   const clientId = await ensureClientForChat(supa, a.chatWid);
+  // The default sales rep, the way an ad lead gets one: the webhook's inbound
+  // reconcile ran before this client existed, so run it now — it opens the
+  // first follow-up with wassell_default_sales_rep(), and client_owner is
+  // derived from that follow-up (recalc_client_derived_data).
+  const { error: rErr } = await supa.rpc('reconcile_inbound_whatsapp', { p_client_id: clientId, p_message_at: new Date().toISOString() });
+  if (rErr) console.error(`[basic-reply] new client ${clientId} got no sales rep (reconcile failed):`, rErr.message);
   const { error: nErr } = await supa.from('ai_notifications').insert({
     source: 'whatsapp', severity: 'info', title: null,
     body: decision.action === 'project_sheet'
