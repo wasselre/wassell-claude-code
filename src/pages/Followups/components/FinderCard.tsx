@@ -347,6 +347,9 @@ export default function FinderCard({
           <Spec icon={<Bath size={12} />} label={L('دورات المياه', 'Bathrooms')} value={baths} />
         </div>
 
+        {/* The amenities this search asked for — found / not confirmed / not there. */}
+        <AmenityMatchRow value={f.amenity_match} isAr={isAr} />
+
         {/* Suggested units — the project's best-fitting units for this search,
             ranked against the client requirements (catalog projects only; a market
             listing is itself a single unit). */}
@@ -515,6 +518,71 @@ function ResultSelect({ value, saving, isAr, onChange }: {
         <option key={s} value={s}>{isAr ? CLIENT_OPTION_STATUS_META[s].ar : CLIENT_OPTION_STATUS_META[s].en}</option>
       ))}
     </select>
+  );
+}
+
+/** Display labels for the engine's amenity groups (api/_lib/matchAgent.ts AMENITY_GROUPS). */
+const AMENITY_LABEL: Record<string, [string, string]> = {
+  pool: ['مسبح', 'Pool'],
+  elevator: ['مصعد', 'Elevator'],
+  rooftop: ['سطح', 'Rooftop'],
+  yard: ['حوش', 'Yard'],
+  majlis: ['مجلس', 'Majlis'],
+  maid_room: ['غرفة خادمة', 'Maid room'],
+  driver_room: ['غرفة سائق', 'Driver room'],
+  garden: ['حديقة', 'Garden'],
+  gym: ['نادي رياضي', 'Gym'],
+  balcony: ['بلكونة', 'Balcony'],
+  prayer: ['مصلى', 'Prayer room'],
+  basement_parking: ['مواقف قبو', 'Basement parking'],
+  kids_play: ['ألعاب أطفال', 'Kids play area'],
+};
+
+interface AmenityMatchFact { asked: string; key: string | null; status: 'found' | 'unknown' | 'missing' }
+
+function isAmenityFact(x: unknown): x is AmenityMatchFact {
+  const o = x as Record<string, unknown> | null;
+  return !!o && typeof o.asked === 'string' && (o.status === 'found' || o.status === 'unknown' || o.status === 'missing');
+}
+
+/**
+ * The amenities the search asked for, on THIS project (operator, 2026-10-07):
+ * ✓ it has it (the project or its available units), ? not confirmed (the units
+ * record nothing yet), ✗ not there. Decided by the engine; the card only shows it.
+ */
+function AmenityMatchRow({ value, isAr }: { value: unknown; isAr: boolean }) {
+  const items = Array.isArray(value) ? value.filter(isAmenityFact) : [];
+  if (items.length === 0) return null;
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  const tone = {
+    found: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    unknown: 'border-sand/60 bg-cream/60 text-charcoal/60',
+    missing: 'border-rose-200 bg-rose-50 text-rose-700 line-through decoration-rose-400/60',
+  } as const;
+  const mark = { found: '✓', unknown: '?', missing: '✗' } as const;
+  const hint = {
+    found: L('متوفر في المشروع أو وحداته المتاحة', 'In the project or its available units'),
+    unknown: L('غير مؤكد — وحدات المشروع لا تذكر مكوناتها', 'Not confirmed — the project’s units do not list their components'),
+    missing: L('غير متوفر', 'Not available'),
+  } as const;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] font-bold text-charcoal/55">{L('المزايا المطلوبة:', 'Requested amenities:')}</span>
+      {items.map((it) => {
+        const pair = it.key ? AMENITY_LABEL[it.key] : undefined;
+        const label = pair ? pair[isAr ? 0 : 1] : it.asked;
+        return (
+          <span
+            key={it.asked}
+            title={hint[it.status]}
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${tone[it.status]}`}
+          >
+            <span aria-hidden>{mark[it.status]}</span>
+            {label}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 

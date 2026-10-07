@@ -68,3 +68,19 @@ describe('must-have amenities', () => {
     expect(firstFailedHardConstraint({ preferred_amenities: ['gym'] }, { required_amenities: ['مسبح'] } as never)).toBe('amenities');
   });
 });
+
+describe('amenityMatchFacts — what the finder card shows', () => {
+  it('found / unknown / missing per requested amenity, de-duplicated', async () => {
+    const { amenityMatchFacts } = await import('../matchAgent.js');
+    expect(amenityMatchFacts({ preferred_amenities: ['swimming_pool'] }, ['مسبح', 'غرفة سائق', 'نادي رياضي', 'مسبح'])).toEqual([
+      { asked: 'مسبح', key: 'pool', status: 'found' },
+      { asked: 'غرفة سائق', key: 'driver_room', status: 'unknown' },
+      { asked: 'نادي رياضي', key: 'gym', status: 'missing' },
+    ]);
+    expect(amenityMatchFacts({ unit_features: ['مجلس'] }, ['مجلس', 'غرفة خادمة'])).toEqual([
+      { asked: 'مجلس', key: 'majlis', status: 'found' },
+      { asked: 'غرفة خادمة', key: 'maid_room', status: 'missing' },
+    ]);
+    expect(amenityMatchFacts({}, [])).toEqual([]);
+  });
+});

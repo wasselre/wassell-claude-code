@@ -1152,6 +1152,9 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   // catalog projects are stamped 0 by the caller (new-development stock).
   put('unit_age', asNum(data.unit_age));
   put('preferred_amenities', asArr(data.preferred_amenities));
+  // Which of the amenities the search asked for this project has — shown on the
+  // finder card (operator, 2026-10-07). Same rule as the score and the gate.
+  put('amenity_match', amenityMatchFacts(data, [...(req.amenities ?? []), ...(req.required_amenities ?? [])]));
   if (distanceKm != null) put('distance_km', distanceKm);
   // Main image for the result card. Market listings carry a raw URL (`image`, set by
   // the adapter); projects carry a files.id (`main_image`, else first `project_images`).
@@ -1506,6 +1509,31 @@ export function amenityMatches(have: string, want: string): boolean {
 /** Something a unit has (maid room, majlis, yard…), as opposed to a project facility. */
 export function isUnitAmenity(want: string): boolean {
   return amenityGroup(want)?.unit === true;
+}
+
+export interface AmenityMatchFact {
+  /** What the search asked for, as stored on the client («غرفة خادمة»). */
+  asked: string;
+  /** Synonym group (pool, maid_room…) for a display label; null when unknown. */
+  key: string | null;
+  /** found — the project or its available units have it; unknown — a unit
+   *  amenity while the units record nothing; missing — evidence exists, it isn't there. */
+  status: 'found' | 'unknown' | 'missing';
+}
+
+/** Per requested amenity: found / unknown / missing for this project. Exported for tests. */
+export function amenityMatchFacts(data: Record<string, unknown>, asked: string[]): AmenityMatchFact[] {
+  const have = amenityEvidence(data);
+  const unitsUnknown = !Array.isArray(data.unit_features);
+  const seen = new Set<string>();
+  const out: AmenityMatchFact[] = [];
+  for (const a of asked) {
+    if (typeof a !== 'string' || !a.trim() || seen.has(a.trim())) continue;
+    seen.add(a.trim());
+    const status = have.some((h) => amenityMatches(h, a)) ? 'found' : unitsUnknown && isUnitAmenity(a) ? 'unknown' : 'missing';
+    out.push({ asked: a.trim(), key: amenityGroup(a)?.key ?? null, status });
+  }
+  return out;
 }
 
 /** Everything known about a project's amenities: its own list + what its
