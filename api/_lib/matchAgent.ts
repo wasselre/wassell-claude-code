@@ -1075,9 +1075,9 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   //    subscore credit. ──
   const wanted = [...new Set([...(req.lifestyle ?? []), ...(req.amenities ?? []), ...(req.required_amenities ?? [])])].filter(Boolean);
   if (wanted.length > 0) {
-    const have = asArr(data.preferred_amenities);
+    const have = amenityEvidence(data);
     let matched = 0;
-    for (const w of wanted) if (have.some((h) => fuzzyContains(h, w))) matched += 1;
+    for (const w of wanted) if (have.some((h) => amenityMatches(h, w))) matched += 1;
     dims.amenities.value = matched / wanted.length;
   }
 
@@ -1449,9 +1449,69 @@ export function passesRequiredAmenities(data: Record<string, unknown>, req: Matc
 function amenitiesAllPresent(data: Record<string, unknown>, wanted: string[]): boolean {
   const required = wanted.filter((s) => typeof s === 'string' && s.trim() !== '');
   if (required.length === 0) return true;
-  const have = asArr(data.preferred_amenities);
-  if (have.length === 0) return false;
-  return required.every((w) => have.some((h) => fuzzyContains(h, w)));
+  const have = amenityEvidence(data);
+  // Something a UNIT has (maid room, majlis…) is unknown — not absent — while
+  // the project's available units record nothing (`unit_features` null): kept
+  // until that data exists (operator, 2026-10-07). Everything else still fails
+  // closed on no evidence.
+  const unitsUnknown = !Array.isArray(data.unit_features);
+  return required.every((w) => have.some((h) => amenityMatches(h, w)) || (unitsUnknown && isUnitAmenity(w)));
+}
+
+/**
+ * Amenity synonyms (2026-10-07). Clients pick Arabic labels («مسبح», «مصعد»)
+ * while projects store slugs in either language («swimming_pool», «مصاعد»,
+ * «اسطح-خاصة») — plain substring matching found 0 of the 39 projects with a
+ * pool. Each group is one amenity; a value belongs to the first group with a
+ * variant it contains (or that contains it) after normalization.
+ */
+const AMENITY_GROUPS: Array<{ key: string; unit: boolean; variants: string[] }> = [
+  { key: 'pool', unit: false, variants: ['مسبح', 'مسابح', 'حمام سباحه', 'swimming pool', 'pool'] },
+  { key: 'elevator', unit: true, variants: ['مصعد', 'مصاعد', 'اسانسير', 'elevator', 'lift'] },
+  { key: 'rooftop', unit: true, variants: ['سطح', 'اسطح', 'روف', 'rooftop', 'roof'] },
+  { key: 'yard', unit: true, variants: ['حوش', 'فناء', 'yard'] },
+  { key: 'majlis', unit: true, variants: ['مجلس', 'majlis'] },
+  { key: 'maid_room', unit: true, variants: ['غرفه خادمه', 'غرفه الخادمه', 'غرفه شغاله', 'maid'] },
+  { key: 'driver_room', unit: true, variants: ['غرفه سائق', 'غرفه السائق', 'غرفه سواق', 'driver'] },
+  { key: 'garden', unit: false, variants: ['حديقه', 'حدائق', 'garden'] },
+  { key: 'gym', unit: false, variants: ['نادي رياضي', 'جيم', 'صاله رياضيه', 'sports club', 'gym', 'fitness'] },
+  { key: 'balcony', unit: false, variants: ['بلكونه', 'بلكونات', 'شرفه', 'balcony', 'balconies'] },
+  { key: 'prayer', unit: false, variants: ['مصلى', 'مسجد', 'جامع', 'prayer', 'mosque'] },
+  { key: 'basement_parking', unit: false, variants: ['قبو', 'مواقف سفليه', 'basement'] },
+  { key: 'kids_play', unit: false, variants: ['ملعب اطفال', 'العاب اطفال', 'children', 'kids'] },
+];
+
+/** Fold for amenity matching: slug separators → spaces, Arabic letter variants folded. */
+function amenityNorm(s: string): string {
+  return normalizeForSearch(String(s ?? '').replace(/[-_]+/g, ' ').replace(/ـ/g, '')
+    .replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي'));
+}
+
+function amenityGroup(s: string): (typeof AMENITY_GROUPS)[number] | null {
+  const n = amenityNorm(s);
+  if (!n) return null;
+  return AMENITY_GROUPS.find((g) => g.variants.some((v) => n.includes(v) || (n.length >= 3 && v.includes(n)))) ?? null;
+}
+
+/** True when a project's amenity value satisfies what the client asked for. Exported for tests. */
+export function amenityMatches(have: string, want: string): boolean {
+  const gw = amenityGroup(want);
+  const gh = amenityGroup(have);
+  if (gw && gh) return gw.key === gh.key;
+  const h = amenityNorm(have);
+  const w = amenityNorm(want);
+  return !!h && !!w && (h.includes(w) || w.includes(h));
+}
+
+/** Something a unit has (maid room, majlis, yard…), as opposed to a project facility. */
+export function isUnitAmenity(want: string): boolean {
+  return amenityGroup(want)?.unit === true;
+}
+
+/** Everything known about a project's amenities: its own list + what its
+ *  available units contain (`unit_features`, the stored rollup). */
+function amenityEvidence(data: Record<string, unknown>): string[] {
+  return [...asArr(data.preferred_amenities), ...asArr(data.unit_features)];
 }
 
 /** Cheapest / dearest AVAILABLE unit price and the available size band. Prefers the
