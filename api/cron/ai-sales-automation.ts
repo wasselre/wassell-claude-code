@@ -17,7 +17,7 @@
  *      (api/_lib/officerNoticeDraft.ts). An event the AI raised (not the score)
  *      must pass the interest rules first (api/_lib/officerInterestGate.ts):
  *      the client's own words about this project — wants to visit / buy, a deal
- *      question, or two detailed questions — and a project that fits. With
+ *      question, or two detailed questions (never the client's preferences). With
  *      `officer_notice_auto_send` (2026-10-07) it is SENT without approval
  *      (api/_lib/officerNoticeSend.ts), inside 09:00–21:00 Riyadh; otherwise it
  *      waits in the Work Queue's AI tab.
