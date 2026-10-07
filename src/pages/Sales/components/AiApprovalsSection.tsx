@@ -14,7 +14,8 @@ import ChatThreadModal from '@/pages/Chats/components/ChatThreadModal';
  * Sales → Work Queue → AI tab, «بانتظار موافقتك»: everything the AI prepared
  * that waits for the operator (2026-10-04 — only portal registration runs on
  * its own for now):
- *   · messages to clients — the due WhatsApp follow-ups the AI wrote;
+ *   · (messages to clients are NOT here since 2026-10-07 — the AI sends them
+ *     itself; the Sales overview shows how many went out);
  *   · messages to project officers — about a highly interested client;
  *   · follow-up results — the outcome the AI read from the chat, plus the
  *     client's main project it chose.
@@ -430,9 +431,10 @@ export default function AiApprovalsSection({ actions, results, loading, error, i
     return results.filter((s) => s.suggested_outcome && s.followup_id && open.has(s.followup_id));
   }, [results, followupsModel, records]);
 
-  const clientMsgs = actions.filter((a) => a.kind === 'followup_message');
   const officerMsgs = actions.filter((a) => a.kind === 'officer_notice');
-  const total = clientMsgs.length + officerMsgs.length + liveResults.length;
+  // Follow-up messages to clients are no longer approved here — the AI sends
+  // them itself (operator, 2026-10-07); the overview counts what went out.
+  const total = officerMsgs.length + liveResults.length;
 
   const group = (title: string, children: React.ReactNode, n: number) => n > 0 && (
     <section className="space-y-2">
@@ -445,8 +447,8 @@ export default function AiApprovalsSection({ actions, results, loading, error, i
     <div className="mb-6 space-y-4">
       <p className="text-xs text-charcoal/60">
         {L(
-          'ما جهّزه المساعد وينتظر موافقتك. لا يُرسل شيء قبل أن تعتمده — التسجيل في البوابات فقط يتم تلقائياً.',
-          'What the AI prepared, waiting for your approval. Nothing is sent until you approve it — only portal registration runs on its own.',
+          'ما بقي من عمل المساعد بانتظار قرارك. رسائل المتابعة للعملاء يرسلها المساعد بنفسه.',
+          'What the AI left for you to decide. Follow-up messages to clients are sent by the AI itself.',
         )}
       </p>
       {error && <p className="rounded-xl bg-terracotta/10 p-3 text-sm text-terracotta">{L(`تعذّر التحميل: ${error}`, `Could not load: ${error}`)}</p>}
@@ -456,9 +458,6 @@ export default function AiApprovalsSection({ actions, results, loading, error, i
         <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">{L('لا يوجد شيء بانتظار موافقتك.', 'Nothing is waiting for your approval.')}</p>
       ) : (
         <>
-          {group(L('متابعات للعملاء', 'Follow-ups to clients'), clientMsgs.map((a) => (
-            <MessageCard key={a.id} action={a} isAr={isAr} clientName={clientNames.get(a.client_id) ?? null} onDone={onActionDone} onRestore={onActionRestore} onSettled={onActionSettled} />
-          )), clientMsgs.length)}
           {group(L('رسائل للمسؤولين', 'Messages to officers'), officerMsgs.map((a) => (
             <MessageCard key={a.id} action={a} isAr={isAr} clientName={clientNames.get(a.client_id) ?? null} onDone={onActionDone} onRestore={onActionRestore} onSettled={onActionSettled} />
           )), officerMsgs.length)}

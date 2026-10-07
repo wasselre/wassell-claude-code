@@ -109,7 +109,7 @@ export default function MyTasksPage() {
   const canApprove = isManager || (!!currentUserId && campaignAgent === currentUserId);
   const aiApprovals = useAiApprovals(canApprove);
 
-  const [section, setSection] = useState<Section>('actions');
+  const [pickedSection, setSection] = useState<Section>('actions');
   const [apptBucket, setApptBucket] = useState<ApptBucket>('today');
   const [showAll, setShowAll] = useState(false); // manager-only: include all reps
 
@@ -262,7 +262,9 @@ export default function MyTasksPage() {
   const pendingApprovals = (() => {
     const fm = followupsModel ? records[followupsModel.id] ?? [] : [];
     const open = new Set(fm.filter((r) => { const st = String(r.data.followup_status ?? '') || 'open'; return st === 'open' || st === 'in_progress'; }).map((r) => r.id));
-    return aiApprovals.actions.filter((a) => a.status === 'pending').length
+    // Follow-up messages to clients are sent by the AI without approval
+    // (operator, 2026-10-07) — they never count here.
+    return aiApprovals.actions.filter((a) => a.status === 'pending' && a.kind !== 'followup_message').length
       + aiApprovals.results.filter((r) => r.suggested_outcome && r.followup_id && open.has(r.followup_id)).length;
   })();
 
@@ -300,7 +302,13 @@ export default function MyTasksPage() {
     // Drop the search tab entirely when the model isn't loaded (offline seeds,
     // or a profile without permission) rather than showing an empty tab that
     // reads as "no searches" when it really means "you cannot see them".
-    .filter((s) => s.id !== 'search' || !!salesTasksModel);
+    .filter((s) => s.id !== 'search' || !!salesTasksModel)
+    // «المساعد يحتاجك» shows only when the AI really needs a person (a question,
+    // a customer handed over, something left to decide). AI follow-up messages
+    // no longer wait for approval there (operator, 2026-10-07).
+    .filter((s) => s.id !== 'agent_questions' || aiNeedsYou > 0);
+  // A tab that just disappeared falls back to the calls.
+  const section: Section = SECTIONS.some((s) => s.id === pickedSection) ? pickedSection : 'actions';
 
   if (!initialized) {
     return <div className="p-6 text-sm text-charcoal/50">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>;

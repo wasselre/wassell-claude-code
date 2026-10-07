@@ -1,8 +1,8 @@
 // aiActions — the operator's half of the AI sales automation.
 //
 // The AI prepares follow-up messages to clients and notices to project
-// officers; each waits in `ai_actions` until the operator approves it in the
-// Work Queue's AI tab. This module lists them (RLS: admins see them) and sends
+// officers in `ai_actions`. Since 2026-10-07 the cron sends both itself; what is
+// still pending can be decided in the Work Queue's AI tab. This module lists them (RLS: admins see them) and sends
 // the decision to /api/ai-actions, which re-checks and queues the message.
 
 import { supabase } from '@/lib/supabase';
@@ -72,4 +72,56 @@ export async function decideAiAction(
   const error = payload.error ?? `HTTP ${res.status}`;
   console.error(`[aiActions] ${action} ${id} failed:`, error);
   return { ok: false, error };
+}
+
+/** How many AI follow-up messages went out in a period (the Sales overview). */
+export interface AiFollowupSends {
+  /** Delivered in the period. */
+  sent: number;
+  /** …of which old-lead (campaign) messages. */
+  campaign: number;
+  /** Queued now, waiting for their paced slot (any period). */
+  queued: number;
+  /** Failed to send in the period. */
+  failed: number;
+}
+
+/**
+ * Counts ai_actions kind='followup_message' by status for [fromIso, toIso):
+ * sent by `sent_at`, failed by `updated_at`, queued = everything still sending.
+ * Paged past 1,000 rows; an error throws (never a silent 0).
+ */
+export async function fetchAiFollowupSends(fromIso: string, toIso: string): Promise<AiFollowupSends> {
+  const out: AiFollowupSends = { sent: 0, campaign: 0, queued: 0, failed: 0 };
+  if (!supabase) return out;
+  const client = supabase;
+  const page = async (build: (from: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>) => {
+    const rows: Record<string, unknown>[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await build(from);
+      if (error) {
+        console.error('[aiActions] follow-up send counts failed:', error.message);
+        throw new Error(error.message);
+      }
+      const batch = (data ?? []) as Record<string, unknown>[];
+      rows.push(...batch);
+      if (batch.length < 1000) return rows;
+    }
+  };
+  const [sent, queued, failed] = await Promise.all([
+    page((from) => client.from('ai_actions').select('id, context').eq('kind', 'followup_message').eq('status', 'sent')
+      .gte('sent_at', fromIso).lt('sent_at', toIso).order('id').range(from, from + 999)),
+    page((from) => client.from('ai_actions').select('id').eq('kind', 'followup_message').eq('status', 'sending')
+      .order('id').range(from, from + 999)),
+    page((from) => client.from('ai_actions').select('id').eq('kind', 'followup_message').eq('status', 'failed')
+      .gte('updated_at', fromIso).lt('updated_at', toIso).order('id').range(from, from + 999)),
+  ]);
+  out.sent = sent.length;
+  out.campaign = sent.filter((r) => {
+    const c = r.context;
+    return !!c && typeof c === 'object' && typeof (c as Record<string, unknown>).campaign === 'string';
+  }).length;
+  out.queued = queued.length;
+  out.failed = failed.length;
+  return out;
 }

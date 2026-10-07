@@ -8,6 +8,7 @@ import {
   computeDailyActivity, matchesFilter, riyadhDay, riyadhDayRange,
   INTERESTED, NOT_REACHED, NO_REPLY, type ActivityFilter, type ActivityResult, type ActivityBooking, type Tally,
 } from '../lib/dailyActivity';
+import { useAiFollowupSends } from '../lib/useAiFollowupSends';
 
 /**
  * Overview → «نشاط المبيعات»: what happened on a day (default yesterday) —
@@ -45,6 +46,9 @@ export default function DailyActivityPanel() {
     if (period === 'day') return riyadhDayRange(pickedDay);
     return riyadhDayRange(riyadhDay(-1));
   }, [period, pickedDay]);
+
+  // The AI's own WhatsApp follow-ups (sent without approval since 2026-10-07).
+  const aiSends = useAiFollowupSends(range);
 
   const rowsOf = (name: string): AppRecord[] => {
     const m = models.find((x) => x.name === name);
@@ -159,6 +163,23 @@ export default function DailyActivityPanel() {
           on={filter.kind === 'appointments'} onClick={() => toggle({ kind: 'appointments' })} />
         <Tile icon={<MapPin size={16} />} label={L('زيارات', 'Visits')} value={a.visits.length} tone="good"
           on={filter.kind === 'visits'} onClick={() => toggle({ kind: 'visits' })} />
+      </div>
+
+      {/* What the AI sent on WhatsApp by itself */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-xl border border-sand/50 bg-cream/50 px-4 py-3 text-sm">
+        <span className="flex items-center gap-1.5 font-bold text-chocolate"><Bot size={16} className="text-copper" />{L('رسائل المساعد على واتساب', 'AI WhatsApp messages')}</span>
+        {aiSends.error ? (
+          <span className="text-terracotta">{L(`تعذّر التحميل: ${aiSends.error}`, `Could not load: ${aiSends.error}`)}</span>
+        ) : !aiSends.counts ? (
+          <span className="text-charcoal/50">{L('جارٍ التحميل…', 'Loading…')}</span>
+        ) : (
+          <>
+            <span>{L('أُرسلت', 'Sent')} <b className="text-chocolate" dir="ltr">{aiSends.counts.sent}</b></span>
+            <span className="text-charcoal/70">{L('منها للحملة', 'Campaign')} <b dir="ltr">{aiSends.counts.campaign}</b> · {L('متابعات', 'Follow-ups')} <b dir="ltr">{aiSends.counts.sent - aiSends.counts.campaign}</b></span>
+            {aiSends.counts.queued > 0 && <span className="text-charcoal/70">{L('بالطابور الآن', 'Queued now')} <b dir="ltr">{aiSends.counts.queued}</b></span>}
+            {aiSends.counts.failed > 0 && <span className="text-terracotta">{L('فشلت', 'Failed')} <b dir="ltr">{aiSends.counts.failed}</b></span>}
+          </>
+        )}
       </div>
 
       {/* Results breakdown */}

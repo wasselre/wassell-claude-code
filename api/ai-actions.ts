@@ -1,8 +1,9 @@
 /**
  * POST /api/ai-actions — the operator approves or rejects something the AI
  * prepared (ai_actions): a follow-up message to a client, or a notice to a
- * project's officer. Nothing the AI writes is sent until this is called
- * (operator, 2026-10-04).
+ * project's officer. Since 2026-10-07 the cron sends both on its own (no
+ * approval — api/_lib/salesAgent/followupSend.ts, officerNoticeSend.ts); this is
+ * the manual path for anything still pending, and for rejecting.
  *
  * Body: { id, action: 'approve' | 'reject', body?, note? } — a reject needs a note
  *   (why the draft was wrong; operator, 2026-10-05), stored in reject_note.
@@ -24,13 +25,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonOk, jsonError } from './_lib/auth.js';
 import { getServiceSupabase } from './_lib/supabaseServer.js';
-import { enqueueAiReply } from './_lib/aiSend.js';
+import { sendFollowupAction } from './_lib/salesAgent/followupSend.js';
 import { resolveOperationsDeviceId } from './_lib/whatsappGateway.js';
 
 export const config = { runtime: 'edge' };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const TERMINAL_STAGES = new Set(['خاسر', 'مغلق ناجح', 'غير مؤهل', 'يريد إيجار', 'طلب غير مجاب']);
 
 interface ActionRow {
   id: string; kind: 'followup_message' | 'officer_notice'; status: string; client_id: string;
@@ -78,6 +78,23 @@ export default async function handler(req: Request): Promise<Response> {
       return jsonOk({ status: 'rejected' });
     }
 
+    // A follow-up to a client goes through the ONE send path the cron also uses.
+    const { data: kindRow, error: kErr } = await svc.from('ai_actions').select('kind').eq('id', id).maybeSingle();
+    if (kErr) return jsonError(500, `lookup failed: ${kErr.message}`);
+    if ((kindRow as { kind?: string } | null)?.kind === 'followup_message') {
+      try {
+        const r = await sendFollowupAction(svc, id, { decidedBy: me, editedBody: edited, auto: false });
+        if (r.ok) return jsonOk({ status: 'sending', job_id: r.job_id, send_at: r.send_at });
+        const http = r.code === 'already_decided' || r.code === 'followup_moved' || r.code === 'client_closed' || r.code === 'ai_paused' ? 409
+          : r.code === 'queue_failed' ? 502 : 500;
+        return jsonError(http, r.code === 'queue_failed' || r.code === 'incomplete' ? r.message : r.code);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[ai-actions] approve ${id} failed:`, msg);
+        return jsonError(500, msg);
+      }
+    }
+
     // Claim: pending → sending, once.
     const patch: Record<string, unknown> = { status: 'sending', decided_by: me, decided_at: now, updated_at: now, error: null };
     if (edited !== null) patch.body = edited;
@@ -96,58 +113,6 @@ export default async function handler(req: Request): Promise<Response> {
 
     try {
       if (!a.reference || !a.chat_wid) { await giveBack('failed', 'the action has no reference or chat'); return jsonError(500, 'action incomplete'); }
-
-      if (a.kind === 'followup_message') {
-        // Still right to send? The task, the client's stage and the chat switch.
-        const [fRes, cRes, chRes] = await Promise.all([
-          a.followup_id ? svc.from('records').select('data').eq('id', a.followup_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
-          svc.from('records').select('data').eq('id', a.client_id).maybeSingle(),
-          typeof a.context.chat_record_id === 'string'
-            ? svc.from('records').select('data').eq('id', a.context.chat_record_id).maybeSingle()
-            : Promise.resolve({ data: null, error: null }),
-        ]);
-        for (const r of [fRes, cRes, chRes]) if (r.error) throw new Error(r.error.message);
-        const f = (fRes.data as { data?: Record<string, unknown> } | null)?.data ?? null;
-        const stillOpen = !!f && (String(f.followup_status ?? '') || 'open') === 'open' && !f.whatsapp_state && !f.sent_at;
-        if (!stillOpen) { await giveBack('expired', 'the follow-up is no longer open and unsent'); return jsonError(409, 'followup_moved'); }
-        const stage = String(((cRes.data as { data?: Record<string, unknown> } | null)?.data ?? {}).client_stage ?? '');
-        if (TERMINAL_STAGES.has(stage)) { await giveBack('expired', `the client is now «${stage}»`); return jsonError(409, 'client_closed'); }
-        if (((chRes.data as { data?: Record<string, unknown> } | null)?.data ?? {}).ai_paused === true) {
-          await giveBack('pending', 'the assistant is paused in this chat — resume it, or send the message yourself');
-          return jsonError(409, 'ai_paused');
-        }
-
-        // The line the client last wrote from (enqueueAiReply falls back to the default line)
-        // — but never an INTERNAL line. The operations and office-outreach lines are
-        // kept out of the sales funnel; a client follow-up sent from the office line
-        // is exactly the unsolicited traffic that gets that line restricted. On
-        // 2026-10-04 a test message from the operations number into the (not yet
-        // office) bridge line made the approved follow-up go out from it.
-        const internal = await internalDeviceIds(svc);
-        let lastInQ = svc.from('chat_messages').select('device_id')
-          .eq('chat_wid', a.chat_wid).eq('flow', 'in');
-        if (internal.length > 0) lastInQ = lastInQ.not('device_id', 'in', `(${internal.join(',')})`);
-        const { data: lastIn } = await lastInQ.order('date', { ascending: false }).limit(1).maybeSingle();
-        // PACED, never a burst (operator 2026-10-05): approving 40 drafts in five
-        // minutes must not send 40 messages in five minutes. ai_send_next_slot
-        // hands out one slot 60–180 s after the previous one, inside 10:00–21:00
-        // Riyadh (an old-lead message also skips Friday/Saturday).
-        const { data: slot, error: slotErr } = await svc.rpc('ai_send_next_slot', { p_old_lead: typeof a.context.campaign === 'string' });
-        if (slotErr) throw new Error(`send slot failed: ${slotErr.message}`);
-        const delaySeconds = Math.max(0, Math.round((Date.parse(String(slot)) - Date.now()) / 1000));
-        const r = await enqueueAiReply(svc, {
-          chatWid: a.chat_wid, text: a.body, deviceId: (lastIn as { device_id?: string | null } | null)?.device_id ?? null,
-          jobId: 'followup', force: true, reference: a.reference, delaySeconds,
-        });
-        if (!r.queued) {
-          await giveBack('failed', r.error ?? r.reason ?? 'could not queue');
-          return jsonError(502, r.error ?? 'could not queue');
-        }
-        const jobId = r.wid?.startsWith('sched:') ? r.wid.slice(6) : null;
-        const { error: sErr } = await svc.from('ai_actions').update({ scheduled_job_id: jobId, updated_at: new Date().toISOString() }).eq('id', id);
-        if (sErr) console.error(`[ai-actions] queued ${id} but could not store its job id: ${sErr.message}`);
-        return jsonOk({ status: 'sending', job_id: jobId, send_at: String(slot) });
-      }
 
       // officer_notice — operations line only.
       const ops = await resolveOperationsDeviceId();
@@ -176,24 +141,4 @@ export default async function handler(req: Request): Promise<Response> {
       return jsonError(500, msg);
     }
   });
-}
-
-/**
- * Device ids of the lines that must never carry a client follow-up: every
- * operations line and the office-outreach line. A failed lookup returns what it
- * could read and logs — the caller then falls back to the default (sales) line
- * only if the client's last line was internal, never the other way round.
- */
-async function internalDeviceIds(svc: ReturnType<typeof getServiceSupabase>): Promise<string[]> {
-  const ids = new Set<string>();
-  const [ops, office] = await Promise.all([
-    svc.from('whatsapp_numbers').select('device_id').eq('is_operations', true),
-    svc.from('office_outreach_settings').select('device_id').eq('id', 1).maybeSingle(),
-  ]);
-  if (ops.error) console.error('[ai-actions] could not read operations lines', ops.error);
-  if (office.error) console.error('[ai-actions] could not read the office-outreach line', office.error);
-  for (const r of (ops.data ?? []) as { device_id?: string | null }[]) if (r.device_id) ids.add(r.device_id);
-  const officeId = (office.data as { device_id?: string | null } | null)?.device_id;
-  if (officeId) ids.add(officeId);
-  return [...ids];
 }

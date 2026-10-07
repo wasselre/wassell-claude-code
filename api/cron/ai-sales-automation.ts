@@ -26,17 +26,21 @@
  *      the project's officer is told from the operations line, no approval
  *      (api/_lib/officerRegistrationNotice.ts). The one officer message that
  *      does not wait for the operator.
- *   4. FOLLOW-UPS (draft for approval): due WhatsApp follow-ups get a message
- *      written by the AI (api/_lib/salesAgent/followupDraft.ts), held in
- *      ai_actions the same way. Capped per day; one draft per follow-up round.
+ *   4. FOLLOW-UPS (SENT, no approval since 2026-10-07 — operator: «the agent
+ *      is good now»): due WhatsApp follow-ups get a message written by the AI
+ *      (api/_lib/salesAgent/followupDraft.ts), recorded in ai_actions and sent
+ *      at once through api/_lib/salesAgent/followupSend.ts (paced 60–180 s;
+ *      old-lead messages from 12:00 Riyadh). Switch:
+ *      ai_automation_settings.followup_auto_send. Capped per day; one message
+ *      per follow-up round.
  *   0. OLD-LEAD CAMPAIGN (2026-10-05): `sales_campaign_tick()` opens today's
  *      40 old leads after 08:00 Riyadh on a working day (one WhatsApp task
  *      each; their call tasks were planned at activation). Their messages are
  *      drafted in their OWN pass before step 4 — never limited by the daily
  *      cap, and drafted even though the lead has an open call (that is the plan).
  *
- * Apart from 3 (with officer_notice_auto_send) and 3c, nothing here sends a
- * WhatsApp. Everything else is sent only when the operator approves
+ * What sends a WhatsApp here: 3 (with officer_notice_auto_send), 3c, and 4
+ * (with followup_auto_send). With a switch off, its drafts wait for a person
  * (/api/ai-actions).
  *
  * Budget: no follow-up draft STARTS after TIME_BUDGET_MS (one draft is one
@@ -52,6 +56,7 @@ import { registerOnInterest, isTransientPortalFailure, RETRY_AFTER_MS } from '..
 import { draftOfficerNotice, refreshPendingNotice } from '../_lib/officerNoticeDraft.js';
 import { sendRegistrationNotices } from '../_lib/officerRegistrationNotice.js';
 import { sendOfficerNotice } from '../_lib/officerNoticeSend.js';
+import { sendFollowupAction } from '../_lib/salesAgent/followupSend.js';
 import { resolveOperationsDeviceId } from '../_lib/whatsappGateway.js';
 import { draftFollowupMessage } from '../_lib/salesAgent/followupDraft.js';
 
@@ -71,6 +76,7 @@ interface Settings {
   officer_notice_drafts: boolean;
   /** Send an officer notice that passed the rules without approval (2026-10-07). */
   officer_notice_auto_send: boolean;
+  followup_auto_send: boolean;
   followup_drafts: boolean;
   followup_drafts_per_day: number;
   officer_cooldown_days: number;
@@ -315,10 +321,25 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       fail('auto-apply outcomes', err);
     }
 
-    // ── 4. Follow-up drafts (await approval) ─────────────────────────────────
+    // ── 4. Follow-up messages (sent without approval) ────────────────────────
     const { data: expired, error: xErr } = dryRun ? { data: null, error: null } : await svc.rpc('ai_actions_expire');
     if (xErr) fail('ai_actions_expire', xErr);
     else if (!dryRun) report.expired_drafts = expired;
+
+    // 4a. Drafts still waiting (written while approval was on) go out now.
+    // The send re-checks each one is still right to send, so a stale one is
+    // closed, not sent.
+    if (!dryRun && settings.followup_auto_send) {
+      const { data: waiting, error: wErr } = await svc.from('ai_actions').select('id')
+        .eq('kind', 'followup_message').eq('status', 'pending').order('created_at', { ascending: true }).limit(40);
+      if (wErr) fail('pending follow-up drafts read', wErr);
+      const swept: unknown[] = [];
+      for (const w of (waiting ?? []) as { id: string }[]) {
+        try { swept.push({ action: w.id, ...(await sendFollowupAction(svc, w.id, { decidedBy: null, auto: true })) }); }
+        catch (err) { fail(`follow-up send action=${w.id}`, err); }
+      }
+      report.followup_pending_sent = swept;
+    }
 
     const draftOut: unknown[] = [];
     if (settings.followup_drafts) {
@@ -367,9 +388,17 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
               // The AI judged no message should go (e.g. the client said stop):
               // recorded as expired so it is visible and never redrafted.
               : { ...base, status: 'expired', body: '', original_body: '', error: `AI skipped: ${d.skipReason ?? 'no reason'}`, context };
-            const { error: iErr } = await svc.from('ai_actions').insert(row);
+            const { data: ins, error: iErr } = await svc.from('ai_actions').insert(row).select('id').maybeSingle();
             if (iErr && iErr.code !== '23505') throw new Error(`draft insert failed: ${iErr.message}`);
-            draftOut.push({ followup: c.followup_id, campaign, drafted: !!d.body, warnings: d.warnings.length, skip: d.skipReason });
+            const newId = (ins as { id?: string } | null)?.id ?? null;
+            // Sent at once — a separate try, so a send failure never records a
+            // second (failed) draft for a round that already has one.
+            let sent: unknown = null;
+            if (d.body && newId && settings.followup_auto_send) {
+              try { sent = await sendFollowupAction(svc, newId, { decidedBy: null, auto: true }); }
+              catch (err) { fail(`follow-up send action=${newId}`, err); sent = { ok: false, error: err instanceof Error ? err.message : String(err) }; }
+            }
+            draftOut.push({ followup: c.followup_id, campaign, drafted: !!d.body, warnings: d.warnings.length, skip: d.skipReason, ...(sent ? { sent } : {}) });
           } catch (err) {
             fail(`follow-up draft followup=${c.followup_id}`, err);
             // One failed round is recorded so a broken chat is not re-billed every tick.
