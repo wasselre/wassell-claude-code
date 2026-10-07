@@ -25,11 +25,14 @@
  */
 import { type Rec, type Svc, idList, str, loadRecord, resolvePortals, withPhonePrefix } from './leadPortals.js';
 import { resolveProjectOfficers } from './projectOfficers.js';
+import { judgeInterest, SIGNAL_REASON, type GateVerdict } from './officerInterestGate.js';
 
 export type OfficerDraftResult =
   | { status: 'drafted'; action_id: string; officer_id: string }
   | { status: 'wait_portal' }
-  | { status: 'no_officer' | 'cooldown' | 'missing_record' | 'no_phone'; reason?: string };
+  | { status: 'no_officer' | 'cooldown' | 'missing_record' | 'no_phone'; reason?: string }
+  /** The AI route did not earn a message (officerInterestGate.ts rules A–C). */
+  | { status: 'not_strong'; reason: string; signal: string | null; quotes: string[] };
 
 /** A KSA mobile → the local 05XXXXXXXX a person writes. Stored numbers often
  *  carry no prefix («5XXXXXXXX»); those are Saudi and get it first. */
@@ -68,6 +71,14 @@ export async function draftOfficerNotice(
 
   const [client, project] = await Promise.all([loadRecord(svc, args.clientId), loadRecord(svc, args.projectId)]);
   if (!client || !project) return { status: 'missing_record' };
+
+  // The AI route (not the score) must earn the message: the client's own words
+  // about THIS project, a real signal, and a project that fits (2026-10-07).
+  let verdict: GateVerdict | null = null;
+  if (args.source !== 'interest_score') {
+    verdict = await judgeInterest(svc, { clientId: args.clientId, projectId: args.projectId, chatWid: args.chatWid, client: client.data ?? {}, project: project.data ?? {} });
+    if (!verdict.pass) return { status: 'not_strong', reason: verdict.reason ?? 'not strong enough', signal: verdict.signal, quotes: verdict.quotes };
+  }
 
   const officers = await resolveProjectOfficers(svc, args.projectId);
   const officer = officers[0];
@@ -127,7 +138,9 @@ export async function draftOfficerNotice(
   const clientName = str(client.data?.client_name).trim();
   const clientPhone = localPhone(str(client.data?.phone_number));
   const why = await interestWhy(svc, args.clientId, args.projectId, args.chatWid);
-  const body = noticeBody({ projectName: projectName(project), registered, why, lowNames, clientName, clientPhone, questions: [] });
+  // The AI route says what actually happened: the signal and the client's words.
+  if (verdict?.pass && verdict.signal) why.reason = SIGNAL_REASON[verdict.signal];
+  const body = noticeBody({ projectName: projectName(project), registered, why, lowNames, clientName, clientPhone, questions: [], said: verdict?.quotes ?? [] });
 
   const { data: ins, error: insErr } = await svc.from('ai_actions').insert({
     kind: 'officer_notice',
@@ -149,6 +162,7 @@ export async function draftOfficerNotice(
       less_interest: lowNames,
       interest_source: args.source,
       interest_score: args.score,
+      ...(verdict ? { gate: { signal: verdict.signal, quotes: verdict.quotes } } : {}),
     },
   }).select('id').single();
   if (insErr) {
@@ -166,12 +180,16 @@ export async function draftOfficerNotice(
 export function noticeBody(a: {
   projectName: string; registered: boolean; why: InterestWhy; lowNames: string[];
   clientName: string; clientPhone: string; questions: string[];
+  /** The client's own words that earned the message (AI route) — quoted as said. */
+  said?: string[];
 }): string {
   const asking = a.questions.length > 0;
+  const said = (a.said ?? []).filter((q) => q.trim());
   return [
     'السلام عليكم،',
-    `عندنا عميل مهتم${asking ? '' : ' كثير'} بمشروع «${a.projectName}»${a.registered ? '، وهو مسجّل عندكم في البوابة' : ''}.`,
+    `عندنا عميل مهتم${asking || said.length ? '' : ' كثير'} بمشروع «${a.projectName}»${a.registered ? '، وهو مسجّل عندكم في البوابة' : ''}.`,
     ...(a.why.reason ? [`سبب الاهتمام: ${a.why.reason}.`] : []),
+    ...(said.length ? [`قال العميل: ${said.map((q) => `«${q}»`).join('، ')}`] : []),
     ...(a.why.actions.length ? [`ما قام به العميل: ${a.why.actions.join('، ')}.`] : []),
     ...(a.why.booking ? [bookingLine(a.why.booking, a.projectName)] : []),
     ...(a.lowNames.length ? [`اهتمامه أقل بـ«${a.lowNames.join('» و«')}».`] : []),
@@ -367,9 +385,14 @@ export async function refreshPendingNotice(svc: Svc, actionId: string): Promise<
   const ctx = a.context ?? {};
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   const why = await interestWhy(svc, a.client_id, a.project_id, typeof ctx.client_chat_wid === 'string' ? ctx.client_chat_wid : null);
+  // Keep the AI route's signal and the client's words (officerInterestGate).
+  const gate = ctx.gate && typeof ctx.gate === 'object' ? (ctx.gate as { signal?: unknown; quotes?: unknown }) : null;
+  const sig = typeof gate?.signal === 'string' && gate.signal in SIGNAL_REASON ? (gate.signal as keyof typeof SIGNAL_REASON) : null;
+  if (sig) why.reason = SIGNAL_REASON[sig];
   const body = noticeBody({
     projectName: projectName(project), registered: ctx.registered === true, why, lowNames: strings(ctx.less_interest),
     clientName: str(client.data?.client_name).trim(), clientPhone: localPhone(str(client.data?.phone_number)), questions: strings(ctx.questions),
+    said: strings(gate?.quotes),
   });
   if (body === a.body) return false;
   const { error: uErr } = await svc.from('ai_actions').update({ body, original_body: body }).eq('id', a.id).eq('status', 'pending').eq('body', a.body);

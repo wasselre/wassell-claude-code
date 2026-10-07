@@ -13,9 +13,14 @@
  *      interest event registers the client in the portal of that project's
  *      company, unless they are already registered with it
  *      (api/_lib/portalInterest.ts).
- *   3. OFFICER (draft for approval): each interest event gets ONE draft message
- *      to the project's officer, held in ai_actions until the operator approves
- *      it in the Work Queue's AI tab (api/_lib/officerNoticeDraft.ts).
+ *   3. OFFICER: each interest event gets ONE message to the project's officer
+ *      (api/_lib/officerNoticeDraft.ts). An event the AI raised (not the score)
+ *      must pass the interest rules first (api/_lib/officerInterestGate.ts):
+ *      the client's own words about this project — wants to visit / buy, a deal
+ *      question, or two detailed questions — and a project that fits. With
+ *      `officer_notice_auto_send` (2026-10-07) it is SENT without approval
+ *      (api/_lib/officerNoticeSend.ts), inside 09:00–21:00 Riyadh; otherwise it
+ *      waits in the Work Queue's AI tab.
  *   3c. OFFICER ON REGISTRATION (automatic, 2026-10-07): a client registered in
  *      a portal whose `notify_officer_on_register` box is ticked (Al Ramz) →
  *      the project's officer is told from the operations line, no approval
@@ -30,8 +35,9 @@
  *      drafted in their OWN pass before step 4 — never limited by the daily
  *      cap, and drafted even though the lead has an open call (that is the plan).
  *
- * Apart from 3c, nothing here sends a WhatsApp. Sending happens only when the
- * operator approves (/api/ai-actions).
+ * Apart from 3 (with officer_notice_auto_send) and 3c, nothing here sends a
+ * WhatsApp. Everything else is sent only when the operator approves
+ * (/api/ai-actions).
  *
  * Budget: no follow-up draft STARTS after TIME_BUDGET_MS (one draft is one
  * model call, up to ~60 s). Auth: Bearer $CRON_SECRET or ?secret=.
@@ -45,6 +51,7 @@ import { LEAD_PORTALS_MODEL_ID, type Rec } from '../_lib/leadPortals.js';
 import { registerOnInterest, isTransientPortalFailure, RETRY_AFTER_MS } from '../_lib/portalInterest.js';
 import { draftOfficerNotice, refreshPendingNotice } from '../_lib/officerNoticeDraft.js';
 import { sendRegistrationNotices } from '../_lib/officerRegistrationNotice.js';
+import { sendOfficerNotice } from '../_lib/officerNoticeSend.js';
 import { resolveOperationsDeviceId } from '../_lib/whatsappGateway.js';
 import { draftFollowupMessage } from '../_lib/salesAgent/followupDraft.js';
 
@@ -62,6 +69,8 @@ interface Settings {
   portal_score_threshold: number;
   portal_on_interest: boolean;
   officer_notice_drafts: boolean;
+  /** Send an officer notice that passed the rules without approval (2026-10-07). */
+  officer_notice_auto_send: boolean;
   followup_drafts: boolean;
   followup_drafts_per_day: number;
   officer_cooldown_days: number;
@@ -255,9 +264,20 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
               .update({ officer_done_at: new Date().toISOString(), officer_result: r }).eq('id', ev.id);
             if (uErr) throw new Error(`marking officer step done failed: ${uErr.message}`);
           }
-          officerOut.push({ interest: ev.id, ...r });
+          let sent: unknown = null;
+          if (r.status === 'drafted' && settings.officer_notice_auto_send) {
+            sent = await sendOfficerNotice(svc, r.action_id, resolveOperationsDeviceId);
+          }
+          officerOut.push({ interest: ev.id, ...r, ...(sent ? { sent } : {}) });
         } catch (err) {
           fail(`officer step interest=${ev.id}`, err);
+          // A failed judgement or send is closed, not retried every 5 minutes
+          // (each retry is a paid model call). Nothing was sent; the error is
+          // on the event for the record.
+          const { error: eErr } = await svc.from('client_project_interest')
+            .update({ officer_done_at: new Date().toISOString(), officer_result: { status: 'error', error: err instanceof Error ? err.message : String(err) } })
+            .eq('id', ev.id).is('officer_done_at', null);
+          if (eErr) fail(`recording the officer step error interest=${ev.id}`, eErr);
         }
       }
     }
