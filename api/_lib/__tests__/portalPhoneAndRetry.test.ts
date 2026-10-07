@@ -78,19 +78,25 @@ describe('the officer message on registration', () => {
       projectName: 'ربوة الرمز', why: { reason: null, actions: [] }, clientName: 'محمد', clientPhone: localPhone('558992913'),
     });
     expect(body).toBe([
-      'السلام عليكم،',
-      'سجّلنا عميل جديد عندكم في البوابة، مهتم بمشروع «ربوة الرمز».',
-      'العميل: محمد — رقمه: 0558992913',
-      'نتمنى تتواصلون معه، ويعطيك العافية.',
+      'السلام عليكم ورحمة الله وبركاته،',
+      '',
+      'نفيدكم بأننا سجّلنا لديكم في البوابة عميلاً جديداً مهتماً بمشروع «ربوة الرمز».',
+      '',
+      'بيانات العميل:',
+      'الاسم: محمد',
+      'الجوال: 0558992913',
+      '',
+      'نأمل منكم التواصل معه، ولكم جزيل الشكر.',
     ].join('\n'));
   });
   it('adds the facts when there are some', () => {
     const body = registrationNoticeBody({
-      projectName: 'X', why: { reason: 'سأل عن الأسعار', actions: ['فتح صفحة المشروع مرتين'] }, clientName: '', clientPhone: '',
+      projectName: 'X', why: { reason: 'استفسر عن الأسعار', actions: ['اطّلع على صفحة المشروع مرتين'] }, clientName: '', clientPhone: '',
     });
-    expect(body).toContain('سبب الاهتمام: سأل عن الأسعار.');
-    expect(body).toContain('ما قام به العميل: فتح صفحة المشروع مرتين.');
-    expect(body).toContain('العميل: —');
+    expect(body).toContain('• سبب اهتمامه: استفسر عن الأسعار.');
+    expect(body).toContain('• تفاعله مع المشروع: اطّلع على صفحة المشروع مرتين.');
+    expect(body).toContain('الاسم: —');
+    expect(body).not.toContain('الجوال:');
   });
   it('is delivered inside 09:00–21:00 Riyadh', () => {
     // 10:00 Riyadh → now

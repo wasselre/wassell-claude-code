@@ -25,7 +25,7 @@
  */
 import { type Rec, type Svc, idList, str, loadRecord, resolvePortals, withPhonePrefix } from './leadPortals.js';
 import { resolveProjectOfficers } from './projectOfficers.js';
-import { judgeInterest, SIGNAL_REASON, type GateVerdict } from './officerInterestGate.js';
+import { judgeInterest, cleanReason, SIGNAL_REASON, type GateVerdict } from './officerInterestGate.js';
 
 export type OfficerDraftResult =
   | { status: 'drafted'; action_id: string; officer_id: string }
@@ -139,7 +139,7 @@ export async function draftOfficerNotice(
   const clientPhone = localPhone(str(client.data?.phone_number));
   const why = await interestWhy(svc, args.clientId, args.projectId, args.chatWid);
   // The AI route says what actually happened: the signal and the client's words.
-  if (verdict?.pass && verdict.signal) why.reason = SIGNAL_REASON[verdict.signal];
+  if (verdict?.pass && verdict.signal) why.reason = verdict.summary ?? SIGNAL_REASON[verdict.signal];
   const body = noticeBody({ projectName: projectName(project), registered, why, lowNames, clientName, clientPhone, questions: [], said: verdict?.quotes ?? [] });
 
   const { data: ins, error: insErr } = await svc.from('ai_actions').insert({
@@ -162,7 +162,7 @@ export async function draftOfficerNotice(
       less_interest: lowNames,
       interest_source: args.source,
       interest_score: args.score,
-      ...(verdict ? { gate: { signal: verdict.signal, quotes: verdict.quotes } } : {}),
+      ...(verdict ? { gate: { signal: verdict.signal, quotes: verdict.quotes, summary: verdict.summary ?? null } } : {}),
     },
   }).select('id').single();
   if (insErr) {
@@ -176,6 +176,32 @@ export async function draftOfficerNotice(
   return { status: 'drafted', action_id: actionId, officer_id: officer.id };
 }
 
+/** «أ، وب، وج» — a formal Arabic list. PURE. */
+export function arList(items: string[]): string {
+  return items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join('، و')}، و${items[items.length - 1]}`;
+}
+
+/**
+ * The fact bullets every officer message shares (operator, 2026-10-07: «more
+ * human, keep the organized structure and a formal tone»). PURE.
+ */
+export function factLines(why: InterestWhy, said: string[] = []): string[] {
+  // One line per quote: a client's line break inside a quote would split the bullet.
+  const q = said.map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean).map((x) => `«${x}»`).join('، ');
+  const lines: string[] = [];
+  if (why.reason && q) lines.push(`• سبب اهتمامه: ${why.reason}، ومن كلامه: ${q}.`);
+  else if (why.reason) lines.push(`• سبب اهتمامه: ${why.reason}.`);
+  else if (q) lines.push(`• من كلامه: ${q}.`);
+  if (why.actions.length) lines.push(`• تفاعله مع المشروع: ${arList(why.actions)}.`);
+  if (why.booking) lines.push(bookingLine(why.booking));
+  return lines;
+}
+
+/** The client block. PURE. */
+export function clientLines(name: string, phone: string): string[] {
+  return ['بيانات العميل:', `الاسم: ${name || '—'}`, ...(phone ? [`الجوال: ${phone}`] : [])];
+}
+
 /** The officer message, from facts only. PURE. */
 export function noticeBody(a: {
   projectName: string; registered: boolean; why: InterestWhy; lowNames: string[];
@@ -184,18 +210,20 @@ export function noticeBody(a: {
   said?: string[];
 }): string {
   const asking = a.questions.length > 0;
-  const said = (a.said ?? []).filter((q) => q.trim());
+  const facts = [
+    ...factLines(a.why, a.said ?? []),
+    ...(a.lowNames.length ? [`• مشاريع أخرى لكم أرسلناها له: «${a.lowNames.join('» و«')}»، واهتمامه بها أقل.`] : []),
+    ...a.questions.map((q) => `• سؤاله لكم: «${q}»`),
+  ];
   return [
-    'السلام عليكم،',
-    `عندنا عميل مهتم${asking || said.length ? '' : ' كثير'} بمشروع «${a.projectName}»${a.registered ? '، وهو مسجّل عندكم في البوابة' : ''}.`,
-    ...(a.why.reason ? [`سبب الاهتمام: ${a.why.reason}.`] : []),
-    ...(said.length ? [`قال العميل: ${said.map((q) => `«${q}»`).join('، ')}`] : []),
-    ...(a.why.actions.length ? [`ما قام به العميل: ${a.why.actions.join('، ')}.`] : []),
-    ...(a.why.booking ? [bookingLine(a.why.booking, a.projectName)] : []),
-    ...(a.lowNames.length ? [`اهتمامه أقل بـ«${a.lowNames.join('» و«')}».`] : []),
-    ...a.questions.map((q) => `سؤال العميل: «${q}»`),
-    `العميل: ${a.clientName || '—'}${a.clientPhone ? ` — رقمه: ${a.clientPhone}` : ''}`,
-    asking ? 'نتمنى تتواصلون معه وتردون على سؤاله، ويعطيك العافية.' : 'نتمنى تتواصلون معه، ويعطيك العافية.',
+    'السلام عليكم ورحمة الله وبركاته،',
+    '',
+    `نفيدكم بوجود عميل مهتم بمشروع «${a.projectName}»${a.registered ? '، وهو مسجّل لديكم في البوابة' : ''}.`,
+    ...(facts.length ? ['', ...facts] : []),
+    '',
+    ...clientLines(a.clientName, a.clientPhone),
+    '',
+    asking ? 'نأمل منكم التواصل معه والإفادة بخصوص سؤاله، ولكم جزيل الشكر.' : 'نأمل منكم التواصل معه، ولكم جزيل الشكر.',
   ].join('\n');
 }
 
@@ -215,14 +243,14 @@ const AR_DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأرب
 const AR_MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
 
 /**
- * PURE — «حجز العميل موعد زيارة لمشروع «X» يوم الاثنين 5 أكتوبر الساعة 7:00 مساءً.»
+ * PURE — «• موعد الزيارة: يوم الاثنين 5 أكتوبر، الساعة 7:00 مساءً.»
  * (operator, 2026-10-05: when a visit is saved the officer must see, below the
  * interest and what the client did, that the client booked a visit at this time
  * for this project). The stored time is Riyadh wall-clock — no conversion.
  */
-export function bookingLine(b: Booking, projectName: string): string {
+export function bookingLine(b: Booking): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(b.at);
-  if (!m) return b.done ? `زار العميل مشروع «${projectName}».` : `حجز العميل موعد زيارة لمشروع «${projectName}».`;
+  if (!m) return b.done ? '• زار المشروع.' : '• حجز موعداً لزيارة المشروع.';
   const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
   const day = `يوم ${AR_DAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()]} ${d} ${AR_MONTHS[mo - 1]}`;
   let time = '';
@@ -230,11 +258,9 @@ export function bookingLine(b: Booking, projectName: string): string {
     const h = Number(m[4]);
     const h12 = h % 12 === 0 ? 12 : h % 12;
     const part = h < 12 ? 'صباحاً' : h === 12 ? 'ظهراً' : 'مساءً';
-    time = ` الساعة ${h12}:${m[5]} ${part}`;
+    time = `، الساعة ${h12}:${m[5]} ${part}`;
   }
-  return b.done
-    ? `زار العميل مشروع «${projectName}» ${day}${time}.`
-    : `حجز العميل موعد زيارة لمشروع «${projectName}» ${day}${time}.`;
+  return b.done ? `• زار المشروع ${day}${time}.` : `• موعد الزيارة: ${day}${time}.`;
 }
 
 /** Riyadh wall-clock now, «YYYY-MM-DDTHH:mm» (Saudi Arabia has no daylight saving). */
@@ -317,21 +343,23 @@ export function describeInterest(r: {
     const q = fold(r.message_quote ?? '');
     const topics = TOPICS.filter((t) => t.re.test(q)).map((t) => t.label);
     reason = topics.length
-      ? `سأل عن ${topics.join(' و')}`
-      : r.message_level === 'wants' ? 'أبدى رغبة واضحة في المشروع' : 'سأل عن تفاصيل المشروع';
+      ? `استفسر عن ${topics.join(' و')}`
+      : r.message_level === 'wants' ? 'أبدى رغبة واضحة في المشروع' : 'استفسر عن تفاصيل المشروع';
   }
   const actions: string[] = [];
+  const times = (n: number) => (n === 2 ? 'مرتين' : n <= 10 ? `${n} مرات` : `${n} مرة`);
+  const days = (n: number) => (n === 2 ? ' خلال يومين' : n > 2 && n <= 10 ? ` خلال ${n} أيام` : n > 10 ? ` خلال ${n} يوماً` : '');
   if (l && l.sessions > 0) {
-    actions.push(l.sessions === 1 ? 'فتح صفحة المشروع' : `فتح صفحة المشروع ${l.sessions === 2 ? 'مرتين' : `${l.sessions} مرات`}${l.open_days === 2 ? ' في يومين' : l.open_days > 2 ? ` في ${l.open_days} أيام` : ''}`);
+    actions.push(l.sessions === 1 ? 'اطّلع على صفحة المشروع' : `اطّلع على صفحة المشروع ${times(l.sessions)}${days(l.open_days)}`);
   }
   if (l && (l.brochure_pages > 0 || l.brochure_seconds > 0)) actions.push(l.brochure_pages > 1 ? `تصفّح البروشور (${l.brochure_pages} صفحات)` : 'تصفّح البروشور');
-  if (l && l.videos_played > 0) actions.push(l.max_video_pct >= 90 ? 'شاهد فيديو المشروع كاملاً' : l.max_video_pct > 0 ? `شاهد فيديو المشروع (${Math.round(l.max_video_pct)}٪ منه)` : 'شغّل فيديو المشروع');
-  if (l && l.photos_opened > 0) actions.push(l.photos_opened === 1 ? 'فتح صورة من صور المشروع' : `فتح ${l.photos_opened} صور`);
-  if (l && l.units_opened > 0) actions.push(l.units_opened === 1 ? 'فتح تفاصيل وحدة' : `فتح تفاصيل ${l.units_opened} وحدات`);
+  if (l && l.videos_played > 0) actions.push(l.max_video_pct >= 90 ? 'شاهد فيديو المشروع كاملاً' : l.max_video_pct > 0 ? `شاهد ${Math.round(l.max_video_pct)}٪ من فيديو المشروع` : 'شغّل فيديو المشروع');
+  if (l && l.photos_opened > 0) actions.push(l.photos_opened === 1 ? 'استعرض إحدى صور المشروع' : `استعرض ${l.photos_opened} من صور المشروع`);
+  if (l && l.units_opened > 0) actions.push(l.units_opened === 1 ? 'اطّلع على تفاصيل إحدى الوحدات' : `اطّلع على تفاصيل ${l.units_opened} وحدات`);
   if (l?.opened_map) actions.push('فتح موقع المشروع على الخريطة');
   if (booking) return { reason, actions, booking };
   if (r.visits > 0) actions.push('زار المشروع');
-  else if (r.appointments > 0) actions.push('حجز موعد زيارة');
+  else if (r.appointments > 0) actions.push('حجز موعداً لزيارة المشروع');
   return { reason, actions };
 }
 
@@ -386,9 +414,9 @@ export async function refreshPendingNotice(svc: Svc, actionId: string): Promise<
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   const why = await interestWhy(svc, a.client_id, a.project_id, typeof ctx.client_chat_wid === 'string' ? ctx.client_chat_wid : null);
   // Keep the AI route's signal and the client's words (officerInterestGate).
-  const gate = ctx.gate && typeof ctx.gate === 'object' ? (ctx.gate as { signal?: unknown; quotes?: unknown }) : null;
+  const gate = ctx.gate && typeof ctx.gate === 'object' ? (ctx.gate as { signal?: unknown; quotes?: unknown; summary?: unknown }) : null;
   const sig = typeof gate?.signal === 'string' && gate.signal in SIGNAL_REASON ? (gate.signal as keyof typeof SIGNAL_REASON) : null;
-  if (sig) why.reason = SIGNAL_REASON[sig];
+  if (sig) why.reason = cleanReason(gate?.summary) ?? SIGNAL_REASON[sig];
   const body = noticeBody({
     projectName: projectName(project), registered: ctx.registered === true, why, lowNames: strings(ctx.less_interest),
     clientName: str(client.data?.client_name).trim(), clientPhone: localPhone(str(client.data?.phone_number)), questions: strings(ctx.questions),
@@ -425,7 +453,7 @@ export async function draftOfficerQuestion(
   if (!officer) return { status: 'no_officer' };
   const wid = officerChatWid(officer.phone);
   if (!wid) return { status: 'no_phone' };
-  const qLine = `سؤال العميل: «${question}»`;
+  const qLine = `• سؤاله لكم: «${question}»`;
 
   const { data: open, error: oErr } = await svc.from('ai_actions')
     .select('id, body, context, status, created_at')
@@ -438,8 +466,14 @@ export async function draftOfficerQuestion(
   const pending = rows.find((r) => r.status === 'pending');
   if (pending) {
     const lines = pending.body.split('\n');
-    const at = lines.findIndex((l) => l.startsWith('العميل:'));
-    lines.splice(at >= 0 ? at : lines.length - 1, 0, qLine);
+    // Formal layout: the fact bullets end one blank line above «بيانات العميل:».
+    const block = lines.indexOf('بيانات العميل:');
+    const legacy = lines.findIndex((l) => l.startsWith('العميل:'));
+    const at = block > 0 ? (lines[block - 1] === '' ? block - 1 : block) : legacy >= 0 ? legacy : lines.length - 1;
+    if (block > 0) lines.splice(at, 0, ...(lines[at - 1]?.startsWith('•') ? [qLine] : ['', qLine]));
+    else lines.splice(at, 0, qLine.replace('• سؤاله لكم: ', 'سؤال العميل: '));
+    const closing = lines.indexOf('نأمل منكم التواصل معه، ولكم جزيل الشكر.');
+    if (closing >= 0) lines[closing] = 'نأمل منكم التواصل معه والإفادة بخصوص سؤاله، ولكم جزيل الشكر.';
     const body = lines.join('\n');
     const questions = [...(Array.isArray(pending.context?.questions) ? pending.context!.questions as unknown[] : []), question];
     const { error: uErr } = await svc.from('ai_actions')

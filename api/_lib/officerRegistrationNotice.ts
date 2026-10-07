@@ -23,16 +23,17 @@
  * the next tick from trying again. A missing operations line is left undone
  * (reported) so the next tick retries once the line is back.
  *
- * The text is a fixed template from facts only:
- *   السلام عليكم،
- *   سجّلنا عميل جديد عندكم في البوابة، مهتم بمشروع «X».
- *   سبب الاهتمام: … / ما قام به العميل: … / حجز العميل موعد زيارة …   (when known)
- *   العميل: محمد — رقمه: 05…
- *   نتمنى تتواصلون معه، ويعطيك العافية.
+ * The text is a fixed formal template from facts only (the same blocks as the
+ * interest notice — officerNoticeDraft.ts factLines / clientLines):
+ *   السلام عليكم ورحمة الله وبركاته،
+ *   نفيدكم بأننا سجّلنا لديكم في البوابة عميلاً جديداً مهتماً بمشروع «X».
+ *   • سبب اهتمامه … / • تفاعله مع المشروع … / • موعد الزيارة …   (when known)
+ *   بيانات العميل: الاسم / الجوال
+ *   نأمل منكم التواصل معه، ولكم جزيل الشكر.
  */
 import { type Rec, type Svc, LEAD_PORTALS_MODEL_ID, str, loadRecord } from './leadPortals.js';
 import { resolveProjectOfficers } from './projectOfficers.js';
-import { type InterestWhy, bookingLine, interestWhy, localPhone, officerChatWid, projectName } from './officerNoticeDraft.js';
+import { type InterestWhy, clientLines, factLines, interestWhy, localPhone, officerChatWid, projectName } from './officerNoticeDraft.js';
 
 /** Never announce a registration older than this, whatever `notify_officer_since` says. */
 export const LOOKBACK_MS = 48 * 3600_000;
@@ -47,14 +48,16 @@ export type RegistrationNoticeOutcome =
 export function registrationNoticeBody(a: {
   projectName: string; why: InterestWhy; clientName: string; clientPhone: string;
 }): string {
+  const facts = factLines(a.why);
   return [
-    'السلام عليكم،',
-    `سجّلنا عميل جديد عندكم في البوابة، مهتم بمشروع «${a.projectName}».`,
-    ...(a.why.reason ? [`سبب الاهتمام: ${a.why.reason}.`] : []),
-    ...(a.why.actions.length ? [`ما قام به العميل: ${a.why.actions.join('، ')}.`] : []),
-    ...(a.why.booking ? [bookingLine(a.why.booking, a.projectName)] : []),
-    `العميل: ${a.clientName || '—'}${a.clientPhone ? ` — رقمه: ${a.clientPhone}` : ''}`,
-    'نتمنى تتواصلون معه، ويعطيك العافية.',
+    'السلام عليكم ورحمة الله وبركاته،',
+    '',
+    `نفيدكم بأننا سجّلنا لديكم في البوابة عميلاً جديداً مهتماً بمشروع «${a.projectName}».`,
+    ...(facts.length ? ['', ...facts] : []),
+    '',
+    ...clientLines(a.clientName, a.clientPhone),
+    '',
+    'نأمل منكم التواصل معه، ولكم جزيل الشكر.',
   ].join('\n');
 }
 
