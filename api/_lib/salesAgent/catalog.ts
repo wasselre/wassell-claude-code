@@ -131,19 +131,43 @@ export interface CatalogSearch {
   };
   /** Projects already sent in this chat that also fit (not repeated in `projects`). */
   already_sent: string[];
-  /** Only when NOTHING fits (total 0): the same search inside the same area once
-   *  without each condition the ladder never widens — the place («قريب من
-   *  المترو», nearest first, real distances kept) and ready / off-plan. Live test
-   *  2026-10-05: «شقة جاهزة 3 غرف شمال الرياض قريبة من مترو بمليون و200» got
-   *  "nothing" while مينا 51 (ready, 2.5 km from a station) and مكانة (0.5 km,
-   *  off-plan) were there. Never a fit — the reply says what differs. */
-  alternatives?: Array<{ without: AlternativeWithout; relaxed: CatalogSearch['relaxed']; total: number; projects: CatalogProject[] }>;
+  /** When nothing fits EXACTLY (total 0, or the result is relaxed): the closest
+   *  real options, each missing exactly ONE condition and keeping every other,
+   *  sorted CLOSEST FIRST (`closeness`, lower = closer) with the real margin
+   *  (`misses`: «2.1M — 100K / 5% above the budget», «one bedroom fewer»…).
+   *  Never a fit — the reply says what differs.
+   *  Why one-at-a-time: the ladder drops conditions in a FIXED order and stops at
+   *  the first hit, so «4 rooms + driver/maid/majlis at 2M» came back "without the
+   *  driver room" (relaxed=features) while يمام 16 had every room at 2.1M — 5%
+   *  over (replay 2026-10-07). Live test 2026-10-05 for near/readiness: «شقة جاهزة
+   *  3 غرف شمال الرياض قريبة من مترو بمليون و200» got "nothing" while مينا 51
+   *  (ready, 2.5 km from a station) was there. */
+  alternatives?: CatalogAlternative[];
 }
 
-/** What an alternative leaves out. «area» = outside the asked area — tried only
- *  when nothing else turned up (an area with none of our projects: «دور في ظهرة
- *  لبن» got nothing while 3-room أدوار were elsewhere in Riyadh). */
-export type AlternativeWithout = 'near' | 'readiness' | 'near_and_readiness' | 'area';
+/** What an alternative leaves out (exactly one condition). */
+export type AlternativeWithout =
+  | 'budget' | 'bedrooms' | 'size' | 'features' | 'amenities' | 'unit_type'
+  | 'readiness' | 'near' | 'near_and_readiness' | 'area';
+
+export interface CatalogAlternative {
+  without: AlternativeWithout;
+  /** How far off it is, in words the agent can say back. */
+  misses: string;
+  /** Lower = closer to what they asked (a 5% budget overrun ≈ 5). */
+  closeness: number;
+  /** budget: the cheapest unit with EVERYTHING else, and how far above the budget. */
+  over_budget_sar?: number;
+  over_budget_pct?: number;
+  relaxed: CatalogSearch['relaxed'];
+  total: number;
+  projects: CatalogProject[];
+}
+
+/** PURE — order alternatives closest first and keep the best few. */
+export function rankAlternatives(alts: CatalogAlternative[], keep = 4): CatalogAlternative[] {
+  return [...alts].sort((a, b) => a.closeness - b.closeness).slice(0, keep);
+}
 
 const TOP = 6;
 
@@ -597,28 +621,68 @@ export async function searchProjects(
 
   const { fits, relaxed, used } = runLadder({}, true);
   const all = toProjects(fits, used);
-  // Nothing at all → the closest real options, each labelled with what it lacks.
-  // Inside the asked area only (no area rung): "outside the area" is its own answer.
+  // Nothing fits EXACTLY → the closest real options, one per condition the
+  // customer set: each drops exactly that condition and keeps every other one
+  // strict (inside the asked area unless it is the area that is dropped), so
+  // the agent can offer the one that misses by the least.
   let alternatives: CatalogSearch['alternatives'];
   const areaAsked = zoneKnown || !!areaIds || wantDistricts.size > 0;
-  if (!all.length && (nearDist.length || criteria.readiness || areaAsked)) {
-    alternatives = [];
-    const tries: Array<{ without: AlternativeWithout; drop: Drop }> = [];
-    if (nearDist.length) tries.push({ without: 'near', drop: { near: true } });
-    if (criteria.readiness) tries.push({ without: 'readiness', drop: { readiness: true } });
-    for (const t of tries) {
-      const r = runLadder(t.drop, false);
-      if (r.fits.length) alternatives.push({ without: t.without, relaxed: r.relaxed, total: r.fits.length, projects: toProjects(r.fits, r.used).slice(0, 3) });
+  if (!all.length || relaxed !== null) {
+    const found: CatalogAlternative[] = [];
+    const strict = fit({});
+    const tryOne = (without: AlternativeWithout, check: FitCheck, drop: Drop, misses: (ps: CatalogProject[]) => { text: string; closeness: number; extra?: Partial<CatalogAlternative> } | null, order?: (a: CatalogProject, b: CatalogProject) => number) => {
+      const fits = pick(check, !drop.area, 1, drop);
+      if (!fits.length) return;
+      let ps = toProjects(fits, check);
+      if (order) ps = [...ps].sort(order);
+      const m = misses(ps);
+      if (!m) return;
+      found.push({ without, misses: m.text, closeness: m.closeness, relaxed: null, total: fits.length, projects: ps.slice(0, 3), ...(m.extra ?? {}) });
+    };
+    const fmtK = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M` : `${Math.round(n / 1000)}K`);
+    const priceOf = (p: CatalogProject) => p.fit?.price_from ?? p.price_from ?? Infinity;
+    if (budget) {
+      // Everything else kept, only the price above the budget: the cheapest first.
+      tryOne('budget', { ...strict, budgetMax: null }, {}, (ps) => {
+        const best = Math.min(...ps.map(priceOf));
+        if (!Number.isFinite(best) || best <= budget) return null;
+        const over = best - budget; const pct = Math.round((over / budget) * 100);
+        return { text: `has everything else; cheapest such unit ${fmtK(best)} — ${fmtK(over)} (${pct}%) above the budget`, closeness: pct, extra: { over_budget_sar: Math.round(over), over_budget_pct: pct } };
+      }, (a, b) => priceOf(a) - priceOf(b));
     }
-    if (!alternatives.length && nearDist.length && criteria.readiness) {
-      const r = runLadder({ near: true, readiness: true }, false);
-      if (r.fits.length) alternatives.push({ without: 'near_and_readiness', relaxed: r.relaxed, total: r.fits.length, projects: toProjects(r.fits, r.used).slice(0, 3) });
+    if (beds && beds > 1) {
+      tryOne('bedrooms', { ...strict, bedroomsMin: beds - 1 }, {}, () => ({ text: `one bedroom fewer (${beds - 1}) — everything else as asked`, closeness: 15 }));
     }
-    if (!alternatives.length && areaAsked) {
-      const r = runLadder({ area: true }, false);
-      if (r.fits.length) alternatives.push({ without: 'area', relaxed: r.relaxed, total: r.fits.length, projects: toProjects(r.fits, r.used).slice(0, 3) });
+    if (areaMin || areaMax) {
+      tryOne('size', { ...strict, areaMin: areaMin ? Math.round(areaMin * 0.85) : null, areaMax: areaMax ? Math.round(areaMax * 1.15) : null }, {},
+        () => ({ text: `size within 15% of the asked range — everything else as asked`, closeness: 10 }));
     }
-    if (!alternatives.length) alternatives = undefined;
+    if (feats.known.length) {
+      tryOne('features', { ...strict, features: [] }, {}, () => ({ text: `everything except the features asked (${feats.known.join('، ')}) — check which units have them`, closeness: 18 }));
+    }
+    if (amen.asks.length) {
+      tryOne('amenities', strict, { amenities: true }, () => ({ text: `everything except the project amenities asked (${amen.asks.map((a) => a.label).join('، ')}) — see amenities_asked`, closeness: 18 }));
+    }
+    if (types.length) {
+      tryOne('unit_type', { ...strict, checkType: false }, {}, (ps) => ({ text: `a different unit type (${[...new Set(ps.flatMap((p) => p.unit_types))].slice(0, 3).join('/') || 'other'}) — everything else as asked`, closeness: 25 }));
+    }
+    if (criteria.readiness) {
+      tryOne('readiness', strict, { readiness: true }, () => ({ text: criteria.readiness === 'ready' ? 'not ready yet (off-plan) — everything else as asked' : 'ready now, not off-plan — everything else as asked', closeness: 20 }));
+    }
+    if (nearDist.length) {
+      tryOne('near', strict, { near: true }, (ps) => {
+        const km = Math.min(...ps.map((p) => { const v = Object.values(p.distances_km ?? {}); return v.length ? Math.max(...v) : Infinity; }));
+        const maxKm = Math.max(...nearDist.map((c) => c.max_km));
+        return { text: Number.isFinite(km) ? `farther than asked — the nearest is ${km} km away (asked within ${maxKm} km)` : 'not within the asked distance', closeness: Number.isFinite(km) ? Math.min(40, Math.round((km / maxKm) * 8)) : 30 };
+      });
+    }
+    if (!found.length && nearDist.length && criteria.readiness) {
+      tryOne('near_and_readiness', strict, { near: true, readiness: true }, () => ({ text: 'farther than asked AND a different ready/off-plan status', closeness: 35 }));
+    }
+    if (areaAsked) {
+      tryOne('area', strict, { area: true }, (ps) => ({ text: `outside the asked area (${[...new Set(ps.map((p) => p.district).filter(Boolean))].slice(0, 3).join('، ')}) — everything else as asked`, closeness: 30 }));
+    }
+    alternatives = found.length ? rankAlternatives(found) : undefined;
   }
   const fresh = all.filter((p) => !sentSet.has(p.project_id));
   const facets = facetsOf(all);

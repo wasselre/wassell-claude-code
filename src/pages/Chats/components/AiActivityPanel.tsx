@@ -68,7 +68,7 @@ function FoundBlock({ search, sent, isAr }: { search: AgentRunSearch; sent: Read
       <div className="space-y-1.5">
         {search.alternatives.map((a) => (
           <div key={a.without}>
-            <p className="text-[10px] text-amber-700">{t(`chats.ai_act.alt_without_${a.without}`)}</p>
+            <p className="text-[10px] text-amber-700">{t(`chats.ai_act.alt_without_${a.without}`)}{!isAr && a.misses ? ` (${a.misses})` : ''}</p>
             <FoundList items={a.top} sent={sent} isAr={isAr} />
           </div>
         ))}

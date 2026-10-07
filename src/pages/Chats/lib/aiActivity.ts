@@ -17,7 +17,12 @@ export interface AgentRunSearch {
   profile_name?: string | null;
   top: AgentFoundProject[];
   /** Nothing fit: the closest options, each missing one condition. */
-  alternatives?: Array<{ without: 'near' | 'readiness' | 'near_and_readiness' | 'area'; top: AgentFoundProject[] }>;
+  alternatives?: Array<{
+    without: 'budget' | 'bedrooms' | 'size' | 'features' | 'amenities' | 'unit_type' | 'readiness' | 'near' | 'near_and_readiness' | 'area';
+    /** How far off it is (English, from the search) — shown only in the English UI. */
+    misses?: string;
+    top: AgentFoundProject[];
+  }>;
 }
 
 export interface AgentFoundProject { id: string; name: string; district: string | null; price_from: number | null }

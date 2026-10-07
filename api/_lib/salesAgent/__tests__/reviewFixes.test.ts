@@ -133,3 +133,21 @@ describe('replay round 2 (2026-10-07)', () => {
     for (const n of ['LaLa', 'Lolo', 'Haneen', 'Nadeen', 'Razane', 'Ola', 'ميرا', 'حنين']) expect(genderFromName(n), n).toBe('f');
   });
 });
+
+describe('alternatives: the closest one comes first', () => {
+  it('a 5% budget overrun with everything beats "without the driver room"', async () => {
+    const { rankAlternatives } = await import('../catalog');
+    const mk = (without: 'budget' | 'features' | 'area' | 'unit_type', closeness: number) =>
+      ({ without, misses: without, closeness, relaxed: null, total: 1, projects: [] });
+    const r = rankAlternatives([mk('features', 18), mk('area', 30), mk('budget', 5), mk('unit_type', 25)]);
+    expect(r.map((a) => a.without)).toEqual(['budget', 'features', 'unit_type', 'area']);
+    expect(rankAlternatives([mk('features', 18), mk('budget', 40)])[0]!.without).toBe('features');
+  });
+});
+
+describe('guard: "725.3K"', () => {
+  it('is the grounded 725,330', async () => {
+    const { groundedNumbers } = await import('../guard');
+    expect(checkReply('3-bedroom apartments from 725.3K. Would you like it?', { lang: 'en', grounded: groundedNumbers([{ price: 725330, bedrooms: 3 }]) }).ok).toBe(true);
+  });
+});

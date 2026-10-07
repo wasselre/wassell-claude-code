@@ -74,6 +74,8 @@ export function groundedNumbers(sources: unknown[]): Set<number> {
       // «954 ألف و450» for 954,450 — the remainder is part of the same price
       // (replay 2026-10-07: a correct reply was refused and the customer got none).
       if (n % 1000) out.add(Math.round(n % 1000));
+      // "725.3K" for 725,330 (English replies; replay 2026-10-07 refused it twice).
+      out.add(r(n / 1000, 1));
     }
     if (Math.abs(n) >= 1_000_000) {
       out.add(r(n / 1e6, 1)); out.add(r(n / 1e6, 2)); out.add(Math.floor(n / 1e6));
