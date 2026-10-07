@@ -23,6 +23,7 @@ import { num, projectFits, range, type FitCheck, type Master } from './search.js
 import type { Zone } from './texts.js';
 import { clip } from './clip.js';
 import { componentsOf, resolveFeatures } from './features.js';
+import { amenityAnswers, amenityLabels, hasAmenities, splitAmenities } from './amenities.js';
 import { cityPrefix, distancesFor, resolveNear, type NearCondition } from './places.js';
 
 export type Readiness = 'ready' | 'off_plan';
@@ -38,7 +39,8 @@ export interface SearchCriteria {
   /** Minimum unit size in m². */
   area_min?: number | null;
   readiness?: Readiness | null;
-  /** Unit features in the customer's words («غرفة خادمة», «روف», «مصعد»). */
+  /** Unit features AND project amenities in the customer's words («غرفة خادمة»,
+   *  «روف», «مسبح», «جيم») — split server-side (features.ts, amenities.ts). */
   features?: string[];
   /** «قريب من …»: a named place or a kind of place, within max_km. ALL must hold. */
   near?: NearCondition[];
@@ -69,6 +71,11 @@ export interface CatalogProject {
   fit: UnitFit | null;
   /** km to each place the customer asked to be near (when asked). */
   distances_km?: Record<string, number>;
+  /** When amenities were asked: per amenity, true = the project lists it,
+   *  false = it lists its amenities and this is not one, null = none recorded. */
+  amenities_asked?: Record<string, boolean | null>;
+  /** When amenities were asked: everything the project lists (null = none recorded). */
+  amenities?: string[] | null;
 }
 
 export interface UnitFit {
@@ -96,9 +103,12 @@ export interface CatalogSearch {
   /** What had to be widened to find anything: null = exact. «distance» = nothing
    *  within the asked radius, these are within double it; «features» = nothing
    *  has those features, these fit everything else. */
-  relaxed: null | 'unit_type' | 'specs_and_budget' | 'budget' | 'area' | 'distance' | 'features';
+  relaxed: null | 'unit_type' | 'specs_and_budget' | 'budget' | 'area' | 'distance' | 'features' | 'amenities';
   /** Features our data does not record (only a floor plan can tell). */
   unknown_features?: string[];
+  /** Project amenities asked for («مسبح», «نادي رياضي») — matched against each
+   *  project's المرافق list. relaxed «amenities» = no project lists them all. */
+  amenities_asked?: string[];
   /** Places the customer named that we could not find on the map. */
   unresolved_places?: string[];
   /** The best few (Finder order), with selling facts. */
@@ -431,7 +441,10 @@ export async function searchProjects(
   const resolved = universe.items.filter((r) => !excluded.has(r.master.id));
 
   // Features → stored components; a word we don't record is reported, not guessed.
-  const feats = resolveFeatures(criteria.features);
+  const feats0 = resolveFeatures(criteria.features);
+  // Words that are not unit features may be PROJECT amenities (pool, gym…).
+  const amen = splitAmenities(feats0.unknown);
+  const feats = { known: feats0.known, unknown: amen.unknown };
   // «قريب من …» → km per project for every condition (the whole universe at once).
   const near = criteria.near ?? [];
   const prefix = cityPrefix(city);
@@ -463,13 +476,14 @@ export async function searchProjects(
   // road, a distance from a place…) replaces the zone test when present.
   const areaIds = criteria.area_ids ? new Set(criteria.area_ids) : null;
   const inArea = (r: { master: Master; inArea: boolean }) => (areaIds ? areaIds.has(r.master.id) : r.inArea);
-  interface Drop { near?: boolean; readiness?: boolean; area?: boolean }
+  interface Drop { near?: boolean; readiness?: boolean; area?: boolean; amenities?: boolean }
   const pick = (check: FitCheck, areaOnly: boolean, nearFactor = 1, drop: Drop = {}): Array<{ master: Master; m: FinderMatch; inArea: boolean }> =>
     resolved.filter((r) => (!areaOnly || drop.area || inArea(r))
       && (drop.near || nearOk(r.master.id, nearFactor))
       && projectFits(r.master.data, check)
       && unitsFit(r.master.id, check)
       && (drop.readiness || !criteria.readiness || readinessOf(r.master.data) === criteria.readiness)
+      && (drop.amenities || hasAmenities(r.master.data, amen.asks))
       && (drop.area || !wantDistricts.size || (typeof r.m.facts?.district === 'string' && wantDistricts.has(districtKey(r.m.facts.district)))));
 
   const beds = criteria.bedrooms_min ?? null;
@@ -481,12 +495,15 @@ export async function searchProjects(
   // without the features → any type → widened specs → outside the requested
   // area. Each rung only if the previous found nothing.
   const runLadder = (drop: Drop, withAreaRung: boolean) => {
-    const ladder: Array<{ check: FitCheck; areaOnly: boolean; relaxed: CatalogSearch['relaxed']; nearFactor?: number }> = [
+    const ladder: Array<{ check: FitCheck; areaOnly: boolean; relaxed: CatalogSearch['relaxed']; nearFactor?: number; noAmenities?: boolean }> = [
       { check: fit({ strictType: true }), areaOnly: true, relaxed: null },
       { check: fit({}), areaOnly: true, relaxed: null },
     ];
     if (nearDist.length && !drop.near) ladder.push({ check: fit({}), areaOnly: true, relaxed: 'distance', nearFactor: 2 });
     if (feats.known.length) ladder.push({ check: fit({ features: [] }), areaOnly: true, relaxed: 'features' });
+    // No project lists every amenity asked → the fits without that condition,
+    // each saying which of the amenities it has (amenities_asked).
+    if (amen.asks.length) ladder.push({ check: fit({ features: [] }), areaOnly: true, relaxed: 'amenities', noAmenities: true });
     if (types.length) ladder.push({ check: fit({ checkType: false }), areaOnly: true, relaxed: 'unit_type' });
     if (beds || budget || areaMin) {
       ladder.push({
@@ -503,7 +520,7 @@ export async function searchProjects(
     let relaxed: CatalogSearch['relaxed'] = null;
     let used: FitCheck = ladder[0]!.check;
     for (const rung of ladder) {
-      fits = pick(rung.check, rung.areaOnly, rung.nearFactor ?? 1, drop);
+      fits = pick(rung.check, rung.areaOnly, rung.nearFactor ?? 1, rung.noAmenities ? { ...drop, amenities: true } : drop);
       if (fits.length) { relaxed = rung.relaxed; used = rung.check; break; }
     }
     return { fits, relaxed, used };
@@ -512,6 +529,10 @@ export async function searchProjects(
     let all = fits.map((f) => {
       const us = universe.units.get(f.master.id);
       const p = toProject(f.master, f.m, inArea(f), us && us.length ? fitOf(us, used) : null);
+      if (amen.asks.length) {
+        p.amenities_asked = amenityAnswers(f.master.data, amen.asks);
+        p.amenities = amenityLabels(f.master.data);
+      }
       if (nearDist.length) {
         p.distances_km = {};
         for (const c of nearDist) { const km = c.km.get(f.master.id); if (km !== undefined) p.distances_km[c.label] = Math.round(km * 10) / 10; }
@@ -563,6 +584,7 @@ export async function searchProjects(
     facets,
     already_sent: all.filter((p) => sentSet.has(p.project_id)).map((p) => p.name),
     ...(feats.unknown.length ? { unknown_features: feats.unknown } : {}),
+    ...(amen.asks.length ? { amenities_asked: amen.asks.map((a) => a.label) } : {}),
     ...(unresolvedPlaces.length ? { unresolved_places: unresolvedPlaces } : {}),
     ...(alternatives ? { alternatives } : {}),
   };
@@ -585,6 +607,8 @@ export interface ProjectFacts {
   during_construction_percent: number | null;
   on_handover_percent: number | null;
   payment_plan: string | null;
+  /** The project's amenities (المرافق — pool, gym, mosque…). null = none recorded. */
+  amenities: string[] | null;
 }
 
 const AVAILABLE = new Set(['available', 'متاح', 'متاحة', 'متوفر', 'متوفرة']);
@@ -662,5 +686,6 @@ export async function projectFacts(svc: SupabaseClient, projectId: string): Prom
     during_construction_percent: num(d.during_construction_percent),
     on_handover_percent: num(d.on_handover_percent),
     payment_plan: (() => { const p = text(d.payment_plan_summary); return p ? clip(p, 300) : null; })(),
+    amenities: amenityLabels(d),
   };
 }

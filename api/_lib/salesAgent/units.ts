@@ -12,6 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { loadAvailableUnits, summarizeUnit, type UnitSummary } from '../trackedLinks.js';
 import { normalizeUnitType } from './decide.js';
 import { componentsOf, resolveFeatures } from './features.js';
+import { amenityAnswers, amenityLabels, splitAmenities } from './amenities.js';
 
 export interface UnitCriteria {
   unit_type?: string;
@@ -42,6 +43,9 @@ export interface UnitSearch {
   /** Features asked: stored components matched, and words we don't record
    *  (only the floor plan can answer those — check_unit_plans). */
   features?: { matched: string[]; unknown: string[]; units_without_component_data: number };
+  /** PROJECT amenities asked (pool, gym...): true = the project lists it, false =
+   *  it lists its amenities and not this, null = none recorded. Not a unit filter. */
+  project_amenities?: { asked: Record<string, boolean | null>; listed: string[] | null };
   /** What the project actually has, across ALL its available units. */
   facets: {
     bedrooms: Record<string, number>;
@@ -104,7 +108,16 @@ export async function searchUnits(svc: SupabaseClient, projectId: string, c: Uni
   const wantType = c.unit_type ? (normalizeUnitType(c.unit_type) ?? c.unit_type.trim()) : null;
   const wantFloor = c.floor ? normalizeFloor(c.floor) : null;
   const notFloors = new Set((c.exclude_floors ?? []).map(normalizeFloor).filter(Boolean));
-  const feats = resolveFeatures(c.features);
+  const feats0 = resolveFeatures(c.features);
+  const amen = splitAmenities(feats0.unknown);
+  const feats = { known: feats0.known, unknown: amen.unknown };
+  let projectAmenities: UnitSearch['project_amenities'];
+  if (amen.asks.length) {
+    const { data: p, error: pErr } = await svc.from('records').select('data').eq('id', projectId).maybeSingle();
+    if (pErr) throw new Error(`units: project read failed: ${pErr.message}`);
+    const d = ((p as { data?: Record<string, unknown> } | null)?.data ?? {}) as Record<string, unknown>;
+    projectAmenities = { asked: amenityAnswers(d, amen.asks), listed: amenityLabels(d) };
+  }
 
   const matched = all
     .filter((u) => {
@@ -145,6 +158,7 @@ export async function searchUnits(svc: SupabaseClient, projectId: string, c: Uni
       matched: feats.known, unknown: feats.unknown,
       units_without_component_data: [...comps.values()].filter((l) => l.length === 0).length,
     } } : {}),
+    ...(projectAmenities ? { project_amenities: projectAmenities } : {}),
     facets: {
       bedrooms: tally(all.map((u) => u.bedrooms)),
       types: tally(all.map((u) => u.type)),
@@ -167,6 +181,7 @@ export function unitSearchView(r: UnitSearch): Record<string, unknown> {
     matched: r.matched,
     showing: r.units.length,
     ...(r.features ? { features: r.features } : {}),
+    ...(r.project_amenities ? { project_amenities: r.project_amenities } : {}),
     units: r.units.map((u) => ({
       unit_id: u.id, code: u.code, type: u.type, bedrooms: u.bedrooms, bathrooms: u.bathrooms,
       area_m2: u.area === null ? null : Math.round(u.area), price: u.price, floor: u.floor,
