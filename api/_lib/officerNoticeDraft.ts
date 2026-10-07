@@ -23,7 +23,7 @@
  * as the «إشعار المسؤول» button), and a cooldown: no new draft for the same
  * client × officer while one is pending or was sent in the last N days.
  */
-import { type Rec, type Svc, idList, str, loadRecord, resolvePortals } from './leadPortals.js';
+import { type Rec, type Svc, idList, str, loadRecord, resolvePortals, withPhonePrefix } from './leadPortals.js';
 import { resolveProjectOfficers } from './projectOfficers.js';
 
 export type OfficerDraftResult =
@@ -31,14 +31,15 @@ export type OfficerDraftResult =
   | { status: 'wait_portal' }
   | { status: 'no_officer' | 'cooldown' | 'missing_record' | 'no_phone'; reason?: string };
 
-/** A KSA mobile in E.164 (+9665XXXXXXXX) → the local 05XXXXXXXX a person writes. */
-function localPhone(v: string): string {
-  const digits = v.replace(/\D/g, '');
+/** A KSA mobile → the local 05XXXXXXXX a person writes. Stored numbers often
+ *  carry no prefix («5XXXXXXXX»); those are Saudi and get it first. */
+export function localPhone(v: string): string {
+  const digits = withPhonePrefix(v).replace(/\D/g, '');
   const m = /^(?:00)?966(5\d{8})$/.exec(digits);
   return m ? `0${m[1]}` : v.trim();
 }
 
-function officerChatWid(phone: string): string | null {
+export function officerChatWid(phone: string): string | null {
   let d = phone.replace(/\D/g, '');
   if (d.startsWith('00')) d = d.slice(2);
   if (d.startsWith('0')) d = `966${d.slice(1)}`;
@@ -46,7 +47,7 @@ function officerChatWid(phone: string): string | null {
   return /^\d{10,15}$/.test(d) ? `${d}@c.us` : null;
 }
 
-function projectName(p: Rec): string {
+export function projectName(p: Rec): string {
   return str(p.data?.project_name) || str(p.data?.name) || '—';
 }
 
@@ -321,7 +322,7 @@ export function describeInterest(r: {
  * the project's links (v_project_interest, every chat of this client), a visit
  * or booked appointment, and the topics they asked about.
  */
-async function interestWhy(svc: Svc, clientId: string, projectId: string, chatWid: string | null): Promise<InterestWhy> {
+export async function interestWhy(svc: Svc, clientId: string, projectId: string, chatWid: string | null): Promise<InterestWhy> {
   const [{ data, error }, { data: links, error: lErr }, booking] = await Promise.all([
     svc.from('v_client_project_interest')
       .select('appointments, visits, message_level, message_quote')

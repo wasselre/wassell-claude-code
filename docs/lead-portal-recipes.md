@@ -60,6 +60,16 @@ then available to the recipe as `{{lead.<key>}}`.
 - If the field is empty, the two defaults above (`name` + `phone`) are used.
 - `lead.project_name` is always available even if not declared.
 
+### Phone fields — prefix and `phone_country` (2026-10-07)
+
+A `"type": "phone"` field's prefill always carries a country prefix: a stored
+number without one («5XXXXXXXX», «05XXXXXXXX») is Saudi and gets +966; a number
+with a code keeps it. `"phone_country": "966"` declares the only country the
+portal's form takes (Al Ramz: a fixed «+966» box) — any other country is refused
+before the run, with a failed row naming the number, so no SMS code is spent.
+In the recipe keep typing `{{lead.phone|ksa_short}}`; the filters accept the
+prefixed form.
+
 ### Projects a portal does not list — `allow_unlisted` (2026-10-05)
 
 On the project field, `"allow_unlisted": true` means the portal accepts a stand-in: a client whose project is not one of the field's `options` is sent under its `default`, and a notes field should name the real project, e.g. `"source": "template:المشروع المطلوب للعميل: {project.project_name}"`. Without it the high-interest path refuses rather than send the client under another project (the strict-project rule). All three use it (operator, 2026-10-05). Stand-ins: Al Ramz «تل الربوة 1»; Safa «صفا 101» (Safa id 108); Riva «أكنان 23» — Safa's and Riva's chosen as the project with the most available units that day.

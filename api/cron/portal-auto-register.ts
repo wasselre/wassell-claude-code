@@ -42,6 +42,7 @@
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import {
   LEAD_PORTALS_MODEL_ID, type Rec, idList, str, loadRecord, resolvePortals, wakeWorker, registeredByUs, isAlreadyRegisteredError,
+  phoneCountryProblem,
 } from '../_lib/leadPortals.js';
 
 export const config = { runtime: 'edge' };
@@ -224,12 +225,15 @@ export default async function handler(req: Request): Promise<Response> {
         const projectName = str(project.data?.project_name);
         if (projectName) lead.project_name = projectName;
 
-        if (missing.length > 0) {
+        // A portal whose phone box takes one country only cannot take a
+        // foreign number — refuse before signing in (no SMS code burned).
+        const phoneProblem = missing.length === 0 ? phoneCountryProblem(portal.fields, lead, portal.name) : null;
+        if (missing.length > 0 || phoneProblem) {
           // Leave a visible failed row so the gap shows in the client's portal
           // history (and so the next tick does not try again).
           const labels = portal.fields.filter((f) => missing.includes(f.key));
-          const errAr = `لم يُسجَّل العميل تلقائياً — حقول ناقصة: ${labels.map((f) => f.label_ar).join('، ')}`;
-          const errEn = `Automatic registration skipped — missing fields: ${labels.map((f) => f.label_en).join(', ')}`;
+          const errAr = phoneProblem ? phoneProblem.ar : `لم يُسجَّل العميل تلقائياً — حقول ناقصة: ${labels.map((f) => f.label_ar).join('، ')}`;
+          const errEn = phoneProblem ? phoneProblem.en : `Automatic registration skipped — missing fields: ${labels.map((f) => f.label_en).join(', ')}`;
           const now = new Date().toISOString();
           const { error: insErr } = await svc.from('portal_registration_jobs').insert({
             portal_record_id: portal.id,

@@ -16,6 +16,11 @@
  *   3. OFFICER (draft for approval): each interest event gets ONE draft message
  *      to the project's officer, held in ai_actions until the operator approves
  *      it in the Work Queue's AI tab (api/_lib/officerNoticeDraft.ts).
+ *   3c. OFFICER ON REGISTRATION (automatic, 2026-10-07): a client registered in
+ *      a portal whose `notify_officer_on_register` box is ticked (Al Ramz) →
+ *      the project's officer is told from the operations line, no approval
+ *      (api/_lib/officerRegistrationNotice.ts). The one officer message that
+ *      does not wait for the operator.
  *   4. FOLLOW-UPS (draft for approval): due WhatsApp follow-ups get a message
  *      written by the AI (api/_lib/salesAgent/followupDraft.ts), held in
  *      ai_actions the same way. Capped per day; one draft per follow-up round.
@@ -25,8 +30,8 @@
  *      drafted in their OWN pass before step 4 — never limited by the daily
  *      cap, and drafted even though the lead has an open call (that is the plan).
  *
- * Nothing here sends a WhatsApp. Sending happens only when the operator
- * approves (/api/ai-actions).
+ * Apart from 3c, nothing here sends a WhatsApp. Sending happens only when the
+ * operator approves (/api/ai-actions).
  *
  * Budget: no follow-up draft STARTS after TIME_BUDGET_MS (one draft is one
  * model call, up to ~60 s). Auth: Bearer $CRON_SECRET or ?secret=.
@@ -39,6 +44,8 @@ import { makeServiceClient } from '../_lib/serviceClient.js';
 import { LEAD_PORTALS_MODEL_ID, type Rec } from '../_lib/leadPortals.js';
 import { registerOnInterest, isTransientPortalFailure, RETRY_AFTER_MS } from '../_lib/portalInterest.js';
 import { draftOfficerNotice, refreshPendingNotice } from '../_lib/officerNoticeDraft.js';
+import { sendRegistrationNotices } from '../_lib/officerRegistrationNotice.js';
+import { resolveOperationsDeviceId } from '../_lib/whatsappGateway.js';
 import { draftFollowupMessage } from '../_lib/salesAgent/followupDraft.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
@@ -184,14 +191,14 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       // portal (registerOnInterest → interestRetry decides). Only the pair's
       // LATEST job counts, so a pair already retried or registered is left alone.
       const { data: failedJobs, error: fErr } = await svc.from('portal_registration_jobs')
-        .select('id, interest_id, client_record_id, portal_record_id, error_message, finished_at, created_at')
+        .select('id, interest_id, client_record_id, portal_record_id, error_message, finished_at, created_at, phase')
         .eq('origin', 'auto').eq('status', 'failed').not('interest_id', 'is', null)
         .gte('finished_at', new Date(Date.now() - 3 * 86_400_000).toISOString())
         .lte('finished_at', new Date(Date.now() - RETRY_AFTER_MS).toISOString())
         .order('finished_at', { ascending: true }).limit(50);
       if (fErr) throw new Error(`failed portal jobs read failed: ${fErr.message}`);
-      const retryable = ((failedJobs ?? []) as Array<{ id: string; interest_id: string; client_record_id: string; portal_record_id: string; error_message: string | null; created_at: string }>)
-        .filter((j) => isTransientPortalFailure(j.error_message));
+      const retryable = ((failedJobs ?? []) as Array<{ id: string; interest_id: string; client_record_id: string; portal_record_id: string; error_message: string | null; created_at: string; phase: string | null }>)
+        .filter((j) => isTransientPortalFailure(j.error_message, j.phase));
       if (retryable.length) {
         const { data: later, error: lErr } = await svc.from('portal_registration_jobs')
           .select('client_record_id, portal_record_id, created_at')
@@ -270,6 +277,13 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         }
       }
       report.officer_refreshed = refreshed;
+    }
+
+    // ── 3c. Registered in a portal → the officer is told (automatic) ─────────
+    try {
+      report.officer_on_registration = await sendRegistrationNotices(svc, { dryRun, operationsDeviceId: resolveOperationsDeviceId });
+    } catch (err) {
+      fail('officer notice on registration', err);
     }
 
     // ── 3b. Follow-up results the AI records itself (no rep confirm) ─────────

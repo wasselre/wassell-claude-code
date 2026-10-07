@@ -55,7 +55,7 @@ import { makeServiceClient } from './_lib/serviceClient.js';
 import {
   type Svc, type Rec,
   str, idList, parseFields, checkRecipe, loadRecord, resolvePortals, wakeWorker,
-  registeredByUs, isAlreadyRegisteredError,
+  registeredByUs, isAlreadyRegisteredError, withPhonePrefix, phoneCountryProblem,
 } from './_lib/leadPortals.js';
 import {
   listClientRegistrations, loadRegistration, updateRegistration, addRegistration,
@@ -248,10 +248,16 @@ export default async function handler(req: Request): Promise<Response> {
           const { fields } = parseFields(pd.required_fields);
           const lead: Record<string, string> = {};
           for (const f of fields) {
-            const v = str((body.lead ?? {})[f.key]).trim();
+            let v = str((body.lead ?? {})[f.key]).trim();
+            if (f.type === 'phone') v = withPhonePrefix(v);
             if (f.required && !v) return jsonError(400, `missing required field: ${f.key}`);
             if (v) lead[f.key] = v;
           }
+          // A portal whose phone box takes one country only (Al Ramz: +966)
+          // cannot take a foreign number — say so now instead of a run that
+          // signs in, burns an SMS code and dies on the portal's own error.
+          const phoneProblem = phoneCountryProblem(fields, lead, str(pd.name) || 'portal');
+          if (phoneProblem) return jsonError(400, `${phoneProblem.ar}\n${phoneProblem.en}`);
           // Keep any extra keys the modal sent (project_name etc.) as plain strings.
           for (const [k, v] of Object.entries(body.lead ?? {})) {
             if (!(k in lead) && typeof v === 'string' && v.trim()) lead[k] = v.trim();

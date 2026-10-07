@@ -46,6 +46,13 @@ export interface PortalFieldSpec {
    *  REQUIRED field that resolves to nothing still blocks the run (the modal
    *  names it so the rep can fix the client record). */
   hidden?: boolean;
+  /** Phone fields: the ONLY country code the portal's form takes (digits, e.g.
+   *  "966"). Al Ramz's phone box is a fixed «+966» plus 9 digits — a +20 or
+   *  +970 number cannot be entered at all (2026-10-05/06: three Egyptian and
+   *  three Palestinian runs each signed in, burned an SMS code, and died on
+   *  "The phone field format is invalid"). A number of another country is
+   *  refused BEFORE the run starts (see phoneCountryProblem). */
+  phone_country?: string;
 }
 
 export interface PortalOption {
@@ -134,9 +141,53 @@ export function parseFields(raw: unknown): { fields: PortalFieldSpec[]; error: s
       min_length: typeof o.min_length === 'number' && o.min_length > 0 ? o.min_length : undefined,
       fallback_source: str(o.fallback_source) || undefined,
       hidden: o.hidden === true,
+      phone_country: str(o.phone_country).replace(/\D/g, '') || undefined,
     });
   }
   return { fields: fields.length ? fields : DEFAULT_FIELDS, error: null };
+}
+
+/**
+ * A client phone with its country prefix (operator, 2026-10-07: "if there is
+ * no prefix, then add the prefix"). Most clients are stored WITHOUT one —
+ * «5XXXXXXXX» (602 of ~1,000 on that day) or «05XXXXXXXX» — and those are
+ * Saudi mobiles, so they get +966. A number that already carries a code
+ * (+20…, 00971…, or a bare international «96598881178») keeps it; anything
+ * unrecognisable is returned trimmed, unchanged.
+ */
+export function withPhonePrefix(v: string): string {
+  const raw = v.trim();
+  if (!raw) return '';
+  const d = raw.replace(/\D/g, '');
+  if (!d) return raw;
+  if (raw.startsWith('+')) return `+${d}`;
+  if (d.startsWith('00')) return `+${d.slice(2)}`;
+  if (/^05\d{8}$/.test(d)) return `+966${d.slice(1)}`;
+  if (/^5\d{8}$/.test(d)) return `+966${d}`;
+  if (d.length >= 11) return `+${d}`;
+  return raw;
+}
+
+/**
+ * The phone a portal cannot take, or null. Only fields that declare
+ * `phone_country` are checked, after the prefix is added, so a stored
+ * «558992913» passes as +966 and only a real foreign number is refused.
+ */
+export function phoneCountryProblem(
+  fields: readonly PortalFieldSpec[],
+  lead: Record<string, string>,
+  portalName: string,
+): { ar: string; en: string } | null {
+  for (const f of fields) {
+    if (f.type !== 'phone' || !f.phone_country) continue;
+    const v = withPhonePrefix(lead[f.key] ?? '');
+    if (!v || v.startsWith(`+${f.phone_country}`)) continue;
+    return {
+      ar: `لم يُسجَّل العميل — رقمه ${v} ليس برمز +${f.phone_country}، وبوابة ${portalName} لا تقبل إلا أرقام +${f.phone_country}. سجّله يدوياً برقم +${f.phone_country} إن كان لديه.`,
+      en: `Not registered — the client's number ${v} is not a +${f.phone_country} number, and ${portalName} only accepts +${f.phone_country} numbers. Register by hand with a +${f.phone_country} number if the client has one.`,
+    };
+  }
+  return null;
 }
 
 /** A record value → the string a form wants. Arrays (multiselect / multi
@@ -184,6 +235,7 @@ export function prefillField(
     v = localKsaPhone(resolveSource(f.fallback_source, ctx).trim());
   }
   if (v && f.map && f.map[v] != null) v = f.map[v]!;
+  if (f.type === 'phone') v = withPhonePrefix(v);
   if (f.type === 'select' && f.options?.length) {
     if (v && !f.options.some((o) => o.value === v)) {
       const byLabel = f.options.find((o) => o.label_ar === v || o.label_en === v);

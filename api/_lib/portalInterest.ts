@@ -10,8 +10,14 @@
  *     refuse a phone they already hold, so there is nothing more to send;
  *   · a run for the pair is already live → IN PROGRESS;
  *   · an earlier INTEREST run for the pair exists → not tried again, UNLESS it
- *     failed because the portal or the browser misbehaved (a timeout…): then
- *     it is retried ≥ 20 min later, up to 3 interest attempts (interestRetry);
+ *     failed because the portal or the browser misbehaved (a timeout…) BEFORE
+ *     the submit: then it is retried ≥ 20 min later, up to 3 interest attempts
+ *     (interestRetry). A run that died after reaching the submit ('committing')
+ *     is never retried — the portal answered something the recipe did not
+ *     recognise, or the client may already be in;
+ *   · a portal whose phone field takes one country only (`phone_country`) and
+ *     a client of another country → a FAILED row naming it, no run (the run
+ *     would sign in and burn an SMS code for a form that cannot take it);
  *   · otherwise a run is queued exactly like the ad sweep's (origin 'auto' so
  *     the OTP relay works, owner = the client's owner), tagged with interest_id.
  *
@@ -27,6 +33,7 @@
  */
 import {
   type Rec, type Svc, idList, str, loadRecord, resolvePortals, prefillField, wakeWorker, isAlreadyRegisteredError,
+  phoneCountryProblem,
 } from './leadPortals.js';
 
 export type PortalOutcome =
@@ -40,7 +47,7 @@ export interface InterestRegistration {
 
 const LIVE = ['queued', 'running', 'awaiting_input'];
 
-interface JobRow { id: string; status: string; interest_id: string | null; error_message: string | null; finished_at: string | null }
+interface JobRow { id: string; status: string; interest_id: string | null; error_message: string | null; finished_at: string | null; phase?: string | null }
 
 /** Interest attempts per client × portal, counting the first. */
 export const MAX_INTEREST_ATTEMPTS = 3;
@@ -53,10 +60,17 @@ export const RETRY_AFTER_MS = 20 * 60_000;
  * client, and the same recipe registered the next client 4 minutes later; the
  * first client was never tried again. A missing project / missing fields row
  * (written by this file, «لم يُسجَّل…») is NOT transient.
+ *
+ * Nor is ANY failure after the submit (`phase` 'committing' — the worker sets
+ * it when the recipe enters its last phase). There a "timeout" means the
+ * portal answered with something the recipe did not recognise: 2026-10-05→07
+ * Al Ramz refused a foreign number and a client held by another broker, the
+ * final wait timed out, and each client was retried 3× — 3 SMS codes each —
+ * for the same refusal. A retry after the submit could also register twice.
  */
-export function isTransientPortalFailure(message: string | null): boolean {
+export function isTransientPortalFailure(message: string | null, phase?: string | null): boolean {
   const m = message ?? '';
-  if (!m || m.startsWith('لم يُسجَّل')) return false;
+  if (!m || m.startsWith('لم يُسجَّل') || phase === 'committing') return false;
   return /timeout|timed out|net::err|target (page|closed)|browser has been closed|session (closed|expired)|econnreset|socket hang up|navigation failed/i.test(m);
 }
 
@@ -71,7 +85,7 @@ export function isTransientPortalFailure(message: string | null): boolean {
 export function interestRetry(interestJobs: readonly JobRow[], now = Date.now()): 'go' | 'later' | 'used' {
   if (interestJobs.length === 0) return 'go';
   if (interestJobs.length >= MAX_INTEREST_ATTEMPTS) return 'used';
-  if (interestJobs.some((j) => j.status !== 'failed' || !isTransientPortalFailure(j.error_message))) return 'used';
+  if (interestJobs.some((j) => j.status !== 'failed' || !isTransientPortalFailure(j.error_message, j.phase))) return 'used';
   const last = Math.max(...interestJobs.map((j) => (j.finished_at ? Date.parse(j.finished_at) : now)));
   return now - last < RETRY_AFTER_MS ? 'later' : 'go';
 }
@@ -117,7 +131,7 @@ export async function registerOnInterest(
 
     const { data: jobs, error: jobsErr } = await svc
       .from('portal_registration_jobs')
-      .select('id, status, interest_id, error_message, finished_at')
+      .select('id, status, interest_id, error_message, finished_at, phase')
       .eq('client_record_id', args.clientId)
       .eq('portal_record_id', portal.id);
     if (jobsErr) throw new Error(`existing-job check failed: ${jobsErr.message}`);
@@ -173,12 +187,13 @@ export async function registerOnInterest(
     const projectName = str(project.data?.project_name);
     if (projectName) lead.project_name = projectName;
 
-    if (missing.length > 0) {
+    const phoneProblem = missing.length === 0 ? phoneCountryProblem(portal.fields, lead, portal.name) : null;
+    if (missing.length > 0 || phoneProblem) {
       const labels = portal.fields.filter((f) => missing.includes(f.key));
-      const errAr = projectGap
+      const errAr = phoneProblem ? phoneProblem.ar : projectGap
         ? `لم يُسجَّل العميل — المشروع «${projectName || '—'}» غير موجود في قائمة مشاريع بوابة ${portal.name}`
         : `لم يُسجَّل العميل تلقائياً — حقول ناقصة: ${labels.map((f) => f.label_ar).join('، ')}`;
-      const errEn = projectGap
+      const errEn = phoneProblem ? phoneProblem.en : projectGap
         ? `Not registered — project "${projectName || '—'}" is not on the ${portal.name} project list`
         : `Automatic registration skipped — missing fields: ${labels.map((f) => f.label_en).join(', ')}`;
       const { error: insErr } = await svc.from('portal_registration_jobs').insert({
