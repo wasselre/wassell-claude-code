@@ -171,6 +171,25 @@ export function resolveWahaPhone(msg: WahaMessageRaw): string | null {
  * one (live 2026-07-27). Inbound never hit this because SenderAlt is usually
  * present — the resolution was one-legged, not absent.
  */
+/**
+ * True for WhatsApp Status posts and broadcast-list messages, which are not
+ * conversations and must not be ingested as chats (WA-23).
+ *
+ * WAHA message ids look like `<true|false>_<chatId>_<hash>[_<participant>]`,
+ * so a status post's id is `false_status@broadcast_3EB0..._9665...@c.us` -- the
+ * chat id is followed by `_`. A plain `\b` after "broadcast" can never match
+ * there (`t` and `_` are both word characters), so the id test requires the
+ * chat id to end at `_` or end-of-string instead. Until 2026-10-07 this regex
+ * held a literal BACKSPACE byte where `\b` was meant, so only the `from` half
+ * of the filter ever worked (outbound status posts, whose `from` is our own
+ * number, slipped past it).
+ */
+export function isStatusOrBroadcastMessage(id: unknown, from: unknown): boolean {
+  const rawId = String(id ?? '');
+  const rawFrom = String(from ?? '');
+  return /@(status|broadcast)(_|$)/.test(rawId) || /@(status|broadcast)$/.test(rawFrom);
+}
+
 export function resolveWahaCounterpartyPhone(msg: WahaMessageRaw, flow: 'in' | 'out'): string | null {
   if (flow === 'in') return resolveWahaPhone(msg);
   const info = msg._data?.Info;

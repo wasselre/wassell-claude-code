@@ -33,7 +33,7 @@ import {
   type ChatMessageRow,
 } from '../_lib/chatIngest.js';
 import { wakeWorker } from '../_lib/leadPortals.js';
-import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, mirrorWahaHostedMedia, recoverWahaText, getGroupSubject, type WahaMessageRaw } from '../_lib/waha.js';
+import { resolveWahaCounterpartyPhone, resolveLidToPhone, extractAdReferral, mirrorWahaHostedMedia, recoverWahaText, getGroupSubject, isStatusOrBroadcastMessage, type WahaMessageRaw } from '../_lib/waha.js';
 
 export const config = {
   runtime: 'edge',
@@ -166,8 +166,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // created customer-looking chats in the list — 9 of them — and one shadowed a
   // real contact's phone, so the same person appeared twice with the status row
   // outranking the actual conversation (WA-23).
-  const rawId = String(p.id ?? '');
-  if (/@(status|broadcast)/.test(rawId) || /@(status|broadcast)$/.test(String(p.from ?? ''))) {
+  if (isStatusOrBroadcastMessage(p.id, p.from)) {
     return;
   }
 
