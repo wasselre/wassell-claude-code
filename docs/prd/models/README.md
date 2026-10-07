@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [Advertisers](advertisers.md) | `advertisers` | JSONB | — | 1 | 10 | no | 2026-07-01 |
 | [AI Agent](ai-chats.md) | `ai_chats` | JSONB | — | 1 | 5 | yes | 2026-10-04 |
-| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 73 | no | 2026-09-29 |
+| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 10 | 74 | no | 2026-10-07 |
 | [Appointments](appointments.md) | `appointments` | JSONB | — | 1 | 11 | no | 2026-10-04 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | — | 1 | 13 | yes | 2026-09-27 |
 | [Chats](chats.md) | `chats` | JSONB | — | 1 | 15 | yes | 2026-10-04 |
@@ -29,7 +29,7 @@
 | [Follow-ups](followups.md) | `followups` | JSONB | — | 3 | 44 | no | 2026-10-04 |
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-09-20 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |
-| [Lead portals](lead-portals.md) | `lead_portals` | JSONB | — | 2 | 25 | no | 2026-10-05 |
+| [Lead portals](lead-portals.md) | `lead_portals` | JSONB | — | 2 | 26 | no | 2026-10-07 |
 | [Market Listings](market-listings.md) | `market_listings` | frozen `market_listings` | — | 8 | 86 | no | 2026-09-20 |
 | [Sales Assistant](matching-chats.md) | `matching_chats` | JSONB | — | 1 | 4 | no | 2026-09-20 |
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | — | 1 | 9 | no | 2026-10-04 |

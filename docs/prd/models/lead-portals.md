@@ -5,7 +5,7 @@
 # Model: Lead portals / بوابات تسجيل العملاء  `lead_portals`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-10-05
+**Last updated (from DB):** 2026-10-07
 **Model id:** `1ead0000-0000-4000-8000-000000000001`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **2** (2 base, 0 non-base)
-- Fields: **25**
+- Fields: **26**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -80,6 +80,7 @@
 | `browserbase_session_reused_at` | Last login reuse / آخر إعادة استخدام للجلسة | Date & time | no | half | no |  |
 | `browserbase_login_survived_s` | Observed login lifetime (seconds) / مدة بقاء الدخول بالثواني | Number | no | half | no |  |
 | `inventory_capture_enabled` | Capture unit inventory daily / حفظ مخزون الوحدات يومياً | Checkbox | no | half | no |  |
+| `notify_officer_on_register` | Tell the officer automatically after registering / إشعار المسؤول تلقائياً بعد التسجيل | Checkbox | no | half | no |  |
 
 **Field details:**
 

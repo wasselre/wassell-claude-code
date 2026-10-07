@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-09-29
+**Last updated (from DB):** 2026-10-07
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **10** (1 base, 9 non-base)
-- Fields: **73**
+- Fields: **74**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 1
@@ -193,6 +193,7 @@
 | `available_price_range` | Available Price Range / نطاق سعر الوحدات المتاحة | Range | no | half | no | 30000–1000000 |
 | `available_area_range` | Available Area Range / نطاق مساحة الوحدات المتاحة | Range | no | half | no | 50–10000 |
 | `available_native_price_range` | Available Price Range (Developer Currency) / نطاق سعر الوحدات المتاحة (عملة المطور) | Range | no | half | no | 30000–1000000 |
+| `unit_features` | Available Unit Features / مكونات الوحدات المتاحة | Multi-select | no | full | no | 29 options · multi |
 
 **Field details:**
 
@@ -231,6 +232,37 @@
 - **Available Price Range (Developer Currency) / نطاق سعر الوحدات المتاحة (عملة المطور)** (`available_native_price_range`, type `range`):
   - 30000 to 1000000 step 10000 SAR
   - stored rollup (`available_native_price_range`), read-only
+- **Available Unit Features / مكونات الوحدات المتاحة** (`unit_features`, type `multiselect`) — multi-value. Options:
+  - API value `صالة جلوس` → "Living Room" / "صالة جلوس"
+  - API value `مجلس` → "Majlis" / "مجلس"
+  - API value `غرفة سائق` → "Driver Room" / "غرفة سائق"
+  - API value `صالة طعام` → "Dining Room" / "صالة طعام"
+  - API value `غرفة خادمة` → "Maid Room" / "غرفة خادمة"
+  - API value `بلكونة` → "Balcony" / "بلكونة"
+  - API value `غرفة خدمات` → "Utility Room" / "غرفة خدمات"
+  - API value `فناء خارجي` → "Outdoor Yard" / "فناء خارجي"
+  - API value `غرفة غسيل` → "Laundry Room" / "غرفة غسيل"
+  - API value `مطبخ` → "Kitchen" / "مطبخ"
+  - API value `ملابس` → "Walk-in Closet" / "ملابس"
+  - API value `سطح` → "Rooftop" / "سطح"
+  - API value `مستودع` → "Storage Room" / "مستودع" · color `#F59E0B`
+  - API value `تراس` → "Terrace" / "تراس" · color `#EF4444`
+  - API value `مصعد` → "Elevator" / "مصعد" · color `#8B5CF6`
+  - API value `حديقة` → "Garden" / "حديقة" · color `#EC4899`
+  - API value `غرفة-نوم-رييسية` → "Master Bedroom" / "غرفة نوم رئيسية" · color `#06B6D4`
+  - API value `فتحة-سماوية` → "Skylight" / "فتحة سماوية" · color `#84CC16`
+  - API value `مطبخ-مجهز-مسبقا` → "Pre-fitted Kitchen" / "مطبخ مُجهَّز مسبقاً" · color `#F97316`
+  - API value `بيت-ذكي` → "Smart Home" / "بيت ذكي" · color `#6366F1`
+  - API value `تكييف-مخفي-مجهز-مسبقا` → "Pre-installed Concealed A/C" / "تكييف مخفي مُجهَّز مسبقاً" · color `#3B82F6`
+  - API value `حمام-ضيوف` → "Guest Bathroom" / "حمام ضيوف" · color `#10B981`
+  - API value `حمام-رييسي` → "Master Bathroom" / "حمام رئيسي" · color `#F59E0B`
+  - API value `حمام-غرفة-النوم-الرييسية` → "En-suite Bathroom" / "حمام غرفة النوم الرئيسية" · color `#EF4444`
+  - API value `مدخل-خاص` → "Private Entrance" / "مدخل خاص" · color `#8B5CF6`
+  - API value `مدخل-جانبي` → "Side Entrance" / "مدخل جانبي" · color `#EC4899`
+  - API value `سيب-خاص` → "Private utility yard" / "سيب خاص" · color `#9CA3AF`
+  - API value `مؤثثة` → "Furnished" / "مؤثثة" · color `#C09B5F`
+  - API value `مكنسة-مركزية` → "Central Vacuum" / "مكنسة مركزية" · color `#C09B5F`
+  - stored rollup (`unit_components`), read-only
 
 ### 4. Payment & Handover / الدفع والتسليم  _(color #B8734F)_
 
