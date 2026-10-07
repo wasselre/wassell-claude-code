@@ -115,3 +115,21 @@ describe('price per unit type', () => {
     expect(f.area_to).toBe(280);
   });
 });
+
+describe('replay round 2 (2026-10-07)', () => {
+  const base = { grounded: new Set<number>() };
+  it('blocks raw thinking and third-person notes in both languages', () => {
+    expect(checkReply('<thinking>The customer just said thanks.</thinking> You are welcome!', { ...base, lang: 'en' }).ok).toBe(false);
+    expect(checkReply('العميل أبلغ أنه غير مهتم حالياً، فأنهيت المحادثة. هذا الرد اللي ينرسل له', { ...base, lang: 'ar' }).ok).toBe(false);
+  });
+  it('a normal reply that mentions our clients is fine', () => {
+    expect(checkReply('أبشر، عملاؤنا يزورون المشروع يومياً، يناسبك بكرة؟', { ...base, lang: 'ar' }).ok).toBe(true);
+  });
+  it('«954 ألف و450» is the grounded 954,450, not an unknown 450', async () => {
+    const { groundedNumbers } = await import('../guard');
+    expect(checkReply('شقة 136 متر بـ954 ألف و450، ودك تزورها؟', { lang: 'ar', grounded: groundedNumbers([{ price: 954450, area: 136 }]) }).ok).toBe(true);
+  });
+  it('names written in Latin letters', () => {
+    for (const n of ['LaLa', 'Lolo', 'Haneen', 'Nadeen', 'Razane', 'Ola', 'ميرا', 'حنين']) expect(genderFromName(n), n).toBe('f');
+  });
+});

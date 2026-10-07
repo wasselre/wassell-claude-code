@@ -71,6 +71,9 @@ export function groundedNumbers(sources: unknown[]): Set<number> {
     if (Math.abs(n) >= 1000) {
       out.add(Math.round(n / 1000));
       out.add(Math.floor(n / 1000));
+      // «954 ألف و450» for 954,450 — the remainder is part of the same price
+      // (replay 2026-10-07: a correct reply was refused and the customer got none).
+      if (n % 1000) out.add(Math.round(n % 1000));
     }
     if (Math.abs(n) >= 1_000_000) {
       out.add(r(n / 1e6, 1)); out.add(r(n / 1e6, 2)); out.add(Math.floor(n / 1e6));
@@ -115,6 +118,10 @@ export function claimsPlaceDistance(text: string): boolean {
  * not see it, because the chat WAS English.
  */
 const SELF_NOTE = /\b(answer directly|sent card|card says|tool ?(result|call|output)|search (result|returned)|the (customer|client|user) (is|asked|wants|said|writes|has)|customer (asked|wants|said)|rule \d|per the rules?|state says|I (should|need to|will now|must)|let me |note:|reply:|draft:)/i;
+/** Replay 2026-10-07: «<thinking>The customer just said thanks…» and «العميل أبلغ أنه
+ *  غير مهتم… هذا الرد اللي ينرسل له» — both on turns that should have been <no_reply>.
+ *  A message TO the customer never calls them «the customer» / «العميل». */
+const SELF_NOTE_2 = /<\/?\s*(thinking|reasoning|analysis|note)\b|\bthe (customer|client)\b|(^|[\s،.:])(ال)?عميل(ة)?(?=$|[\s،.:])|هذا الرد|الرد اللي|ينرسل|أنهيت المحادثة|انهيت المحادثة/i;
 const AR_SELF_NOTE = /(العميل|العميلة) (يسأل|تسأل|يبي|تبي|يريد|تريد|طلب|طلبت|قال|قالت)|(حسب|بحسب) (الأداة|الأدوات|البيانات|النتائج|القاعدة)|ملاحظة\s*:/;
 const MORNING_GREETING = /^\s*(صباح الخير|صباح النور|good morning)/i;
 const EVENING_GREETING = /^\s*(مساك الله بالخير|مساكم الله بالخير|مسيتي بالخير|مسيت بالخير|مساء الخير|good evening)/i;
@@ -152,7 +159,7 @@ export function checkReply(text: string, opts: {
     problems.push('the message contains notes or English sentences — write only the Arabic message itself');
   }
   if (opts.lang === 'en' && arabic && latinWords < 2) problems.push('the customer writes English — reply in English');
-  if (lines.some((l) => SELF_NOTE.test(l) || AR_SELF_NOTE.test(l))) {
+  if (lines.some((l) => SELF_NOTE.test(l) || AR_SELF_NOTE.test(l) || SELF_NOTE_2.test(l))) {
     problems.push('the message contains a note to yourself (about the customer, a tool, a card or a rule) — write ONLY what the customer should read');
   }
   // «Lسه»: a Latin letter glued to an Arabic one is a typo, never a word.

@@ -27,6 +27,7 @@ const FEMALE = new Set(([
   'جيهان', 'نسرين', 'شيرين', 'ياسمين', 'افنان', 'وفاء', 'رجاء', 'صفاء', 'هناء', 'ضحي', 'اروي', 'ريهام', 'ريناد', 'ديما', 'لما',
   'تالا', 'جوري', 'جمانه', 'حلا', 'غلا', 'لولو', 'نوران', 'سجي', 'الاء', 'اسيل', 'بيان', 'سديم', 'وئام', 'هالة', 'ساره', 'نوره',
   'ساره', 'سارا', 'نورا', 'هاله', 'موزه', 'عائشه', 'فاطمه', 'حصه', 'نوال', 'منيره', 'لطيفه', 'الجوهره', 'لولوه', 'طرفه',
+  'ميرا', 'حنين', 'نادين', 'لالا', 'رزان', 'علا', 'ريما', 'دانه', 'دانا', 'رنيم', 'سلوى', 'نجوى', 'رحاب', 'ابرار', 'غيداء', 'لينه',
 ]).map(fold));
 
 /** Male first names that END in ة/ه — the exceptions to "ends in ة ⇒ female". Folded. */
@@ -42,6 +43,8 @@ const FEMALE_EN = new Set([
   'lina', 'dina', 'nada', 'hind', 'haya', 'hanan', 'asma', 'sabeena', 'sabina', 'amal', 'layla', 'leila', 'laila', 'salma', 'samar', 'nouf',
   'rawan', 'maha', 'manal', 'iman', 'eman', 'heba', 'hiba', 'yasmin', 'yasmine', 'jana', 'lama', 'ghada', 'shahad', 'abeer', 'lujain',
   'mrs', 'ms', 'miss', 'madam',
+  'lala', 'lolo', 'loulou', 'haneen', 'nadeen', 'nadine', 'habiba', 'salwa', 'mira', 'meera', 'ola', 'ula', 'razan', 'razane', 'khadija',
+  'khadejah', 'khadijah', 'ghalia', 'thurya', 'najat', 'mervat', 'taghreed', 'reema', 'rima', 'dana', 'shatha', 'wafa', 'nawal', 'arwa',
 ]);
 
 /** 'f' | 'm' from the record's name, or null when the name does not tell. */
