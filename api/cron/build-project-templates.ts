@@ -234,6 +234,12 @@ async function run(req: Request): Promise<Response> {
       let bodyEn = existingEn;
       let bodySource: string | undefined = bodyIsAi ? 'ai' : (newest?.data?.body_source as string | undefined);
       let generatedBy: string | undefined;
+      // The signature stamped on the record says "this body quotes these numbers".
+      // Stamp the NEW one only when the body really was (re)written or was already
+      // current — never on a stale body. Stamping it anyway (budget spent, AI
+      // failed) marked the old text current for good: ريّا النخيل kept «1,279,112»
+      // while its live price was 1,539,000 (review 2026-10-07).
+      let stampSig = bodyStale ? (newest?.data?.facts_sig as string | undefined) ?? null : factsSig;
 
       if (bodyStale && !dryRun && bodyBudget > 0) {
         bodyBudget--;
@@ -246,6 +252,7 @@ async function run(req: Request): Promise<Response> {
         });
         if (r.ok) {
           bodyAr = r.body_ar; bodyEn = r.body_en; bodySource = 'ai'; generatedBy = r.generated_by;
+          stampSig = factsSig;
           stats.body_generated++;
         } else {
           console.error(`[build-templates] AI body project=${projectId} failed (${r.status}): ${r.error}`);
@@ -268,7 +275,7 @@ async function run(req: Request): Promise<Response> {
         body_ar: bodyAr,
         body_en: bodyEn,
         ...(bodySource ? { body_source: bodySource } : {}),
-        facts_sig: factsSig,
+        facts_sig: stampSig,
         ...(generatedBy ? { body_generated_by: generatedBy } : {}),
         media_source: 'auto',
       };

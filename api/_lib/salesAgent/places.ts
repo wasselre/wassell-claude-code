@@ -19,6 +19,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveAnchor } from '../geoPreference/resolver.js';
 import { createSupabaseResolverDb } from '../geoPreference/resolverDb.js';
+import { districtsInText } from './districtNames.js';
 
 export type PlaceCategory = 'metro' | 'mall' | 'hospital' | 'university' | 'park';
 export const PLACE_CATEGORIES: PlaceCategory[] = ['metro', 'mall', 'hospital', 'university', 'park'];
@@ -37,6 +38,8 @@ export interface ResolvedNear {
   max_km: number;
   elementIds: string[] | null;
   elementTypes: string[] | null;
+  /** «قريب من أم الحمام» — a DISTRICT: km to its boundary (0 inside it). */
+  districtIds?: string[] | null;
 }
 
 /** City → geo_elements external_id prefix. Unknown city → none (no geography). */
@@ -70,6 +73,18 @@ export async function resolveNear(
     if (!c.place && c.category) {
       resolved.push({ label: CATEGORY_LABEL[c.category], max_km: c.max_km, elementIds: null, elementTypes: CATEGORY_TYPES[c.category] });
       continue;
+    }
+    // A district name («أم الحمام», «السليمانية») is measured to the district
+    // itself, not to a landmark that happens to share the name (a metro station
+    // is named السليمانية). Review 2026-10-07: «near Umm Al Hamam, my kids' school
+    // is there» got a made-up list of "nearest" districts — districts were never
+    // measurable before.
+    if (prefix === 'RUH' && !STATION_WORD.test(c.place!) && !ROAD_WORD.test(c.place!)) {
+      const ds = await districtsInText(svc, [c.place!]);
+      if (ds.length) {
+        resolved.push({ label: c.place!, max_km: c.max_km, elementIds: null, elementTypes: null, districtIds: ds.map((d) => d.id) });
+        continue;
+      }
     }
     const hit = await resolveNamedPlace(svc, c.place!, c.max_km, prefix);
     if (!hit) { unresolved.push(c.place!); continue; }
@@ -119,6 +134,22 @@ export async function resolveNamedPlace(
 export async function distancesFor(svc: SupabaseClient, projectIds: string[], r: ResolvedNear, prefix: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!projectIds.length) return out;
+  if (r.districtIds?.length) {
+    const points: Array<{ id: string; lat: unknown; lng: unknown }> = [];
+    for (let i = 0; i < projectIds.length; i += 150) {
+      const { data: rows, error: pErr } = await svc.from('records').select('id, lat:data->latitude, lng:data->longitude').in('id', projectIds.slice(i, i + 150));
+      if (pErr) throw new Error(`places: project points failed: ${pErr.message}`);
+      for (const p of (rows ?? []) as Array<{ id: string; lat: unknown; lng: unknown }>) points.push({ id: p.id, lat: p.lat, lng: p.lng });
+    }
+    const pieces = r.districtIds.map((id) => ({ kind: 'district', district_id: id, name: r.label }));
+    const { data: dist, error: dErr } = await svc.rpc('wassell_area_point_distances', { p_points: points, p_pieces: pieces });
+    if (dErr) throw new Error(`places: district distance failed: ${dErr.message}`);
+    for (const row of (dist ?? []) as Array<{ id: string; distance_km: number | string }>) {
+      const km = typeof row.distance_km === 'number' ? row.distance_km : parseFloat(row.distance_km);
+      if (Number.isFinite(km)) out.set(row.id, km);
+    }
+    return out;
+  }
   const { data, error } = await svc.rpc('sales_agent_project_distances', {
     p_project_ids: projectIds, p_element_ids: r.elementIds, p_element_types: r.elementTypes, p_city_prefix: prefix,
   });

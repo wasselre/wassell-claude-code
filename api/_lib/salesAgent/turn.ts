@@ -27,6 +27,7 @@ import type { Zone } from './texts.js';
 import { clip } from './clip.js';
 import { createTrackedLink, loadAvailableUnits, summarizeUnit } from '../trackedLinks.js';
 import { alertRep, askRep, bookVisit, loadChatContext, recordVisit } from './escalation.js';
+import { genderFromName } from './nameGender.js';
 import { readLocation, matchSavedPlaces } from './geoGate.js';
 import { loadSavedProfile, type SavedProfile } from './savedProfile.js';
 import { readCustomerWants, type CustomerReading } from './prefReading.js';
@@ -144,18 +145,35 @@ async function notifyRep(svc: SupabaseClient, chatWid: string, body: string): Pr
 }
 
 interface PendingAnswer { id: string; question: string; answer: string }
+interface ClosedQuestion { id: string; question: string }
 
-/** Rep answers waiting to be passed on, and questions still with a rep. */
-async function loadQuestions(svc: SupabaseClient, chatWid: string): Promise<{ pending: PendingAnswer[]; open: string[] }> {
+/** A rep's «ليس سؤالاً» older than this is not brought up with the customer. */
+const CLOSED_QUESTION_WINDOW_MS = 3 * 24 * 3_600_000;
+
+/** Rep answers waiting to be passed on, questions still with a rep, and
+ *  questions a rep CLOSED without an answer that the customer was never told
+ *  about. Review 2026-10-07: two customers were promised «بتأكد لك وأرد عليك»,
+ *  the rep dismissed the question, and nobody ever went back to them. */
+async function loadQuestions(svc: SupabaseClient, chatWid: string): Promise<{ pending: PendingAnswer[]; open: string[]; closed: ClosedQuestion[] }> {
   const { data, error } = await svc.from('wa_agent_questions')
-    .select('id, question, answer, status, relayed_at').eq('chat_wid', chatWid)
-    .in('status', ['open', 'answered']).order('created_at', { ascending: true }).limit(20);
-  if (error) { console.error('[salesAgent] questions read failed:', error.message); return { pending: [], open: [] }; }
-  const rows = (data ?? []) as Array<{ id: string; question: string; answer: string | null; status: string; relayed_at: string | null }>;
+    .select('id, question, answer, status, relayed_at, answered_at').eq('chat_wid', chatWid)
+    .in('status', ['open', 'answered', 'dismissed']).order('created_at', { ascending: true }).limit(20);
+  if (error) { console.error('[salesAgent] questions read failed:', error.message); return { pending: [], open: [], closed: [] }; }
+  const rows = (data ?? []) as Array<{ id: string; question: string; answer: string | null; status: string; relayed_at: string | null; answered_at: string | null }>;
   return {
     pending: rows.filter((r) => r.status === 'answered' && !r.relayed_at && r.answer).map((r) => ({ id: r.id, question: r.question, answer: r.answer as string })),
     open: rows.filter((r) => r.status === 'open').map((r) => r.question),
+    closed: rows.filter((r) => r.status === 'dismissed' && !r.relayed_at && r.answered_at
+      && Date.now() - new Date(r.answered_at).getTime() < CLOSED_QUESTION_WINDOW_MS).map((r) => ({ id: r.id, question: r.question })),
   };
+}
+
+/** Did the customer write again after `sinceIso`? (a reply drafted before it is stale) */
+async function customerWroteSince(svc: SupabaseClient, chatWid: string, sinceIso: string): Promise<boolean> {
+  const { data, error } = await svc.from('chat_messages').select('id')
+    .eq('chat_wid', chatWid).eq('flow', 'in').gt('date', sinceIso).limit(1);
+  if (error) { console.error('[salesAgent] newer-message check failed (sending anyway):', error.message); return false; }
+  return (data ?? []).length > 0;
 }
 
 function slotsSummary(s: Slots): string {
@@ -248,9 +266,9 @@ export async function runAgentTurn(
   } else {
     ({ turns, newestCustomerAt, deviceId, newCustomerText, lastOursAt } = await loadRecentTurns(svc, chatWid, sinceIso));
   }
-  const questions = sim ? { pending: [], open: [] } : await loadQuestions(svc, chatWid);
+  const questions = sim ? { pending: [], open: [], closed: [] } : await loadQuestions(svc, chatWid);
   const hasNew = turns.some((t) => t.isNew && t.who === 'customer');
-  if (!hasNew && !questions.pending.length) return { skipped: 'nothing_new' };
+  if (!hasNew && !questions.pending.length && !questions.closed.length) return { skipped: 'nothing_new' };
 
   // ── Brain (v2): writes its own reply, narrows, answers from facts ─────────
   // v1 below is the fallback: it runs only when the brain failed BEFORE any side
@@ -261,7 +279,7 @@ export async function runAgentTurn(
         chatWid, conv, turns, newestCustomerAt, deviceId, newCustomerText, lastOursAt, dryRun,
         model: settings?.agent_model || 'claude-opus-5-5',
         effort: settings?.agent_effort ?? 'low',
-        pending: questions.pending, openQuestions: questions.open, hasNew,
+        pending: questions.pending, openQuestions: questions.open, closedQuestions: questions.closed, hasNew,
       });
     } catch (err) {
       if (!(err instanceof BrainError) || err.sideEffects) throw err;
@@ -469,7 +487,7 @@ async function runBrainTurn(
     chatWid: string; conv: AgentConversation; turns: ChatTurn[]; newestCustomerAt: string | null;
     deviceId: string | null; newCustomerText: string; lastOursAt: string | null; dryRun: boolean;
     model: string; effort: 'low' | 'medium' | 'high';
-    pending: PendingAnswer[]; openQuestions: string[]; hasNew: boolean;
+    pending: PendingAnswer[]; openQuestions: string[]; closedQuestions: ClosedQuestion[]; hasNew: boolean;
   },
 ): Promise<TurnResult> {
   const { chatWid, conv, dryRun } = a;
@@ -531,8 +549,12 @@ async function runBrainTurn(
   // already know. A failed read only costs this turn that context — logged.
   let saved: SavedProfile | null = null;
   let runClientId: string | null = null;
+  let nameGender: 'f' | 'm' | null = null;
   try {
-    runClientId = (await loadChatContext(svc, chatWid)).clientId;
+    const chatCtx = await loadChatContext(svc, chatWid);
+    runClientId = chatCtx.clientId;
+    // The client record's name first (a rep typed it), else the WhatsApp name.
+    nameGender = genderFromName(chatCtx.clientName) ?? genderFromName(chatCtx.name);
     saved = await loadSavedProfile(svc, runClientId);
     if (saved?.line) stateLines.push(saved.line);
     if (saved) stateLines.push(saved.checklist);
@@ -544,10 +566,14 @@ async function runBrainTurn(
   // wishes, so it is not shown as "what they want" (brain.ts skips it too).
   const severalProfiles = (saved?.profiles.length ?? 0) > 1;
   if (customerReading?.line && !severalProfiles) stateLines.push(customerReading.line);
-  if (slots.gender === 'f') stateLines.push('The customer is a woman — use feminine forms.');
+  // Gender from the name too: judged only from the chat, a client named نوره got
+  // masculine forms from the agent and feminine from the follow-up writer in the
+  // same chat (review 2026-10-07). nameGender.ts is shared with the writer.
+  if (slots.gender === 'f' || nameGender === 'f') stateLines.push('The customer is a woman (from her messages or the name on her record) — use feminine forms throughout.');
   if (slots.handed_off_at) stateLines.push(`Already handed to a colleague at ${slots.handed_off_at} — don't promise that again.`);
   for (const p of a.pending) stateLines.push(`A colleague ANSWERED the question you asked («${p.question}»): «${p.answer}» — pass it on now.`);
-  for (const q of a.openQuestions) stateLines.push(`Still with a colleague, no answer yet: «${q}» — don't ask it again; if the customer asks, say you're still checking.`);
+  for (const q of a.openQuestions) stateLines.push(`Still with a colleague, no answer yet: «${q}» — don't ask it again and DON'T mention it again: only if the customer asks about it now, say once in a few words that you're still waiting for the answer.`);
+  for (const q of a.closedQuestions) stateLines.push(`A colleague CLOSED without an answer the question you said you'd check («${q.question}»). If you promised the customer an answer, tell them now in one short line that you couldn't confirm it, and offer the next step (a colleague can call them, or what you DO know) — no new promise to check. If you never promised them anything about it, say nothing about it.`);
   if (a.lastOursAt) {
     const hours = Math.round((Date.now() - new Date(a.lastOursAt).getTime()) / 3_600_000);
     if (hours >= 20) stateLines.push(`Our last message was ${hours} hours ago — greet first.`);
@@ -578,7 +604,8 @@ async function runBrainTurn(
       conversationStartedAt: new Date(new Date(conv.created_at).getTime() - START_WINDOW_MS).toISOString(),
       excludeProjectIds: exclude, knownProjectIds: knownIds, narrowTurns: slots.narrow_turns ?? 0, customerReading,
       profiles: saved?.profiles.map((p) => ({ id: p.id, name: p.name })) ?? [],
-      instruction: a.hasNew ? null : 'There is NO new customer message. A colleague answered the question you asked (see the state): pass the answer on to the customer now, in your own short voice, numbers exactly as given.',
+      lastOursAt: a.lastOursAt, newCustomerText: a.newCustomerText,
+      instruction: a.hasNew ? null : 'There is NO new customer message. A colleague answered — or closed without an answer — a question you said you would check (see the state): tell the customer now, in your own short voice, numbers exactly as given. If there is nothing the customer needs to hear, answer <no_reply>.',
     },
     {
       beforeSideEffect: commit,
@@ -777,6 +804,27 @@ async function runBrainTurn(
   };
   if (dryRun) return { ...result, sent: false };
 
+  // The customer wrote AGAIN while this reply was being written (a turn takes
+  // 20–40 s). Sending it would answer half of what they said and the next turn
+  // would answer the rest — the double replies in ~13 chats of the 2026-10-07
+  // review («الفرسان بعيد» → two contradicting lines). Drop the text; the turn
+  // already queued for the newer message answers everything. Not committed yet
+  // ⇒ the watermark stays, so that turn sees these messages as [NEW] too.
+  // Committed (a card/units already went out) ⇒ only the trailing line is dropped.
+  if (reply && a.hasNew && a.newestCustomerAt && await customerWroteSince(svc, chatWid, a.newestCustomerAt)) {
+    console.log(`[salesAgent] reply superseded by a newer customer message chat=${chatWid} committed=${committed}`);
+    outcome.toolTrace.push('reply superseded — the customer wrote again; the next turn answers everything');
+    reply = null;
+    if (!committed) {
+      await recordAgentRun(svc, {
+        chat_wid: chatWid, client_id: runClientId, kind: 'brain', model: outcome.model, ms: Date.now() - turnStartedAt,
+        customer_text: a.newCustomerText || null, reading: null, searches: outcome.searchLog, actions: {},
+        reply: null, reply_sent: null, reply_failed: false, guard_problems: outcome.guardProblems, tool_trace: outcome.toolTrace,
+      });
+      return { ...result, replies: [], sent: false };
+    }
+  }
+
   await commit();
   const { error: upErr } = await svc.from('wa_agent_conversations').update({
     slots, asked: null, status: outcome.ended ? 'done' : 'active', updated_at: new Date().toISOString(),
@@ -802,10 +850,12 @@ async function runBrainTurn(
       notify = `${notify ? `${notify} — ` : ''}تعذّر إرسال رد المساعد الآلي للعميل — يحتاج مندوب.`;
     }
   }
-  // The colleague's answer reached the customer (in this reply): mark it passed on.
-  if (a.pending.length && reply && sent) {
+  // The colleague's answer (or the "couldn't confirm" for a closed question) was
+  // handled in this turn: mark it passed on so it is not raised again.
+  const relayedIds = [...(reply && sent ? a.pending.map((p) => p.id) : []), ...a.closedQuestions.map((q) => q.id)];
+  if (relayedIds.length) {
     const { error: rErr } = await svc.from('wa_agent_questions')
-      .update({ relayed_at: new Date().toISOString() }).in('id', a.pending.map((p) => p.id));
+      .update({ relayed_at: new Date().toISOString() }).in('id', relayedIds);
     if (rErr) console.error(`[salesAgent] relay stamp failed chat=${chatWid}:`, rErr.message);
   }
   if (notify) await notifyRep(svc, chatWid, notify);

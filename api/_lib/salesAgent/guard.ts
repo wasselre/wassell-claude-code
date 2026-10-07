@@ -108,7 +108,27 @@ export function claimsPlaceDistance(text: string): boolean {
   return text.split(/[\n.،,؟?!]/).some((part) => PLACE_WORD.test(part) && NEAR_WORD.test(part));
 }
 
-export function checkReply(text: string, opts: { lang: 'ar' | 'en'; grounded: Set<number>; distancesMeasured?: boolean }): GuardVerdict {
+/**
+ * A note the model wrote to ITSELF, in any language. Review 2026-10-07: «Sadeem
+ * Town units are apartments. Sent card says Type: Apartment. Answer directly.»
+ * went to an English-speaking customer — the Arabic-chat English check could
+ * not see it, because the chat WAS English.
+ */
+const SELF_NOTE = /\b(answer directly|sent card|card says|tool ?(result|call|output)|search (result|returned)|the (customer|client|user) (is|asked|wants|said|writes|has)|customer (asked|wants|said)|rule \d|per the rules?|state says|I (should|need to|will now|must)|let me |note:|reply:|draft:)/i;
+const AR_SELF_NOTE = /(العميل|العميلة) (يسأل|تسأل|يبي|تبي|يريد|تريد|طلب|طلبت|قال|قالت)|(حسب|بحسب) (الأداة|الأدوات|البيانات|النتائج|القاعدة)|ملاحظة\s*:/;
+const MORNING_GREETING = /^\s*(صباح الخير|صباح النور|good morning)/i;
+const EVENING_GREETING = /^\s*(مساك الله بالخير|مساكم الله بالخير|مسيتي بالخير|مسيت بالخير|مساء الخير|good evening)/i;
+const CUSTOMER_GREETS = /(صباح|مساء|مسا|السلام|هلا|good (morning|evening|afternoon)|hello|\bhi\b)/i;
+
+export function checkReply(text: string, opts: {
+  lang: 'ar' | 'en'; grounded: Set<number>; distancesMeasured?: boolean;
+  /** Riyadh hour when the reply goes out (0–23) — a «صباح الخير» at 5 pm is wrong. */
+  riyadhHour?: number;
+  /** Hours since our last message in the chat — a second greeting the same day reads as a bot. */
+  hoursSinceOurs?: number | null;
+  /** The customer's new messages, to tell a returned greeting from a fresh one. */
+  customerText?: string;
+}): GuardVerdict {
   const problems: string[] = [];
   const t = text.trim();
   if (!t) return { ok: false, problems: ['empty message'] };
@@ -132,6 +152,20 @@ export function checkReply(text: string, opts: { lang: 'ar' | 'en'; grounded: Se
     problems.push('the message contains notes or English sentences — write only the Arabic message itself');
   }
   if (opts.lang === 'en' && arabic && latinWords < 2) problems.push('the customer writes English — reply in English');
+  if (lines.some((l) => SELF_NOTE.test(l) || AR_SELF_NOTE.test(l))) {
+    problems.push('the message contains a note to yourself (about the customer, a tool, a card or a rule) — write ONLY what the customer should read');
+  }
+  // «Lسه»: a Latin letter glued to an Arabic one is a typo, never a word.
+  if (/[A-Za-z][؀-ۿ]|[؀-ۿ][A-Za-z]/.test(t)) problems.push('a word mixes Latin and Arabic letters (a typo) — fix the spelling');
+  if (typeof opts.riyadhHour === 'number') {
+    const h = opts.riyadhHour;
+    if (MORNING_GREETING.test(t) && (h >= 12 || h < 4)) problems.push('«صباح الخير» / good morning is wrong now — it is after noon in Riyadh; use «مساك الله بالخير» or no greeting');
+    if (EVENING_GREETING.test(t) && h >= 4 && h < 12) problems.push('it is morning in Riyadh — use «صباح الخير», not an evening greeting');
+  }
+  if (typeof opts.hoursSinceOurs === 'number' && opts.hoursSinceOurs < 6
+    && (MORNING_GREETING.test(t) || EVENING_GREETING.test(t)) && !CUSTOMER_GREETS.test(opts.customerText ?? '')) {
+    problems.push("we already talked in the last few hours — don't greet again, just answer");
+  }
 
   if (opts.distancesMeasured === false && claimsPlaceDistance(t)) {
     problems.push('you said how near a place is (a metro station, mall, road…) but no search measured it — search with near first, or say you will check; never guess a distance');

@@ -340,3 +340,44 @@ export async function projectRepAnswers(svc: SupabaseClient, projectId: string):
   return ((data ?? []) as Array<{ question: string; answer: string | null }>)
     .filter((r) => r.answer).map((r) => ({ q: r.question, a: r.answer as string }));
 }
+
+/**
+ * Hand-offs nobody answered: the agent told the customer «بيتواصل معك زميلي»
+ * (a call, a negotiation, a cash price…) and, 3 hours later, no person has
+ * written in the chat. The rep is reminded ONCE per hand-off (a notification
+ * row carrying the run id is the marker). Review 2026-10-07: three hand-offs
+ * (cash price, negotiation, a call request) had no rep message days later.
+ * Only during working hours, so nobody is pinged at night. Returns how many
+ * reminders were sent.
+ */
+export async function remindUnansweredHandoffs(svc: SupabaseClient, now = new Date()): Promise<number> {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Asia/Riyadh' }).format(now)) % 24;
+  if (hour < 9 || hour >= 21) return 0;
+  const from = new Date(now.getTime() - 48 * 3_600_000).toISOString();
+  const to = new Date(now.getTime() - 3 * 3_600_000).toISOString();
+  const { data: runs, error } = await svc.from('wa_agent_runs')
+    .select('id, chat_wid, created_at, actions').not('actions->handoff', 'is', null)
+    .gte('created_at', from).lte('created_at', to).order('created_at', { ascending: true }).limit(50);
+  if (error) throw new Error(`hand-off runs read failed: ${error.message}`);
+  let sent = 0;
+  for (const run of (runs ?? []) as Array<{ id: string; chat_wid: string; created_at: string; actions: Record<string, unknown> | null }>) {
+    const { data: reminded, error: rErr } = await svc.from('ai_notifications').select('id').eq('meta->>run_id', run.id).limit(1);
+    if (rErr) { console.error('[salesAgent] hand-off reminder check failed:', rErr.message); continue; }
+    if ((reminded ?? []).length) continue;
+    const { data: human, error: hErr } = await svc.from('chat_messages').select('id')
+      .eq('chat_wid', run.chat_wid).eq('flow', 'out').gt('date', run.created_at)
+      .or('send_source.is.null,send_source.neq.ai').limit(1);
+    if (hErr) { console.error('[salesAgent] hand-off reply check failed:', hErr.message); continue; }
+    if ((human ?? []).length) continue;
+    const h = (run.actions?.handoff ?? {}) as { reason?: string; note?: string };
+    const ctx = await loadChatContext(svc, run.chat_wid);
+    await alertRep(svc, ctx, {
+      title: 'تذكير: عميل ينتظر تواصلك',
+      body: `قلنا للعميل إن زميل بيتواصل معه، ومرّت ${Math.round((now.getTime() - new Date(run.created_at).getTime()) / 3_600_000)} ساعة بدون رد.${h.note ? `
+${clip(h.note, 300)}` : ''}`,
+      kind: 'handoff_reminder', dedupe: `agent-h-remind:${run.id}`, meta: { run_id: run.id, reason: h.reason ?? null },
+    });
+    sent += 1;
+  }
+  return sent;
+}

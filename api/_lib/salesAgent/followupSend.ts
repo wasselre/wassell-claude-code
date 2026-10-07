@@ -20,6 +20,39 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { enqueueAiReply } from '../aiSend.js';
 
+/** PURE — the hour of day in Riyadh. */
+function riyadhHour(at: Date): number {
+  return Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Asia/Riyadh' }).format(at)) % 24;
+}
+
+/**
+ * PURE — make the opening greeting match the time the message is DELIVERED.
+ * Drafts are written hours before they go out (old-lead drafts at ~08:00 go out
+ * from 12:00; a draft can wait overnight), so «صباح الخير» landed at 5 pm in 55
+ * of 137 follow-ups (review 2026-10-07). Only a greeting at the very start is
+ * touched; a message without one is returned as is.
+ */
+export function retimeGreeting(message: string, at: Date): string {
+  const h = riyadhHour(at);
+  const morning = h >= 4 && h < 12;
+  const ar = /^(\s*)(صباح الخير|صباح النور|مساك الله بالخير|مساكم الله بالخير|مسيتي بالخير|مسيت بالخير|مساء الخير|مسا الخير)/;
+  const m = message.match(ar);
+  if (m) {
+    const was = m[2]!;
+    const isMorning = was.startsWith('صباح');
+    if (isMorning === morning) return message;
+    // Gender-neutral either way: the send step does not know the client's gender.
+    const want = morning ? 'صباح الخير' : 'مساء الخير';
+    return `${m[1]}${want}${message.slice(m[0].length)}`;
+  }
+  const en = message.match(/^(\s*)Good (morning|afternoon|evening)/i);
+  if (en) {
+    const want = morning ? 'morning' : h < 17 ? 'afternoon' : 'evening';
+    return `${en[1]}Good ${want}${message.slice(en[0].length)}`;
+  }
+  return message;
+}
+
 const TERMINAL_STAGES = new Set(['خاسر', 'مغلق ناجح', 'غير مؤهل', 'يريد إيجار', 'طلب غير مجاب']);
 
 export type FollowupSendResult =
@@ -29,6 +62,7 @@ export type FollowupSendResult =
 interface ActionRow {
   id: string; kind: string; status: string; client_id: string; chat_wid: string | null;
   followup_id: string | null; body: string; reference: string | null; context: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export async function sendFollowupAction(
@@ -84,6 +118,17 @@ export async function sendFollowupAction(
       return { ok: false, code: 'ai_paused', message: why };
     }
 
+    // The chat moved on after the draft was written: the client wrote (the agent
+    // or a rep answers them — a follow-up on top would ignore what they said), or
+    // a rep wrote (they took it). Review 2026-10-07: a draft went out 5 minutes
+    // after a rep sent the client three other projects.
+    const { data: since, error: sinceErr } = await svc.from('chat_messages').select('flow, send_source')
+      .eq('chat_wid', a.chat_wid).gt('date', a.created_at).limit(50);
+    if (sinceErr) throw new Error(`chat re-check failed: ${sinceErr.message}`);
+    const moved = (since ?? []) as { flow: string; send_source: string | null }[];
+    if (moved.some((m) => m.flow === 'in')) { await close('expired', 'the client wrote after this draft was written'); return { ok: false, code: 'followup_moved', message: 'client_wrote' }; }
+    if (moved.some((m) => m.flow === 'out' && m.send_source !== 'ai')) { await close('expired', 'a colleague wrote in the chat after this draft was written'); return { ok: false, code: 'followup_moved', message: 'rep_wrote' }; }
+
     // The line the client last wrote from — never an INTERNAL line (operations,
     // office outreach): a client follow-up from the office line is exactly the
     // unsolicited traffic that gets that line restricted.
@@ -96,8 +141,13 @@ export async function sendFollowupAction(
     const { data: slot, error: slotErr } = await svc.rpc('ai_send_next_slot', { p_old_lead: typeof context.campaign === 'string' });
     if (slotErr) throw new Error(`send slot failed: ${slotErr.message}`);
     const delaySeconds = Math.max(0, Math.round((Date.parse(String(slot)) - Date.now()) / 1000));
+    const text = retimeGreeting(a.body, new Date(Date.now() + delaySeconds * 1000));
+    if (text !== a.body) {
+      const { error: tErr } = await svc.from('ai_actions').update({ body: text }).eq('id', id);
+      if (tErr) console.error(`[followup-send] could not store the re-timed greeting for ${id}: ${tErr.message}`);
+    }
     const r = await enqueueAiReply(svc, {
-      chatWid: a.chat_wid, text: a.body, deviceId: (lastIn as { device_id?: string | null } | null)?.device_id ?? null,
+      chatWid: a.chat_wid, text, deviceId: (lastIn as { device_id?: string | null } | null)?.device_id ?? null,
       jobId: 'followup', force: true, reference: a.reference, delaySeconds,
     });
     if (!r.queued) {

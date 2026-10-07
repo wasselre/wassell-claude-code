@@ -160,6 +160,6 @@ export async function chatIsClient(svc: SupabaseClient, chatWid: string): Promis
 
 /** Queue a turn ~8 s out; further messages in the burst push it (≤ 60 s). */
 export async function enqueueAgentTurn(svc: SupabaseClient, chatWid: string): Promise<void> {
-  const { error } = await svc.rpc('wa_agent_turn_enqueue', { p_chat_wid: chatWid, p_delay_s: 8 });
+  const { error } = await svc.rpc('wa_agent_turn_enqueue', { p_chat_wid: chatWid, p_delay_s: 20 });
   if (error) throw new Error(`sales agent: turn enqueue failed: ${error.message}`);
 }

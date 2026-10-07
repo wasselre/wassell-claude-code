@@ -158,6 +158,13 @@ function classify(raw: string | null | undefined): Decision {
   if (/دعاي|الاعلان|الإعلان|عرض الخدمات|عرض خدمات|شركة متخصص|تطوير وتشغيل|توقيع اتفاقية|الاسم التجاري|وكيل تنفيذ|نادي ذكي|مسؤول التسويق|حابة اتواصل|حابه اتواصل/.test(t))
     return { action: 'handoff', reason: 'b2b', severity: 'warning', silent: true };
 
+  // Not a buyer at all: a wrong number, a job seeker, someone selling us a
+  // service. They used to get «أبشر، بيتواصل معك زميلي» — a callback promise to a
+  // wrong number, an SEO agency, a cleaning company, a job applicant (review
+  // 2026-10-07). The operator note still fires; the customer gets nothing.
+  if (/(اخطات|أخطأت|اخطأت|غلطت)\s*(في|ب)?\s*الرقم|رقم\s*(غلط|خطا|خطأ)|wrong\s*number|سيرتي\s*الذاتية|السيرة\s*الذاتية|ابحث\s*عن\s*وظيف|أبحث\s*عن\s*وظيف|فرصة\s*وظيف|نقدم\s*(لكم\s*)?خدمات|خدمات\s*(التنظيف|تنظيف|السيو|seo|التسويق|الصيانة|المقاولات)/i.test(t))
+    return { action: 'handoff', reason: 'not_customer', severity: 'info', silent: true };
+
   // Things we don't offer.
   if (/للايجار|للإيجار|إيجار|ايجار|تأجير|أرض للبيع|ارض للبيع|محل تجاري|مكتب للايجار/.test(t))
     return { action: 'no_service' };
@@ -233,7 +240,9 @@ export async function kimiClassify(message: string): Promise<Decision> {
     if (action === 'project_sheet') return { action: 'project_sheet', projectName: (out.project_name || '').trim() };
     if (action === 'no_service') return { action: 'no_service' };
     if (action === 'qualify') return { action: 'qualify' };
-    if (action === 'not_customer') return { action: 'handoff', reason: 'not_customer', severity: 'action', holding: HOLDING };
+    // Not a buyer (a service seller, a job seeker, a wrong number): the operator
+    // note fires, but no «بيتواصل معك زميلي» promise goes to them.
+    if (action === 'not_customer') return { action: 'handoff', reason: 'not_customer', severity: 'action', silent: true };
     return { action: 'handoff', reason: 'kimi_handoff', severity: 'action', holding: HOLDING };
   } catch (err) {
     console.error('[basic-reply] kimi call failed:', err instanceof Error ? err.message : String(err));
@@ -325,6 +334,17 @@ async function answerAdClick(
     return { action: 'ad_other_projects', sent: res.queued, error: res.error, handoff: true };
   }
 
+  // They wrote their OWN request with the click («السلام عليكم، ابي فلل بالنزهة
+  // أو المرسلات») — the agent answers it (it knows the ad's project and sends it
+  // only if it fits). Sending the ad's card blind answered a villa ask with a
+  // floors project and never returned the greeting (review 2026-10-07).
+  if (a.agentAllowed && !a.namedProject && hasOwnRequest(a.text)) {
+    await startAgentConversation(supa, {
+      chatWid: a.chatWid, source: 'ad_project', adProjectId: a.adProjectId, text: a.text, lang: a.lang,
+    });
+    return { action: 'agent_started', source: 'ad_with_request' };
+  }
+
   // Which project: the one they NAME (if it resolves to one of ours), else the ad's.
   let projectId: string | null = null;
   if (a.namedProject) {
@@ -385,6 +405,15 @@ async function answerAdClick(
   const res =await enqueueAiReply(supa, { chatWid: a.chatWid, text: holding, deviceId: a.deviceId, jobId: 'basic', force: true });
   await notifyHandoff(supa, a.chatWid, a.chatRecordId, `عميل من إعلان — تعذّر إرسال بطاقة المشروع (${flow.error ?? flow.reason ?? ''}) — يحتاج متابعة مندوب.`);
   return { action: 'ad_project_failed', sent: res.queued, handoff: true, error: flow.error ?? flow.reason };
+}
+
+/** PURE — an ad-click message that carries the customer's own property request
+ *  (a type, rooms, a budget, a district), not just a greeting or the ad's
+ *  prefilled «أريد معرفة المزيد». */
+export function hasOwnRequest(text: string | null | undefined): boolean {
+  const t = (text ?? '').trim();
+  if (!t) return false;
+  return /(فيلا|فلل|شق[ةه]|شقق|(?:^|\s)دور(?:\s|$)|ادوار|أدوار|تاون|دبلكس|بحي|حي\s|غرف|غرفة|غرفتين|ميزاني|مليون|الف(?:\s|$)|ألف|villa|apartment|townhouse|duplex|bedroom|budget)/i.test(t);
 }
 
 /** Interest a new number's message shows: our project named, a property asked for, a website unit code. PURE. */

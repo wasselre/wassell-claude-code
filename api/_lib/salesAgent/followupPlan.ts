@@ -104,6 +104,10 @@ export async function findNewProject(
   if (!area.ids || area.ids.size === 0) return null;
   criteria.area_ids = [...area.ids];
   const r = await searchProjects(svc, criteria, { exclude: [...exclude] });
+  // Only a real fit. A widened result (another type, over budget, outside their
+  // places) is not a suggestion — review 2026-10-07: أكنان 23 «من 669 ألف» went to
+  // a client whose saved needs (≥150 m², ≤700K) no unit of it meets.
+  if (r.relaxed !== null && r.relaxed !== 'distance') return null;
   const p = r.projects.find((x) => !exclude.includes(x.project_id));
   if (!p) return null;
   return { projectId: p.project_id, name: p.name, district: p.district, readiness: p.readiness === 'ready' || p.readiness === 'off_plan' ? p.readiness : null, priceFrom: p.price_from };

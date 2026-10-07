@@ -75,6 +75,18 @@ export function readingWindow(turns: Array<{ who: 'customer' | 'us'; text: strin
   return { turns: win, current };
 }
 
+/**
+ * PURE — does the customer's quote say they want ONLY that kind? «على الخارطة
+ * عادي» / «ما عندي مانع» / "off plan is ok" ACCEPT off-plan without refusing
+ * ready. Read as "off-plan only", it hid every ready home: «ما عندنا فلل
+ * بالنرجس» while نخيل فستا fit exactly (review 2026-10-07, two chats).
+ */
+export function readinessIsExclusive(quote: string | null | undefined): boolean {
+  const q = String(quote ?? '').toLowerCase();
+  if (!q.trim()) return true;
+  return !/(عادي|مانع|ما\s*يفرق|ماي?فرق|ما\s*تفرق|اي\s*شي|أي\s*شي|يمشي|ما\s*عندي\s*مشكل|ماعندي\s*مشكل|\bok\b|okay|\bfine\b|either|\bany\b|both|doesn'?t\s+matter)/i.test(q);
+}
+
 const PURPOSE_AR: Record<string, string> = { residential: 'سكن', investment: 'استثمار' };
 const fmt = (n: number): string => Math.round(n).toLocaleString('en-US');
 
@@ -92,7 +104,7 @@ export function readingFromSuggestions(suggestions: Record<string, PrefSuggestio
   const purpose = asSetValue(suggestions.purchase_objective?.value);
   if (purpose.length) r.purpose = purpose;
   const ready = asSetValue(suggestions.preferred_readiness?.value).filter((v) => v === 'ready' || v === 'off_plan');
-  if (ready.length === 1) r.readiness = ready[0] as 'ready' | 'off_plan';
+  if (ready.length === 1 && readinessIsExclusive(suggestions.preferred_readiness?.quote)) r.readiness = ready[0] as 'ready' | 'off_plan';
   const amen = asSetValue(suggestions.preferred_amenities?.value);
   if (amen.length) r.amenities = amen;
 

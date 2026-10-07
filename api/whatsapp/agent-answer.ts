@@ -72,7 +72,18 @@ export default async function handler(req: Request): Promise<Response> {
     const { data: upd, error: uErr } = await svc.from('wa_agent_questions').update(patch).eq('id', id).eq('status', 'open').select('id');
     if (uErr) return jsonError(500, `could not save: ${uErr.message}`);
     if (!upd || upd.length === 0) return jsonError(409, 'already_resolved');
-    if (action !== 'answer') return jsonOk({ status: patch.status });
+    if (action === 'direct') return jsonOk({ status: patch.status });
+    // Dismissed: the agent may have told the customer «بتأكد لك وأرد عليك» — queue
+    // a turn so it tells them it couldn't confirm (turn.ts closed questions).
+    // Only while the agent is running the chat; never reopen an ended one for it.
+    if (action === 'dismiss') {
+      try {
+        if (await activeAgentConversation(svc, question.chat_wid)) await enqueueAgentTurn(svc, question.chat_wid);
+      } catch (e) {
+        console.error('[agent-answer] dismiss follow-up enqueue failed:', e instanceof Error ? e.message : String(e));
+      }
+      return jsonOk({ status: patch.status });
+    }
 
     // Queue the turn that passes the answer on.
     try {

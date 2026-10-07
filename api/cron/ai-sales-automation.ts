@@ -59,6 +59,7 @@ import { sendOfficerNotice } from '../_lib/officerNoticeSend.js';
 import { sendFollowupAction } from '../_lib/salesAgent/followupSend.js';
 import { resolveOperationsDeviceId } from '../_lib/whatsappGateway.js';
 import { draftFollowupMessage } from '../_lib/salesAgent/followupDraft.js';
+import { remindUnansweredHandoffs } from '../_lib/salesAgent/escalation.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
 
@@ -288,6 +289,13 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       }
     }
     report.officer = officerOut;
+
+    // ── 3c. A hand-off nobody answered in 3 hours → remind the rep once.
+    if (!dryRun) {
+      try {
+        report.handoff_reminders = await remindUnansweredHandoffs(svc);
+      } catch (err) { fail('hand-off reminders', err); }
+    }
 
     // ── 3a. Waiting officer drafts follow the facts (a visit booked after the
     // draft, new link activity). Only drafts nobody edited; unchanged = no write.

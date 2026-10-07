@@ -1,7 +1,7 @@
 /**
- * The AI writes a due WhatsApp follow-up — as a DRAFT for the operator to
- * approve in the AI tab (operator, 2026-10-04: "in the beginning I need to
- * approve every follow-up"). Nothing here sends anything.
+ * The AI writes a due WhatsApp follow-up. Nothing here sends anything: the
+ * draft is saved to ai_actions and sent by followupSend.ts (automatically since
+ * 2026-10-07, or by hand from the AI tab).
  *
  * It reads the client's whole file — the WhatsApp thread with real speaker
  * labels (client / rep / our assistant), the last three calls in full (who
@@ -24,6 +24,7 @@ import { resolveProjectDelivery } from '../../../src/lib/projectMessage/delivery
 import { hatifWordsToTurns } from '../geoPreference/hatifDialogue.js';
 import { requestPreferenceGaps } from '../../../src/lib/clients/requestReadiness.js';
 import { choosePlan, findNewProject, gapQuestion, primaryGap, DEAD_OPTION, type FollowupFocus, type NewProject } from './followupPlan.js';
+import { genderFromName } from './nameGender.js';
 
 const CALL_SITE = 'api/_lib/salesAgent/followupDraft';
 const MESSAGE_WINDOW = 60;
@@ -82,7 +83,15 @@ function rangeText(v: unknown): string {
   return '';
 }
 
-const SYSTEM = `You are a sales consultant at وصل العقارية (Wassel Real Estate) writing ONE WhatsApp follow-up message to a client whose follow-up is due today. A colleague will read it and approve it before it is sent.
+/** PURE — no unit left to sell: the stored available count is 0, or there is no available price. */
+export function isSoldOut(d: Record<string, unknown>): boolean {
+  const n = Number(d.available_units);
+  if (d.available_units !== null && d.available_units !== undefined && Number.isFinite(n)) return n <= 0;
+  const r = d.available_price_range;
+  return !r || typeof r !== 'object' || !Number.isFinite(Number((r as { min?: unknown }).min));
+}
+
+const SYSTEM = `You are a sales consultant at وصل العقارية (Wassel Real Estate) writing ONE WhatsApp follow-up message to a client whose follow-up is due today. It is sent automatically, so it must be right exactly as written.
 
 WHAT THE MESSAGE IS FOR
 The sales process scheduled this check-in: the client went quiet after we talked or sent projects. Re-open the conversation and move them one step toward a visit. Read the WHOLE thread and the file first — never reply to the last line alone.
@@ -93,13 +102,17 @@ RE-ENTRY (never skip)
 - The client went quiet after we answered → a light check-in on the last real topic: «ناسبك المشروع؟», «وش رأيك في صفا 82؟», «لازلت مهتم؟».
 - The thread is stale (a week or more) and continuing would need real work → a check-in first («مساك الله بالخير، لازلت مهتم بشراء وحدة سكنية؟»), not a delivery.
 - You may ask which day suits them to visit; never confirm a time.
+- A project marked «على الخارطة» has no finished units yet: never invite them to «see the units» or «تشوف الوحدات على الطبيعة» — offer the plans/brochure or a visit to the sales office.
+- Never offer, or invite them to visit, a project marked «نفدت الوحدات» in the facts.
+- Never ask for something the client already told us — in the thread or in the saved preferences. If the plan asks for a preference the thread already answers, don't ask it: mention what they said («لازلت تدور بالنرجس بحدود مليون؟») and ask if it still holds.
 - Use the file: the client's saved preferences, their visits, and each project's status in their options. Never bring up a project marked not_interested / eliminated / closed. After a visit, ask how it went before offering anything new.
 - «خطة هذه المتابعة» at the top of the file decides WHAT the message is about — follow it exactly: ask about the project it names, OR suggest the new project it names, OR (no project) say that if the projects we sent didn't suit them we have other options, and ask for the missing preferences it lists, saying you need them to send the best fit. Don't swap in another project.
 
 VOICE (the reps' measured style)
 - Najdi colloquial, warm, brief. One idea, ONE closing question. 1–2 short lines, ideally under 80 characters, never over 200.
 - Softeners at most once: «الله يسلمك», «طال عمرك». Never formal Arabic («يسعدنا», «نود», «يُرجى», «حيث», «كذلك»).
-- Gender: feminine client → تبين، شفتي، ناسبتك، أبشري، مسيتي. Judge it ONLY from the client's own messages; unknown → masculine.
+- Gender: feminine client → تبين، شفتي، ناسبتك، أبشري، مسيتي. Use «جنس العميل» in the file when it gives one (from their name); otherwise judge from the client's own messages; unknown → masculine. Never switch gender inside one chat.
+- Never put a Latin-script name inside an Arabic message («صباح الخير Ahmad») — write it in Arabic or leave it out.
 - The client visits, we arrange: «تزور / تزورين», never «نزور». «أرسلك إياه/إياها/إياهم», never a bare «أرسل لك».
 - Numbers the way reps say them («559 ألف», «مليون و219»), at most two, never «ر.س». Any project you name must carry «جاهز» or «على الخارطة» exactly as the facts say.
 - No lists, bullets, bold, links, emojis beyond one, adjectives like فاخر/مميز.
@@ -110,6 +123,7 @@ VOICE (the reps' measured style)
 WHEN NOT TO WRITE
 If a follow-up would be wrong — the client said they're not interested, bought elsewhere, asked us to stop, wants to rent, or is clearly waiting on something we can't give — do not write one; give the reason.
 The person is a BROKER or agent, not a buyer — they said they are a وسيط / وسيطة / مسوّق / مكتب عقار, or that they have their own clients («عندي عملاء») — do not write one either: skip_reason "broker, not a buyer". A buyer follow-up to a broker is always rejected.
+The person is NOT a buyer at all — they sell us a service or product (advertising, printing, signage, SEO, cleaning, contracting, design…), the name is a company or office («شركة», «مؤسسة», «مكتب», «للعقارات», «للدعاية»), they are looking for a job, or they said it was a wrong number — skip_reason "not a buyer". Never send a buyer follow-up to them.
 
 Reply with ONLY this JSON object — no notes, no reasoning, nothing before or after it:
 {"message": "<the WhatsApp text, or null>", "reason": "<for your colleague, NOT sent: one or two short Arabic lines — what the client last said or did (and when), and why this message>", "skip_reason": "<short English reason when message is null, else null>"}
@@ -267,8 +281,9 @@ export async function draftFollowupMessage(
       const ready = d.kind === 'off_plan' ? 'على الخارطة' : d.kind === 'ready' ? 'جاهز' : 'غير محدد';
       const price = rangeText(p.data.available_price_range);
       const score = scoreOf.get(p.id);
+      const soldOut = isSoldOut(p.data);
       projectFacts.push(
-        `- ${name} | ${ready}${price ? ` | الأسعار المتاحة ${price}` : ''}`
+        `- ${name} | ${soldOut ? 'نفدت الوحدات — لا تعرضه' : ready}${!soldOut && price ? ` | الأسعار المتاحة ${price}` : ''}`
         + ` | تفاعل العميل مع الرابط: ${score == null ? 'غير معروف' : `${score}/100`}`,
       );
     }
@@ -286,6 +301,14 @@ export async function draftFollowupMessage(
   if (laErr) throw new Error(`previous follow-up read failed: ${laErr.message}`);
   const lastFocusRaw = ((lastActs ?? [])[0] as { context?: Record<string, unknown> } | undefined)?.context?.focus;
   const lastFocus = lastFocusRaw && typeof lastFocusRaw === 'object' ? (lastFocusRaw as FollowupFocus) : null;
+  // A sold-out project is never the follow-up's subject (review 2026-10-07: صفا 83
+  // and صفا 52 were pitched, with a visit, after every unit had sold).
+  const candidateIds = [...interestOf.keys()];
+  if (candidateIds.length) {
+    const { data: cand, error: cErr2 } = await svc.from('records').select('id, data').in('id', candidateIds);
+    if (cErr2) throw new Error(`candidate projects read failed: ${cErr2.message}`);
+    for (const p of (cand ?? []) as { id: string; data: Record<string, unknown> }[]) if (isSoldOut(p.data)) deadIds.add(p.id);
+  }
   const choice = choosePlan({
     candidates: [...interestOf.values()].map((r) => ({ projectId: r.project_id, score: Number(r.score) || 0 })),
     deadIds, lastFocus, gaps: requestPreferenceGaps(client),
@@ -336,7 +359,7 @@ export async function draftFollowupMessage(
       focus = { mode: 'preferences' };
       const gap = primaryGap(gaps);
       planLines = gap
-        ? [`لا تسأل عن مشروع بعينه. قل: إذا ما ناسبتك المشاريع اللي أرسلناها عندنا خيارات ثانية، ثم اسأل عن شيء واحد فقط — ${gapQuestion(gap)} — عشان ترسل له الأنسب. لا تسأل عن أي تفضيل آخر في هذه الرسالة. اختم بعلامة «؟».`]
+        ? [`لا تسأل عن مشروع بعينه. قل: إذا ما ناسبتك المشاريع اللي أرسلناها عندنا خيارات ثانية، ثم اسأل عن شيء واحد فقط — ${gapQuestion(gap)} — عشان ترسل له الأنسب. إذا كان العميل ذكر هذا في المحادثة فلا تسأله: اذكر ما قاله واسأل هل ما زال كذلك. لا تسأل عن أي تفضيل آخر في هذه الرسالة. اختم بعلامة «؟».`]
         : ['لا تسأل عن مشروع بعينه. قل: إذا ما ناسبتك المشاريع اللي أرسلناها عندنا خيارات ثانية، ثم سؤال واحد مفتوح فقط: «وش أهم شي تبيه يتغير عشان أرسلك الأنسب؟» — لا تعدّد له خيارات (الحي/الميزانية/النوع).'];
     }
   }
@@ -376,6 +399,7 @@ export async function draftFollowupMessage(
     ...planLines.map((l) => `- ${l}`),
     '',
     `اسم العميل: ${s(client.client_name) || '—'}`,
+    ...(() => { const g = genderFromName(s(client.client_name)); return g ? [`جنس العميل (من اسمه): ${g === 'f' ? 'أنثى — خاطبها بصيغة المؤنث' : 'ذكر'}`] : []; })(),
     `مرحلة العميل: ${s(client.client_stage) || '—'} | حالته: ${s(client.client_status) || '—'}`,
     `هذه المتابعة: واتساب، المحاولة ${args.attempt}${escalation === 'whatsapp_no_response_24h' ? ' (لم يرد على رسالتنا السابقة)' : ''}`,
     `الوقت الآن (الرياض): ${riyadh(new Date().toISOString())} — آخر رسالة قبل ${hoursSilent ?? '?'} ساعة`,

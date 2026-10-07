@@ -81,6 +81,9 @@ export interface FitCheck {
   requireKnownPrice?: boolean;
   /** Minimum unit size (m²) the customer wants; checked against AVAILABLE units. */
   areaMin?: number | null;
+  /** Maximum unit size (m²) — «250 لـ300 متر» means up to 300 (review 2026-10-07:
+   *  a 376 m villa was offered to a 250–300 m ask because only the floor was kept). */
+  areaMax?: number | null;
   /** Unit components the unit must have (folded, see features.ts). Unit-level only. */
   features?: string[];
 }
@@ -108,6 +111,10 @@ export function projectFits(data: Record<string, unknown>, f: FitCheck): boolean
   if (f.areaMin) {
     const area = range(data.available_area_range);
     if (area.max !== null && area.max < f.areaMin) return false;
+  }
+  if (f.areaMax) {
+    const area = range(data.available_area_range);
+    if (area.min !== null && area.min > f.areaMax) return false;
   }
   if (f.budgetMax) {
     const price = range(data.available_price_range);

@@ -371,6 +371,17 @@ export async function sendProjectViaAiFlow(
     }
   }
 
+  // The basic bot's card used to end at the links — no next step, and no buyer
+  // ever answered one (review 2026-10-07). One short question closes it — on the
+  // basic bot's cards only: the sales agent writes its own line after the card,
+  // and broker / rep sends are not a buyer conversation.
+  if (input.jobId === 'basic') {
+    const ask = (input.lang ?? 'ar') === 'en' ? 'Does it suit you?' : 'ناسبك المشروع؟';
+    if (!fullText.trimEnd().endsWith(ask)) fullText = `${fullText.trimEnd()}
+
+${ask}`;
+  }
+
   // ── 1) TEXT — gate re-check + audit, delivered ~now. If the gate blocks (a
   //        human took over), send NOTHING further. ──
   // The card carries the package prefix, and every media item waits for it

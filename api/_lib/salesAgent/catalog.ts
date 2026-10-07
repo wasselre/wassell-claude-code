@@ -38,6 +38,8 @@ export interface SearchCriteria {
   budget_max?: number | null;
   /** Minimum unit size in m². */
   area_min?: number | null;
+  /** Maximum unit size in m² («250 لـ300 متر» → 300). */
+  area_max?: number | null;
   readiness?: Readiness | null;
   /** Unit features AND project amenities in the customer's words («غرفة خادمة»,
    *  «روف», «مسبح», «جيم») — split server-side (features.ts, amenities.ts). */
@@ -89,6 +91,10 @@ export interface UnitFit {
    *  Live test 2026-10-05: «تبدأ من مليون و40 (غرفتين و3 غرف)» quoted a
    *  2-room price to a 3-room buyer — the 3-room units started at 1,348,000. */
   from_by_bedrooms: Record<string, number>;
+  /** Cheapest fitting unit per unit type ({"فيلا": 1259840, "تاون هاوس": 1005535}).
+   *  Review 2026-10-07: «والفلل تبدأ من مليون و5 آلاف» quoted the townhouse price
+   *  for villas (أديم الفرسان villas start at 1,259,840). */
+  from_by_type: Record<string, number>;
 }
 
 /** One available unit, as much as the search needs. */
@@ -169,6 +175,7 @@ export function unitFits(u: UnitLite, f: FitCheck): boolean {
   if (f.bedroomsMin && (u.bedrooms === null || u.bedrooms < f.bedroomsMin)) return false;
   if (f.budgetMax && (u.price === null || u.price > f.budgetMax)) return false;
   if (f.areaMin && (u.area === null || u.area < f.areaMin)) return false;
+  if (f.areaMax && (u.area === null || u.area > f.areaMax)) return false;
   // A unit with no recorded components cannot be shown as having a feature.
   if (f.features?.length && !f.features.every((c) => (u.components ?? []).includes(c))) return false;
   return true;
@@ -186,7 +193,18 @@ export function fitOf(us: UnitLite[], f: FitCheck): UnitFit {
     area_to: areas.length ? Math.round(Math.max(...areas)) : null,
     bedrooms: [...new Set(m.map((u) => u.bedrooms).filter((x): x is number => x !== null))].sort((a, b) => a - b),
     from_by_bedrooms: fromByBedrooms(m),
+    from_by_type: fromByType(m),
   };
+}
+
+function fromByType(us: UnitLite[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const u of us) {
+    const t = u.type ? (normalizeUnitType(u.type) ?? u.type.trim()) : null;
+    if (!t || u.price === null) continue;
+    if (out[t] === undefined || u.price < out[t]!) out[t] = u.price;
+  }
+  return out;
 }
 
 function fromByBedrooms(us: UnitLite[]): Record<string, number> {
@@ -202,12 +220,13 @@ function fromByBedrooms(us: UnitLite[]): Record<string, number> {
 const AVAILABLE_UNIT = new Set(['available', 'متاح', 'متاحة', 'متوفر', 'متوفرة']);
 
 /** Available units of the given projects, light columns only, paged. */
-async function loadUnitIndex(svc: SupabaseClient, projectIds: string[]): Promise<Map<string, UnitLite[]>> {
+async function loadUnitIndex(svc: SupabaseClient, projectIds: string[]): Promise<{ available: Map<string, UnitLite[]>; withUnits: Set<string> }> {
   const out = new Map<string, UnitLite[]>();
-  if (!projectIds.length) return out;
+  const withUnits = new Set<string>();
+  if (!projectIds.length) return { available: out, withUnits };
   const { data: model, error: mErr } = await svc.from('models').select('id').eq('name', 'units').maybeSingle();
   if (mErr) throw new Error(`catalog: units model lookup failed: ${mErr.message}`);
-  if (!model?.id) return out;
+  if (!model?.id) return { available: out, withUnits };
   for (let i = 0; i < projectIds.length; i += 100) {
     const ids = projectIds.slice(i, i + 100);
     for (let from = 0; ; from += 1000) {
@@ -218,6 +237,7 @@ async function loadUnitIndex(svc: SupabaseClient, projectIds: string[]): Promise
       const rows = (data ?? []) as unknown as Array<{ [k: string]: unknown }>;
       for (const r of rows) {
         const pid = typeof r.pid === 'string' ? r.pid : null;
+        if (pid) withUnits.add(pid);
         if (!AVAILABLE_UNIT.has(String(r.st ?? '').trim().toLowerCase()) || !pid) continue;
         const list = out.get(pid) ?? [];
         list.push({ type: typeof r.t === 'string' ? r.t : null, bedrooms: num(r.b), price: num(r.p), area: num(r.a) ?? num(r.ta), components: componentsOf(r.c) });
@@ -226,14 +246,14 @@ async function loadUnitIndex(svc: SupabaseClient, projectIds: string[]): Promise
       if (rows.length < 1000) break;
     }
   }
-  return out;
+  return { available: out, withUnits };
 }
 
-function toProject(master: Master, m: FinderMatch, inArea: boolean, fit: UnitFit | null): CatalogProject {
+function toProject(master: Master, m: FinderMatch, inArea: boolean, fit: UnitFit | null, recordDistrict: string | null): CatalogProject {
   const d = master.data;
   const price = range(d.available_price_range);
   const beds = range(d.bedroom_range);
-  const district = typeof m.facts?.district === 'string' && m.facts.district.trim() ? m.facts.district.trim() : null;
+  const district = recordDistrict ?? (typeof m.facts?.district === 'string' && m.facts.district.trim() ? m.facts.district.trim() : null);
   const plan = typeof d.payment_plan_summary === 'string' && d.payment_plan_summary.trim() ? clip(d.payment_plan_summary.trim(), 200) : null;
   const handover = typeof d.handover_date === 'string' && d.handover_date ? d.handover_date.slice(0, 10) : null;
   return {
@@ -318,8 +338,30 @@ export function districtKey(s: string): string {
   return s.replace(/^\s*حي\s+/, '').replace(/\s+/g, ' ').trim();
 }
 
-interface Resolved { master: Master; m: FinderMatch; inArea: boolean }
-interface Universe { items: Resolved[]; zoneNames: Set<string> | null; units: Map<string, UnitLite[]> }
+interface Resolved { master: Master; m: FinderMatch; inArea: boolean; district: string | null }
+interface Universe { items: Resolved[]; zoneNames: Set<string> | null; units: Map<string, UnitLite[]>; withUnits: Set<string> }
+
+/** location.district ids → district names, one batched read. */
+async function recordDistrictNames(svc: SupabaseClient, masters: Master[]): Promise<Map<string, string>> {
+  const idOf = (mm: Master): string | null => {
+    const loc = mm.data.location && typeof mm.data.location === 'object' ? (mm.data.location as Record<string, unknown>) : {};
+    const v = loc.district;
+    return typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v) ? v : null;
+  };
+  const ids = [...new Set(masters.map(idOf).filter((x): x is string => !!x))];
+  const names = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = await svc.from('districts').select('id, name_ar, display_name').in('id', ids.slice(i, i + 150));
+    if (error) throw new Error(`catalog: district names failed: ${error.message}`);
+    for (const r of (data ?? []) as Array<{ id: string; name_ar: string | null; display_name: string | null }>) {
+      const n = (r.name_ar ?? r.display_name ?? '').trim();
+      if (n) names.set(r.id, districtKey(n));
+    }
+  }
+  const out = new Map<string, string>();
+  for (const mm of masters) { const id = idOf(mm); const n = id ? names.get(id) : undefined; if (n) out.set(mm.id, n); }
+  return out;
+}
 
 // The candidate universe depends only on (city, zone): every later filter is
 // applied in memory. A brain turn searches several times in one area, so cache
@@ -362,6 +404,7 @@ async function buildUniverse(svc: SupabaseClient, city: string, zone: Zone | nul
   for (const g of FINDER_GROUP_KEYS) for (const m of out.result.groups[g] ?? []) { ordered.push(m); groupOf.set(m, g); }
 
   const masters = await resolveMasters(svc, ordered.map((m) => m.project_id));
+  const recordDistricts = await recordDistrictNames(svc, [...new Map([...masters.values()].map((x) => [x.id, x])).values()]);
   const items: Resolved[] = [];
   const seen = new Set<string>();
   for (const m of ordered) {
@@ -371,13 +414,14 @@ async function buildUniverse(svc: SupabaseClient, city: string, zone: Zone | nul
     // "In the requested area" = the project's OWN district is one of the zone's
     // districts. The Finder's "nearby" group crosses region lines (an east search
     // returned النرجس), so it is not trusted for this; the exact group is the
-    // fallback only when the project has no district on record.
-    const d = typeof m.facts?.district === 'string' ? districtKey(m.facts.district) : '';
-    const inArea = zoneNames === null ? true : d ? zoneNames.has(d) : groupOf.get(m) === 'exact_district_matches';
-    items.push({ master, m, inArea });
+    // fallback only when the project has no district on record. The record's
+    // district wins over the Finder's map-pin one (they disagree for a few).
+    const district = recordDistricts.get(master.id) ?? (typeof m.facts?.district === 'string' && m.facts.district.trim() ? districtKey(m.facts.district) : null);
+    const inArea = zoneNames === null ? true : district ? zoneNames.has(district) : groupOf.get(m) === 'exact_district_matches';
+    items.push({ master, m, inArea, district });
   }
-  const units = await loadUnitIndex(svc, items.map((r) => r.master.id));
-  return { items, zoneNames, units };
+  const idx = await loadUnitIndex(svc, items.map((r) => r.master.id));
+  return { items, zoneNames, units: idx.available, withUnits: idx.withUnits };
 }
 
 /** Finder ids → all_projects master rows in two batched reads (was one read per
@@ -469,6 +513,9 @@ export async function searchProjects(
   // except for features, which only unit records can show.
   const unitsFit = (id: string, check: FitCheck) => {
     const us = universe.units.get(id);
+    // Unit records exist but none is available → sold out, whatever the
+    // project's summary says (its stored count can lag or be empty).
+    if ((!us || us.length === 0) && universe.withUnits.has(id)) return false;
     if (!us || us.length === 0) return !check.features?.length;
     return us.some((u) => unitFits(u, check));
   };
@@ -477,19 +524,20 @@ export async function searchProjects(
   const areaIds = criteria.area_ids ? new Set(criteria.area_ids) : null;
   const inArea = (r: { master: Master; inArea: boolean }) => (areaIds ? areaIds.has(r.master.id) : r.inArea);
   interface Drop { near?: boolean; readiness?: boolean; area?: boolean; amenities?: boolean }
-  const pick = (check: FitCheck, areaOnly: boolean, nearFactor = 1, drop: Drop = {}): Array<{ master: Master; m: FinderMatch; inArea: boolean }> =>
+  const pick = (check: FitCheck, areaOnly: boolean, nearFactor = 1, drop: Drop = {}): Resolved[] =>
     resolved.filter((r) => (!areaOnly || drop.area || inArea(r))
       && (drop.near || nearOk(r.master.id, nearFactor))
       && projectFits(r.master.data, check)
       && unitsFit(r.master.id, check)
       && (drop.readiness || !criteria.readiness || readinessOf(r.master.data) === criteria.readiness)
       && (drop.amenities || hasAmenities(r.master.data, amen.asks))
-      && (drop.area || !wantDistricts.size || (typeof r.m.facts?.district === 'string' && wantDistricts.has(districtKey(r.m.facts.district)))));
+      && (drop.area || !wantDistricts.size || (!!r.district && wantDistricts.has(r.district))));
 
   const beds = criteria.bedrooms_min ?? null;
   const budget = criteria.budget_max ?? null;
   const areaMin = criteria.area_min ?? null;
-  const fit = (o: Partial<FitCheck>): FitCheck => ({ types, strictType: false, checkType: true, bedroomsMin: beds, budgetMax: budget, requireKnownPrice: true, areaMin, features: feats.known, ...o });
+  const areaMax = criteria.area_max && (!areaMin || criteria.area_max >= areaMin) ? criteria.area_max : null;
+  const fit = (o: Partial<FitCheck>): FitCheck => ({ types, strictType: false, checkType: true, bedroomsMin: beds, budgetMax: budget, requireKnownPrice: true, areaMin, areaMax, features: feats.known, ...o });
 
   // Ladder: exact (type listed) → type unrecorded → twice the distance →
   // without the features → any type → widened specs → outside the requested
@@ -505,9 +553,9 @@ export async function searchProjects(
     // each saying which of the amenities it has (amenities_asked).
     if (amen.asks.length) ladder.push({ check: fit({ features: [] }), areaOnly: true, relaxed: 'amenities', noAmenities: true });
     if (types.length) ladder.push({ check: fit({ checkType: false }), areaOnly: true, relaxed: 'unit_type' });
-    if (beds || budget || areaMin) {
+    if (beds || budget || areaMin || areaMax) {
       ladder.push({
-        check: fit({ checkType: false, bedroomsMin: null, areaMin: null, budgetMax: budget ? Math.round(budget * 1.15) : null }),
+        check: fit({ checkType: false, bedroomsMin: null, areaMin: null, areaMax: null, budgetMax: budget ? Math.round(budget * 1.15) : null }),
         areaOnly: true, relaxed: 'specs_and_budget',
       });
     }
@@ -516,7 +564,7 @@ export async function searchProjects(
     if (budget) ladder.push({ check: fit({ budgetMax: null }), areaOnly: true, relaxed: 'budget' });
     if (withAreaRung && (zoneKnown || areaIds)) ladder.push({ check: fit({}), areaOnly: false, relaxed: 'area' });
 
-    let fits: Array<{ master: Master; m: FinderMatch; inArea: boolean }> = [];
+    let fits: Resolved[] = [];
     let relaxed: CatalogSearch['relaxed'] = null;
     let used: FitCheck = ladder[0]!.check;
     for (const rung of ladder) {
@@ -525,10 +573,10 @@ export async function searchProjects(
     }
     return { fits, relaxed, used };
   };
-  const toProjects = (fits: Array<{ master: Master; m: FinderMatch; inArea: boolean }>, used: FitCheck): CatalogProject[] => {
+  const toProjects = (fits: Resolved[], used: FitCheck): CatalogProject[] => {
     let all = fits.map((f) => {
       const us = universe.units.get(f.master.id);
-      const p = toProject(f.master, f.m, inArea(f), us && us.length ? fitOf(us, used) : null);
+      const p = toProject(f.master, f.m, inArea(f), us && us.length ? fitOf(us, used) : null, f.district);
       if (amen.asks.length) {
         p.amenities_asked = amenityAnswers(f.master.data, amen.asks);
         p.amenities = amenityLabels(f.master.data);
@@ -603,6 +651,8 @@ export interface ProjectFacts {
   price_to: number | null;
   /** Available units grouped by bedroom count. */
   by_bedrooms: Array<{ bedrooms: number | null; units: number; price_from: number | null; price_to: number | null; area_from: number | null; area_to: number | null }>;
+  /** Available units grouped by unit type — quote a type's OWN starting price. */
+  by_type: Array<{ type: string; units: number; price_from: number | null; area_from: number | null; area_to: number | null; bedrooms: number[] }>;
   down_payment_percent: number | null;
   during_construction_percent: number | null;
   on_handover_percent: number | null;
@@ -650,6 +700,23 @@ export async function projectFacts(svc: SupabaseClient, projectId: string): Prom
     groups.set(key, g);
   }
   const mm = (xs: number[]) => (xs.length ? { from: Math.min(...xs), to: Math.max(...xs) } : { from: null, to: null });
+  const typeGroups = new Map<string, { prices: number[]; areas: number[]; beds: Set<number>; units: number }>();
+  for (const u of units) {
+    if (!AVAILABLE.has(String(u.unit_status ?? '').trim().toLowerCase())) continue;
+    const raw = typeof u.unit_type === 'string' ? u.unit_type : '';
+    const t = raw ? (normalizeUnitType(raw) ?? raw.trim()) : '';
+    if (!t) continue;
+    const g = typeGroups.get(t) ?? { prices: [], areas: [], beds: new Set<number>(), units: 0 };
+    g.units += 1;
+    const p = num(u.total_price); if (p !== null && p > 0) g.prices.push(p);
+    const a = num(u.unit_area); if (a !== null && a > 0) g.areas.push(a);
+    const b = num(u.bedrooms); if (b !== null) g.beds.add(b);
+    typeGroups.set(t, g);
+  }
+  const by_type = [...typeGroups.entries()].map(([type, g]) => {
+    const p = mm(g.prices); const a = mm(g.areas);
+    return { type, units: g.units, price_from: p.from, area_from: a.from === null ? null : Math.round(a.from), area_to: a.to === null ? null : Math.round(a.to), bedrooms: [...g.beds].sort((x, y) => x - y) };
+  });
   const by_bedrooms = [...groups.values()]
     .sort((x, y) => (x.bedrooms ?? 99) - (y.bedrooms ?? 99))
     .map((g) => { const p = mm(g.prices); const a = mm(g.areas); return { bedrooms: g.bedrooms, units: g.units, price_from: p.from, price_to: p.to, area_from: a.from, area_to: a.to }; });
@@ -682,6 +749,7 @@ export async function projectFacts(svc: SupabaseClient, projectId: string): Prom
     price_from: price.min,
     price_to: price.max,
     by_bedrooms,
+    by_type,
     down_payment_percent: num(d.down_payment_percent),
     during_construction_percent: num(d.during_construction_percent),
     on_handover_percent: num(d.on_handover_percent),

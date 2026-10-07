@@ -19,6 +19,8 @@ import { makeSupabaseBackfillDeps, hydrateClipGeometry } from '../geoPreference/
 import type { Conversation } from '../geoPreference/extractor.js';
 import type { ProposalInput, ProposalRecord, ProposalStore } from '../geoPreference/orchestrator.js';
 import { geoPreferenceToLocationItems, summarizeGeometry } from '../../geo-preference/review.js';
+import { newDistrictItem } from '../../../src/lib/geo/locationItems.js';
+import { districtsInText } from './districtNames.js';
 
 export interface GeoReading {
   /** Master project ids inside the area; null = nothing usable was understood. */
@@ -105,8 +107,16 @@ async function compilePlaces(svc: SupabaseClient, conv: Conversation, clientId: 
 
 async function run(svc: SupabaseClient, conv: Conversation, clientId: string | null): Promise<GeoReading> {
   if (!conv.turns.some((t) => t.speaker === 'client')) return { ids: null, understood: [], needs_review: 0 };
-  const { items, understood } = await compilePlaces(svc, conv, clientId);
-  if (!items.some((i) => i.polarity !== 'exclude')) return { ids: null, understood, needs_review: 0 };
+  let { items, understood } = await compilePlaces(svc, conv, clientId);
+  if (!items.some((i) => i.polarity !== 'exclude')) {
+    // Nothing usable from the reader → plain district names in the customer's
+    // own recent messages (districtNames.ts). «المصيف» / «الصفا و الفاروق».
+    const recent = conv.turns.filter((t) => t.speaker === 'client').slice(-8).map((t) => t.text);
+    const named = await districtsInText(svc, recent);
+    if (!named.length) return { ids: null, understood, needs_review: 0 };
+    items = [...items, ...named.map((d) => newDistrictItem(d.id, d.label, 'include'))];
+    understood = [...new Map(named.map((d) => [d.label, { place: d.label, wanted: true, kind: 'district', radius_m: null }])).values()];
+  }
   const { data, error } = await svc.rpc('sales_agent_geo_match', { p_items: items });
   if (error) throw new Error(`geo match failed: ${error.message}`);
   const r = (data ?? {}) as { ids?: string[]; includes?: number; needs_review?: number };
