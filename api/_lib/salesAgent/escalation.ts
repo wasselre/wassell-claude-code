@@ -8,7 +8,9 @@
  * an ordinary `appointments` record WITHOUT the "appointment booked" WhatsApp:
  * that message belongs to the browser-side workflow, and `appointments` is not
  * enrolled in the server workflow runner, so a server-created appointment fires
- * nothing (verified 2026-09-30). The agent confirms the visit in its own words.
+ * no workflow (verified 2026-09-30). The client's stage / status DO move: the
+ * `records_client_stage_from_milestone` DB trigger (2026-10-08) applies the
+ * same stage table for every writer. The agent confirms the visit in its own words.
  *
  * The rep is the client's own rep: chat `client_owner` mirror → the client's
  * `client_owner` → the designated WhatsApp inbox user.
