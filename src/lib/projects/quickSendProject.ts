@@ -38,9 +38,10 @@ import type { AppRecord } from '@/types';
  *   3. SEND  — straight into the client's WhatsApp conversation (created if it
  *              doesn't exist yet), text first, then the media.
  *
- * NOT SENT when the saved prices can't be verified: a fact-check that fails
- * stops the send with a red toast — the popup used to show stale numbers with a
- * warning for the rep to fix, and with no preview there is nobody to read it.
+ * Stale prices are never sent: a fact-check that fails falls back to a fresh
+ * AI message from the project's current data (validated + saved); only if that
+ * fails too is the send stopped with a red toast. The popup used to show stale
+ * numbers with a warning, and with no preview there is nobody to read it.
  *
  * Per-button state lives in a tiny store keyed by client + project, so the same
  * project shows «تم الإرسال» on every surface for this session.
@@ -92,10 +93,32 @@ async function resolveMessageText(projectId: string, projectName: string, lang: 
   const savedAr = typeof sd.body_ar === 'string' ? sd.body_ar : '';
   const savedEn = typeof sd.body_en === 'string' ? sd.body_en : '';
 
+  // A fresh AI message from the project's current data — validated server-side
+  // (prices, district, city, off-plan) and saved, so a broken saved message
+  // is repaired by the send itself.
+  const writeFresh = async (why: string | null): Promise<{ ar: string; en: string }> => {
+    try {
+      const r = await generateProjectMessageAi(projectId);
+      return { ar: r.body_ar, en: r.body_en };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[quickSendProject] AI message failed — not sending:', msg, why ? `(after: ${why})` : '');
+      throw new Error(L(
+        `تعذّر تجهيز رسالة «${projectName}» بأسعار محدّثة — لم تُرسل (${msg})`,
+        `Couldn't prepare "${projectName}" with current prices — not sent (${msg})`,
+      ));
+    }
+  };
+
+  // A saved English side that is a copy of the Arabic (written by the compose
+  // step's bug fixed 2026-10-08) can't be sent to an English client and fails
+  // every fact-check — treat the saved message as unusable.
+  const englishIsArabicCopy = savedEn.trim() !== '' && savedEn.trim() === savedAr.trim();
+
   let ar: string;
   let en: string;
   let persist = false;
-  if (saved && (savedAr.trim() || savedEn.trim())) {
+  if (saved && (savedAr.trim() || savedEn.trim()) && !englishIsArabicCopy) {
     ar = savedAr;
     en = savedEn;
     if (sd.fact_check_on_use === true && !savedMessageMatchesCurrentFacts(facts, savedAr, savedEn)) {
@@ -103,20 +126,16 @@ async function resolveMessageText(projectId: string, projectName: string, lang: 
         const r = await factCheckProjectMessage(projectId, savedAr, savedEn);
         ar = r.body_ar || savedAr;
         en = r.body_en || savedEn;
-        persist = true;
       } catch (e) {
+        // Never send the stale numbers — write a fresh, validated message.
         const msg = e instanceof Error ? e.message : String(e);
-        console.error('[quickSendProject] fact-check failed — not sending unverified prices:', msg);
-        throw new Error(L(
-          `تعذّر تحديث أسعار «${projectName}» — لم تُرسل الرسالة (${msg})`,
-          `Couldn't refresh the prices of "${projectName}" — not sent (${msg})`,
-        ));
+        console.error('[quickSendProject] fact-check failed — writing a fresh message:', msg);
+        ({ ar, en } = await writeFresh(msg));
       }
+      persist = true;
     }
   } else {
-    const r = await generateProjectMessageAi(projectId);
-    ar = r.body_ar;
-    en = r.body_en;
+    ({ ar, en } = await writeFresh(englishIsArabicCopy ? 'saved English is a copy of the Arabic' : null));
     persist = true;
   }
 

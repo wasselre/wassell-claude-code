@@ -237,8 +237,12 @@ export default function ProjectMessageComposeStep({
       addToast(L('الرسالة فارغة', 'Message is empty'), 'error');
       return;
     }
+    // The edited box is ONE language; the other side keeps its own text. (Until
+    // 2026-10-08 the English side was set to the box on an Arabic send, saving
+    // the Arabic copy as body_en — 33 of 110 project messages — which then
+    // failed every fact-check on the English district/city.)
     const ar = sendAr ? chatBody : bodyAr;
-    const en = sendAr ? chatBody : bodyEn;
+    const en = sendAr ? bodyEn : chatBody;
     setBodyAr(ar);
     setBodyEn(en);
 
