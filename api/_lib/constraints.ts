@@ -52,7 +52,14 @@ export interface FieldConstraint {
    *  to the minimum of an at-least field, and to the maximum of an at-most field.
    *  Ignored for categorical fields (property_type / amenities). */
   tolerance_pct?: number;
+  /** `amenities` only: where each selected amenity must be, keyed by the amenity
+   *  as stored on the client. Absent = 'both'. Saved with the client's
+   *  preference_constraints; sent to the engine as `amenity_scopes`. */
+  scopes?: Record<string, AmenityScope>;
 }
+
+/** Where an amenity must be (2026-10-08): in the unit, in the project, or either. */
+export type AmenityScope = 'unit' | 'project' | 'both';
 
 export type RequirementConstraints = Partial<Record<ConstraintField, FieldConstraint>>;
 
@@ -91,7 +98,7 @@ export const MAX_TOLERANCE_PCT = 0.5;
 export function resolveConstraint(
   field: ConstraintField,
   constraints?: RequirementConstraints | null,
-): Required<FieldConstraint> {
+): Required<Pick<FieldConstraint, 'mode' | 'tolerance_pct'>> {
   const def = DEFAULT_CONSTRAINTS[field];
   const given = constraints?.[field];
   const mode: ConstraintMode = given?.mode === 'soft' || given?.mode === 'hard' ? given.mode : def.mode;

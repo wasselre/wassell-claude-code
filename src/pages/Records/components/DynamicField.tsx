@@ -837,6 +837,12 @@ export default function DynamicField({
       constraints={(recordData?.preference_constraints ?? {}) as RequirementConstraints}
       onChange={(next) => onPatch({ preference_constraints: next })}
       isAr={isAr}
+      amenityOptions={cField === 'amenities' && Array.isArray(value)
+        ? (value as unknown[]).filter((v): v is string => typeof v === 'string' && v.trim() !== '').map((v) => {
+            const opt = field.options?.find((o) => o.value === v);
+            return { value: v, label: opt ? (isAr ? opt.label_ar : opt.label_en) || v : v };
+          })
+        : undefined}
     />
   ) : null;
 

@@ -552,7 +552,7 @@ const AMENITY_LABEL: Record<string, [string, string]> = {
   kids_play: ['ألعاب أطفال', 'Kids play area'],
 };
 
-interface AmenityMatchFact { asked: string; key: string | null; status: 'found' | 'unknown' | 'missing' }
+interface AmenityMatchFact { asked: string; key: string | null; status: 'found' | 'unknown' | 'missing'; scope?: 'unit' | 'project' | 'both' }
 
 function isAmenityFact(x: unknown): x is AmenityMatchFact {
   const o = x as Record<string, unknown> | null;
@@ -574,11 +574,16 @@ function AmenityMatchRow({ value, isAr }: { value: unknown; isAr: boolean }) {
     missing: 'border-rose-200 bg-rose-50 text-rose-700 line-through decoration-rose-400/60',
   } as const;
   const mark = { found: '✓', unknown: '?', missing: '✗' } as const;
-  const hint = {
-    found: L('متوفر في المشروع أو وحداته المتاحة', 'In the project or its available units'),
-    unknown: L('غير مؤكد — وحدات المشروع لا تذكر مكوناتها', 'Not confirmed — the project’s units do not list their components'),
-    missing: L('غير متوفر', 'Not available'),
-  } as const;
+  const where = (s: AmenityMatchFact['scope']) =>
+    s === 'unit' ? L('في الوحدات المتاحة', 'in the available units')
+    : s === 'project' ? L('في مرافق المشروع', 'in the project’s facilities')
+    : L('في المشروع أو وحداته المتاحة', 'in the project or its available units');
+  const hint = (it: AmenityMatchFact) =>
+    it.status === 'found' ? L(`متوفر ${where(it.scope)}`, `Available ${where(it.scope)}`)
+    : it.status === 'unknown' ? L('غير مؤكد — وحدات المشروع لا تذكر مكوناتها', 'Not confirmed — the project’s units do not list their components')
+    : L(`غير متوفر ${where(it.scope)}`, `Not available ${where(it.scope)}`);
+  const scopeTag = (s: AmenityMatchFact['scope']) =>
+    s === 'unit' ? L('وحدة', 'unit') : s === 'project' ? L('مشروع', 'project') : null;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] font-bold text-charcoal/55">{L('المزايا المطلوبة:', 'Requested amenities:')}</span>
@@ -588,11 +593,12 @@ function AmenityMatchRow({ value, isAr }: { value: unknown; isAr: boolean }) {
         return (
           <span
             key={it.asked}
-            title={hint[it.status]}
+            title={hint(it)}
             className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${tone[it.status]}`}
           >
             <span aria-hidden>{mark[it.status]}</span>
             {label}
+            {scopeTag(it.scope) && <span className="font-normal opacity-70">· {scopeTag(it.scope)}</span>}
           </span>
         );
       })}

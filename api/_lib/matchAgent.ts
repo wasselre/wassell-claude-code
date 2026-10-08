@@ -775,6 +775,10 @@ export interface MatchRequirements {
    *  project preferred_amenities). Fails CLOSED — no amenity data ⇒ dropped,
    *  because "must contain" means verified-present, not unknown. */
   required_amenities?: string[];
+  /** Where each amenity must be (operator, 2026-10-08): `unit` — in the
+   *  project's available units only; `project` — in the project's own amenity
+   *  list only; `both` (the default) — either. Keyed by the amenity as asked. */
+  amenity_scopes?: Record<string, AmenityScope>;
   /** PER-FIELD strictness: which requirements HARD-exclude a candidate and with
    *  what tolerance band. Omitted ⇒ DEFAULT_CONSTRAINTS (see constraints.ts).
    *  Only 'hard' fields exclude; 'soft' ones influence the score only. */
@@ -1075,9 +1079,8 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   //    subscore credit. ──
   const wanted = [...new Set([...(req.lifestyle ?? []), ...(req.amenities ?? []), ...(req.required_amenities ?? [])])].filter(Boolean);
   if (wanted.length > 0) {
-    const have = amenityEvidence(data);
     let matched = 0;
-    for (const w of wanted) if (have.some((h) => amenityMatches(h, w))) matched += 1;
+    for (const w of wanted) if (amenityStatus(data, w, amenityScopeOf(req, w)) === 'found') matched += 1;
     dims.amenities.value = matched / wanted.length;
   }
 
@@ -1154,7 +1157,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   put('preferred_amenities', asArr(data.preferred_amenities));
   // Which of the amenities the search asked for this project has — shown on the
   // finder card (operator, 2026-10-07). Same rule as the score and the gate.
-  put('amenity_match', amenityMatchFacts(data, [...(req.amenities ?? []), ...(req.required_amenities ?? [])]));
+  put('amenity_match', amenityMatchFacts(data, [...(req.amenities ?? []), ...(req.required_amenities ?? [])], req.amenity_scopes));
   if (distanceKm != null) put('distance_km', distanceKm);
   // Main image for the result card. Market listings carry a raw URL (`image`, set by
   // the adapter); projects carry a files.id (`main_image`, else first `project_images`).
@@ -1430,7 +1433,7 @@ export function firstFailedHardConstraint(
   const amen = resolveConstraint('amenities', c);
   const wantedAmenities = (req.required_amenities?.length ? req.required_amenities : amen.mode === 'hard' ? req.amenities ?? [] : [])
     .filter((s) => typeof s === 'string' && s.trim() !== '');
-  if (!amenitiesAllPresent(data, wantedAmenities)) return 'amenities';
+  if (!amenitiesAllPresent(data, wantedAmenities, req.amenity_scopes)) return 'amenities';
 
   return null;
 }
@@ -1442,23 +1445,47 @@ export function firstFailedHardConstraint(
  *  with no amenity data is dropped, because "must contain" means
  *  verified-present, not unknown. Exported for tests. */
 export function passesRequiredAmenities(data: Record<string, unknown>, req: MatchRequirements): boolean {
-  return amenitiesAllPresent(data, req.required_amenities ?? []);
+  return amenitiesAllPresent(data, req.required_amenities ?? [], req.amenity_scopes);
 }
 
 /** THE amenity primitive both callers share (the standalone `required_amenities`
  *  check above and the amenities branch of firstFailedHardConstraint). Empty
  *  wanted list ⇒ pass; any wanted entry ⇒ the candidate must have evidence for
  *  ALL of them, so no amenity data at all is a fail. */
-function amenitiesAllPresent(data: Record<string, unknown>, wanted: string[]): boolean {
+function amenitiesAllPresent(data: Record<string, unknown>, wanted: string[], scopes?: Record<string, AmenityScope>): boolean {
   const required = wanted.filter((s) => typeof s === 'string' && s.trim() !== '');
   if (required.length === 0) return true;
-  const have = amenityEvidence(data);
-  // Something a UNIT has (maid room, majlis…) is unknown — not absent — while
-  // the project's available units record nothing (`unit_features` null): kept
-  // until that data exists (operator, 2026-10-07). Everything else still fails
-  // closed on no evidence.
+  // `unknown` passes: a unit amenity while the project's available units record
+  // nothing is kept until that data exists (operator, 2026-10-07). A missing
+  // project facility still fails closed.
+  return required.every((w) => amenityStatus(data, w, scopeFrom(scopes, w)) !== 'missing');
+}
+
+export type AmenityScope = 'unit' | 'project' | 'both';
+
+function scopeFrom(scopes: Record<string, AmenityScope> | undefined, want: string): AmenityScope {
+  const s = scopes?.[want.trim()];
+  return s === 'unit' || s === 'project' ? s : 'both';
+}
+const amenityScopeOf = (req: MatchRequirements, want: string): AmenityScope => scopeFrom(req.amenity_scopes, want);
+
+/**
+ * THE amenity rule (score, must-have gate and the finder card all use it):
+ *   project — found in the project's own amenity list, else missing;
+ *   unit    — found in what its AVAILABLE units contain (`unit_features`);
+ *             unknown while the units record nothing; else missing;
+ *   both    — found in either; unknown when it is a unit-type amenity and the
+ *             units record nothing; else missing.
+ * Exported for tests.
+ */
+export function amenityStatus(data: Record<string, unknown>, want: string, scope: AmenityScope = 'both'): 'found' | 'unknown' | 'missing' {
+  const inProject = asArr(data.preferred_amenities).some((h) => amenityMatches(h, want));
+  const inUnits = asArr(data.unit_features).some((h) => amenityMatches(h, want));
   const unitsUnknown = !Array.isArray(data.unit_features);
-  return required.every((w) => have.some((h) => amenityMatches(h, w)) || (unitsUnknown && isUnitAmenity(w)));
+  if (scope === 'project') return inProject ? 'found' : 'missing';
+  if (scope === 'unit') return inUnits ? 'found' : unitsUnknown ? 'unknown' : 'missing';
+  if (inProject || inUnits) return 'found';
+  return unitsUnknown && isUnitAmenity(want) ? 'unknown' : 'missing';
 }
 
 /**
@@ -1516,31 +1543,26 @@ export interface AmenityMatchFact {
   asked: string;
   /** Synonym group (pool, maid_room…) for a display label; null when unknown. */
   key: string | null;
-  /** found — the project or its available units have it; unknown — a unit
-   *  amenity while the units record nothing; missing — evidence exists, it isn't there. */
+  /** found — it is where the search asked (project / units / either); unknown —
+   *  looked in the units and they record nothing; missing — not there. */
   status: 'found' | 'unknown' | 'missing';
+  /** Where the search looked. */
+  scope: AmenityScope;
 }
 
 /** Per requested amenity: found / unknown / missing for this project. Exported for tests. */
-export function amenityMatchFacts(data: Record<string, unknown>, asked: string[]): AmenityMatchFact[] {
-  const have = amenityEvidence(data);
-  const unitsUnknown = !Array.isArray(data.unit_features);
+export function amenityMatchFacts(data: Record<string, unknown>, asked: string[], scopes?: Record<string, AmenityScope>): AmenityMatchFact[] {
   const seen = new Set<string>();
   const out: AmenityMatchFact[] = [];
   for (const a of asked) {
     if (typeof a !== 'string' || !a.trim() || seen.has(a.trim())) continue;
     seen.add(a.trim());
-    const status = have.some((h) => amenityMatches(h, a)) ? 'found' : unitsUnknown && isUnitAmenity(a) ? 'unknown' : 'missing';
-    out.push({ asked: a.trim(), key: amenityGroup(a)?.key ?? null, status });
+    const scope = scopeFrom(scopes, a);
+    out.push({ asked: a.trim(), key: amenityGroup(a)?.key ?? null, status: amenityStatus(data, a, scope), scope });
   }
   return out;
 }
 
-/** Everything known about a project's amenities: its own list + what its
- *  available units contain (`unit_features`, the stored rollup). */
-function amenityEvidence(data: Record<string, unknown>): string[] {
-  return [...asArr(data.preferred_amenities), ...asArr(data.unit_features)];
-}
 
 /** Cheapest / dearest AVAILABLE unit price and the available size band. Prefers the
  *  persisted available_* rollups (what the client can actually buy right now); falls

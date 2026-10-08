@@ -16,7 +16,7 @@
  */
 
 import type { AppModel } from '@/types';
-import type { RequirementConstraints } from './constraints';
+import type { AmenityScope, RequirementConstraints } from './constraints';
 
 /** Mirror of api/_lib/matchAgent.MatchRequirements (the fields the SPA fills). */
 export interface MatchRequirementsInput {
@@ -52,6 +52,9 @@ export interface MatchRequirementsInput {
    *  of them (hard gate, fails closed on no-amenity-data). Set by the finder UIs'
    *  "must have" toggle from the selected `amenities`; never stored on the client. */
   required_amenities?: string[];
+  /** Where each amenity must be — unit / project / both (default). Built from
+   *  `preference_constraints.amenities.scopes`, only for the selected amenities. */
+  amenity_scopes?: Record<string, AmenityScope>;
   /** PER-FIELD strictness (hard/soft + tolerance band). Omitted fields fall back
    *  to DEFAULT_CONSTRAINTS in the engine. See `./constraints`. */
   constraints?: RequirementConstraints;
@@ -229,6 +232,14 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
     out.constraints = pc as RequirementConstraints;
     const amenC = (pc as RequirementConstraints).amenities;
     if (amenC?.mode === 'hard' && out.amenities?.length) out.required_amenities = out.amenities;
+    if (amenC?.scopes && out.amenities?.length) {
+      const scopes: Record<string, AmenityScope> = {};
+      for (const a of out.amenities) {
+        const s = amenC.scopes[a];
+        if (s === 'unit' || s === 'project') scopes[a] = s;
+      }
+      if (Object.keys(scopes).length) out.amenity_scopes = scopes;
+    }
   }
 
   return out;

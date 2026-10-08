@@ -16,6 +16,7 @@
 import type { MatchRequirementsInput } from './requirements';
 import type { UnitView } from '@/lib/projects/unitView';
 import { normalizeForSearch } from '@/lib/recordSearch';
+import { unitHasAmenity, unitHasAmenityData } from './amenityMatch';
 
 /** Band cutoffs — same spirit as the project scorer (STRONG 80 / GOOD 60). */
 const STRONG = 80;
@@ -31,6 +32,7 @@ const WEIGHTS = {
   bedrooms: 15,
   bathrooms: 5,
   availability: 10,
+  amenities: 15,
 } as const;
 type Dim = keyof typeof WEIGHTS;
 
@@ -92,7 +94,7 @@ function typeMatches(unitTypeTokens: string[], reqTypes: string[]): boolean {
 /** Deterministic fit score for ONE unit against the client requirements. */
 export function scoreUnit(unit: UnitView, req: MatchRequirementsInput): UnitScore {
   const dims: Record<Dim, number | null> = {
-    budget: null, type: null, area: null, bedrooms: null, bathrooms: null, availability: null,
+    budget: null, type: null, area: null, bedrooms: null, bathrooms: null, availability: null, amenities: null,
   };
   const requestedMissing = new Set<Dim>();
 
@@ -155,6 +157,15 @@ export function scoreUnit(unit: UnitView, req: MatchRequirementsInput): UnitScor
     else if (bt === reqBaths) dims.bathrooms = 1;
     else if (Math.abs(bt - reqBaths) <= 1) dims.bathrooms = 0.6;
     else dims.bathrooms = 0;
+  }
+
+  // ── Amenities the search asked to find IN THE UNIT (scope 'unit') ──
+  //    A unit that records no components can't confirm them → 0, same honesty
+  //    rule as every other dimension (it never reads as a full match).
+  const unitAmenities = (req.amenities ?? []).filter((a) => req.amenity_scopes?.[a] === 'unit');
+  if (unitAmenities.length > 0) {
+    if (!unitHasAmenityData(unit)) requestedMissing.add('amenities');
+    else dims.amenities = unitAmenities.filter((a) => unitHasAmenity(unit, a)).length / unitAmenities.length;
   }
 
   // ── Availability (always applies) ──

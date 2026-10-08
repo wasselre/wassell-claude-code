@@ -2,8 +2,14 @@ import { useState } from 'react';
 import { Lock, Unlock, ChevronDown } from 'lucide-react';
 import {
   resolveConstraint, isNonDefault, BANDED_FIELDS, TOLERANCE_PRESETS, MODE_LABELS, MAX_TOLERANCE_PCT,
-  type ConstraintField, type ConstraintMode, type RequirementConstraints,
+  type AmenityScope, type ConstraintField, type ConstraintMode, type RequirementConstraints,
 } from '@/lib/matching/constraints';
+
+const SCOPES: Array<{ value: AmenityScope; ar: string; en: string; hint_ar: string; hint_en: string }> = [
+  { value: 'unit', ar: 'في الوحدة', en: 'In the unit', hint_ar: 'يبحث في مكونات الوحدات المتاحة فقط', hint_en: 'Looks only in the available units' },
+  { value: 'project', ar: 'في المشروع', en: 'In the project', hint_ar: 'يبحث في مرافق المشروع فقط', hint_en: 'Looks only in the project’s facilities' },
+  { value: 'both', ar: 'الاثنين', en: 'Either', hint_ar: 'يكفي وجوده في المشروع أو في الوحدة', hint_en: 'In the project or in a unit — either is enough' },
+];
 
 /**
  * The per-field strictness control rendered under each finder preference picker.
@@ -22,7 +28,7 @@ import {
  * before concluding "there's nothing available".
  */
 export default function FieldConstraintControl({
-  field, constraints, onChange, isAr, droppedCount,
+  field, constraints, onChange, isAr, droppedCount, amenityOptions,
 }: {
   field: ConstraintField;
   constraints: RequirementConstraints;
@@ -30,6 +36,9 @@ export default function FieldConstraintControl({
   isAr: boolean;
   /** How many candidates this field excluded on the last search (if any). */
   droppedCount?: number;
+  /** `amenities` only: the SELECTED amenities (value + display label). Each
+   *  gets a where-to-look choice: in the unit / in the project / either. */
+  amenityOptions?: Array<{ value: string; label: string }>;
 }) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const eff = resolveConstraint(field, constraints);
@@ -38,12 +47,21 @@ export default function FieldConstraintControl({
   const [openBand, setOpenBand] = useState(false);
 
   const patch = (next: { mode?: ConstraintMode; tolerance_pct?: number }) => {
-    onChange({ ...constraints, [field]: { ...eff, ...next } });
+    onChange({ ...constraints, [field]: { ...constraints[field], ...eff, ...next } });
   };
+  const scopes = constraints.amenities?.scopes ?? {};
+  const setScope = (value: string, scope: AmenityScope) => {
+    const nextScopes = { ...scopes };
+    if (scope === 'both') delete nextScopes[value];
+    else nextScopes[value] = scope;
+    onChange({ ...constraints, amenities: { ...resolveConstraint('amenities', constraints), ...constraints.amenities, scopes: nextScopes } });
+  };
+  const showScopes = field === 'amenities' && (amenityOptions?.length ?? 0) > 0;
 
   const pctLabel = `±${Math.round(eff.tolerance_pct * 100)}%`;
 
   return (
+    <>
     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
       {/* Mode toggle — the whole point of the control, so it reads as a switch. */}
       <div className="inline-flex overflow-hidden rounded-md border border-sand/60">
@@ -145,5 +163,37 @@ export default function FieldConstraintControl({
         </span>
       )}
     </div>
+    {/* Where each selected amenity must be (operator, 2026-10-08). */}
+    {showScopes && (
+      <div className="mt-1.5 space-y-1 rounded-lg border border-sand/40 bg-cream/30 p-1.5 text-[11px]">
+        <div className="font-bold text-charcoal/55">{L('أين تبحث عن كل ميزة؟', 'Where to look for each amenity?')}</div>
+        {amenityOptions!.map((o) => {
+          const current: AmenityScope = scopes[o.value] === 'unit' || scopes[o.value] === 'project' ? scopes[o.value]! : 'both';
+          return (
+            <div key={o.value} className="flex flex-wrap items-center justify-between gap-1.5">
+              <span className="font-semibold text-charcoal/80">{o.label}</span>
+              <div className="inline-flex overflow-hidden rounded-md border border-sand/60">
+                {SCOPES.map((s) => {
+                  const active = current === s.value;
+                  return (
+                    <button
+                      key={s.value}
+                      type="button"
+                      onClick={() => setScope(o.value, s.value)}
+                      aria-pressed={active}
+                      title={isAr ? s.hint_ar : s.hint_en}
+                      className={`px-2 py-0.5 font-bold transition ${active ? 'bg-copper text-white' : 'bg-white text-charcoal/50 hover:bg-cream/60'}`}
+                    >
+                      {isAr ? s.ar : s.en}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    )}
+    </>
   );
 }

@@ -73,14 +73,41 @@ describe('amenityMatchFacts — what the finder card shows', () => {
   it('found / unknown / missing per requested amenity, de-duplicated', async () => {
     const { amenityMatchFacts } = await import('../matchAgent.js');
     expect(amenityMatchFacts({ preferred_amenities: ['swimming_pool'] }, ['مسبح', 'غرفة سائق', 'نادي رياضي', 'مسبح'])).toEqual([
-      { asked: 'مسبح', key: 'pool', status: 'found' },
-      { asked: 'غرفة سائق', key: 'driver_room', status: 'unknown' },
-      { asked: 'نادي رياضي', key: 'gym', status: 'missing' },
+      { asked: 'مسبح', key: 'pool', status: 'found', scope: 'both' },
+      { asked: 'غرفة سائق', key: 'driver_room', status: 'unknown', scope: 'both' },
+      { asked: 'نادي رياضي', key: 'gym', status: 'missing', scope: 'both' },
     ]);
     expect(amenityMatchFacts({ unit_features: ['مجلس'] }, ['مجلس', 'غرفة خادمة'])).toEqual([
-      { asked: 'مجلس', key: 'majlis', status: 'found' },
-      { asked: 'غرفة خادمة', key: 'maid_room', status: 'missing' },
+      { asked: 'مجلس', key: 'majlis', status: 'found', scope: 'both' },
+      { asked: 'غرفة خادمة', key: 'maid_room', status: 'missing', scope: 'both' },
     ]);
     expect(amenityMatchFacts({}, [])).toEqual([]);
+  });
+});
+
+describe('amenityStatus — where to look (2026-10-08)', () => {
+  it('project / unit / both look only where asked', async () => {
+    const { amenityStatus } = await import('../matchAgent.js');
+    const data = { preferred_amenities: ['swimming_pool'], unit_features: ['غرفة خادمة'] };
+    expect(amenityStatus(data, 'مسبح', 'project')).toBe('found');
+    expect(amenityStatus(data, 'مسبح', 'unit')).toBe('missing');
+    expect(amenityStatus(data, 'غرفة خادمة', 'unit')).toBe('found');
+    expect(amenityStatus(data, 'غرفة خادمة', 'project')).toBe('missing');
+    expect(amenityStatus(data, 'غرفة خادمة', 'both')).toBe('found');
+    expect(amenityStatus(data, 'مسبح', 'both')).toBe('found');
+  });
+  it('units that record nothing: unit scope is unknown, project scope is missing', async () => {
+    const { amenityStatus } = await import('../matchAgent.js');
+    expect(amenityStatus({ preferred_amenities: ['gym'] }, 'مسبح', 'unit')).toBe('unknown');
+    expect(amenityStatus({ preferred_amenities: ['gym'] }, 'غرفة خادمة', 'project')).toBe('missing');
+  });
+  it('the must-have gate and the card facts follow the scope', async () => {
+    const { passesRequiredAmenities, amenityMatchFacts } = await import('../matchAgent.js');
+    const data = { preferred_amenities: ['غرفة خادمة'], unit_features: ['مجلس'] };
+    expect(passesRequiredAmenities(data, { required_amenities: ['غرفة خادمة'], amenity_scopes: { 'غرفة خادمة': 'unit' } })).toBe(false);
+    expect(passesRequiredAmenities(data, { required_amenities: ['غرفة خادمة'], amenity_scopes: { 'غرفة خادمة': 'project' } })).toBe(true);
+    expect(amenityMatchFacts(data, ['غرفة خادمة'], { 'غرفة خادمة': 'unit' })).toEqual([
+      { asked: 'غرفة خادمة', key: 'maid_room', status: 'missing', scope: 'unit' },
+    ]);
   });
 });
