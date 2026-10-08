@@ -1,7 +1,7 @@
 import {
   Building2, MapPin, Wallet, Ruler, BedDouble, Bath, PackageCheck, AlertTriangle,
   ExternalLink, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
-  CheckSquare, Square, LayoutGrid,
+  CheckSquare, Square, Send, LayoutGrid,
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import ProjectUnitsModal from './ProjectUnitsModal';
@@ -15,7 +15,7 @@ import type { ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
 import { useQuickSendState } from '@/lib/projects/quickSendProject';
-import { quickSendContent } from '@/components/matching/QuickSendProjectButton';
+import { QuickSendControl } from '@/components/matching/QuickSendProjectButton';
 import QualityBadge from '@/components/market/QualityBadge';
 
 /**
@@ -49,7 +49,7 @@ interface Props {
    *  project the parent calls `quickSendProject` (one click, no popup) and the
    *  button reads its state via `clientId`; a listing opens the parent's flow
    *  modal. Omit → no send button. */
-  onSendToClient?: (item: FinderMatch) => void;
+  onSendToClient?: (item: FinderMatch, lang?: 'ar' | 'en') => void;
   /** Jump to the MAP view and open/center THIS project's pin. Supplied only in
    *  list context (a map is available to switch to); omitted for the map's own
    *  selected-pin card and where the item has no coordinates. */
@@ -164,7 +164,6 @@ export default function FinderCard({
   // Projects send in ONE click (quickSendProject) — the button itself shows
   // sending → sent / failed. Market listings still open their own flow.
   const sendState = useQuickSendState(hasUnits ? clientId : null, item.project_id);
-  const send = quickSendContent(sendState, isAr, 12);
   // "Show on map" only makes sense when the pin can actually be placed.
   const hasCoords = asCoord(f.latitude) != null && asCoord(f.longitude) != null;
   // Main image: raw URL (market listings) or files.id (projects) → resolved to a
@@ -416,21 +415,25 @@ export default function FinderCard({
             <ActionBtn icon={<LayoutGrid size={12} />} label={L('الوحدات', 'Units')} onClick={() => setShowUnits(true)} />
           )}
 
-          {/* Send THIS project/listing to the connected client. A project goes
-              out in one click (no popup — the button shows it was sent); a
-              listing opens its creation flow. Hidden on the standalone finder
-              (no client). */}
-          {!hideClientActions && onSendToClient && (
+          {/* Send THIS project/listing to the connected client. A project: the
+              click turns the button into العربية | English (no popup) and the
+              pick sends — the button then shows it was sent. A listing opens
+              its creation flow. Hidden on the standalone finder (no client). */}
+          {!hideClientActions && onSendToClient && (hasUnits ? (
+            <QuickSendControl
+              state={sendState}
+              isAr={isAr}
+              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition disabled:opacity-100 bg-copper text-white hover:bg-terracotta"
+              onSend={(lang) => onSendToClient(item, lang)}
+            />
+          ) : (
             <ActionBtn
-              icon={send.icon}
-              label={send.label}
+              icon={<Send size={12} />}
+              label={L('إرسال للعميل', 'Send to client')}
               onClick={() => onSendToClient(item)}
-              disabled={sendState === 'sending' || sendState === 'sent'}
-              active={sendState === 'sent'}
-              danger={sendState === 'failed'}
               primary
             />
-          )}
+          ))}
 
           {/* Market listings only: contact the advertiser — opens the WhatsApp
               chat if the phone is already on the listing, else runs the REGA
@@ -456,12 +459,10 @@ export default function FinderCard({
   );
 }
 
-function ActionBtn({ icon, label, onClick, active, disabled, primary, danger }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean; disabled?: boolean; primary?: boolean; danger?: boolean }) {
+function ActionBtn({ icon, label, onClick, active, disabled, primary }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean; disabled?: boolean; primary?: boolean }) {
   const base = 'inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition disabled:opacity-60';
   const cls = primary
-    ? (active ? 'bg-green-100 text-green-700 border border-green-200 disabled:opacity-100'
-      : danger ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
-      : 'bg-copper text-white hover:bg-terracotta')
+    ? (active ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-copper text-white hover:bg-terracotta')
     : 'border border-sand/60 bg-white text-charcoal/75 hover:bg-cream/60';
   return <button type="button" onClick={onClick} disabled={disabled} className={`${base} ${cls}`}>{icon}{label}</button>;
 }

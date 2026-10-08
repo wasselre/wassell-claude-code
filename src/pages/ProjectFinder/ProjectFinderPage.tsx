@@ -599,9 +599,9 @@ export default function ProjectFinderPage() {
 
   // Send a card to the selected client: a project goes out in one click (no
   // popup — the card's button shows sent); a market listing opens its flow.
-  const onSendToClient = (item: FinderMatch) => {
+  const onSendToClient = (item: FinderMatch, lang?: 'ar' | 'en') => {
     if (item.source === 'market_listings') { setSendTarget(item); return; }
-    void quickSendProject({ projectId: item.project_id, projectName: item.project_name, clientRec });
+    void quickSendProject({ projectId: item.project_id, projectName: item.project_name, clientRec, lang });
   };
 
   // One card, wired for a selected client (full actions) or read-only discovery.

@@ -576,10 +576,10 @@ export default function SuggestedProjectsView({
 
   // Send THIS card's project to the connected client in one click (no popup —
   // the card's button shows sent); a market listing opens its creation flow.
-  function onSendToClient(item: FinderMatch) {
+  function onSendToClient(item: FinderMatch, lang?: 'ar' | 'en') {
     if (!clientRec?.id) return noClient();
     if (item.source === 'market_listings') { setSendTarget(item); return; }
-    void quickSendProject({ projectId: item.project_id, projectName: item.project_name, clientRec });
+    void quickSendProject({ projectId: item.project_id, projectName: item.project_name, clientRec, lang });
   }
 
   function matchToInput(item: FinderMatch): Omit<SaveOptionInput, 'clientId'> {

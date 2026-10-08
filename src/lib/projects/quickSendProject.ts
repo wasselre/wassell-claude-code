@@ -30,8 +30,9 @@ import type { AppRecord } from '@/types';
  *              numbers refreshed by the AI first (skipped when they already
  *              match the project); no saved message → one is written by AI from
  *              the project's current data and saved for next time. The off-plan
- *              line is always enforced. Language = the client's preferred
- *              language, else the rep's UI language.
+ *              line is always enforced. Language = the one the rep picks on the
+ *              button (العربية | English, shown after the click — 2026-10-08),
+ *              else the client's preferred language, else the rep's UI language.
  *   2. LINKS — this customer's tracked links + the cover photo replace the
  *              website link. If no link can be minted, the brochure + top-3
  *              photos go instead (the file picker's default selection).
@@ -67,7 +68,7 @@ export function useQuickSendState(clientId: string | null | undefined, projectId
 }
 
 /** Client's preferred language (clients.preferred_language), else the UI's. */
-function sendLanguageFor(clientRec: AppRecord, uiIsAr: boolean): 'ar' | 'en' {
+export function sendLanguageFor(clientRec: AppRecord, uiIsAr: boolean): 'ar' | 'en' {
   const v = (clientRec.data as Record<string, unknown>)?.preferred_language;
   const s = typeof v === 'string' ? v : '';
   if (s.includes('الإنجليزية') || /english/i.test(s)) return 'en';
@@ -179,6 +180,9 @@ export async function quickSendProject(input: {
   clientRec: AppRecord | null | undefined;
   /** Send into this conversation instead of the client's own number. */
   chatWid?: string | null;
+  /** The language the rep picked on the button. Absent → the client's
+   *  preferred language, else the UI's. */
+  lang?: 'ar' | 'en';
 }): Promise<void> {
   const { projectId, projectName, clientRec } = input;
   const app = useAppStore.getState();
@@ -208,7 +212,7 @@ export async function quickSendProject(input: {
     if (!targetWid || !targetPhone) {
       throw new Error(L('لا يوجد رقم جوال لهذا العميل', 'This client has no phone number'));
     }
-    const lang = sendLanguageFor(clientRec, isAr);
+    const lang = input.lang ?? sendLanguageFor(clientRec, isAr);
     let body = await resolveMessageText(projectId, projectName, lang);
 
     let refs: string[] | null = null;
