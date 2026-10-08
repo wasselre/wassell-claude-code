@@ -1137,7 +1137,15 @@ rule for telling them apart is what question each answers:
   **It stays OUT of the app and Files (operator 2026-10-08):** the table is
   service-role only (no RLS policy, no anon/authenticated grants —
   `2026-10-08_02`), and `api/_lib/__tests__/rawCaptureStaysOut.test.ts` fails
-  if `src/`, `api/` or `supabase/functions/` ever reference it. (The
+  if `src/`, `api/` or `supabase/functions/` ever reference it.
+  **Memory incident 2026-10-08:** each image goes through ffmpeg (~70 MB);
+  3 loops x 4 images OOM-killed the 512 MB general machines until Fly's
+  10-restart limit left four of five STOPPED (decks, documents, translations
+  down with them, ~10:15-11:23 UTC). `imageToBoundedJpeg` is now capped at 2
+  concurrent conversions per process (`IMAGE_FFMPEG_MAX`). Never add an
+  ffmpeg path that scales with loops x images without a cap like it, and after
+  any worker roll CHECK that every machine is `started` — an update leaves a
+  stopped machine stopped. (The
   Social-media → Files bridge is a separate, wanted feature and stays ON.)
   **Visual-reference companies (2026-10-06):** `org_type = 'visual_reference'`
   marks a NON-competitor followed only for its visuals (car brands etc.). The

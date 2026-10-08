@@ -34,6 +34,27 @@ export async function toTempFile(bytes: Buffer, ext: string): Promise<{ dir: str
 export async function cleanup(dir: string): Promise<void> { await rm(dir, { recursive: true, force: true }).catch(() => {}); }
 
 /**
+ * At most IMAGE_FFMPEG_MAX image conversions run at once in this process
+ * (2026-10-08). One ffmpeg decoding a large photo holds ~70 MB; the raw-capture
+ * lane started one per image across every claim loop (3 loops x 4 images = 12),
+ * and the 512 MB general machines were OOM-killed until Fly's 10-restart limit
+ * left four of the five STOPPED — taking decks, documents, translations and the
+ * other queues on those machines down with them. A conversion takes well under a
+ * second while each model call waits ~45 s, so queueing them costs nothing.
+ */
+const IMAGE_FFMPEG_MAX = Math.max(1, Number(process.env.IMAGE_FFMPEG_MAX ?? 2) || 2);
+let imageFfmpegActive = 0;
+const imageFfmpegWaiters: Array<() => void> = [];
+async function withImageSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (imageFfmpegActive >= IMAGE_FFMPEG_MAX) await new Promise<void>((r) => imageFfmpegWaiters.push(r));
+  else imageFfmpegActive++;
+  try { return await fn(); } finally {
+    const next = imageFfmpegWaiters.shift();
+    if (next) next(); else imageFfmpegActive--;
+  }
+}
+
+/**
  * Re-encode an image to a bounded JPEG (max 1600px on the long edge, moderate
  * quality) so it fits comfortably under the vision API's ~10 MB per-image limit,
  * and so unsupported source formats (e.g. HEIC) become a plain JPEG the model
@@ -42,6 +63,10 @@ export async function cleanup(dir: string): Promise<void> { await rm(dir, { recu
  * kill posture as every other ffmpeg call here.
  */
 export async function imageToBoundedJpeg(bytes: Buffer, srcExt: string): Promise<Buffer> {
+  return withImageSlot(() => imageToBoundedJpegNow(bytes, srcExt));
+}
+
+async function imageToBoundedJpegNow(bytes: Buffer, srcExt: string): Promise<Buffer> {
   const dir = await mkdtemp(join(tmpdir(), 'mkt-img-'));
   const inPath = join(dir, `in.${srcExt || 'img'}`);
   const outPath = join(dir, 'out.jpg');

@@ -24,9 +24,15 @@ kill_timeout = 30
   # Collection/reading claim loops per general machine. 3 since 2026-10-05: with
   # shots moved off, a machine sat at ~185 MB of 459 and load ~0.2, and Apify
   # history runs (up to ~90 min each) were the slowest part of the catch-up.
-  # 6 since 2026-10-08: the raw-capture backlog (~45 s per image, all of it
-  # waiting on OpenAI) had 282 posts queued ~32 min behind 15 slots.
-  MARKETING_LOOPS = '6'
+  # Raised to 6 on 2026-10-08 and reverted within minutes: the raw-capture lane
+  # ran one ffmpeg (~70 MB) per image per loop and OOM-killed the 512 MB
+  # machines until Fly left them stopped. Image conversions are now capped at 2
+  # per process (ffmpegMedia IMAGE_FFMPEG_MAX); keep 3 here regardless.
+  MARKETING_LOOPS = '3'
+  # Marketing claim loops on the dedicated `cv` machine (performance-2x, 4 GB).
+  # 8 since 2026-10-08 for the raw-capture backlog (each job ~45 s waiting on
+  # OpenAI, little CPU or memory once conversions are capped).
+  CV_MARKETING_LOOPS = '8'
 
 # Two process groups, same image/command:
 #   app    — the general worker: all lanes EXCEPT the unit-pdf renderer. 512MB × 5.
