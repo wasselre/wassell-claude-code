@@ -130,7 +130,7 @@ function loadLocal<T>(key: string): T | null {
 
 // Track which keys have already shouted about a quota error this session so we
 // don't toast on every keystroke once the cliff hits.
-const AGENT_QUESTION_COLS = 'id, chat_wid, conversation_record_id, client_id, project_id, rep_user_id, question, note, status, created_at';
+const AGENT_QUESTION_COLS = 'id, chat_wid, conversation_record_id, client_id, project_id, rep_user_id, question, note, status, created_at, asked_to, officer_name, officer_message, sent_at, due_at, reminded_at, escalated_at, visit_day, visit_slot, visit_time';
 
 const localStorageWarned = new Set<string>();
 

@@ -26,6 +26,10 @@
  *      the project's officer is told from the operations line, no approval
  *      (api/_lib/officerRegistrationNotice.ts). The one officer message that
  *      does not wait for the operator.
+ *   3d. OFFICER QUESTION DEADLINES (2026-10-08): an officer question or visit
+ *      check nobody answered by its deadline → one fixed reminder to the
+ *      officer, then an alert to the rep; a visit still unconfirmed the day
+ *      before → an alert to the rep (api/_lib/salesAgent/officerQuestions.ts).
  *   4. FOLLOW-UPS (SENT, no approval since 2026-10-07 — operator: «the agent
  *      is good now»): due WhatsApp follow-ups get a message written by the AI
  *      (api/_lib/salesAgent/followupDraft.ts), recorded in ai_actions and sent
@@ -39,7 +43,7 @@
  *      drafted in their OWN pass before step 4 — never limited by the daily
  *      cap, and drafted even though the lead has an open call (that is the plan).
  *
- * What sends a WhatsApp here: 3 (with officer_notice_auto_send), 3c, and 4
+ * What sends a WhatsApp here: 3 (with officer_notice_auto_send), 3c, 3d, and 4
  * (with followup_auto_send). With a switch off, its drafts wait for a person
  * (/api/ai-actions).
  *
@@ -60,6 +64,7 @@ import { sendFollowupAction } from '../_lib/salesAgent/followupSend.js';
 import { resolveOperationsDeviceId } from '../_lib/whatsappGateway.js';
 import { draftFollowupMessage } from '../_lib/salesAgent/followupDraft.js';
 import { remindUnansweredHandoffs } from '../_lib/salesAgent/escalation.js';
+import { remindOfficerQuestions } from '../_lib/salesAgent/officerQuestions.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
 
@@ -295,6 +300,17 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       try {
         report.handoff_reminders = await remindUnansweredHandoffs(svc);
       } catch (err) { fail('hand-off reminders', err); }
+    }
+
+    // ── 3d. Officer questions / visit checks past their deadline: one fixed
+    // reminder to the officer, then the rep is alerted; a visit still
+    // unconfirmed the day before → the rep is alerted (officerQuestions.ts).
+    if (!dryRun) {
+      try {
+        const r = await remindOfficerQuestions(svc, resolveOperationsDeviceId);
+        report.officer_question_deadlines = r;
+        for (const e of r.errors) fail('officer question deadline', new Error(e));
+      } catch (err) { fail('officer question deadlines', err); }
     }
 
     // ── 3a. Waiting officer drafts follow the facts (a visit booked after the

@@ -40,7 +40,10 @@ export interface AgentRunReading {
 export interface AgentRunActions {
   sent_project?: { id: string; name: string };
   sent_units?: { project_id: string; name: string; count: number };
+  /** Old runs (before 2026-10-08): the agent booked the visit itself. */
   booked?: { projectId: string; day: string };
+  /** The agent sent the visit to the project to confirm (booked only once confirmed). */
+  visit_requested?: { projectId: string; day: string };
   handoff?: { reason: string; note: string | null };
   asked?: boolean;
   ended?: boolean;

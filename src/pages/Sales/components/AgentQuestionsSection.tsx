@@ -58,8 +58,8 @@ export default function AgentQuestionsSection({ questions, loading, error, isAr,
     <>
       <p className="mb-4 text-xs text-charcoal/60">
         {isAr
-          ? 'أسئلة لم يعرف المساعد جوابها وسألك عنها. اكتب الجواب هنا والمساعد يبلّغه للعميل بأسلوبه، أو أغلق السؤال إذا رددت بنفسك.'
-          : 'Questions the AI could not answer and asked you. Type the answer here and the AI passes it on in its own voice, or close it if you answered yourself.'}
+          ? 'أسئلة لم يعرف المساعد جوابها وسألك عنها، وأسئلة وتأكيدات زيارة أرسلناها لمسؤول المشروع (بالأزرق) — سجّل جوابه هنا. المساعد يبلّغ العميل بأسلوبه، والزيارة لا تنحجز إلا إذا سجّلت أنها تأكدت.'
+          : 'Questions the AI could not answer and asked you, plus questions and visit checks sent to the project\'s officer (in blue) — record his answer here. The AI passes it on to the customer, and a visit is booked only when you record that it is confirmed.'}
       </p>
       {error && (
         <p className="mb-3 rounded-xl bg-terracotta/10 p-3 text-sm text-terracotta">

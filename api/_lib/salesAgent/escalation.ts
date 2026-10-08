@@ -1,7 +1,8 @@
 /**
  * What the sales agent does when the conversation needs the BUSINESS, not just
- * an answer: ask the client's rep a question it cannot answer, book a visit,
- * record a visit the customer mentions, and alert the rep.
+ * an answer: ask the client's rep a question it cannot answer, book a visit
+ * (only once the project confirmed it — officerQuestions.ts; the agent itself
+ * can no longer book), record a visit the customer mentions, and alert the rep.
  *
  * Everything here is silent to the customer. In particular a visit is booked as
  * an ordinary `appointments` record WITHOUT the "appointment booked" WhatsApp:
@@ -151,7 +152,7 @@ export async function ensureClientForChat(svc: SupabaseClient, chatWid: string):
 }
 
 /** The client record for this chat, created from the phone when there is none. */
-async function ensureClient(svc: SupabaseClient, ctx: ChatContext): Promise<string> {
+export async function ensureClient(svc: SupabaseClient, ctx: ChatContext): Promise<string> {
   if (ctx.clientId) return ctx.clientId;
   if (!ctx.phone) throw new Error('no phone on this chat — cannot create the client');
   const id = crypto.randomUUID();
@@ -165,7 +166,7 @@ async function ensureClient(svc: SupabaseClient, ctx: ChatContext): Promise<stri
   return id;
 }
 
-const SLOT_TIME: Record<string, { hhmm: string; ar: string }> = {
+export const SLOT_TIME: Record<string, { hhmm: string; ar: string }> = {
   morning: { hhmm: '10:00', ar: 'الصباح' },
   noon: { hhmm: '13:00', ar: 'الظهر' },
   afternoon: { hhmm: '16:30', ar: 'العصر' },
@@ -230,8 +231,12 @@ async function createCallTask(
  */
 export async function bookVisit(
   svc: SupabaseClient, chatWid: string,
-  a: { projectId: string; projectName: string; day: string; slot: VisitSlot | null; time: string | null },
-): Promise<{ ok: true; when: string } | { ok: false; error: string }> {
+  a: {
+    projectId: string; projectName: string; day: string; slot: VisitSlot | null; time: string | null;
+    /** The project confirmed it (the rep recorded the officer's answer — officerQuestions.ts). */
+    confirmation?: { by: string; answer: string };
+  },
+): Promise<{ ok: true; when: string; appointmentId: string | null } | { ok: false; error: string }> {
   if (!isIsoDay(a.day)) return { ok: false, error: 'day must be a real date YYYY-MM-DD' };
   if (a.day < riyadhToday()) return { ok: false, error: 'that day is in the past' };
   const hhmm = a.time && /^([01]\d|2[0-3]):[0-5]\d$/.test(a.time) ? a.time : SLOT_TIME[a.slot ?? 'afternoon']?.hhmm ?? '16:30';
@@ -251,7 +256,8 @@ export async function bookVisit(
     .like('data->>appointment_date', `${a.day}%`).in('data->>appointment_status', ['scheduled', 'confirmed', 'rescheduled']).limit(1);
   if (dErr) throw new Error(`appointment check failed: ${dErr.message}`);
   const when = `${a.day}T${hhmm}`;
-  if (dup && dup.length) return { ok: true, when };   // already booked for that day — nothing to add
+  // Already booked for that day — nothing to add.
+  if (dup && dup.length) return { ok: true, when, appointmentId: (dup[0] as { id: string }).id };
 
   // The «م ع###» number a rep-created appointment gets in the browser.
   const { data: appId, error: idErr } = await svc.rpc('record_assign_auto_id_system', { p_model_name: 'appointments', p_field_name: 'app_id' });
@@ -266,7 +272,9 @@ export async function bookVisit(
       appointment_date: when, ...(ourProjectId ? { project_id: ourProjectId } : {}), sales_rep: ctx.repUserId, appointment_status: 'scheduled',
       // The work queue shows agent bookings to managers with a label (MyTasksPage.isAgentBooked).
       booked_by: 'ai_agent',
-      notes: `حجزه المساعد الآلي من محادثة واتساب — الوقت: ${approx}. لم تُرسل للعميل رسالة تأكيد آلية.`,
+      notes: a.confirmation
+        ? `طلبه العميل في محادثة واتساب مع المساعد الآلي، وأكّده ${a.confirmation.by}: «${clip(a.confirmation.answer, 300)}» — الوقت: ${approx}.`
+        : `حجزه المساعد الآلي من محادثة واتساب — الوقت: ${approx}. لم تُرسل للعميل رسالة تأكيد آلية.`,
     },
     p_expected_version: null,
   });
@@ -276,12 +284,12 @@ export async function bookVisit(
     type: 'appointment_confirmation_call', at: riyadhTenAm(a.day, -1), link: { appointment_id: apptId }, source: 'ai_booked_visit',
   });
   await alertRep(svc, ctx, {
-    title: 'موعد زيارة حجزه المساعد الآلي',
-    body: `${a.projectName} — ${a.day} — ${approx}.\nالعميل وافق في المحادثة. ${callOk ? 'أُضيفت لك مكالمة تأكيد الموعد.' : 'تعذّر إنشاء مكالمة التأكيد — أنشئها يدويًا.'}${ourProjectId ? '' : '\nالمشروع ليس ضمن مشاريعنا المعتمدة، فسُجّل الموعد بلا مشروع.'}`,
+    title: a.confirmation ? 'تأكدت الزيارة وانحجز الموعد' : 'موعد زيارة حجزه المساعد الآلي',
+    body: `${a.projectName} — ${a.day} — ${approx}.\n${a.confirmation ? `أكّدها ${a.confirmation.by}.` : 'العميل وافق في المحادثة.'} ${callOk ? 'أُضيفت لك مكالمة تأكيد الموعد.' : 'تعذّر إنشاء مكالمة التأكيد — أنشئها يدويًا.'}${ourProjectId ? '' : '\nالمشروع ليس ضمن مشاريعنا المعتمدة، فسُجّل الموعد بلا مشروع.'}`,
     kind: 'visit_booked', dedupe: `agent-visit:${chatWid}:${a.projectId}:${a.day}`,
     meta: { project_id: a.projectId, day: a.day },
   });
-  return { ok: true, when };
+  return { ok: true, when, appointmentId: apptId };
 }
 
 /**
@@ -292,7 +300,7 @@ export async function recordVisit(
   svc: SupabaseClient, chatWid: string, a: { projectId: string; projectName: string; day: string | null },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const day = a.day && isIsoDay(a.day) ? a.day : riyadhToday();
-  if (day > riyadhToday()) return { ok: false, error: 'a visit that already happened cannot be in the future — use book_visit' };
+  if (day > riyadhToday()) return { ok: false, error: 'a visit that already happened cannot be in the future — use request_visit' };
   const ctx = await loadChatContext(svc, chatWid);
   const clientId = await ensureClient(svc, ctx);
   const visitsModel = await modelId(svc, 'visits');

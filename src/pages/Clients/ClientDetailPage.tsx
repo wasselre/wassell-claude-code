@@ -27,6 +27,7 @@ import OverviewTab from './components/tabs/OverviewTab';
 import PreferencesTab from './components/tabs/PreferencesTab';
 import ClientOptionsTab from './components/tabs/ClientOptionsTab';
 import ClientPortalsTab from './components/tabs/ClientPortalsTab';
+import OfficerMessagesSection from './components/tabs/OfficerMessagesSection';
 import TimelineTab from './components/tabs/TimelineTab';
 import AiTimelineTab from './components/tabs/AiTimelineTab';
 import SalesNotesTab from './components/tabs/SalesNotesTab';
@@ -244,7 +245,12 @@ export default function ClientDetailPage({ clientId, onClose }: { clientId?: str
             }}
           />
         )}
-        {activeTab === 'portals' && <ClientPortalsTab client={client} isAr={isAr} canEdit={canEdit} />}
+        {activeTab === 'portals' && (
+          <>
+            <ClientPortalsTab client={client} isAr={isAr} canEdit={canEdit} />
+            <OfficerMessagesSection clientId={client.id} isAr={isAr} />
+          </>
+        )}
         {activeTab === 'ai' && <AiTimelineTab clientId={client.id} isAr={isAr} />}
         {activeTab === 'timeline' && <TimelineTab view={view} ctx={ctx} isAr={isAr} />}
         {activeTab === 'whatsapp' && <WhatsAppHistoryPanel clientId={client.id} chrome="card" />}

@@ -185,7 +185,7 @@ export default function AiActivityPanel({ clientId, chatWid, isAr, refreshKey, p
   );
 
   const s = data?.stats;
-  const visits = (data?.runs ?? []).filter((r) => r.actions?.booked).length;
+  const visits = (data?.runs ?? []).filter((r) => r.actions?.booked || r.actions?.visit_requested).length;
 
   return (
     <div className="border-t border-sand/30 bg-cream/40 md:mt-3 md:rounded-2xl md:border" dir={isAr ? 'rtl' : 'ltr'}>

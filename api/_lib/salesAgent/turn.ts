@@ -26,7 +26,9 @@ import { BrainError, runBrain, type BrainOutcome } from './brain.js';
 import type { Zone } from './texts.js';
 import { clip } from './clip.js';
 import { createTrackedLink, loadAvailableUnits, summarizeUnit } from '../trackedLinks.js';
-import { alertRep, askRep, bookVisit, loadChatContext, recordVisit } from './escalation.js';
+import { alertRep, askRep, loadChatContext, recordVisit } from './escalation.js';
+import { askProjectOfficer } from './officerQuestions.js';
+import { resolveOperationsDeviceId } from '../whatsappGateway.js';
 import { genderFromName } from './nameGender.js';
 import { readLocation, matchSavedPlaces } from './geoGate.js';
 import { loadSavedProfile, type SavedProfile } from './savedProfile.js';
@@ -35,7 +37,6 @@ import { recordAgentRun } from './runLog.js';
 
 /** The shared preference reading may take this long before the turn goes on without it. */
 const READING_WAIT_MS = 9_000;
-import { draftOfficerQuestion } from '../officerNoticeDraft.js';
 
 /** Photos in a project package go out 4 s apart; the follow-up question must
  *  land after the last one (mirrors aiSendProject's SPACING_MS). */
@@ -144,8 +145,11 @@ async function notifyRep(svc: SupabaseClient, chatWid: string, body: string): Pr
   }
 }
 
-interface PendingAnswer { id: string; question: string; answer: string }
-interface ClosedQuestion { id: string; question: string }
+/** Who the question went to: the rep, the project's officer, or a visit check (officerQuestions.ts). */
+type QuestionKind = 'rep' | 'officer' | 'visit';
+interface PendingAnswer { id: string; question: string; answer: string; kind: QuestionKind; visitConfirmed: boolean | null }
+interface OpenQuestion { question: string; kind: QuestionKind }
+interface ClosedQuestion { id: string; question: string; kind: QuestionKind }
 
 /** A rep's «ليس سؤالاً» older than this is not brought up with the customer. */
 const CLOSED_QUESTION_WINDOW_MS = 3 * 24 * 3_600_000;
@@ -154,17 +158,22 @@ const CLOSED_QUESTION_WINDOW_MS = 3 * 24 * 3_600_000;
  *  questions a rep CLOSED without an answer that the customer was never told
  *  about. Review 2026-10-07: two customers were promised «بتأكد لك وأرد عليك»,
  *  the rep dismissed the question, and nobody ever went back to them. */
-async function loadQuestions(svc: SupabaseClient, chatWid: string): Promise<{ pending: PendingAnswer[]; open: string[]; closed: ClosedQuestion[] }> {
+async function loadQuestions(svc: SupabaseClient, chatWid: string): Promise<{ pending: PendingAnswer[]; open: OpenQuestion[]; closed: ClosedQuestion[] }> {
   const { data, error } = await svc.from('wa_agent_questions')
-    .select('id, question, answer, status, relayed_at, answered_at').eq('chat_wid', chatWid)
+    .select('id, question, answer, status, relayed_at, answered_at, asked_to, visit_day, visit_confirmed').eq('chat_wid', chatWid)
     .in('status', ['open', 'answered', 'dismissed']).order('created_at', { ascending: true }).limit(20);
   if (error) { console.error('[salesAgent] questions read failed:', error.message); return { pending: [], open: [], closed: [] }; }
-  const rows = (data ?? []) as Array<{ id: string; question: string; answer: string | null; status: string; relayed_at: string | null; answered_at: string | null }>;
+  const rows = (data ?? []) as Array<{
+    id: string; question: string; answer: string | null; status: string; relayed_at: string | null; answered_at: string | null;
+    asked_to: string | null; visit_day: string | null; visit_confirmed: boolean | null;
+  }>;
+  const kindOf = (r: { asked_to: string | null; visit_day: string | null }): QuestionKind => (r.visit_day ? 'visit' : r.asked_to === 'officer' ? 'officer' : 'rep');
   return {
-    pending: rows.filter((r) => r.status === 'answered' && !r.relayed_at && r.answer).map((r) => ({ id: r.id, question: r.question, answer: r.answer as string })),
-    open: rows.filter((r) => r.status === 'open').map((r) => r.question),
+    pending: rows.filter((r) => r.status === 'answered' && !r.relayed_at && r.answer)
+      .map((r) => ({ id: r.id, question: r.question, answer: r.answer as string, kind: kindOf(r), visitConfirmed: r.visit_confirmed })),
+    open: rows.filter((r) => r.status === 'open').map((r) => ({ question: r.question, kind: kindOf(r) })),
     closed: rows.filter((r) => r.status === 'dismissed' && !r.relayed_at && r.answered_at
-      && Date.now() - new Date(r.answered_at).getTime() < CLOSED_QUESTION_WINDOW_MS).map((r) => ({ id: r.id, question: r.question })),
+      && Date.now() - new Date(r.answered_at).getTime() < CLOSED_QUESTION_WINDOW_MS).map((r) => ({ id: r.id, question: r.question, kind: kindOf(r) })),
   };
 }
 
@@ -487,7 +496,7 @@ async function runBrainTurn(
     chatWid: string; conv: AgentConversation; turns: ChatTurn[]; newestCustomerAt: string | null;
     deviceId: string | null; newCustomerText: string; lastOursAt: string | null; dryRun: boolean;
     model: string; effort: 'low' | 'medium' | 'high';
-    pending: PendingAnswer[]; openQuestions: string[]; closedQuestions: ClosedQuestion[]; hasNew: boolean;
+    pending: PendingAnswer[]; openQuestions: OpenQuestion[]; closedQuestions: ClosedQuestion[]; hasNew: boolean;
   },
 ): Promise<TurnResult> {
   const { chatWid, conv, dryRun } = a;
@@ -571,9 +580,18 @@ async function runBrainTurn(
   // same chat (review 2026-10-07). nameGender.ts is shared with the writer.
   if (slots.gender === 'f' || nameGender === 'f') stateLines.push('The customer is a woman (from her messages or the name on her record) — use feminine forms throughout.');
   if (slots.handed_off_at) stateLines.push(`Already handed to a colleague at ${slots.handed_off_at} — don't promise that again.`);
-  for (const p of a.pending) stateLines.push(`A colleague ANSWERED the question you asked («${p.question}»): «${p.answer}» — pass it on now.`);
-  for (const q of a.openQuestions) stateLines.push(`Still with a colleague, no answer yet: «${q}» — don't ask it again and DON'T mention it again: only if the customer asks about it now, say once in a few words that you're still waiting for the answer.`);
-  for (const q of a.closedQuestions) stateLines.push(`A colleague CLOSED without an answer the question you said you'd check («${q.question}»). If you promised the customer an answer, tell them now in one short line that you couldn't confirm it, and offer the next step (a colleague can call them, or what you DO know) — no new promise to check. If you never promised them anything about it, say nothing about it.`);
+  for (const p of a.pending) {
+    if (p.kind === 'visit' && p.visitConfirmed === true) stateLines.push(`The project CONFIRMED the visit («${p.question}»): «${p.answer}». It is booked — tell the customer it's confirmed (the day and the time) in one warm line.`);
+    else if (p.kind === 'visit' && p.visitConfirmed === false) stateLines.push(`The project said the visit («${p.question}») is NOT possible: «${p.answer}». Tell the customer in one short line and offer another day.`);
+    else if (p.kind === 'officer') stateLines.push(`The project's officer ANSWERED the question you asked («${p.question}»): «${p.answer}» — pass it on now.`);
+    else stateLines.push(`A colleague ANSWERED the question you asked («${p.question}»): «${p.answer}» — pass it on now.`);
+  }
+  for (const q of a.openQuestions) {
+    if (q.kind === 'visit') stateLines.push(`Waiting for the project to confirm the visit («${q.question}») — it is NOT confirmed yet: never say it is set, and don't send it again. Don't bring it up; only if the customer asks, say once in a few words that you're still confirming with the project.`);
+    else stateLines.push(`Still with ${q.kind === 'officer' ? "the project's officer" : 'a colleague'}, no answer yet: «${q.question}» — don't ask it again and DON'T mention it again: only if the customer asks about it now, say once in a few words that you're still waiting for the answer.`);
+  }
+  for (const q of a.closedQuestions.filter((c) => c.kind === 'visit')) stateLines.push(`The visit you said you'd confirm with the project («${q.question}») could NOT be confirmed — it is not booked. Tell the customer in one short line and offer another day or a call from a colleague.`);
+  for (const q of a.closedQuestions.filter((c) => c.kind !== 'visit')) stateLines.push(`A colleague CLOSED without an answer the question you said you'd check («${q.question}»). If you promised the customer an answer, tell them now in one short line that you couldn't confirm it, and offer the next step (a colleague can call them, or what you DO know) — no new promise to check. If you never promised them anything about it, say nothing about it.`);
   if (a.lastOursAt) {
     const hours = Math.round((Date.now() - new Date(a.lastOursAt).getTime()) / 3_600_000);
     if (hours >= 20) stateLines.push(`Our last message was ${hours} hours ago — greet first.`);
@@ -671,33 +689,37 @@ async function runBrainTurn(
           return { ok: false, error: msg };
         }
       },
-      // A visit-details question → the project's officer, as a draft in the AI
-      // tab (operator, 2026-10-05: «any questions regarding details of visits
-      // should go to officers»). The officer contacts the customer directly.
+      // A visit-details question → the project's officer as a TRACKED task for
+      // the client's rep (officerQuestions.ts, operator 2026-10-08): a fixed
+      // message goes to the officer at once, the rep records his answer in My
+      // Tasks, and this agent passes it on.
       askOfficer: async (question, projectId) => {
         if (dryRun) return { ok: true };
         try {
-          const ctx = await loadChatContext(svc, chatWid);
-          if (!ctx.clientId) return { ok: true, noOfficer: true };
-          const r = await draftOfficerQuestion(svc, { clientId: ctx.clientId, projectId, clientChatWid: chatWid, question, trigger: 'visit_question' });
-          console.log(`[salesAgent] officer visit question chat=${chatWid} project=${projectId} → ${r.status}`);
-          if (r.status === 'no_officer' || r.status === 'no_phone' || r.status === 'missing_record') return { ok: true, noOfficer: true };
+          const pname = (await projectNames(svc, [projectId])).get(projectId) ?? '';
+          const r = await askProjectOfficer(svc, chatWid, { projectId, projectName: pname, question, visit: null }, resolveOperationsDeviceId);
+          console.log(`[salesAgent] officer question chat=${chatWid} project=${projectId} → ${r.ok ? r.via : 'noOfficer' in r ? 'no officer' : r.error}`);
+          if (!r.ok) return 'noOfficer' in r ? { ok: true, noOfficer: true } : { ok: false, error: r.error };
           return { ok: true };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[salesAgent] officer visit question failed chat=${chatWid}:`, msg);
+          console.error(`[salesAgent] officer question failed chat=${chatWid}:`, msg);
           return { ok: false, error: msg };
         }
       },
-      bookVisit: async (projectId, day, slot, time) => {
-        if (dryRun) return { ok: true };
+      // The visit the customer wants → a visit check (officer, or the rep when the
+      // project has none). Booked only when the rep records the confirmation.
+      requestVisit: async (projectId, day, slot, time, question) => {
+        if (dryRun) return { ok: true, via: 'officer' };
         try {
           const pname = (await projectNames(svc, [projectId])).get(projectId) ?? '';
-          const r = await bookVisit(svc, chatWid, { projectId, projectName: pname, day, slot, time });
-          return r.ok ? { ok: true } : { ok: false, error: r.error };
+          const r = await askProjectOfficer(svc, chatWid, { projectId, projectName: pname, question, visit: { day, slot, time } }, resolveOperationsDeviceId);
+          console.log(`[salesAgent] visit check chat=${chatWid} project=${projectId} day=${day} → ${r.ok ? `${r.via}${r.duplicate ? ' (already waiting)' : ''}` : 'noOfficer' in r ? 'no officer' : r.error}`);
+          if (!r.ok) return { ok: false, error: 'noOfficer' in r ? 'no officer or rep to confirm the visit' : r.error };
+          return { ok: true, via: r.via, duplicate: r.duplicate };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[salesAgent] book_visit failed chat=${chatWid} project=${projectId}:`, msg);
+          console.error(`[salesAgent] visit check failed chat=${chatWid} project=${projectId}:`, msg);
           return { ok: false, error: msg };
         }
       },
@@ -731,18 +753,18 @@ async function runBrainTurn(
         if (dryRun) return;
         await notifyRep(svc, chatWid, `المساعد الآلي (${reason}): ${note}`);
         // A discount / last-price / payment question → the project's officer,
-        // as a draft with the customer's own words (AI tab, needs approval).
+        // with the customer's own words, as a tracked task for the rep
+        // (officerQuestions.ts — sent at once, deadline + reminder, the answer
+        // recorded in My Tasks). Was a draft waiting for approval until 2026-10-08.
         const projectId = sentIds[sentIds.length - 1];
         if (reason === 'negotiation' && projectId && a.newCustomerText.trim()) {
           try {
-            const ctx = await loadChatContext(svc, chatWid);
-            if (ctx.clientId) {
-              const r = await draftOfficerQuestion(svc, { clientId: ctx.clientId, projectId, clientChatWid: chatWid, question: a.newCustomerText });
-              console.log(`[salesAgent] officer question chat=${chatWid} project=${projectId} → ${r.status}`);
-            }
+            const pname = (await projectNames(svc, [projectId])).get(projectId) ?? '';
+            const r = await askProjectOfficer(svc, chatWid, { projectId, projectName: pname, question: a.newCustomerText, visit: null }, resolveOperationsDeviceId);
+            console.log(`[salesAgent] officer negotiation question chat=${chatWid} project=${projectId} → ${r.ok ? r.via : 'noOfficer' in r ? 'no officer' : r.error}`);
           } catch (err) {
-            // The rep was already notified above; the officer draft is extra.
-            console.error(`[salesAgent] officer question draft failed chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
+            // The rep was already notified above; the officer question is extra.
+            console.error(`[salesAgent] officer negotiation question failed chat=${chatWid}:`, err instanceof Error ? err.message : String(err));
           }
         }
       },
@@ -761,7 +783,7 @@ async function runBrainTurn(
       : outcome.sentUnits ? null
         : (!a.hasNew && a.pending.length) ? a.pending.map((p) => p.answer).join('\n')
           : agentText.holding(lang);
-    if (!outcome.sent && !outcome.sentUnits && !outcome.handoff && !outcome.asked && !outcome.booked && a.hasNew) notify = `المساعد الآلي لم يستطع صياغة رد آمن للعميل — يحتاج متابعة مندوب: «${clip(a.newCustomerText, 200)}»`;
+    if (!outcome.sent && !outcome.sentUnits && !outcome.handoff && !outcome.asked && !outcome.visitRequested && a.hasNew) notify = `المساعد الآلي لم يستطع صياغة رد آمن للعميل — يحتاج متابعة مندوب: «${clip(a.newCustomerText, 200)}»`;
   }
 
   // Never the same line twice in a row within the window (e.g. two quick messages).
@@ -867,7 +889,7 @@ async function runBrainTurn(
     actions: {
       ...(outcome.sent ? { sent_project: { id: outcome.sent.projectId, name: outcome.sent.name } } : {}),
       ...(outcome.sentUnits ? { sent_units: { project_id: outcome.sentUnits.projectId, name: outcome.sentUnits.name, count: outcome.sentUnits.count } } : {}),
-      ...(outcome.booked ? { booked: outcome.booked } : {}),
+      ...(outcome.visitRequested ? { visit_requested: outcome.visitRequested } : {}),
       ...(outcome.handoff ? { handoff: outcome.handoff } : {}),
       ...(outcome.asked ? { asked: true } : {}),
       ...(outcome.ended ? { ended: true } : {}),

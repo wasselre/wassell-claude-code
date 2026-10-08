@@ -78,10 +78,11 @@ export interface BrainHooks {
   handoff(reason: string, note: string): Promise<void>;
   /** Ask the client's rep a question the agent cannot answer. */
   askRep(question: string, note: string, projectId: string | null): Promise<{ ok: boolean; error?: string }>;
-  /** A visit-details question → the project's officer (a draft awaiting approval). `no_officer` = ask the rep instead. */
+  /** A visit-details question → the project's officer, as a tracked task for the rep (officerQuestions.ts). `noOfficer` = ask the rep instead. */
   askOfficer(question: string, projectId: string): Promise<{ ok: boolean; noOfficer?: boolean; error?: string }>;
-  /** Book the visit the customer agreed to (silently — no system message). */
-  bookVisit(projectId: string, day: string, slot: VisitSlot | null, time: string | null): Promise<{ ok: boolean; error?: string }>;
+  /** The visit the customer wants → the project confirms it first (a tracked visit check). It is booked
+   *  only when the rep records the confirmation — the agent never books a visit itself. */
+  requestVisit(projectId: string, day: string, slot: VisitSlot | null, time: string | null, question: string | null): Promise<{ ok: boolean; via?: 'officer' | 'rep'; duplicate?: boolean; error?: string }>;
   /** Record a visit the customer says already happened. */
   recordVisit(projectId: string, day: string | null): Promise<{ ok: boolean; error?: string }>;
   /** The area the customer described in this chat, read by the geography
@@ -118,8 +119,8 @@ export interface BrainOutcome {
   handoff: { reason: string; note: string } | null;
   /** The agent asked the rep a question this turn. */
   asked: boolean;
-  /** A visit booked this turn. */
-  booked: { projectId: string; day: string } | null;
+  /** A visit sent to the project to confirm this turn (booked later, when confirmed). */
+  visitRequested: { projectId: string; day: string } | null;
   ended: boolean;
   lastCriteria: SearchCriteria | null;
   /** Total of the LAST search this turn (null = no search). */
@@ -161,10 +162,10 @@ HOW YOU WORK
 6h. SEVERAL PROFILES. When the state lists SAVED CLIENT PROFILES, the customer wants more than one property (e.g. a villa to live in AND an apartment for their son). Each search is for ONE of them: pass its profile_id and that profile's values (saved_area=true uses its places). Never put one profile's type, budget or area into another's search. When they talk about both, search each separately and answer each in its own short line; when it is unclear which one they mean, ask in a few words («تقصد الفيلا ولا شقة ولدك؟»).
 6b. The customer NAMES a project («مهتم بصفا 78», «عندكم أكنان 25؟») → find_project. If it is ours and not already sent, send_project it right away (unless they asked to see specific units — rule 6a) and add one short line; answer any question they asked with its facts. If ambiguous, ask which one (one line, their names). If it is not ours, say so plainly and ask what they're after so you can offer something similar — never pretend.
 7. Questions about a project (price, payment plan, down payment, sizes, handover, how many options) → use get_project_facts / the search results and answer with the real numbers. "colleague_answers" in the facts are answers our reps gave before — use them like any other fact.
-7b. VISIT DETAILS go to the project's officer (operator, 2026-10-05). When they ask about the details of visiting a project — is the guard / sales office there, can someone open it and show them the project or a unit, the office's working hours, can they come without an appointment, who receives them, parking or access on site — call ask_project_officer with the question, then tell them in one short line you'll check with the project and get back. A WHEN-can-I-visit question is yours: offer a day and time and, when they agree, book_visit. Not for prices or discounts (those are a handoff).
+7b. VISIT DETAILS go to the project's officer (operator, 2026-10-05). When they ask about the details of visiting a project WITHOUT a day agreed — is the guard / sales office there, can someone open it and show them the project or a unit, the office's working hours, can they come without an appointment, who receives them, parking or access on site — call ask_project_officer with the question, then tell them in one short line you'll check with the project and get back. When a day IS agreed, the detail goes inside request_visit (its question) instead — one message to the project. Not for prices or discounts (those are a handoff).
 7a. YOU DON'T KNOW. When the facts and tools do not answer the question (a discount policy, a specific finish, a fee, a date we don't have…) and it is not a visit detail (7b): call ask_rep with the question as the customer meant it, then tell the customer in one short line that you'll check and get back («بتأكد لك وأرد عليك»). Never guess, and don't hand the whole chat over for a question. Ask each question once. While it is still with a colleague, don't keep repeating «لسا أتأكد لك»: say it once when you ask, then only if the customer asks about it again. Never give a deadline for a colleague's answer («اليوم»).
 7b. A COLLEAGUE ANSWERED. When the state gives you a colleague's answer to a question you asked, pass it on now in your own short voice — the numbers exactly as given — and continue the conversation.
-8. VISITS — you arrange them yourself, like a rep would. When the customer wants to see a project: agree the project, the day and a rough time in normal conversation, one question at a time («أي يوم يناسبك؟», «الصبح ولا العصر؟»). Use the date in the state to turn «بكرة» / «الخميس» into a real day. When project + day are agreed (time can be rough — even a tentative «الجمعة مبدئياً»), call book_visit and confirm in one warm line («تمام، بكرة العصر في صفا 82 إن شاء الله»); a booked visit is how the project gets ready for them. Never say «تم حجز موعد», never mention a booking, a system or a reference — the customer visits, we arrange. Working days only if they ask; never promise a named person.
+8. VISITS — you arrange them yourself, like a rep would. When the customer wants to see a project: agree the project, the day and a rough time in normal conversation, one question at a time («أي يوم يناسبك؟», «الصبح ولا العصر؟»). Use the date in the state to turn «بكرة» / «الخميس» into a real day. When project + day are agreed (time can be rough — even a tentative «الجمعة مبدئياً»), call request_visit: the project must confirm someone will receive them before it is a visit (operator, 2026-10-08 — a Friday visit was promised and nobody ever checked). Then tell them in one warm line that you'll confirm with the project and get back («تمام، بأكد لك مع المشروع إن الجمعة العصر مناسب وأرد عليك») — NEVER say it is confirmed or set until the state tells you the project confirmed it. Ask only the day (and a rough time) — if they ask whether someone is there, that is exactly what request_visit asks the project. When the state says the project CONFIRMED, tell them it's confirmed (day + time) in one warm line; when it says NOT possible, tell them and offer another day. Never say «تم حجز موعد», never mention a booking, a system or a reference — the customer visits, we arrange. Never promise a named person.
 8a. THEY ALREADY VISITED. If the customer says they visited one of our projects («زرت صفا 82 أمس», «رحت للمشروع»), call record_visit (with the day if they said it) and carry on — ask how it was. Don't mention that you noted it.
 8b. Hand off (handoff_to_rep, then one short line that a colleague will contact them): they want a call or a person, price negotiation or discounts, a complaint, renting, selling their own property, anything that is not buying one of our homes. If you already told them a colleague will contact them, don't say it again — answer briefly or send nothing.
 9. Not interested / stop → end_conversation and close warmly in a few words.
@@ -340,7 +341,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'ask_project_officer',
-    description: 'A question about the DETAILS of visiting a project (is the guard / sales office on site, can someone open and show the project or a unit, working hours, coming without an appointment, who receives them, parking/access) → the project\'s officer. Then tell the customer you will check with the project and get back. NOT for booking a visit (book_visit), NOT for prices/discounts (handoff). Once per question.',
+    description: 'A question about the DETAILS of visiting a project (is the guard / sales office on site, can someone open and show the project or a unit, working hours, coming without an appointment, who receives them, parking/access) → the project\'s officer. Then tell the customer you will check with the project and get back. NOT for a visit with an agreed day (request_visit carries the question), NOT for prices/discounts (handoff). Once per question.',
     input_schema: {
       type: 'object',
       properties: {
@@ -352,8 +353,8 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'book_visit',
-    description: 'Record the visit the customer agreed to: project + day (+ a rough time). Call only after the customer agreed the day. Nothing is sent to the customer by this tool — you confirm in your own words.',
+    name: 'request_visit',
+    description: 'The customer agreed a project + day (+ a rough time): send the visit to the project to confirm someone will receive them. It becomes a booked visit only when the project confirms — the state tells you. Nothing is sent to the customer by this tool — you tell them you will confirm and get back. Once per visit.',
     input_schema: {
       type: 'object',
       properties: {
@@ -361,6 +362,7 @@ const TOOLS: Anthropic.Tool[] = [
         day: { type: 'string', description: 'The agreed day as YYYY-MM-DD (use the date in the state).' },
         time_of_day: { type: 'string', enum: ['morning', 'noon', 'afternoon', 'evening', 'night'], description: 'Rough time: الصبح / الظهر / العصر / المغرب / المساء.' },
         time: { type: 'string', description: 'Exact time HH:MM (24h) only if the customer gave one.' },
+        question: { type: 'string', description: 'Only if the customer asked a visit detail too (parking, can they see a unit…), in clear Arabic. Whether someone is there to receive them is always asked — don\'t repeat it.' },
       },
       required: ['project_id', 'day'],
       additionalProperties: false,
@@ -378,7 +380,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'handoff_to_rep',
-    description: 'Alert the client\'s sales rep that a person is needed: a call, wanting a human, negotiation, a complaint, renting/selling. NOT for visits (book_visit) and NOT for a question you cannot answer (ask_rep).',
+    description: 'Alert the client\'s sales rep that a person is needed: a call, wanting a human, negotiation, a complaint, renting/selling. NOT for visits (request_visit) and NOT for a question you cannot answer (ask_rep).',
     input_schema: {
       type: 'object',
       properties: {
@@ -494,7 +496,7 @@ export async function runBrain(
   const commit = async () => { if (!committed) { committed = true; await hooks.beforeSideEffect(); } };
 
   const out: BrainOutcome = {
-    reply: null, replyFailed: false, guardProblems: [], sent: null, sentUnits: null, handoff: null, asked: false, booked: null, ended: false,
+    reply: null, replyFailed: false, guardProblems: [], sent: null, sentUnits: null, handoff: null, asked: false, visitRequested: null, ended: false,
     lastCriteria: null, lastTotal: null, searches: 0, searchLog: [], model: opts.model, toolTrace,
   };
 
@@ -726,23 +728,25 @@ export async function runBrain(
           toolTrace.push('ask_project_officer');
           return { content: JSON.stringify({ asked: true, next: 'Tell the customer in one short line you will check with the project and get back. Do not guess the answer.' }) };
         }
-        case 'book_visit': {
+        case 'request_visit': {
           const id = String(input.project_id ?? '');
           const day = String(input.day ?? '');
           if (!known.has(id)) return { content: 'Unknown project_id — use find_project or search_projects first.', isError: true };
           if (!isIsoDay(day)) return { content: 'day must be a real date as YYYY-MM-DD — work it out from the date in the state.', isError: true };
-          if (out.booked) return { content: 'A visit was already booked in this reply.', isError: true };
+          if (out.visitRequested) return { content: 'A visit was already sent to the project in this reply.', isError: true };
           const slot = typeof input.time_of_day === 'string' ? (input.time_of_day as VisitSlot) : null;
           const time = typeof input.time === 'string' ? input.time : null;
+          const question = typeof input.question === 'string' && input.question.trim() ? clip(input.question.trim(), 400) : null;
           await commit();
-          const res = await hooks.bookVisit(id, day, slot, time);
+          const res = await hooks.requestVisit(id, day, slot, time, question);
           if (!res.ok) {
-            toolTrace.push(`book_visit REFUSED ${day}: ${res.error ?? ''}`);
-            return { content: `Could not book (${res.error ?? 'unknown error'}). Agree another day with the customer, or hand off to a rep.`, isError: true };
+            toolTrace.push(`request_visit REFUSED ${day}: ${res.error ?? ''}`);
+            return { content: `Could not send the visit to the project (${res.error ?? 'unknown error'}). Agree another day with the customer, or hand off to a rep.`, isError: true };
           }
-          out.booked = { projectId: id, day };
-          toolTrace.push(`book_visit ${id.slice(0, 8)} ${day} ${time ?? slot ?? ''}`);
-          return { content: JSON.stringify({ booked: true, day, next: 'Confirm the day and rough time in one warm line. Do not mention a booking or a system.' }) };
+          out.visitRequested = { projectId: id, day };
+          out.asked = true;
+          toolTrace.push(`request_visit ${id.slice(0, 8)} ${day} ${time ?? slot ?? ''}${res.via === 'rep' ? ' (rep confirms)' : ''}${res.duplicate ? ' (already waiting)' : ''}`);
+          return { content: JSON.stringify({ sent_to_project: true, day, next: 'Tell the customer in one warm line that you will confirm with the project and get back. It is NOT confirmed yet — never say it is set.' }) };
         }
         case 'record_visit': {
           const id = String(input.project_id ?? '');

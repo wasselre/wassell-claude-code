@@ -3070,4 +3070,19 @@ export interface AgentQuestion {
   note: string | null;
   status: 'open' | 'answered' | 'answered_directly' | 'dismissed';
   created_at: string;
+  /** 'officer' = a question to the project's officer, tracked as the rep's task
+   *  (api/_lib/salesAgent/officerQuestions.ts). */
+  asked_to: 'rep' | 'officer';
+  officer_name: string | null;
+  /** The exact fixed-wording message the officer got. */
+  officer_message: string | null;
+  sent_at: string | null;
+  /** The answer deadline; a reminder goes to the officer when it passes. */
+  due_at: string | null;
+  reminded_at: string | null;
+  escalated_at: string | null;
+  /** A visit check: the visit the customer wants (YYYY-MM-DD). Booked only when confirmed. */
+  visit_day: string | null;
+  visit_slot: string | null;
+  visit_time: string | null;
 }

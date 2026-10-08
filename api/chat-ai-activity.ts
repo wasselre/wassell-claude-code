@@ -156,6 +156,7 @@ export default async function handler(req: Request): Promise<Response> {
         ...portalRegs.map((r) => String(r.portal_record_id ?? '')), ...actions.map((a) => String(a.project_id ?? '')),
         ...interest.map((i) => String(i.project_id ?? '')), ...bookings.map((b) => String(b.project_id ?? '')),
         ...runs.map((r) => String(((r.actions as { booked?: { projectId?: string } } | null)?.booked?.projectId) ?? '')),
+        ...runs.map((r) => String(((r.actions as { visit_requested?: { projectId?: string } } | null)?.visit_requested?.projectId) ?? '')),
       ]);
 
       return jsonOk({

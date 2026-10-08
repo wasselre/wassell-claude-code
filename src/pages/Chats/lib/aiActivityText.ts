@@ -120,6 +120,7 @@ export function buildAiEvents(
     if (a.sent_project) ev.push({ id: `${r.id}p`, at: r.created_at, kind: 'sent', text: t('chats.ai_act.ev_sent_project', { name: a.sent_project.name }), tone: 'ok' });
     if (a.sent_units) ev.push({ id: `${r.id}u`, at: r.created_at, kind: 'sent', text: t('chats.ai_act.ev_sent_units', { n: num(a.sent_units.count, isAr), name: a.sent_units.name }), tone: 'ok' });
     if (a.booked) ev.push({ id: `${r.id}b`, at: r.created_at, kind: 'booked', text: t('chats.ai_act.ev_booked', { name: name(a.booked.projectId), day: a.booked.day }), tone: 'ok' });
+    if (a.visit_requested) ev.push({ id: `${r.id}v`, at: r.created_at, kind: 'booked', text: t('chats.ai_act.ev_visit_requested', { name: name(a.visit_requested.projectId), day: a.visit_requested.day }), tone: 'ok' });
     if (a.handoff) ev.push({ id: `${r.id}h`, at: r.created_at, kind: 'handoff', text: t('chats.ai_act.ev_handoff'), detail: a.handoff.note ?? a.handoff.reason, tone: 'warn' });
     if (!opts.withMessages && r.reply) {
       ev.push({ id: `${r.id}r`, at: r.created_at, kind: 'ai_reply', text: r.reply, tone: r.reply_sent === false ? 'bad' : undefined });
