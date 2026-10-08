@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Users, X } from 'lucide-react';
+import { Search, Users, X, Flame, CalendarCheck, MessageCircleWarning } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useIsAdmin } from '@/hooks/usePermission';
 import type { AppModel } from '@/types';
@@ -20,7 +20,8 @@ import {
   type InteractionWindow,
   type LastInteraction,
 } from './lib/lastInteraction';
-import MyClientCard from './components/MyClientCard';
+import ClientPulseTable from './components/ClientPulseTable';
+import { useClientPulse, INTEREST_ORDER, INTEREST_META, waitingOnUs, type InterestLevel } from './lib/clientPulse';
 
 /** Read an assignee field's user id (scalar, array, or { user_id } shapes). */
 function ownerIdOf(v: unknown): string | null {
@@ -68,8 +69,16 @@ const WINDOWS: { key: InteractionWindow; ar: string; en: string }[] = [
  * tabs and the long filter bar were not used). Filters: stage, status, sales
  * rep, and «last contact» (today / yesterday / 7 days / never) — the newest
  * moment we were in touch on any channel (a completed follow-up, a WhatsApp
- * message, a phone call). Sorted by last contact, newest first. Reps see their
- * own clients; managers see everyone and can pick a rep.
+ * message, a phone call). Reps see their own clients; managers see everyone
+ * and can pick a rep.
+ *
+ * 2026-10-08 (operator: "one list with all of the clients … hot clients …
+ * what's happening … the last action … the top project … if they want to
+ * visit"): dense rows instead of cards, with the live columns from
+ * /api/client-pulse (interest, top project, what is happening, last action by
+ * the AI or a person, last contact, visit). Sorted hot → warm → quiet →
+ * unknown → closed, then by last contact. Interest chips + «wants to visit» /
+ * «waiting on us» quick filters.
  */
 export default function MyClientsPage() {
   const navigate = useNavigate();
@@ -93,6 +102,10 @@ export default function MyClientsPage() {
   const [status, setStatus] = useState('');
   const [ownerId, setOwnerId] = useState('');
   const [win, setWin] = useState<InteractionWindow>('all');
+  const [interest, setInterest] = useState<InterestLevel | ''>('');
+  const [wantsVisit, setWantsVisit] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  const { byId: pulse, error: pulseError } = useClientPulse();
 
   const now = Date.now();
 
@@ -136,18 +149,31 @@ export default function MyClientsPage() {
       if (ownerId === NO_REP && ownerById.get(v.id)) return false;
       if (ownerId && ownerId !== NO_REP && ownerById.get(v.id) !== ownerId) return false;
       if (!inInteractionWindow(lastByClient.get(v.id), win, now)) return false;
+      const p = pulse.get(v.id);
+      if (interest && p?.interest !== interest) return false;
+      if (wantsVisit && !(p?.visit && (p.visit.kind === 'appointment' || p.visit.kind === 'requested'))) return false;
+      if (waiting && !(p && waitingOnUs(p))) return false;
       if (q) {
         const hay = [v.name, v.phone, sc.code].filter(Boolean).join(' ').toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-    // Newest contact first; never-contacted at the bottom, by name.
+    // Hottest first, then newest contact; never-contacted at the bottom, by name.
     const at = (sc: SalesClient) => {
+      const pc = pulse.get(sc.view.id)?.last_contact_at;
       const li = lastByClient.get(sc.view.id);
-      return li ? Date.parse(li.at) : null;
+      const t = Math.max(pc ? Date.parse(pc) : -Infinity, li ? Date.parse(li.at) : -Infinity);
+      return Number.isFinite(t) ? t : null;
+    };
+    const rank = (sc: SalesClient) => {
+      const lv = pulse.get(sc.view.id)?.interest;
+      return lv ? INTEREST_ORDER.indexOf(lv) : INTEREST_ORDER.length;
     };
     return list.sort((a, b) => {
+      const ra = rank(a);
+      const rb = rank(b);
+      if (ra !== rb) return ra - rb;
       const ta = at(a);
       const tb = at(b);
       if (ta !== tb) {
@@ -159,7 +185,16 @@ export default function MyClientsPage() {
     });
     // `now` is read fresh each render; re-sorting on every tick is not wanted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sales, search, stage, status, ownerId, win, lastByClient, ownerById, isAr]);
+  }, [sales, search, stage, status, ownerId, win, lastByClient, ownerById, isAr, pulse, interest, wantsVisit, waiting]);
+
+  const interestCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const sc of sales) {
+      const lv = pulse.get(sc.view.id)?.interest;
+      if (lv) c[lv] = (c[lv] ?? 0) + 1;
+    }
+    return c;
+  }, [sales, pulse]);
 
   const stageOptions = useMemo(() => fieldOptions(clientsModel, 'client_stage', isAr), [clientsModel, isAr]);
   const statusOptions = useMemo(() => fieldOptions(clientsModel, 'client_status', isAr), [clientsModel, isAr]);
@@ -171,13 +206,16 @@ export default function MyClientsPage() {
       .sort((a, b) => a.label.localeCompare(b.label, isAr ? 'ar' : 'en'));
   }, [users, ownerById, isAr]);
 
-  const hasFilters = Boolean(search || stage || status || ownerId || win !== 'all');
+  const hasFilters = Boolean(search || stage || status || ownerId || win !== 'all' || interest || wantsVisit || waiting);
   const reset = () => {
     setSearch('');
     setStage('');
     setStatus('');
     setOwnerId('');
     setWin('all');
+    setInterest('');
+    setWantsVisit(false);
+    setWaiting(false);
   };
 
   if (!initialized) {
@@ -197,6 +235,58 @@ export default function MyClientsPage() {
         {isManager ? L('العملاء', 'Clients') : L('عملائي', 'My Clients')}
         <span className="text-sm font-semibold text-charcoal/40">({sales.length})</span>
       </h1>
+
+      {/* Interest + quick filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-bold text-charcoal/55">{L('الاهتمام:', 'Interest:')}</span>
+        <button
+          type="button"
+          onClick={() => setInterest('')}
+          className={`rounded-full border px-3 py-1 text-xs font-bold transition ${
+            interest === '' ? 'border-copper bg-copper text-white' : 'border-sand bg-white text-charcoal/65 hover:border-copper/60'
+          }`}
+        >
+          {L('الكل', 'All')}
+        </button>
+        {INTEREST_ORDER.map((lv) => (
+          <button
+            key={lv}
+            type="button"
+            onClick={() => setInterest(interest === lv ? '' : lv)}
+            className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold transition ${
+              interest === lv ? 'border-copper bg-copper text-white' : 'border-sand bg-white text-charcoal/65 hover:border-copper/60'
+            }`}
+          >
+            {lv === 'hot' && <Flame size={12} />}
+            {isAr ? INTEREST_META[lv].ar : INTEREST_META[lv].en}
+            <span className="opacity-60">({interestCounts[lv] ?? 0})</span>
+          </button>
+        ))}
+        <span className="mx-1 h-4 w-px bg-sand" />
+        <button
+          type="button"
+          onClick={() => setWantsVisit((x) => !x)}
+          className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold transition ${
+            wantsVisit ? 'border-copper bg-copper text-white' : 'border-sand bg-white text-charcoal/65 hover:border-copper/60'
+          }`}
+        >
+          <CalendarCheck size={12} /> {L('يبي يزور', 'Wants to visit')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setWaiting((x) => !x)}
+          className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold transition ${
+            waiting ? 'border-copper bg-copper text-white' : 'border-sand bg-white text-charcoal/65 hover:border-copper/60'
+          }`}
+        >
+          <MessageCircleWarning size={12} /> {L('ينتظرنا', 'Waiting on us')}
+        </button>
+      </div>
+      {pulseError && (
+        <p className="rounded-xl bg-terracotta/10 p-3 text-sm text-terracotta">
+          {L(`تعذّر تحميل حالة العملاء (الاهتمام وما يحدث الآن): ${pulseError}`, `Could not load the client status (interest, what is happening): ${pulseError}`)}
+        </p>
+      )}
 
       {/* Last contact */}
       <div className="flex flex-wrap items-center gap-2">
@@ -269,20 +359,15 @@ export default function MyClientsPage() {
       ) : visible.length === 0 ? (
         <div className="card p-10 text-center text-sm text-charcoal/50">{L('لا يوجد عملاء مطابقون.', 'No clients match.')}</div>
       ) : (
-        <div className="space-y-2">
-          {visible.map((sc) => (
-            <MyClientCard
-              key={sc.view.id}
-              sc={sc}
-              isAr={isAr}
-              now={now}
-              returnTo="/sales-workspace/clients"
-              onOpen={(id) => navigate(`/model/clients/${id}`)}
-              onWhatsApp={openWhatsApp}
-              lastInteraction={lastByClient.get(sc.view.id) ?? null}
-            />
-          ))}
-        </div>
+        <ClientPulseTable
+          rows={visible}
+          pulse={pulse}
+          isAr={isAr}
+          now={now}
+          returnTo="/sales-workspace/clients"
+          onOpen={(id) => navigate(`/model/clients/${id}`)}
+          onWhatsApp={openWhatsApp}
+        />
       )}
     </div>
   );
