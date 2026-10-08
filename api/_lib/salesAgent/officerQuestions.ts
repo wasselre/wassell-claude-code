@@ -197,7 +197,11 @@ interface OpenRow { id: string; visit_day: string | null; question: string; aske
  */
 export async function askProjectOfficer(
   svc: SupabaseClient, chatWid: string,
-  a: { projectId: string; projectName: string; question: string | null; visit: VisitWish | null },
+  a: {
+    projectId: string; projectName: string; question: string | null; visit: VisitWish | null;
+    /** A discount / last-price question from the negotiation hand-off (labelled so on the Portals tab). */
+    negotiation?: boolean;
+  },
   operationsDeviceId: () => Promise<string | null>,
   now = new Date(),
 ): Promise<AskOfficerResult> {
@@ -276,7 +280,7 @@ export async function askProjectOfficer(
       clientId, projectId: a.projectId, officer: { id: officer.id, name: officer.name, phone: officer.phone }, wid, body,
       reference: `officer_question:${questionId}`, deliverAt, opsDevice: ops,
       context: {
-        trigger: a.visit ? 'visit_check' : 'visit_question', question_id: questionId, client_name: clientName,
+        trigger: a.visit ? 'visit_check' : a.negotiation ? 'negotiation_handoff' : 'visit_question', question_id: questionId, client_name: clientName,
         client_chat_wid: chatWid, project_name: a.projectName, officer_coverage: officer.coverage,
       },
     });

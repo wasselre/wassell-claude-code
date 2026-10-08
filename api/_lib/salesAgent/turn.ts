@@ -760,7 +760,7 @@ async function runBrainTurn(
         if (reason === 'negotiation' && projectId && a.newCustomerText.trim()) {
           try {
             const pname = (await projectNames(svc, [projectId])).get(projectId) ?? '';
-            const r = await askProjectOfficer(svc, chatWid, { projectId, projectName: pname, question: a.newCustomerText, visit: null }, resolveOperationsDeviceId);
+            const r = await askProjectOfficer(svc, chatWid, { projectId, projectName: pname, question: a.newCustomerText, visit: null, negotiation: true }, resolveOperationsDeviceId);
             console.log(`[salesAgent] officer negotiation question chat=${chatWid} project=${projectId} → ${r.ok ? r.via : 'noOfficer' in r ? 'no officer' : r.error}`);
           } catch (err) {
             // The rep was already notified above; the officer question is extra.
