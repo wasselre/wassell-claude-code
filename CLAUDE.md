@@ -1134,6 +1134,14 @@ rule for telling them apart is what question each answers:
   Rows are unique per media × model × `schema_version` — a schema change
   bumps `RAW_CAPTURE_SCHEMA_VERSION`, a re-capture with another model sits
   beside the old row. Images are sent as bytes, never as a link.
+  **It stays OUT of the app and Files (operator 2026-10-08):** the table is
+  service-role only (no RLS policy, no anon/authenticated grants —
+  `2026-10-08_02`), and `api/_lib/__tests__/rawCaptureStaysOut.test.ts` fails
+  if `src/`, `api/` or `supabase/functions/` ever reference it. The same
+  migration switched OFF the Social-media → Files bridge
+  (`social_file_settings.is_enabled = false`), which had been copying collected
+  posts into Files (origin `social_intake`) — don't turn it back on without
+  the operator.
   **Visual-reference companies (2026-10-06):** `org_type = 'visual_reference'`
   marks a NON-competitor followed only for its visuals (car brands etc.). The
   worker stores media, offers videos to shots and design-reads images, but
