@@ -4,6 +4,7 @@ import {
   resolveConstraint, isNonDefault, BANDED_FIELDS, TOLERANCE_PRESETS, MODE_LABELS, MAX_TOLERANCE_PCT,
   type AmenityScope, type ConstraintField, type ConstraintMode, type RequirementConstraints,
 } from '@/lib/matching/constraints';
+import { defaultAmenityScope } from '@/lib/matching/amenityMatch';
 
 const SCOPES: Array<{ value: AmenityScope; ar: string; en: string; hint_ar: string; hint_en: string }> = [
   { value: 'unit', ar: 'في الوحدة', en: 'In the unit', hint_ar: 'يبحث في مكونات الوحدات المتاحة فقط', hint_en: 'Looks only in the available units' },
@@ -52,7 +53,8 @@ export default function FieldConstraintControl({
   const scopes = constraints.amenities?.scopes ?? {};
   const setScope = (value: string, scope: AmenityScope) => {
     const nextScopes = { ...scopes };
-    if (scope === 'both') delete nextScopes[value];
+    // Store only a choice that differs from the amenity's default place.
+    if (scope === defaultAmenityScope(value)) delete nextScopes[value];
     else nextScopes[value] = scope;
     onChange({ ...constraints, amenities: { ...resolveConstraint('amenities', constraints), ...constraints.amenities, scopes: nextScopes } });
   };
@@ -168,7 +170,8 @@ export default function FieldConstraintControl({
       <div className="mt-1.5 space-y-1 rounded-lg border border-sand/40 bg-cream/30 p-1.5 text-[11px]">
         <div className="font-bold text-charcoal/55">{L('أين تبحث عن كل ميزة؟', 'Where to look for each amenity?')}</div>
         {amenityOptions!.map((o) => {
-          const current: AmenityScope = scopes[o.value] === 'unit' || scopes[o.value] === 'project' ? scopes[o.value]! : 'both';
+          const saved = scopes[o.value];
+          const current: AmenityScope = saved === 'unit' || saved === 'project' || saved === 'both' ? saved : defaultAmenityScope(o.value);
           return (
             <div key={o.value} className="flex flex-wrap items-center justify-between gap-1.5">
               <span className="font-semibold text-charcoal/80">{o.label}</span>

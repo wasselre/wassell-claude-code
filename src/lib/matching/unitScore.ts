@@ -16,7 +16,7 @@
 import type { MatchRequirementsInput } from './requirements';
 import type { UnitView } from '@/lib/projects/unitView';
 import { normalizeForSearch } from '@/lib/recordSearch';
-import { unitHasAmenity, unitHasAmenityData } from './amenityMatch';
+import { defaultAmenityScope, unitHasAmenity, unitHasAmenityData } from './amenityMatch';
 
 /** Band cutoffs — same spirit as the project scorer (STRONG 80 / GOOD 60). */
 const STRONG = 80;
@@ -162,7 +162,7 @@ export function scoreUnit(unit: UnitView, req: MatchRequirementsInput): UnitScor
   // ── Amenities the search asked to find IN THE UNIT (scope 'unit') ──
   //    A unit that records no components can't confirm them → 0, same honesty
   //    rule as every other dimension (it never reads as a full match).
-  const unitAmenities = (req.amenities ?? []).filter((a) => req.amenity_scopes?.[a] === 'unit');
+  const unitAmenities = (req.amenities ?? []).filter((a) => (req.amenity_scopes?.[a] ?? defaultAmenityScope(a)) === 'unit');
   if (unitAmenities.length > 0) {
     if (!unitHasAmenityData(unit)) requestedMissing.add('amenities');
     else dims.amenities = unitAmenities.filter((a) => unitHasAmenity(unit, a)).length / unitAmenities.length;

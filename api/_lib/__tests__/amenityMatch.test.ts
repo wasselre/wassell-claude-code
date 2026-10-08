@@ -73,13 +73,13 @@ describe('amenityMatchFacts — what the finder card shows', () => {
   it('found / unknown / missing per requested amenity, de-duplicated', async () => {
     const { amenityMatchFacts } = await import('../matchAgent.js');
     expect(amenityMatchFacts({ preferred_amenities: ['swimming_pool'] }, ['مسبح', 'غرفة سائق', 'نادي رياضي', 'مسبح'])).toEqual([
-      { asked: 'مسبح', key: 'pool', status: 'found', scope: 'both' },
-      { asked: 'غرفة سائق', key: 'driver_room', status: 'unknown', scope: 'both' },
-      { asked: 'نادي رياضي', key: 'gym', status: 'missing', scope: 'both' },
+      { asked: 'مسبح', key: 'pool', status: 'found', scope: 'project' },
+      { asked: 'غرفة سائق', key: 'driver_room', status: 'unknown', scope: 'unit' },
+      { asked: 'نادي رياضي', key: 'gym', status: 'missing', scope: 'project' },
     ]);
     expect(amenityMatchFacts({ unit_features: ['مجلس'] }, ['مجلس', 'غرفة خادمة'])).toEqual([
-      { asked: 'مجلس', key: 'majlis', status: 'found', scope: 'both' },
-      { asked: 'غرفة خادمة', key: 'maid_room', status: 'missing', scope: 'both' },
+      { asked: 'مجلس', key: 'majlis', status: 'found', scope: 'unit' },
+      { asked: 'غرفة خادمة', key: 'maid_room', status: 'missing', scope: 'unit' },
     ]);
     expect(amenityMatchFacts({}, [])).toEqual([]);
   });
@@ -109,5 +109,37 @@ describe('amenityStatus — where to look (2026-10-08)', () => {
     expect(amenityMatchFacts(data, ['غرفة خادمة'], { 'غرفة خادمة': 'unit' })).toEqual([
       { asked: 'غرفة خادمة', key: 'maid_room', status: 'missing', scope: 'unit' },
     ]);
+  });
+});
+
+describe('the new amenities (2026-10-08) and their default place', () => {
+  it('match the values units and projects actually store', async () => {
+    const { amenityMatches } = await import('../matchAgent.js');
+    const pairs: Array<[string, string]> = [
+      ['بلكونات', 'بلكونة'], ['غرفة غسيل', 'غرفة غسيل'], ['ملابس', 'غرفة ملابس'], ['مستودع', 'مستودع'],
+      ['تراس', 'تراس'], ['حديقة', 'حديقة خاصة'], ['green_spaces', 'حدائق ومساحات خضراء'], ['garden', 'حدائق ومساحات خضراء'],
+      ['sports_club', 'نادي رياضي'], ['gym', 'نادي رياضي'], ['جلسات-خارجية', 'جلسات خارجية'],
+      ['children_play_area', 'ألعاب أطفال'], ['نظام-مراقبة-امنية', 'حراسة وكاميرات'], ['ممرات-رياضية', 'ممشى'],
+      ['running_track', 'ممشى'], ['شواحن-سيارات-كهربايية', 'شواحن سيارات كهربائية'], ['jacuzzi', 'جاكوزي وساونا وسبا'],
+      ['sauna', 'جاكوزي وساونا وسبا'], ['سبا', 'جاكوزي وساونا وسبا'], ['padel_court', 'ملعب بادل'], ['mosque', 'مصلى'],
+    ];
+    for (const [have, want] of pairs) expect([have, want, amenityMatches(have, want)]).toEqual([have, want, true]);
+  });
+  it('keeps look-alikes apart', async () => {
+    const { amenityMatches } = await import('../matchAgent.js');
+    expect(amenityMatches('garden', 'حديقة خاصة')).toBe(false);
+    expect(amenityMatches('حديقة', 'حدائق ومساحات خضراء')).toBe(false);
+    expect(amenityMatches('green_spaces', 'جاكوزي وساونا وسبا')).toBe(false);
+    expect(amenityMatches('سبا', 'مسبح')).toBe(false);
+  });
+  it('defaults: room features in the unit, facilities in the project, elevator / rooftop / balcony either', async () => {
+    const { defaultAmenityScope } = await import('../matchAgent.js');
+    expect(defaultAmenityScope('غرفة خادمة')).toBe('unit');
+    expect(defaultAmenityScope('تراس')).toBe('unit');
+    expect(defaultAmenityScope('مسبح')).toBe('project');
+    expect(defaultAmenityScope('ملعب بادل')).toBe('project');
+    expect(defaultAmenityScope('مصعد')).toBe('both');
+    expect(defaultAmenityScope('بلكونة')).toBe('both');
+    expect(defaultAmenityScope('شيء غير معروف')).toBe('both');
   });
 });

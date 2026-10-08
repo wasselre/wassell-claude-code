@@ -236,7 +236,7 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
       const scopes: Record<string, AmenityScope> = {};
       for (const a of out.amenities) {
         const s = amenC.scopes[a];
-        if (s === 'unit' || s === 'project') scopes[a] = s;
+        if (s === 'unit' || s === 'project' || s === 'both') scopes[a] = s;
       }
       if (Object.keys(scopes).length) out.amenity_scopes = scopes;
     }

@@ -388,7 +388,9 @@ describe('9c. required amenities hard gate', () => {
     expect(passesRequiredAmenities(baseProject, { required_amenities: [] })).toBe(true);
   });
   it('required amenities also earn the amenities subscore', () => {
-    const r = scoreProject(withAmenities, { required_amenities: ['غرفة سائق', 'ملحق'] }, {});
+    // A driver room is looked for in the UNIT by default; this project lists it
+    // itself, so the search is told to look in the project.
+    const r = scoreProject(withAmenities, { required_amenities: ['غرفة سائق', 'ملحق'], amenity_scopes: { 'غرفة سائق': 'project' } }, {});
     expect(r.breakdown.amenities).toBe(1);
   });
 });

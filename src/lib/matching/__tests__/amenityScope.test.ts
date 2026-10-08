@@ -26,7 +26,7 @@ function unit(p: Partial<UnitView>): UnitView {
 }
 
 describe('draftToMatchRequirements — amenity_scopes', () => {
-  it('sends unit / project choices for the selected amenities only; «both» is the default', () => {
+  it('sends the choices for the selected amenities only', () => {
     const out = draftToMatchRequirements({
       clientsModel: null,
       prefDraft: {
@@ -35,7 +35,7 @@ describe('draftToMatchRequirements — amenity_scopes', () => {
       },
       savedClientData: null,
     });
-    expect(out.amenity_scopes).toEqual({ 'غرفة خادمة': 'unit', 'مسبح': 'project' });
+    expect(out.amenity_scopes).toEqual({ 'غرفة خادمة': 'unit', 'مسبح': 'project', 'مصعد': 'both' });
   });
   it('no scopes → no amenity_scopes key', () => {
     const out = draftToMatchRequirements({ clientsModel: null, prefDraft: { preferred_amenities: ['مسبح'] }, savedClientData: null });
@@ -54,7 +54,9 @@ describe('the card’s units follow the «in the unit» amenities', () => {
   });
   it('an amenity looked for in the PROJECT (or either) does not filter units', () => {
     expect(matchingUnits([withMaid, withoutMaid], { amenities: ['غرفة خادمة'], amenity_scopes: { 'غرفة خادمة': 'project' } })).toHaveLength(2);
-    expect(matchingUnits([withMaid, withoutMaid], { amenities: ['غرفة خادمة'] })).toHaveLength(2);
+    expect(matchingUnits([withMaid, withoutMaid], { amenities: ['غرفة خادمة'], amenity_scopes: { 'غرفة خادمة': 'both' } })).toHaveLength(2);
+    // …but with no choice a maid room is a UNIT feature, so the units are filtered.
+    expect(matchingUnits([withMaid, withoutMaid], { amenities: ['غرفة خادمة'] })).toEqual([withMaid]);
   });
   it('partial credit when a unit has some of them', () => {
     const req = { amenities: ['غرفة خادمة', 'مجلس'], amenity_scopes: { 'غرفة خادمة': 'unit' as const, 'مجلس': 'unit' as const } };
@@ -69,5 +71,17 @@ describe('the card’s units follow the «in the unit» amenities', () => {
   it('synonyms match like the engine', () => {
     expect(amenityMatches('swimming_pool', 'مسبح')).toBe(true);
     expect(amenityMatches('غرفة خادمة', 'غرفة سائق')).toBe(false);
+  });
+});
+
+describe('browser twin agrees with the engine on defaults', () => {
+  it('same default place per amenity', async () => {
+    const twin = await import('../amenityMatch');
+    const engine = await import('../../../../api/_lib/matchAgent');
+    for (const a of ['مجلس', 'غرفة خادمة', 'غرفة سائق', 'مسبح', 'حوش', 'سطح', 'مصعد', 'بلكونة', 'غرفة غسيل', 'غرفة ملابس', 'مستودع', 'تراس',
+      'حديقة خاصة', 'حدائق ومساحات خضراء', 'نادي رياضي', 'جلسات خارجية', 'ألعاب أطفال', 'حراسة وكاميرات', 'ممشى',
+      'شواحن سيارات كهربائية', 'جاكوزي وساونا وسبا', 'ملعب بادل']) {
+      expect([a, twin.defaultAmenityScope(a)]).toEqual([a, engine.defaultAmenityScope(a)]);
+    }
   });
 });
