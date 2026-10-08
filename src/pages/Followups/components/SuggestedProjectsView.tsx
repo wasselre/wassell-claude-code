@@ -32,7 +32,7 @@ import FinderCard from './FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from './FinderRefinementBar';
 import FinderMapView from './FinderMapView';
 import { collectClientAreaItems } from '@/lib/geo/clientArea';
-import ProjectWhatsAppFlow from './ProjectWhatsAppFlow';
+import { quickSendProject } from '@/lib/projects/quickSendProject';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import LeaveWithoutSavingModal from '@/components/matching/LeaveWithoutSavingModal';
 
@@ -574,11 +574,12 @@ export default function SuggestedProjectsView({
   const noClient = () =>
     addToast(L('لا يوجد عميل مرتبط بهذه المتابعة.', 'No client linked to this follow-up.'), 'error');
 
-  // Send THIS card's project/listing to the connected client — the prepared
-  // message if one exists, else the creation flow (all inside stacked popups).
+  // Send THIS card's project to the connected client in one click (no popup —
+  // the card's button shows sent); a market listing opens its creation flow.
   function onSendToClient(item: FinderMatch) {
     if (!clientRec?.id) return noClient();
-    setSendTarget(item);
+    if (item.source === 'market_listings') { setSendTarget(item); return; }
+    void quickSendProject({ projectId: item.project_id, projectName: item.project_name, clientRec });
   }
 
   function matchToInput(item: FinderMatch): Omit<SaveOptionInput, 'clientId'> {
@@ -1529,27 +1530,16 @@ export default function SuggestedProjectsView({
         </div>
       )}
 
-      {/* "Send to client" WhatsApp flow — the stored message opens the client's
-          chat composer directly; a missing message runs the creation flow first
-          (project: deterministic compose; listing: AI text + cleaned photos). */}
+      {/* "Send to client" for a market listing — AI text + cleaned photos.
+          Projects send in one click from the card (quickSendProject). */}
       {sendTarget && clientRec && (
-        sendTarget.source === 'market_listings' ? (
-          <ListingWhatsAppFlow
-            isAr={isAr}
-            listingId={sendTarget.project_id}
-            listingName={sendTarget.project_name}
-            clientRec={clientRec}
-            onClose={() => setSendTarget(null)}
-          />
-        ) : (
-          <ProjectWhatsAppFlow
-            isAr={isAr}
-            projectId={sendTarget.project_id}
-            projectName={sendTarget.project_name}
-            clientRec={clientRec}
-            onClose={() => setSendTarget(null)}
-          />
-        )
+        <ListingWhatsAppFlow
+          isAr={isAr}
+          listingId={sendTarget.project_id}
+          listingName={sendTarget.project_name}
+          clientRec={clientRec}
+          onClose={() => setSendTarget(null)}
+        />
       )}
 
       {/* Leaving without saving any option for the client → confirm first. */}

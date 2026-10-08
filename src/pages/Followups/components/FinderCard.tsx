@@ -1,7 +1,7 @@
 import {
   Building2, MapPin, Wallet, Ruler, BedDouble, Bath, PackageCheck, AlertTriangle,
   ExternalLink, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
-  CheckSquare, Square, Send, LayoutGrid,
+  CheckSquare, Square, LayoutGrid,
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import ProjectUnitsModal from './ProjectUnitsModal';
@@ -14,6 +14,8 @@ import { CLIENT_OPTION_STATUS_META, CLIENT_OPTION_STATUS_ORDER, type ClientOptio
 import type { ChatPdfContext } from '@/lib/projects/sendPdfToChat';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
+import { useQuickSendState } from '@/lib/projects/quickSendProject';
+import { quickSendContent } from '@/components/matching/QuickSendProjectButton';
 import QualityBadge from '@/components/market/QualityBadge';
 
 /**
@@ -43,9 +45,10 @@ interface Props {
   /** Set/change this card's client-option status inline (main / presented / not
    *  interested / …). Ensures the option exists first. Omit → no status control. */
   onSetStatus?: (item: FinderMatch, status: ClientOptionStatus) => void;
-  /** Send THIS project/listing to the connected client over WhatsApp — reuses
-   *  the stored message if one exists, else starts the creation flow. The
-   *  parent owns the flow modal. Omit → no send button. */
+  /** Send THIS project/listing to the connected client over WhatsApp. For a
+   *  project the parent calls `quickSendProject` (one click, no popup) and the
+   *  button reads its state via `clientId`; a listing opens the parent's flow
+   *  modal. Omit → no send button. */
   onSendToClient?: (item: FinderMatch) => void;
   /** Jump to the MAP view and open/center THIS project's pin. Supplied only in
    *  list context (a map is available to switch to); omitted for the map's own
@@ -158,6 +161,10 @@ export default function FinderCard({
   // Units belong to catalog projects (our_projects / all_projects); a single
   // market listing has none, so the "view units" affordance is projects-only.
   const hasUnits = item.source !== 'market_listings';
+  // Projects send in ONE click (quickSendProject) — the button itself shows
+  // sending → sent / failed. Market listings still open their own flow.
+  const sendState = useQuickSendState(hasUnits ? clientId : null, item.project_id);
+  const send = quickSendContent(sendState, isAr, 12);
   // "Show on map" only makes sense when the pin can actually be placed.
   const hasCoords = asCoord(f.latitude) != null && asCoord(f.longitude) != null;
   // Main image: raw URL (market listings) or files.id (projects) → resolved to a
@@ -409,14 +416,18 @@ export default function FinderCard({
             <ActionBtn icon={<LayoutGrid size={12} />} label={L('الوحدات', 'Units')} onClick={() => setShowUnits(true)} />
           )}
 
-          {/* Send THIS project/listing to the connected client — the prepared
-              WhatsApp message if one exists, else the creation flow, right from
-              the card. Hidden on the standalone finder (no client). */}
+          {/* Send THIS project/listing to the connected client. A project goes
+              out in one click (no popup — the button shows it was sent); a
+              listing opens its creation flow. Hidden on the standalone finder
+              (no client). */}
           {!hideClientActions && onSendToClient && (
             <ActionBtn
-              icon={<Send size={12} />}
-              label={L('إرسال للعميل', 'Send to client')}
+              icon={send.icon}
+              label={send.label}
               onClick={() => onSendToClient(item)}
+              disabled={sendState === 'sending' || sendState === 'sent'}
+              active={sendState === 'sent'}
+              danger={sendState === 'failed'}
               primary
             />
           )}
@@ -445,10 +456,12 @@ export default function FinderCard({
   );
 }
 
-function ActionBtn({ icon, label, onClick, active, disabled, primary }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean; disabled?: boolean; primary?: boolean }) {
+function ActionBtn({ icon, label, onClick, active, disabled, primary, danger }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean; disabled?: boolean; primary?: boolean; danger?: boolean }) {
   const base = 'inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition disabled:opacity-60';
   const cls = primary
-    ? (active ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-copper text-white hover:bg-terracotta')
+    ? (active ? 'bg-green-100 text-green-700 border border-green-200 disabled:opacity-100'
+      : danger ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+      : 'bg-copper text-white hover:bg-terracotta')
     : 'border border-sand/60 bg-white text-charcoal/75 hover:bg-cream/60';
   return <button type="button" onClick={onClick} disabled={disabled} className={`${base} ${cls}`}>{icon}{label}</button>;
 }

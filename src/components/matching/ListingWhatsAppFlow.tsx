@@ -10,7 +10,7 @@ import { resolveClientSlugs, recordToPickedClient, type PickedClient } from '@/p
 
 /**
  * "Send this market listing to the client" flow — launched from a Project
- * Finder card or a Client Options card. The listing twin of ProjectWhatsAppFlow:
+ * Finder card or a Client Options card. The listing twin of the old project popup flow:
  *
  *   • A ready chat_templates message exists for the listing → open the CLIENT's
  *     chat composer (StartChatModal, client preselected) pre-filled with the

@@ -5,14 +5,14 @@
  *
  * A "prepared message" is a chat_templates record linked to the source:
  *   • projects  → data.project_id  (all_projects id; created by
- *     ProjectWhatsAppFlow / the Generate-project-messages tool)
+ *     quickSendProject / the compose step / the Generate-project-messages tool)
  *   • listings  → data.listing_id + data.status === 'ready' (created by
  *     ListingMessageModal — drafts mid-cleaning are NOT ready and never send)
  */
 
 import type { AppRecord } from '@/types';
 
-/** First stored template for an all_projects id (same rule ProjectWhatsAppFlow used). */
+/** First stored template for an all_projects id (same rule the one-click project send uses). */
 export function findProjectTemplate(templates: AppRecord[], projectId: string): AppRecord | null {
   return templates.find((t) => (t.data as Record<string, unknown>)?.project_id === projectId) ?? null;
 }

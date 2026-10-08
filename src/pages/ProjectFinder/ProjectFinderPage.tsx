@@ -26,7 +26,7 @@ import FinderRefinementBar, { type FinderViewMode } from '@/pages/Followups/comp
 import FinderMapView from '@/pages/Followups/components/FinderMapView';
 import { collectClientAreaItems } from '@/lib/geo/clientArea';
 import type { LocationItem } from '@/lib/geo/locationItems';
-import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
+import { quickSendProject } from '@/lib/projects/quickSendProject';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import BulkProjectSendFlow, { type BulkRecipientInput } from '@/pages/Chats/components/BulkProjectSendFlow';
 import { recordToPickedClient, resolveClientSlugs } from '@/pages/Chats/components/ClientPicker';
@@ -597,6 +597,13 @@ export default function ProjectFinderPage() {
     return () => window.removeEventListener('beforeunload', h);
   }, [mustConfirmLeave, prefsDirty]);
 
+  // Send a card to the selected client: a project goes out in one click (no
+  // popup — the card's button shows sent); a market listing opens its flow.
+  const onSendToClient = (item: FinderMatch) => {
+    if (item.source === 'market_listings') { setSendTarget(item); return; }
+    void quickSendProject({ projectId: item.project_id, projectName: item.project_name, clientRec });
+  };
+
   // One card, wired for a selected client (full actions) or read-only discovery.
   // `showMapBtn` is false for the map's own selected-pin card (already on the map).
   const renderCard = (item: FinderMatch, key: string, showMapBtn = true) => (
@@ -612,7 +619,7 @@ export default function ProjectFinderPage() {
       onEliminate={noop}
       onReactivate={noop}
       onSetStatus={selectedClientId ? onSetStatus : undefined}
-      onSendToClient={clientRec ? setSendTarget : undefined}
+      onSendToClient={clientRec ? onSendToClient : undefined}
       onShowOnMap={showMapBtn ? onShowOnMap : undefined}
       saveState={selectedClientId ? saveStates[item.project_id] ?? 'idle' : 'idle'}
       existingStatus={selectedClientId ? existingStatusFor(item) : null}
@@ -1071,27 +1078,16 @@ export default function ProjectFinderPage() {
         </div>
       </div>
 
-      {/* "Send to client" WhatsApp flow — stored message → chat composer;
-          missing message → creation flow first. Client is always set here
-          (the button only renders while one is selected). */}
+      {/* "Send to client" for a market listing. Projects send in one click
+          from the card (quickSendProject). */}
       {sendTarget && clientRec && (
-        sendTarget.source === 'market_listings' ? (
-          <ListingWhatsAppFlow
-            isAr={isAr}
-            listingId={sendTarget.project_id}
-            listingName={sendTarget.project_name}
-            clientRec={clientRec}
-            onClose={() => setSendTarget(null)}
-          />
-        ) : (
-          <ProjectWhatsAppFlow
-            isAr={isAr}
-            projectId={sendTarget.project_id}
-            projectName={sendTarget.project_name}
-            clientRec={clientRec}
-            onClose={() => setSendTarget(null)}
-          />
-        )
+        <ListingWhatsAppFlow
+          isAr={isAr}
+          listingId={sendTarget.project_id}
+          listingName={sendTarget.project_name}
+          clientRec={clientRec}
+          onClose={() => setSendTarget(null)}
+        />
       )}
 
       {/* Bulk send — the selected projects to this client, in order. */}

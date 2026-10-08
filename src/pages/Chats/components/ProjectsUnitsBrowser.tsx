@@ -24,7 +24,7 @@ import BaseMapView, { type MapPin as MapPinData } from '@/components/map/BaseMap
 import { buildColoredPinIcon } from '@/lib/locationUtils';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
 import PaymentPlansTabPane from '@/pages/Records/components/PaymentPlansTabPane';
-import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
+import QuickSendProjectButton from '@/components/matching/QuickSendProjectButton';
 import ProjectFilePickerModal from '@/pages/Chats/components/ProjectFilePickerModal';
 import { sendProjectImageMessages } from '@/lib/projectMessageImages';
 import BulkProjectSendFlow, { type BulkRecipientInput } from '@/pages/Chats/components/BulkProjectSendFlow';
@@ -54,13 +54,13 @@ import type { AppModel, AppRecord } from '@/types';
  * `resolveProjectView` the Projects pages use (stored rollups, never
  * recomputed), and the unit table is the SAME `UnitsInventory` component from
  * the project detail page (filters, sort, unit drawer, compare). Actions reuse
- * the existing paths too — `ProjectWhatsAppFlow` for "send this project" and
+ * the existing paths too — `quickSendProject` (one click, no popup) for "send this project" and
  * `saveProjectToClient` (the unified Client Property Options engine, same as the
  * Project Finder + the unit save) for "save to the client's options".
  *
  * z-index: the sheet sits at z-40, deliberately BELOW the 50/55/60 modal tiers,
  * so everything it launches (UnitsInventory's unit drawer + compare modal at
- * z-50, ProjectWhatsAppFlow at z-60) stacks correctly above it.
+ * z-50, the bulk send flow at z-60) stacks correctly above it.
  */
 
 interface Props {
@@ -284,7 +284,6 @@ export default function ProjectsUnitsBrowser({ clientId: clientIdProp, chatWid: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openId]);
   const openView = useMemo(() => (openId ? views.find((v) => v.id === openId) ?? null : null), [views, openId]);
-  const [sendTarget, setSendTarget] = useState<{ id: string; name: string } | null>(null);
   // Bulk send: multi-select several projects and send them to this client in
   // order (text → PDF → pictures per project, one project at a time).
   const [bulkMode, setBulkMode] = useState(false);
@@ -312,13 +311,13 @@ export default function ProjectsUnitsBrowser({ clientId: clientIdProp, chatWid: 
   // stacked flow owns the screen (the send flow has its own dismissal).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || sendTarget) return;
+      if (e.key !== 'Escape') return;
       if (openId) setOpenId(null);
       else onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openId, sendTarget, onClose]);
+  }, [openId, onClose]);
 
   const addToOptions = async (v: ProjectView) => {
     if (!clientId) return;
@@ -426,7 +425,8 @@ export default function ProjectsUnitsBrowser({ clientId: clientIdProp, chatWid: 
               addState={addState}
               chatPdf={chatPdf}
               clientId={clientRec ? clientId ?? null : null}
-              onSend={() => setSendTarget({ id: openView.id, name: openView.name ?? '' })}
+              clientRec={clientRec}
+              chatWid={chatWid ?? null}
               onAdd={() => void addToOptions(openView)}
               pickUnits={pick?.withUnits ? { initial: unitsSeedFor(openView.id), onChange: setPickedUnitIds } : null}
             />
@@ -630,19 +630,6 @@ export default function ProjectsUnitsBrowser({ clientId: clientIdProp, chatWid: 
           </div>
         )}
       </div>
-
-      {/* "WhatsApp this project" — the SAME flow the Project Finder and the
-          client-options cards use: reuse the stored chat_templates message or
-          generate + approve one, then open the composer for this client. */}
-      {sendTarget && clientRec && (
-        <ProjectWhatsAppFlow
-          isAr={isAr}
-          projectId={sendTarget.id}
-          projectName={sendTarget.name}
-          clientRec={clientRec}
-          onClose={() => setSendTarget(null)}
-        />
-      )}
 
       {/* Bulk send — several selected projects to this client, in order. */}
       {bulkFlow && bulkRecipient && (
@@ -877,7 +864,7 @@ function ProjectRow({
 
 /** The opened project: facts, rep actions, then the real units inventory. */
 function ProjectDetail({
-  v, isAr, model, canAct, addState, chatPdf, clientId, onSend, onAdd, pickUnits = null,
+  v, isAr, model, canAct, addState, chatPdf, clientId, clientRec, chatWid, onAdd, pickUnits = null,
 }: {
   v: ProjectView;
   isAr: boolean;
@@ -886,7 +873,8 @@ function ProjectDetail({
   addState: 'idle' | 'saving' | 'added';
   chatPdf: ChatPdfContext | null;
   clientId: string | null;
-  onSend: () => void;
+  clientRec: AppRecord | null;
+  chatWid: string | null;
   onAdd: () => void;
   /** Pick mode: the unit checkboxes are the unit choice. */
   pickUnits?: { initial: string[]; onChange: (ids: string[]) => void } | null;
@@ -967,14 +955,15 @@ function ProjectDetail({
           <div className="flex flex-wrap items-center gap-2 border-t border-sand/40 pt-2">
             {canAct && (
               <>
-                <button
-                  type="button"
-                  onClick={onSend}
+                <QuickSendProjectButton
+                  projectId={v.id}
+                  projectName={v.name ?? ''}
+                  clientRec={clientRec}
+                  chatWid={chatWid}
+                  isAr={isAr}
+                  iconSize={13}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-terracotta"
-                >
-                  <Send size={13} />
-                  {L('إرسال للعميل', 'Send to client')}
-                </button>
+                />
                 <button
                   type="button"
                   onClick={onAdd}

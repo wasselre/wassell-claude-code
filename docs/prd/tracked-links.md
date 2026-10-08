@@ -1,7 +1,7 @@
 # PRD: Tracked Links (per-customer project & unit pages)
 
 **Status:** Live
-**Last updated:** 2026-10-05 (the project-message preview now says the website link is swapped for this customer's tracked links on continue — the swap always happened on accept, but the preview still showed the old wassel.re link and the button read "Next: files", so reps thought it went out as-is. Measured: no rep or AI message has carried the old link since 2026-09-29.) | 2026-09-30
+**Last updated:** 2026-10-08 (single-project «إرسال للعميل» is now one click — `quickSendProject` mints this customer's links (`sent_via='rep'`) and sends with no preview; the old `ProjectWhatsAppFlow` popup was deleted; a failed mint falls back to brochure + top-3 photos with an info toast) | 2026-10-05 (the project-message preview now says the website link is swapped for this customer's tracked links on continue — the swap always happened on accept, but the preview still showed the old wassel.re link and the button read "Next: files", so reps thought it went out as-is. Measured: no rep or AI message has carried the old link since 2026-09-29.) | 2026-09-30
 **Related PRDs:** [chats.md](chats.md) (project messages, composer, bubbles), [ai-agent.md](ai-agent.md) / the WhatsApp sales agent (sends through the same path), [record-management.md](record-management.md) (project detail + client options)
 
 ## What it is (in plain English)
@@ -26,11 +26,11 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
 - **Sections appear only when there is something behind them** (no «الفيديوهات» link for a project without videos; no «الوحدات المتاحة» when nothing is available).
 - **Language:** the page follows the message's language (`?lang=en` for English messages); Arabic pages are RTL.
 - **Links expire after 365 days** (the page says the link is no longer available).
-- **Degrade, never lie:** if a link can't be minted, the send falls back to the old files package — the server logs it, the browser shows a red toast. Nothing goes out half-built silently.
+- **Degrade, never lie:** if a link can't be minted, the send falls back to the old files package — the server logs it, the browser shows a toast (red in the composer; a blue info toast on the one-click project send, which then sends the brochure + top-3 photos). Nothing goes out half-built silently.
 - **Where links are minted (all project sends):**
   - the WhatsApp sales agent / bot (`aiSendProject.ts`, `SEND_TRACKED_LINKS`): card → cover photo (held behind the card) → no gallery;
   - a rep picking a project template in the composer (links replace the website line; images become the cover only);
-  - the Follow-up/Finder «WhatsApp this project» flow (skips the file picker when the link mints);
+  - the one-click single-project «إرسال للعميل» (2026-10-08, `quickSendProject`, `sent_via='rep'`) on Project Finder, Suggested Projects and Client Options cards and the chat's project browser: links + cover photo go with no preview; if the link can't be minted the brochure + top-3 photos go instead (blue info toast). Replaces the old `ProjectWhatsAppFlow` popup, which skipped the file picker when the link minted;
   - bulk project send (one link per project, `sent_via='bulk'`, works for a brand-new number too);
   - the broker portal ([broker-portal.md](broker-portal.md), `sent_via='broker'`): the send from our line (same `aiSendProject` path), the broker's «copy project message» and «share unit» (`api/broker-portal-send.ts` — these two have no chat, so they appear in no engagement list yet);
   - the units window / unit drawer / client options («طريقة الإرسال: رابط متتبَّع | PDF» — link is the default; the PDF and Download remain).
@@ -43,6 +43,7 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
 
 ## User flows
 1. **Rep sends a project:** picks a project template → the box fills with the text + this customer's links, attachment = cover photo → Send. The customer taps «الصور» → the gallery page opens; the rep's bubble shows «فتحها 1 مرة · 5 صور · 🔥 20» within a minute.
+1b. **Rep sends a project from a card (one click, 2026-10-08):** «إرسال للعميل» on a Finder / Suggested Projects / Client Options card or in the chat's project browser → the project message goes out with this customer's links + cover photo, no preview; the button turns green «تم الإرسال». Engagement then shows on the bubble exactly as in flow 1.
 2. **Rep sends units:** in the units window → «إرسال للعميل» → the dialog defaults to «رابط متتبَّع» → the customer gets «قائمة وحدات X» + one link to the available-units page; each unit they expand is recorded.
 3. **Location:** the customer taps «📍 الموقع» → our page records the tap and forwards to Google Maps after a moment (with a button if the redirect is blocked).
 4. **Error states:** an unknown/expired token shows «الرابط غير متاح»; a failed page load shows a retry; a failed mint in the composer toasts and keeps the template's files.
@@ -66,7 +67,7 @@ We had no idea whether a customer looked at what we sent. A rep sent ten project
 | `src/pages/Chats/components/{Composer,MessageThread,LinkEngagementChip}.tsx` | Template links, bubble chip |
 | `src/pages/Chats/components/SendUnitsPdfModal.tsx` | «رابط متتبَّع / PDF» choice for units |
 | `src/lib/projects/bulkProjectSend.ts` | Bulk send with one link per project |
-| `src/pages/Followups/components/ProjectWhatsAppFlow.tsx` | Single-project flow with links |
+| `src/lib/projects/quickSendProject.ts` | One-click single-project send with links (2026-10-08; replaced the deleted `src/pages/Followups/components/ProjectWhatsAppFlow.tsx`) |
 | `src/components/interest/InterestTimeline.tsx`, `src/lib/trackedLinks/timeline.ts` | The per-project history with points (folding only — scoring is SQL) |
 | `src/components/interest/TrackedInterestList.tsx` | Interest lists (project page tab, client options) |
 

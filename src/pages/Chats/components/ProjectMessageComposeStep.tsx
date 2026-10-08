@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { v4 as uuid } from 'uuid';
 import { X, Loader2, Sparkles, MessageCircle, RefreshCw, FileText, ArrowRight, ArrowLeft, ShieldCheck, AlertTriangle, Link2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { resolveProjectFacts } from '@/lib/projectMessageFacts';
@@ -7,6 +6,7 @@ import { savedMessageMatchesCurrentFacts } from '@/lib/projectMessage/factsMatch
 import { ensureOffPlanDisclosed } from '@/lib/projectMessage/delivery';
 import { generateProjectMessageAi, factCheckProjectMessage } from '@/lib/projectMessage/client';
 import { findProjectTemplate } from '@/lib/matching/sendToClient';
+import { buildProjectTemplateRecord } from '@/lib/projectMessage/templateRecord';
 import Button from '@/components/ui/Button';
 import type { AppRecord } from '@/types';
 
@@ -14,8 +14,9 @@ import type { AppRecord } from '@/types';
  * ProjectMessageComposeStep — compose ONE project's WhatsApp message text.
  *
  * The saved-message / AI-rewrite / fact-check / language-toggle / save-as-template
- * step, extracted from ProjectWhatsAppFlow so the single-project flow AND the bulk
- * wizard share ONE implementation (identical behaviour, no fork). It renders its
+ * step, used by the bulk wizard (the single-project send is now one click —
+ * `quickSendProject` — and shares the template save via
+ * `buildProjectTemplateRecord`). It renders its
  * own modal shell and, on accept, hands back the final `{ text, sendLang }`.
  *
  *   1. CHOOSE — use the SAVED message (AI-authored ones fact-check their numbers
@@ -120,31 +121,10 @@ export default function ProjectMessageComposeStep({
    *  single-project flow, keeps the gallery + flags it for fact-check on reuse. */
   async function saveTemplate(ar: string, en: string): Promise<AppRecord | null> {
     if (!chatTemplatesModel) return null;
-    const now = new Date().toISOString();
-    const baseData = (savedRec?.data ?? {}) as Record<string, unknown>;
-    let galleryIds = baseData.project_image_file_ids;
-    if (!Array.isArray(galleryIds)) {
-      const synthetic = { id: 'wa-synthetic', data: { project: projectId } } as unknown as AppRecord;
-      galleryIds = resolveProjectFacts(synthetic, models, records).imageFileIds;
-    }
-    const record: AppRecord = {
-      id: savedRec?.id ?? uuid(),
-      model_id: chatTemplatesModel.id,
-      data: {
-        media_kind: '', media_file_id: null, media_mime: null, media_size: null, media_filename: null,
-        ...baseData,
-        name: projectName,
-        language: 'both',
-        tags: Array.isArray(baseData.tags) && baseData.tags.length ? baseData.tags : ['project'],
-        body_ar: ar,
-        body_en: en,
-        project_id: projectId,
-        project_image_file_ids: galleryIds,
-        fact_check_on_use: true,
-      },
-      created_at: savedRec?.created_at ?? now,
-      updated_at: now,
-    };
+    const record = buildProjectTemplateRecord({
+      chatTemplatesModelId: chatTemplatesModel.id,
+      savedRec, projectId, projectName, ar, en, models, records,
+    });
     const res = await saveRecord(record);
     if (res.status === 'conflict') return null;
     setSavedRec(record);

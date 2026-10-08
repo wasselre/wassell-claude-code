@@ -27,7 +27,7 @@ import { resolveDeliveryStatus } from '@/lib/matching/deliveryStatus';
 import AddOptionModal from '../AddOptionModal';
 import LogUnansweredRequestModal from '../LogUnansweredRequestModal';
 import ClientOptionsMapView from '../ClientOptionsMapView';
-import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
+import QuickSendProjectButton from '@/components/matching/QuickSendProjectButton';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import Modal from '@/components/ui/Modal';
 import UnitsInventory from '@/pages/Projects/components/UnitsInventory';
@@ -366,7 +366,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
   const [addOpen, setAddOpen] = useState(false);
   const [unansweredOpen, setUnansweredOpen] = useState(false);
   // "Send to client" from an option card — the WhatsApp flow for this option.
-  const [sendTarget, setSendTarget] = useState<{ sourceType: 'project' | 'market_listing'; sourceId: string; sourceName: string } | null>(null);
+  const [sendTarget, setSendTarget] = useState<{ sourceId: string; sourceName: string } | null>(null);
   // "Units" from a PROJECT option card — the project's inventory in a popup
   // (same UnitsInventory the finder + project page use). Holds the resolved
   // all_projects id + a display name.
@@ -962,14 +962,22 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
               </button>
             )}
 
-            {/* Send THIS option to the client over WhatsApp — the prepared
-                message if one exists, else the creation flow. Projects +
-                market listings (units have no message flow). */}
-            {(d.source_type === 'project' || (d.source_type === 'market_listing' && !MARKET_LISTINGS_ARCHIVED)) && (
+            {/* Send THIS option to the client over WhatsApp. A project sends in
+                one click (no popup; the button shows sent); a market listing
+                still opens its creation flow (units have no message flow). */}
+            {d.source_type === 'project' && d.source_id && (
+              <QuickSendProjectButton
+                projectId={resolveUnitsProjectId(String(d.source_id))}
+                projectName={d.source_name || ''}
+                clientRec={client}
+                isAr={isAr}
+                className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-[11px] font-bold text-white transition hover:bg-terracotta"
+              />
+            )}
+            {d.source_type === 'market_listing' && !MARKET_LISTINGS_ARCHIVED && (
               <button
                 type="button"
                 onClick={() => setSendTarget({
-                  sourceType: d.source_type as 'project' | 'market_listing',
                   sourceId: d.source_id,
                   sourceName: d.source_name || '',
                 })}
@@ -1418,27 +1426,16 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore, on
         </Modal>
       )}
 
-      {/* "Send to client" WhatsApp flow — stored message → chat composer;
-          missing message → creation flow first (project: deterministic compose;
-          listing: AI text + cleaned photos). */}
+      {/* "Send to client" for a market listing — AI text + cleaned photos.
+          Projects send in one click from the card (QuickSendProjectButton). */}
       {sendTarget && (
-        sendTarget.sourceType === 'market_listing' ? (
-          <ListingWhatsAppFlow
-            isAr={isAr}
-            listingId={sendTarget.sourceId}
-            listingName={sendTarget.sourceName}
-            clientRec={client}
-            onClose={() => setSendTarget(null)}
-          />
-        ) : (
-          <ProjectWhatsAppFlow
-            isAr={isAr}
-            projectId={sendTarget.sourceId}
-            projectName={sendTarget.sourceName}
-            clientRec={client}
-            onClose={() => setSendTarget(null)}
-          />
-        )
+        <ListingWhatsAppFlow
+          isAr={isAr}
+          listingId={sendTarget.sourceId}
+          listingName={sendTarget.sourceName}
+          clientRec={client}
+          onClose={() => setSendTarget(null)}
+        />
       )}
 
       {/* Units PDF send dialog (unit options). Mounted only while open so its
