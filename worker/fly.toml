@@ -24,7 +24,9 @@ kill_timeout = 30
   # Collection/reading claim loops per general machine. 3 since 2026-10-05: with
   # shots moved off, a machine sat at ~185 MB of 459 and load ~0.2, and Apify
   # history runs (up to ~90 min each) were the slowest part of the catch-up.
-  MARKETING_LOOPS = '3'
+  # 6 since 2026-10-08: the raw-capture backlog (~45 s per image, all of it
+  # waiting on OpenAI) had 282 posts queued ~32 min behind 15 slots.
+  MARKETING_LOOPS = '6'
 
 # Two process groups, same image/command:
 #   app    — the general worker: all lanes EXCEPT the unit-pdf renderer. 512MB × 5.

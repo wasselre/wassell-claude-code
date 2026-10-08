@@ -4188,7 +4188,9 @@ if (process.env.UNIT_PDF_ONLY === '1' || process.env.FLY_PROCESS_GROUP === 'rend
     // Two claim loops per machine by default: a collection job waits on Apify for
     // up to ~80 min (a large account's 12-month history), and with one loop it
     // held the machine's only slot — post reading stalled behind it.
-    const mktLoops = Math.max(1, Math.min(4, Number(process.env.MARKETING_LOOPS ?? 2) || 2));
+    // Ceiling 8 (was 4, raised 2026-10-08): a raw-capture job spends ~45 s waiting
+    // on OpenAI and almost no CPU/memory, so slots — not the machine — were the limit.
+    const mktLoops = Math.max(1, Math.min(8, Number(process.env.MARKETING_LOOPS ?? 2) || 2));
     console.log(`[worker] marketing collection loops enabled ×${mktLoops} (DB pause/enable still gate actual runs)`);
     for (let i = 0; i < mktLoops; i++) loops.push(marketingPollLoop(i));
   } else {
