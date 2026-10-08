@@ -65,6 +65,7 @@ import { resolveOperationsDeviceId } from '../_lib/whatsappGateway.js';
 import { draftFollowupMessage } from '../_lib/salesAgent/followupDraft.js';
 import { remindUnansweredHandoffs } from '../_lib/salesAgent/escalation.js';
 import { remindOfficerQuestions } from '../_lib/salesAgent/officerQuestions.js';
+import { isProviderOutage } from '../_lib/providerOutage.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 300 };
 
@@ -283,6 +284,13 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           officerOut.push({ interest: ev.id, ...r, ...(sent ? { sent } : {}) });
         } catch (err) {
           fail(`officer step interest=${ev.id}`, err);
+          // The PROVIDER is down (credit out, overload, 5xx): the event stays
+          // open and the step stops for this tick — the next tick retries.
+          // Closing it here lost 4 officer checks to an empty balance (2026-10-08).
+          if (isProviderOutage(err)) {
+            officerOut.push({ interest: ev.id, deferred: 'provider unavailable' });
+            break;
+          }
           // A failed judgement or send is closed, not retried every 5 minutes
           // (each retry is a paid model call). Nothing was sent; the error is
           // on the event for the record.
@@ -385,13 +393,15 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         { campaign: true, limit: DRAFTS_PER_TICK },
         { campaign: false, limit: Math.min(room, DRAFTS_PER_TICK) },
       ];
+      let providerDown = false;
       for (const pass of passes) {
-        if (pass.limit <= 0) continue;
+        if (pass.limit <= 0 || providerDown) continue;
         const { data: cands, error: kErr } = await svc.rpc('ai_followup_candidates', { p_limit: pass.limit, p_campaign: pass.campaign });
         if (kErr) throw new Error(`ai_followup_candidates failed: ${kErr.message}`);
         const candidates = (cands ?? []) as { followup_id: string; client_id: string; chat_wid: string; chat_record_id: string; attempt: number; due_at: string; campaign: string | null }[];
 
         for (const c of candidates) {
+          if (providerDown) { draftOut.push({ followup: c.followup_id, deferred: 'provider unavailable' }); continue; }
           if (Date.now() - startedAt > TIME_BUDGET_MS) { draftOut.push({ followup: c.followup_id, deferred: 'time budget' }); continue; }
           if (dryRun) { draftOut.push({ followup: c.followup_id, client: c.client_id, attempt: c.attempt, campaign: c.campaign, would: 'draft' }); continue; }
           const round = String(c.attempt);
@@ -425,6 +435,14 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
             draftOut.push({ followup: c.followup_id, campaign, drafted: !!d.body, warnings: d.warnings.length, skip: d.skipReason, ...(sent ? { sent } : {}) });
           } catch (err) {
             fail(`follow-up draft followup=${c.followup_id}`, err);
+            // The PROVIDER is down: record nothing (a recorded failure blocks the
+            // round for good — 6 rounds lost to an empty balance on 2026-10-08)
+            // and stop drafting this tick; the next tick retries.
+            if (isProviderOutage(err)) {
+              providerDown = true;
+              draftOut.push({ followup: c.followup_id, deferred: 'provider unavailable' });
+              continue;
+            }
             // One failed round is recorded so a broken chat is not re-billed every tick.
             const { error: iErr } = await svc.from('ai_actions').insert({
               ...base, status: 'failed', body: '', original_body: '',

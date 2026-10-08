@@ -124,15 +124,27 @@ describe('extractAnthropicCredits', () => {
     expect(ex.ok).toBe(true);
     if (ex.ok) expect(ex.amount).toBe(9.43);
   });
-  it('refuses to guess when two DIFFERENT dollar figures sit near "Credits"', () => {
+  it('refuses to guess when two DIFFERENT figures follow "Credits" directly', () => {
     const text = 'Credits $9.43\nBuy more credits: $25.00\nCredits $12.10 was added on Sep 1';
     const ex = extractAnthropicCredits(text);
     expect(ex.ok).toBe(false);
     if (!ex.ok) {
       expect(ex.error).toMatch(/ambiguous/);
       expect(ex.error).toMatch(/\$9\.43/);
-      expect(ex.error).toMatch(/\$25\.00/);
+      expect(ex.error).toMatch(/\$12\.10/);
+      // «credits: $25.00» is a price in a sentence, not the balance (strict adjacency).
+      expect(ex.error).not.toMatch(/\$25\.00/);
     }
+  });
+  it('keeps the minus of an overdrawn balance (live page 2026-10-08)', () => {
+    const text = 'Documentation\n\nCredits\n-$0.37\nAdd funds\n\n';
+    expect(extractAnthropicCredits(text)).toMatchObject({ ok: true, amount: -0.37 });
+    expect(extractAnthropicCredits('Credits $-12.50')).toMatchObject({ ok: true, amount: -12.5 });
+  });
+  it('a figure that is not directly after «Credits» is never the balance (the $200 misread)', () => {
+    const text = 'Credits\n-$0.37\nAdd funds\n\nAuto-reload: when credits fall below $10, add $200';
+    expect(extractAnthropicCredits(text)).toMatchObject({ ok: true, amount: -0.37 });
+    expect(extractAnthropicCredits('Monthly spend limit for credits usage: $200').ok).toBe(false);
   });
   it('does not let an unrelated price count as a credits figure', () => {
     const text = 'Upgrade for $20.00/month\nNo balance section rendered';

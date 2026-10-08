@@ -228,7 +228,27 @@ function collectLabelledAmounts(pageText: string, label: RegExp, window: number)
  * on a marketing banner cannot be mistaken for the balance.
  */
 export function extractAnthropicCredits(pageText: string): ExtractResult {
-  return collectLabelledAmounts(pageText, /credits\b/gi, 60);
+  // STRICT adjacency + SIGN (incident 2026-10-08): the sidebar reads
+  // «Credits\n-$0.37» when the account is overdrawn. The old reader took any
+  // "$…" within 60 chars of the word "credits", dropped the minus, and — when
+  // only another figure on the billing page ("$200") was in reach — recorded
+  // $200 as the balance during an outage, which raised a false "$176
+  // unmetered spend". Now only an amount that follows «Credits» with nothing
+  // but whitespace between counts, and its sign is kept («-$0.37» and «$-0.37»).
+  const seen = new Map<number, string>();
+  const re = /\bcredits[ \t]*\r?\n?[ \t]*([-−])?[ \t]*\$[ \t]*([-−])?[ \t]*([\d,]+(?:\.\d{1,2})?)(?![\d,.]*\s*\/)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(pageText)) !== null) {
+    const abs = parseAmount(m[3]!);
+    if (abs === null) continue;
+    const amount = m[1] || m[2] ? -abs : abs;
+    if (!seen.has(amount)) seen.set(amount, m[0].replace(/^credits/i, '').replace(/\s+/g, ' ').trim());
+  }
+  const amounts = [...seen.keys()];
+  if (amounts.length === 1) return { ok: true, amount: amounts[0]!, matched: seen.get(amounts[0]!)! };
+  if (amounts.length === 0) return { ok: false, error: 'no matching figure found', seen: [] };
+  const description = amounts.map((a) => `$${a.toFixed(2)} ("${seen.get(a)!}")`).join(' and ');
+  return { ok: false, error: `ambiguous page: found ${amounts.length} different figures — ${description}`, seen: [...seen.values()] };
 }
 
 /**
