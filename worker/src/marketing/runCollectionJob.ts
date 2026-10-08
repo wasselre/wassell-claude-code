@@ -590,7 +590,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       const postId = job.params.content_post_id as string | undefined;
       if (!postId) throw new ProviderError('content_process needs content_post_id', 'config_invalid');
       // params.media_only: recover the bytes and stop (see ContentProcessOptions).
-      const r = await runContentProcess(sb, postId, { mediaOnly: job.params.media_only === true, narrowOnly: job.params.mode === 'narrow_only', framesOnly: job.params.mode === 'frames_only', designOnly: job.params.mode === 'design_only' });
+      const r = await runContentProcess(sb, postId, { mediaOnly: job.params.media_only === true, narrowOnly: job.params.mode === 'narrow_only', framesOnly: job.params.mode === 'frames_only', designOnly: job.params.mode === 'design_only', rawCapture: job.params.mode === 'raw_capture' });
       stats.received = r.media_total;
       stats.inserted = r.media_stored;
       stats.skipped = r.media_failed + r.transcribe_failed;

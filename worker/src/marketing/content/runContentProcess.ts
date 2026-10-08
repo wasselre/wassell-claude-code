@@ -23,6 +23,7 @@ import { contentReader, isModelRead, isModelReader, pauseReader, readAndDecide, 
 import { dailyQuotaRetryAfter } from '../../ai/providers/geminiHttp.js';
 import { GEMINI_RULE_VERSION } from './geminiRead.js';
 import { designReadStoredPost } from './geminiDesign.js';
+import { pauseRawCapture, rawCapturePausedUntil, rawCapturePost, rawCaptureSettings } from './rawCapture.js';
 
 export interface ContentProcessStats {
   post_id: string; media_total: number; media_stored: number; media_failed: number;
@@ -78,6 +79,12 @@ export interface ContentProcessOptions {
    * leaves the project decision and processing_status alone.
    */
   designOnly?: boolean;
+  /**
+   * Raw-capture pass (2026-10-08): describe every stored image of the post
+   * goal-free and exhaustively (rawCapture.ts → mkt_media_raw_capture). Reads
+   * nothing else, decides nothing, leaves processing_status alone.
+   */
+  rawCapture?: boolean;
 }
 
 export async function runContentProcess(sb: SupabaseClient, contentPostId: string, opts: ContentProcessOptions = {}): Promise<ContentProcessStats> {
@@ -123,6 +130,25 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     }
   };
   if (opts.designOnly) { await designStep(); return stats; }
+  if (opts.rawCapture) {
+    const cfg = await rawCaptureSettings(sb);
+    if (!cfg.enabled || Date.now() < await rawCapturePausedUntil(sb)) { stats.status = 'raw_capture_paused'; return stats; }
+    try {
+      const r = await rawCapturePost(sb, contentPostId, cfg.model);
+      mark('raw_capture');
+      stats.cost_usd += r.costUsd;
+      stats.images_analyzed = r.captured;
+      stats.status = r.failed > 0 ? 'raw_capture_partial' : 'raw_captured';
+      if (r.failed > 0) stats.errors.push(`raw_capture: ${r.failed} of ${r.images} image(s) failed (stored as failed, retried by the sweep)`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const wait = dailyQuotaRetryAfter(msg);
+      if (wait === null) throw e;
+      await pauseRawCapture(sb, wait, msg);
+      stats.status = 'raw_capture_paused';
+    }
+    return stats;
+  }
   // A visual-reference company (car brands, entertainment, …) is followed for
   // how its posts LOOK, never for what they say: no project matching, no
   // caption reading, no transcription. Its posts are stored, its videos go to

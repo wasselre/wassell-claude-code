@@ -1119,6 +1119,21 @@ rule for telling them apart is what question each answers:
   read (`isModelRead`: `gemini…` / `gpt-…`) — never let one engine re-read the
   other's posts. Chosen by blind bake-offs (30 posts / 15 posts × 83 images);
   video shots and every embedding stay on Gemini.
+  **RAW CAPTURE of every image (2026-10-08, LIVE):** one goal-free,
+  exhaustive description per stored image (every text verbatim with
+  position/size/typeface/weight/colour; scene, objects, people, lighting,
+  camera; composition; colours with hex + share; typography; graphics;
+  branding; materials; mood; designer description; recreate brief) in
+  `mkt_media_raw_capture`, by **gpt-6-luna** (`rawCapture.ts`, content_process
+  mode `raw_capture`, sweep via `mkt_raw_capture_due`). It is the BASE layer
+  agents are built from; classification happens later from this text —
+  never add categories/enums to the capture schema (operator: "we are
+  classifying too early"). Own switch/budget/pause: `mkt_settings
+  content.raw_capture` (`enabled`, `model`, `daily_budget_usd`) and
+  `content.raw_capture_paused_until`; independent of the post reader.
+  Rows are unique per media × model × `schema_version` — a schema change
+  bumps `RAW_CAPTURE_SCHEMA_VERSION`, a re-capture with another model sits
+  beside the old row. Images are sent as bytes, never as a link.
   **Visual-reference companies (2026-10-06):** `org_type = 'visual_reference'`
   marks a NON-competitor followed only for its visuals (car brands etc.). The
   worker stores media, offers videos to shots and design-reads images, but

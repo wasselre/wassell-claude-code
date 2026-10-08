@@ -43,8 +43,9 @@ import { sweepApifyStorage } from '../apifyStorageSweep.js';
 import { repairFileMediaMeta } from '../../repairFileMediaMeta.js';
 import { backfillContentEtags } from '../../backfillContentEtags.js';
 import { contentReader, isModelReader, readerPausedUntil } from './geminiEnrich.js';
+import { RAW_CAPTURE_SCHEMA_VERSION, rawCapturePausedUntil, rawCaptureSettings, rawCaptureSpendToday } from './rawCapture.js';
 
-export interface SweepStats { reader: string; gemini_reads: number; gemini_rereads: number; design_reads: number; reader_spend_today_usd: number; reader_over_budget: boolean; media_recover: number; visual_ocr: number; frame_jobs: number; frame_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { reader: string; gemini_reads: number; gemini_rereads: number; design_reads: number; raw_captures: number; reader_spend_today_usd: number; reader_over_budget: boolean; media_recover: number; visual_ocr: number; frame_jobs: number; frame_ocr: number; content_process: number; intelligence: number; cv_reenqueue: number; social_file: number; dims_repaired: number; apify_storage_swept: number; file_media_repaired: number; etags_filled: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
 /** Stage 5 ceilings. A cv_process job is a multi-minute GPU run on Modal, so
  *  the re-enqueue is deliberately small per tick; anything it does not reach
@@ -140,6 +141,8 @@ const MAX_GEMINI_READS_PER_TICK = 300;
 const MAX_GEMINI_REREADS_PER_TICK = 200;
 /** Image posts read before design reads existed (2026-10-05) get a design-only pass. */
 const MAX_DESIGN_READS_PER_TICK = 150;
+/** Posts handed to the raw-capture pass per tick (each carries 1-20 images). */
+const MAX_RAW_CAPTURE_PER_TICK = 150;
 /** Daily ceiling on Gemini reader spend unless mkt_settings
  *  `content.reader_daily_budget_usd` says otherwise. At ~$0.004 an image post
  *  and ~$0.014 a video (60-post test, 2026-10-04) $25 is ~2,000 posts a day. */
@@ -218,7 +221,7 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { reader: 'runner', gemini_reads: 0, gemini_rereads: 0, design_reads: 0, reader_spend_today_usd: 0, reader_over_budget: false, media_recover: 0, visual_ocr: 0, frame_jobs: 0, frame_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, etags_filled: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { reader: 'runner', gemini_reads: 0, gemini_rereads: 0, design_reads: 0, raw_captures: 0, reader_spend_today_usd: 0, reader_over_budget: false, media_recover: 0, visual_ocr: 0, frame_jobs: 0, frame_ocr: 0, content_process: 0, intelligence: 0, cv_reenqueue: 0, social_file: 0, dims_repaired: 0, apify_storage_swept: 0, file_media_repaired: 0, etags_filled: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
 
@@ -518,6 +521,21 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
       if (error) throw new Error(`sweep: design read enqueue failed: ${error.message}`);
       inFlight.add(d.content_post_id);
       stats.design_reads++;
+    }
+  }
+  // Raw capture (2026-10-08): goal-free description of every stored image, on
+  // its own switch, budget and pause — independent of which reader decides
+  // projects (it runs while post reading is paused, and for visual-reference
+  // companies too).
+  const raw = await rawCaptureSettings(sb);
+  if (raw.enabled && Date.now() >= await rawCapturePausedUntil(sb) && await rawCaptureSpendToday(sb) < raw.dailyBudgetUsd) {
+    const { data: due, error: dueErr } = await sb.rpc('mkt_raw_capture_due', { p_model: raw.model, p_schema_version: RAW_CAPTURE_SCHEMA_VERSION, p_limit: MAX_RAW_CAPTURE_PER_TICK * 2 });
+    if (dueErr) throw new Error(`sweep: raw capture scan failed: ${dueErr.message}`);
+    for (const d of ((due ?? []) as Array<{ content_post_id: string }>).filter((x) => !inFlight.has(x.content_post_id)).slice(0, MAX_RAW_CAPTURE_PER_TICK)) {
+      const { error } = await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: d.content_post_id, mode: 'raw_capture', from: 'sweep-raw-capture' }, p_priority: 80, p_requested_by: null, p_fallback_of: null });
+      if (error) throw new Error(`sweep: raw capture enqueue failed: ${error.message}`);
+      inFlight.add(d.content_post_id);
+      stats.raw_captures++;
     }
   }
   const { count: enrichQueued } = reader === 'runner'
