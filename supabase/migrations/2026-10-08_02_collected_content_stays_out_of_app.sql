@@ -36,3 +36,8 @@ BEGIN
 END $assert$;
 
 COMMIT;
+
+-- FOLLOW-UP (same day): the bridge switch-off above was a misreading of the
+-- operator's request (they meant the raw capture only) and was reverted live:
+-- UPDATE social_file_settings SET is_enabled = true. Replaying this file on a
+-- fresh database leaves the bridge off, which is also its shipped default.
