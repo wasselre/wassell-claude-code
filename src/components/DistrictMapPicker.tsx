@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, Check, Loader2, Map as MapIcon, MapPin, Minus, PenLine, Plus, RotateCcw, Route, Search, TriangleAlert, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, GEO_LABEL_SUPPRESSION, buildPillIcon } from '@/lib/locationUtils';
+import { DEFAULT_MAP_CENTER, buildPillIcon } from '@/lib/locationUtils';
+import MapCanvas from '@/components/map/MapCanvas';
+import {
+  EditablePolygon, GeoJsonOverlay, MapTooltip, boundsOf, createIconMarker, createLabelMarker, extendBounds,
+  fitToBounds, geometryFeature, getViewport, getZoomLevel, isMapRemoved, lineFeature, onEmptyMapClick,
+  onViewportChange, pointFeature, polygonFeature, setMapCursor, toMapLibreZoom,
+  type LatLng, type MlMap, type OverlayFeature, type OverlayProps, type OverlayStyle,
+} from '@/lib/map';
+import type { LngLatBounds, Marker } from '@/lib/map/maplibre';
 import { geojsonToPaths, geojsonToLinePaths } from '@/lib/geo/geojsonPaths';
 import { pickVisibleLabels } from '@/lib/geo/labelDeclutter';
 import {
@@ -84,21 +90,46 @@ const CHARCOAL = '#4A4E54';
 const RED = '#B91C1C';
 const GOLD = '#C09B5F'; // drawn areas — distinct from the copper district fill
 const TERRACOTTA = '#8E4E3A'; // landmark pins + element-rule areas
-/** Selected-road highlight. Deliberately NOT terracotta/copper: WASSEL_MAP_STYLE
- *  paints highway fills #B8734F and their casings #8E4E3A, so those colours are
- *  invisible against the basemap (live report 2026-07-27). Rich Chocolate Brown
- *  is the darkest brand colour and nothing else on this map comes close to it. */
+/** Selected-road highlight. Deliberately NOT terracotta/copper: the Wassel basemap
+ *  paints highways in copper/terracotta, so those colours are invisible against
+ *  it (live report 2026-07-27). Rich Chocolate Brown is the darkest brand colour
+ *  and nothing else on this map comes close to it. */
 const ROAD_HIGHLIGHT = '#4A2C2A';
-/** Flowing-dash animation on the selected road. Google Maps can only draw dashes
- *  as repeated `icons` on a Polyline (Data layers can't dash at all), and each
- *  frame costs one `set()` PER line part — so this is deliberately bounded:
- *  only the longest DASH_MAX_PARTS parts animate (the static core still covers
- *  the whole road), and the tick is slow enough to read as flow without running
- *  a hot loop. ST_LineMerge on the road data (2026-07-27) cut the worst road
- *  from 155 parts to 57, which is what makes this affordable at all. */
-const DASH_MAX_PARTS = 60;
+/** Flowing-dash animation on the selected road — the standard MapLibre "animated
+ *  dashes" technique: ONE dashed line layer covering every part of every selected
+ *  road, whose `line-dasharray` is swapped through a precomputed sequence of
+ *  phase-shifted patterns on a slow tick. Each frame is a single paint-property
+ *  update for the whole layer, no matter how many line parts the road has — so
+ *  the old Google-era DASH_MAX_PARTS cap (one `set()` per Polyline per frame) is
+ *  gone and every part animates. The tick stays slow enough to read as flow
+ *  without running a hot loop.
+ *
+ *  Geometry (px, matching the old Google icon sequence): a DASH_LEN_PX white dash
+ *  every DASH_REPEAT_PX, DASH_WIDTH_PX wide, advancing DASH_STEP_PX per tick. */
 const DASH_REPEAT_PX = 24;
+const DASH_LEN_PX = 6;
+const DASH_WIDTH_PX = 4;
+const DASH_STEP_PX = 2;
 const DASH_TICK_MS = 90;
+/** One `line-dasharray` per animation frame. MapLibre dash units are multiples of
+ *  the line width, and patterns are anchored at the line start, so a pattern
+ *  shifted by `o` px starts at phase φ = (period − o) mod period:
+ *   • φ inside the dash → [rest-of-dash, gap, φ]   (odd length: MapLibre joins the
+ *     first and last dash seamlessly)
+ *   • φ inside the gap  → [0, rest-of-gap, dash, φ − dash]
+ *  The zero-length leading dash is why the dash layer uses butt caps — with round
+ *  caps a 0-length dash renders as a dot. */
+const DASH_SEQUENCE: number[][] = (() => {
+  const period = DASH_REPEAT_PX / DASH_WIDTH_PX;
+  const dash = DASH_LEN_PX / DASH_WIDTH_PX;
+  const gap = period - dash;
+  const out: number[][] = [];
+  for (let o = 0; o < DASH_REPEAT_PX; o += DASH_STEP_PX) {
+    const phi = ((DASH_REPEAT_PX - o) % DASH_REPEAT_PX) / DASH_WIDTH_PX;
+    out.push(phi < dash ? [dash - phi, gap, phi] : [0, period - phi, dash, phi - dash]);
+  }
+  return out;
+})();
 
 /** Element types shown as landmark pins on the picker — the sales-relevant
  *  anchors (all curated + verified in geo_elements). Roads/metro/parks are
@@ -109,11 +140,12 @@ const LANDMARK_TYPES = ['landmarks', 'malls', 'universities', 'airports_transpor
  *  can see where it runs. Roads/ring roads/metro lines are all MultiLineString. */
 const ROAD_TYPES = ['roads_major', 'ring_roads', 'metro_lines'];
 /** District name labels + landmark pins appear from this zoom in (city-wide
- *  view stays clean). */
+ *  view stays clean). CLASSIC (Google-equivalent) zoom scale — compared against
+ *  getZoomLevel(), never map.getZoom(). */
 const LABELS_MIN_ZOOM = 11;
 /** Zoom the map snaps to when focusing a landmark — close enough that the dots are
  *  individually distinguishable. It no longer gates NAMES: landmarks render as points
- *  only, because at UAE scale their labels buried the map. */
+ *  only, because at UAE scale their labels buried the map. CLASSIC zoom scale. */
 const LANDMARK_NAMES_MIN_ZOOM = 13;
 /** Max vertices when a district boundary is copied into an editable shape —
  *  keeps the vertex handles usable (a full simplified ring can be 300+). */
@@ -137,16 +169,21 @@ interface LandmarkRow {
 
 /** THE DISTRICT NAME IS THE ONLY TEXT THIS MAP OWES YOU.
  *
- *  Picker map style = the brand style with ALL of Google's basemap text turned
- *  off — we render every district's name ourselves at its centroid, so the
- *  basemap copy would show each name TWICE (live report 2026-07-13). The shared
- *  `GEO_LABEL_SUPPRESSION` (locationUtils) is now a GLOBAL label-off used by
- *  every geo map (no Google text anywhere, per the 2026-08-23 requirement), so
- *  this map and the rest all read the same: our names only. */
-const PICKER_MAP_STYLE: google.maps.MapTypeStyle[] = [
-  ...WASSEL_MAP_STYLE,
-  ...GEO_LABEL_SUPPRESSION,
-];
+ *  We render every district's name ourselves at its centroid, so basemap text
+ *  would show each name TWICE (live report 2026-07-13). The Esri basemap that
+ *  MapCanvas loads (src/lib/map/esriBasemap.ts) has ALL basemap text turned off
+ *  globally (no basemap text anywhere, per the 2026-08-23 requirement), so this
+ *  map and the rest all read the same: our names only. */
+
+/** Strip a GeoJSON ring's closing duplicate so edit handles don't stack two
+ *  draggable vertices on the first point. */
+const openRing = (ring: LatLng[]): LatLng[] => {
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  return ring.length > 3 && first && last && first.lat === last.lat && first.lng === last.lng
+    ? ring.slice(0, -1)
+    : ring;
+};
 
 // geojsonToPaths / geojsonToLinePaths live in '@/lib/geo/geojsonPaths' (shared with
 // the finder's client-area layer) — imported at the top of this file.
@@ -216,10 +253,8 @@ const normSearch = (s: string): string =>
 
 export default function DistrictMapPicker({ cityId, items, onApply, onClose, isAr }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
-  const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
-  const keyMissing = !isMapsKeyConfigured();
 
-  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const [map, setMap] = useState<MlMap | null>(null);
   const [rawShapes, setRawShapes] = useState<DistrictShape[] | null>(null);
   const [shapesError, setShapesError] = useState<string | null>(null);
   // PERF: the hovered-district chip is written straight to the DOM instead of
@@ -310,7 +345,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   const districtGeoms = useMemo(() => {
     return (shapes ?? [])
       .map((s) => {
-        let ring: google.maps.LatLngLiteral[] = [];
+        let ring: LatLng[] = [];
         for (const p of geojsonToPaths(s.geojson)) if (p.length > ring.length) ring = p;
         if (ring.length < 3) return null;
         return {
@@ -408,6 +443,35 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   interface SelectedRoad { externalId: string; name: string; geojson: { type: string; coordinates: unknown } }
   const [selectedRoads, setSelectedRoads] = useState<SelectedRoad[]>([]);
 
+  // ── overlay stacking ────────────────────────────────────────────────────
+  //
+  // MapLibre overlays stack in CREATION order (newest on top), but each layer
+  // below is rebuilt on its own schedule (a selection change adds a district
+  // editor, a drawn-shape edit rebuilds every drawn shape, …). `restack()` lifts
+  // them back into the order the old per-object zIndex values encoded — district
+  // fills (1–2) < element-rule areas (2–3) < selected-district editors (3) <
+  // drawn shapes (4) < draft preview (6–7) < selected roads (7–9) < landmark
+  // points (markers on Google, which always sat above every shape). DOM markers
+  // (labels, road pills, edit handles) are above all of these regardless.
+  // Every effect that creates overlays calls it once at the end.
+  const districtOverlayRef = useRef<GeoJsonOverlay | null>(null);
+  interface DistrictEditor { poly: EditablePolygon; editTimer?: ReturnType<typeof setTimeout> }
+  const districtEditorsRef = useRef<Map<string, DistrictEditor>>(new Map());
+  const elemLayersRef = useRef<GeoJsonOverlay[]>([]);
+  const drawnEditorsRef = useRef<EditablePolygon[]>([]);
+  const previewOverlayRef = useRef<GeoJsonOverlay | null>(null);
+  const roadLayersRef = useRef<GeoJsonOverlay[]>([]);
+  const landmarkOverlayRef = useRef<GeoJsonOverlay | null>(null);
+  const landmarkTooltipRef = useRef<MapTooltip | null>(null);
+  const restack = useCallback(() => {
+    for (const o of elemLayersRef.current) o.moveToTop();
+    districtEditorsRef.current.forEach((e) => e.poly.shape.moveToTop());
+    for (const p of drawnEditorsRef.current) p.shape.moveToTop();
+    previewOverlayRef.current?.moveToTop();
+    for (const o of roadLayersRef.current) o.moveToTop();
+    landmarkOverlayRef.current?.moveToTop();
+  }, []);
+
   // Draw every selected road and fit the map to all of them (so picking a 2nd
   // road frames both). Display-only; the shape itself is created explicitly via
   // the "area between roads" button.
@@ -423,102 +487,73 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   // The name rides in a filled pill instead of bare text, so it's readable over
   // a busy city view.
   //
-  // Rendered via google.maps.Data (ONE feature per road) rather than one
-  // Polyline per line part: a merged road like الدائري الشمالي has 155 parts,
-  // which would otherwise mean 310 Polylines for the casing + core.
+  // Rendered as GeoJsonOverlays with ONE feature per road (casing, core and dash
+  // layers each hold every selected road) rather than one object per line part:
+  // a merged road like الدائري الشمالي has 155 parts.
   useEffect(() => {
-    if (!map || !isLoaded || !window.google || selectedRoads.length === 0) return;
-    const layers: google.maps.Data[] = [];
-    const markers: google.maps.Marker[] = [];
-    const bounds = new google.maps.LatLngBounds();
-    /** Every line part across all selected roads, ranked later for the dash layer. */
-    const dashCandidates: Array<{ path: google.maps.LatLngLiteral[]; len: number }> = [];
+    if (!map || selectedRoads.length === 0) return;
+    const features = selectedRoads.map((r) => geometryFeature(r.geojson));
+    // Creation order = stacking order: casing under core under dashes.
+    const casing = new GeoJsonOverlay(map, { style: { strokeColor: '#FFFFFF', strokeWeight: 13, strokeOpacity: 1 } });
+    casing.setData(features);
+    const core = new GeoJsonOverlay(map, { style: { strokeColor: ROAD_HIGHLIGHT, strokeWeight: 6, strokeOpacity: 1 } });
+    core.setData(features);
+    const layers: GeoJsonOverlay[] = [casing, core];
+    const markers: Marker[] = [];
+    let bounds: LngLatBounds | null = null;
 
     for (const r of selectedRoads) {
-      const feature = { type: 'Feature' as const, geometry: r.geojson, properties: {} };
-      const casing = new google.maps.Data({ map });
-      casing.addGeoJson(feature);
-      casing.setStyle({ strokeColor: '#FFFFFF', strokeWeight: 13, strokeOpacity: 1, zIndex: 7, clickable: false });
-      const core = new google.maps.Data({ map });
-      core.addGeoJson(feature);
-      core.setStyle({ strokeColor: ROAD_HIGHLIGHT, strokeWeight: 6, strokeOpacity: 1, zIndex: 8, clickable: false });
-      layers.push(casing, core);
-
       // Label the LONGEST part's midpoint — on a many-part road the first part
       // can be a stub anywhere along it.
-      let longest: google.maps.LatLngLiteral[] = [];
+      let longest: LatLng[] = [];
       for (const line of geojsonToLinePaths(r.geojson)) {
         if (line.length < 2) continue;
-        for (const p of line) bounds.extend(p);
+        for (const p of line) bounds = extendBounds(bounds, p);
         if (line.length > longest.length) longest = line;
-        // rough planar length, only ever used to RANK parts for the dash layer
-        let len = 0;
-        for (let i = 1; i < line.length; i++) {
-          len += Math.abs(line[i]!.lat - line[i - 1]!.lat) + Math.abs(line[i]!.lng - line[i - 1]!.lng);
-        }
-        dashCandidates.push({ path: line, len });
       }
       if (longest.length && r.name) {
-        markers.push(new google.maps.Marker({
-          map,
+        // No onClick/title → pointer-events pass through to the map.
+        markers.push(createIconMarker(map, {
           position: longest[Math.floor(longest.length / 2)]!,
-          icon: buildPillIcon(r.name, ROAD_HIGHLIGHT) as google.maps.Icon | undefined,
-          clickable: false,
+          icon: buildPillIcon(r.name, ROAD_HIGHLIGHT),
           zIndex: 9,
         }));
       }
     }
-    if (!bounds.isEmpty()) map.fitBounds(bounds, 80);
+    fitToBounds(map, bounds, { padding: 80 });
 
-    // Flowing white dashes along the road — the "this one is live" cue. Bounded
-    // to the longest DASH_MAX_PARTS parts; the static core below already covers
-    // every part, so an un-dashed stub is invisible in practice.
+    // Flowing white dashes along the road — the "this one is live" cue (see
+    // DASH_SEQUENCE). Skipped entirely under prefers-reduced-motion; the static
+    // core still shows the whole road.
     const reduceMotion = typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const dashLines: google.maps.Polyline[] = [];
+    let timer: ReturnType<typeof setInterval> | null = null;
     if (!reduceMotion) {
-      const chosen = dashCandidates.sort((a, b) => b.len - a.len).slice(0, DASH_MAX_PARTS);
-      for (const { path } of chosen) {
-        dashLines.push(new google.maps.Polyline({
-          map,
-          path,
-          strokeOpacity: 0, // the line itself is invisible — only the dashes show
-          zIndex: 9,
-          clickable: false,
-          icons: [{
-            icon: {
-              path: 'M 0,-1 0,1',
-              strokeColor: '#FFFFFF',
-              strokeOpacity: 0.95,
-              strokeWeight: 4,
-              scale: 3,
-            },
-            offset: '0px',
-            repeat: `${DASH_REPEAT_PX}px`,
-          }],
-        }));
-      }
+      const dashes = new GeoJsonOverlay(map, {
+        style: { strokeColor: '#FFFFFF', strokeOpacity: 0.95, strokeWeight: DASH_WIDTH_PX },
+        dash: DASH_SEQUENCE[0],
+        // Butt caps: the gap-phase patterns start with a 0-length dash, which round
+        // caps (the overlay default) would draw as a dot every period.
+        lineCap: 'butt',
+      });
+      dashes.setData(features);
+      layers.push(dashes);
+      let step = 0;
+      timer = setInterval(() => {
+        step = (step + 1) % DASH_SEQUENCE.length;
+        dashes.setLinePaint('line-dasharray', DASH_SEQUENCE[step]);
+      }, DASH_TICK_MS);
     }
-    let step = 0;
-    const timer = dashLines.length
-      ? setInterval(() => {
-          step = (step + 2) % DASH_REPEAT_PX;
-          for (const pl of dashLines) {
-            const icons = pl.get('icons') as google.maps.IconSequence[];
-            if (!icons?.[0]) continue;
-            icons[0].offset = `${step}px`;
-            pl.set('icons', icons); // set() is what triggers the redraw
-          }
-        }, DASH_TICK_MS)
-      : null;
+    roadLayersRef.current = layers;
+    restack();
 
     return () => {
       if (timer) clearInterval(timer);
-      dashLines.forEach((l) => l.setMap(null));
-      layers.forEach((l) => l.setMap(null));
-      markers.forEach((m) => m.setMap(null));
+      layers.forEach((l) => l.remove());
+      markers.forEach((m) => m.remove());
+      roadLayersRef.current = [];
     };
-  }, [map, isLoaded, selectedRoads]);
+  }, [map, selectedRoads, restack]);
 
   // Build one editable polygon spanning the selected roads: the convex hull of
   // ALL their vertices → a drawn_area include item (same as a hand-drawn shape,
@@ -585,56 +620,141 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       : it));
   };
 
-  // (Re)build the polygons when the map + shapes are ready. Selection changes
-  // restyle IN PLACE (no rebuild) via the polygonsRef.
+  // Build the district layer when the map + shapes are ready. Selection changes
+  // restyle IN PLACE (no rebuild) — the overlay's style function reads
+  // selectedRef / excludedIdsRef / drawModeRef.
   //
-  // A SELECTED district is EDITABLE (user decision 2026-07-18): its polygon
-  // swaps to a decimated ring (≤80 handles) with vertex/midpoint handles — the
-  // moment a handle is dragged (or a vertex right-click-deleted) the edited
-  // ring CONVERTS into a drawn_area item ("منطقة مرسومة: <الحي>") and the
-  // district rule is replaced by the custom shape. Untouched selections stay
-  // ordinary district rules with the official boundary.
-  const polygonsRef = useRef<Map<string, google.maps.Polygon>>(new Map());
+  // ALL districts live in ONE GeoJsonOverlay (one feature each — 189 for Riyadh,
+  // 513 for Dubai) instead of one map object per district: one source, one draw
+  // call, one style function, and the shared pointer dispatcher routes click /
+  // right-click / hover to the feature under the cursor.
+  //
+  // A SELECTED district is EDITABLE (user decision 2026-07-18): it is drawn by
+  // its own EditablePolygon on top — a decimated ring (≤80 handles) with
+  // vertex/midpoint handles — and hidden in the base overlay. The moment a
+  // handle is dragged (or a vertex right-click-deleted) the edited ring CONVERTS
+  // into a drawn_area item ("منطقة مرسومة: <الحي>") and the district rule is
+  // replaced by the custom shape. Untouched selections stay ordinary district
+  // rules with the official boundary.
   interface DistrictMeta {
-    poly: google.maps.Polygon;
-    fullPaths: google.maps.LatLngLiteral[][];
-    decimated: google.maps.LatLngLiteral[];
-    pathListeners: google.maps.MapsEventListener[];
-    editTimer?: ReturnType<typeof setTimeout>;
-    /** Precomputed extent, so viewport culling is O(1) per district per pan. */
-    bbox?: { minLat: number; maxLat: number; minLng: number; maxLng: number };
-    /** Whether the polygon is currently attached to the map (culling state). */
-    shown?: boolean;
+    shape: DistrictShape;
+    fullPaths: LatLng[][];
+    /** Largest ring, OPEN (no closing duplicate), decimated to ≤ CONVERT_MAX_POINTS. */
+    decimated: LatLng[];
+    /** Larger of the lat/lng extents in degrees — drives speck culling. */
+    span: number;
   }
   const districtMetaRef = useRef<Map<string, DistrictMeta>>(new Map());
+  /** Re-sync the per-district editors with the current selection (set by the
+   *  district effect, called on every selection change). */
+  const syncDistrictEditorsRef = useRef<() => void>(() => {});
   const drawModeRef = useRef(false);
-  const styleFor = (id: string, isSelected: boolean): google.maps.PolygonOptions =>
-    excludedIds.has(id)
+  const excludedIdsRef = useRef(excludedIds);
+  excludedIdsRef.current = excludedIds;
+  const styleFor = (id: string, isSelected: boolean): OverlayStyle =>
+    excludedIdsRef.current.has(id)
       ? { fillColor: RED, fillOpacity: 0.22, strokeColor: RED, strokeOpacity: 0.8, strokeWeight: 2, zIndex: 2 }
       : isSelected
         ? { fillColor: COPPER, fillOpacity: 0.38, strokeColor: COPPER, strokeOpacity: 1, strokeWeight: 2.5, zIndex: 3 }
         : { fillColor: CHARCOAL, fillOpacity: 0.06, strokeColor: CHARCOAL, strokeOpacity: 0.65, strokeWeight: 1.5, zIndex: 1 };
 
   useEffect(() => {
-    if (!map || !isLoaded || !shapes || !window.google) return;
-    const polys = polygonsRef.current;
+    if (!map || !shapes) return;
     const metas = districtMetaRef.current;
-    const bounds = new google.maps.LatLngBounds();
+    const editors = districtEditorsRef.current;
+    /** Districts too small to make out at the current zoom (speck culling below). */
+    let specks = new Set<string>();
 
-    const clearPathListeners = (m: DistrictMeta) => {
-      m.pathListeners.forEach((l) => google.maps.event.removeListener(l));
-      m.pathListeners = [];
-      if (m.editTimer) { clearTimeout(m.editTimer); m.editTimer = undefined; }
+    const features: OverlayFeature[] = [];
+    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    for (const s of shapes) {
+      const paths = geojsonToPaths(s.geojson);
+      if (!paths.length) continue;
+      let largest: LatLng[] = [];
+      for (const p of paths) if (p.length > largest.length) largest = p;
+      const open = openRing(largest);
+      const step = Math.max(1, Math.ceil(open.length / CONVERT_MAX_POINTS));
+      const decimated = open.filter((_, i) => i % step === 0);
+      let dMinLat = Infinity, dMaxLat = -Infinity, dMinLng = Infinity, dMaxLng = -Infinity;
+      for (const path of paths) for (const pt of path) {
+        if (pt.lat < dMinLat) dMinLat = pt.lat; if (pt.lat > dMaxLat) dMaxLat = pt.lat;
+        if (pt.lng < dMinLng) dMinLng = pt.lng; if (pt.lng > dMaxLng) dMaxLng = pt.lng;
+      }
+      if (dMinLat < minLat) minLat = dMinLat; if (dMaxLat > maxLat) maxLat = dMaxLat;
+      if (dMinLng < minLng) minLng = dMinLng; if (dMaxLng > maxLng) maxLng = dMaxLng;
+      metas.set(s.district_id, {
+        shape: s, fullPaths: paths, decimated,
+        span: Math.max(dMaxLat - dMinLat, dMaxLng - dMinLng),
+      });
+      features.push(geometryFeature(s.geojson, { id: s.district_id, name: s.name }));
+    }
+
+    const overlay = new GeoJsonOverlay(map, {
+      style: (props) => {
+        const id = String(props.id ?? '');
+        // Drawn by its EditablePolygon instead (selected + editable).
+        if (editors.has(id)) return { visible: false };
+        const isSelected = selectedRef.current.has(id);
+        // A SELECTED district always stays drawn — the user is working on it.
+        if (!isSelected && specks.has(id)) return { visible: false };
+        // Unclickable while drawing so vertex clicks over a district register
+        // on the map instead of toggling it.
+        return { ...styleFor(id, isSelected), clickable: !drawModeRef.current };
+      },
+    });
+    overlay.setData(features);
+    districtOverlayRef.current = overlay;
+
+    const toggleDistrict = (id: string) => {
+      if (excludedIdsRef.current.has(id)) return; // exclude rules are managed from the chips
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    };
+    // Right-click a district (not on a vertex) → copy the official boundary
+    // into a NEW editable drawn shape without selecting it.
+    const copyBoundary = (id: string) => {
+      if (excludedIdsRef.current.has(id) || drawModeRef.current) return;
+      const m = metas.get(id);
+      if (!m) return;
+      const lngLat = m.decimated.map((p) => [round6(p.lng), round6(p.lat)] as [number, number]);
+      if (lngLat.length < 3) return;
+      lngLat.push(lngLat[0]!);
+      setDrawnItems((prev) => [
+        ...prev,
+        newDrawnAreaItem(lngLat, `${drawnBaseRef.current('include')}: ${m.shape.name}`, 'include'),
+      ]);
+    };
+    const hoverIn = (name: string) => setHoverName(name);
+    const hoverOut = (name: string) => setHoverName((n) => (n === name ? null : n));
+
+    overlay.on('click', (_hit, p) => toggleDistrict(String(p.id ?? '')));
+    overlay.on('rightclick', (_hit, p) => copyBoundary(String(p.id ?? '')));
+    overlay.on('mouseover', (_hit, p: OverlayProps) => hoverIn(String(p.name ?? '')));
+    overlay.on('mouseout', (_hit, p: OverlayProps) => hoverOut(String(p.name ?? '')));
+
+    const removeEditor = (id: string) => {
+      const ed = editors.get(id);
+      if (!ed) return;
+      if (ed.editTimer) clearTimeout(ed.editTimer);
+      ed.poly.remove();
+      editors.delete(id);
     };
 
     // The edited ring becomes a drawn_area; the district rule is dropped and
-    // its polygon returns to the official (unselected) rendering.
-    const convertEdited = (s: DistrictShape, m: DistrictMeta) => {
-      const pts = m.poly.getPath().getArray().map((ll) => [round6(ll.lng()), round6(ll.lat())] as [number, number]);
-      exitEditable(s, m, false);
+    // the district returns to the official (unselected) rendering.
+    const convertEdited = (id: string) => {
+      const ed = editors.get(id);
+      const m = metas.get(id);
+      if (!ed || !m) return;
+      const pts = ed.poly.getPath().map((ll) => [round6(ll.lng), round6(ll.lat)] as [number, number]);
+      removeEditor(id);
       setSelected((prev) => {
         const next = new Set(prev);
-        next.delete(s.district_id);
+        next.delete(id);
         return next;
       });
       if (pts.length < 3) return;
@@ -643,204 +763,158 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         ...prev,
         newDrawnAreaItem(
           ring,
-          coverageLabelRef.current(ring, 'include') ?? `${drawnBaseRef.current('include')}: ${s.name}`,
+          coverageLabelRef.current(ring, 'include') ?? `${drawnBaseRef.current('include')}: ${m.shape.name}`,
           'include',
         ),
       ]);
     };
 
-    const wireEditListeners = (s: DistrictShape, m: DistrictMeta) => {
-      clearPathListeners(m);
-      const gPath = m.poly.getPath();
-      // Debounced: a handle drag can fire set_at repeatedly — convert once,
-      // from the final geometry.
-      const onEdit = () => {
-        if (m.editTimer) clearTimeout(m.editTimer);
-        m.editTimer = setTimeout(() => convertEdited(s, m), 400);
-      };
-      m.pathListeners = [
-        gPath.addListener('set_at', onEdit),
-        gPath.addListener('insert_at', onEdit),
-        gPath.addListener('remove_at', onEdit),
-      ];
-    };
-
-    const enterEditable = (s: DistrictShape, m: DistrictMeta) => {
-      m.poly.setPaths([m.decimated]);
-      m.poly.setOptions({ ...styleFor(s.district_id, true), editable: !drawModeRef.current });
-      wireEditListeners(s, m);
-    };
-    const exitEditable = (s: DistrictShape, m: DistrictMeta, stillSelected: boolean) => {
-      clearPathListeners(m);
-      m.poly.setPaths(m.fullPaths);
-      m.poly.setOptions({ ...styleFor(s.district_id, stillSelected), editable: false });
-    };
-
-    for (const s of shapes) {
-      const paths = geojsonToPaths(s.geojson);
-      if (!paths.length) continue;
-      let largest: google.maps.LatLngLiteral[] = [];
-      for (const p of paths) if (p.length > largest.length) largest = p;
-      const step = Math.max(1, Math.ceil(largest.length / CONVERT_MAX_POINTS));
-      const decimated = largest.filter((_, i) => i % step === 0);
-      const poly = new google.maps.Polygon({
-        paths,
-        map,
-        clickable: true,
-        ...styleFor(s.district_id, false),
+    const addEditor = (id: string, m: DistrictMeta) => {
+      const poly = new EditablePolygon(map, {
+        path: m.decimated,
+        style: { ...styleFor(id, true), clickable: !drawModeRef.current },
+        // Handles OUTSIDE draw mode only — they would swallow the draw clicks.
+        editable: !drawModeRef.current,
+        // Debounced (kept from the per-frame Google events): convert once, from
+        // the final geometry.
+        onEdit: () => {
+          const ed = editors.get(id);
+          if (!ed) return;
+          if (ed.editTimer) clearTimeout(ed.editTimer);
+          ed.editTimer = setTimeout(() => convertEdited(id), 400);
+        },
+        // Right-click a vertex → delete it (flows into the edit→convert path).
+        onVertexRightClick: (i) => {
+          if (drawModeRef.current) return;
+          const ed = editors.get(id);
+          if (ed && ed.poly.length > 3) ed.poly.removeVertex(i);
+        },
+        onClick: () => toggleDistrict(id),
+        onRightClick: () => copyBoundary(id),
       });
-      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-      for (const path of paths) for (const pt of path) {
-        if (pt.lat < minLat) minLat = pt.lat; if (pt.lat > maxLat) maxLat = pt.lat;
-        if (pt.lng < minLng) minLng = pt.lng; if (pt.lng > maxLng) maxLng = pt.lng;
+      poly.shape.on('mouseover', () => hoverIn(m.shape.name));
+      poly.shape.on('mouseout', () => hoverOut(m.shape.name));
+      editors.set(id, { poly });
+    };
+
+    // Selected (non-excluded) districts open EDITABLE — "select it, then adjust
+    // the highlighted area". Idempotent: only adds/removes what changed.
+    const syncEditors = () => {
+      const sel = selectedRef.current;
+      for (const id of [...editors.keys()]) {
+        if (!sel.has(id) || excludedIdsRef.current.has(id)) removeEditor(id);
       }
-      const meta: DistrictMeta = {
-        poly, fullPaths: paths, decimated, pathListeners: [],
-        bbox: { minLat, maxLat, minLng, maxLng }, shown: true,
-      };
-      metas.set(s.district_id, meta);
+      let added = false;
+      for (const id of sel) {
+        if (editors.has(id) || excludedIdsRef.current.has(id)) continue;
+        const m = metas.get(id);
+        if (!m || m.decimated.length < 3) continue;
+        addEditor(id, m);
+        added = true;
+      }
+      overlay.restyle();
+      if (added) restack();
+    };
+    syncDistrictEditorsRef.current = syncEditors;
+    syncEditors();
+    restack();
 
-      poly.addListener('click', () => {
-        if (excludedIds.has(s.district_id)) return; // exclude rules are managed from the chips
-        setSelected((prev) => {
-          const next = new Set(prev);
-          if (next.has(s.district_id)) {
-            next.delete(s.district_id);
-            exitEditable(s, meta, false);
-          } else {
-            next.add(s.district_id);
-            enterEditable(s, meta);
-          }
-          return next;
-        });
-      });
-      // Right-click: on a SELECTED district's vertex → delete that vertex
-      // (flows into the edit→convert path); anywhere else → copy the official
-      // boundary into a NEW editable drawn shape without selecting it.
-      poly.addListener('rightclick', (e: google.maps.PolyMouseEvent) => {
-        if (excludedIds.has(s.district_id) || drawModeRef.current) return;
-        if (selectedRef.current.has(s.district_id) && e.vertex != null) {
-          const gPath = meta.poly.getPath();
-          if (gPath.getLength() > 3) gPath.removeAt(e.vertex);
-          return;
-        }
-        const lngLat = meta.decimated.map((p) => [round6(p.lng), round6(p.lat)] as [number, number]);
-        if (lngLat.length < 3) return;
-        lngLat.push(lngLat[0]!);
-        setDrawnItems((prev) => [
-          ...prev,
-          newDrawnAreaItem(lngLat, `${drawnBaseRef.current('include')}: ${s.name}`, 'include'),
-        ]);
-      });
-      poly.addListener('mouseover', () => setHoverName(s.name));
-      poly.addListener('mouseout', () => setHoverName((n) => (n === s.name ? null : n)));
-      polys.set(s.district_id, poly);
-      // Districts already selected (saved rules / the editor's options list)
-      // open EDITABLE right away — "select it, then adjust the highlighted area".
-      if (selectedRef.current.has(s.district_id)) enterEditable(s, meta);
-      for (const path of paths) for (const p of path) bounds.extend(p);
-    }
-    if (!bounds.isEmpty()) map.fitBounds(bounds, 24);
+    fitToBounds(
+      map,
+      boundsOf([{ lat: minLat, lng: minLng }, { lat: maxLat, lng: maxLng }]),
+      { padding: 24, animate: false },
+    );
 
     // Search → focus a district: zoom to its boundary and select it (same
-    // enter-editable behavior as a polygon tap). Already-excluded districts are
-    // only focused (they're managed from the chips, not toggled here).
+    // enter-editable behavior as a tap). Already-excluded districts are only
+    // focused (they're managed from the chips, not toggled here).
     focusDistrictRef.current = (id: string) => {
-      const s = shapes.find((x) => x.district_id === id);
-      const meta = metas.get(id);
-      if (!s || !meta) return;
-      const b = new google.maps.LatLngBounds();
-      for (const path of meta.fullPaths) for (const p of path) b.extend(p);
-      if (!b.isEmpty()) map.fitBounds(b, 48);
-      if (excludedIds.has(id)) return;
+      const m = metas.get(id);
+      if (!m) return;
+      fitToBounds(map, boundsOf(m.fullPaths.flat()), { padding: 48 });
+      if (excludedIdsRef.current.has(id)) return;
       setSelected((prev) => {
         if (prev.has(id)) return prev; // already selected — just re-centered
         const next = new Set(prev);
         next.add(id);
-        enterEditable(s, meta);
         return next;
       });
     };
 
-    // ── viewport culling ──────────────────────────────────────────────────
+    // ── speck culling ─────────────────────────────────────────────────────
     //
-    // Every district of the city gets its own google.maps.Polygon with click,
-    // rightclick and hover listeners. That was fine at Riyadh's 189; Dubai has 513
-    // and the map became an unreadable mass of overlapping outlines that lagged on
-    // every zoom — reported from the live app.
+    // Dubai has 513 districts, and at city zoom the tiny ones made the map an
+    // unreadable mass of overlapping outlines (reported from the live app on the
+    // Google version, which also had to detach OFF-SCREEN polygons because every
+    // district was its own heavyweight map object and every zoom lagged).
     //
-    // The polygons are NOT rebuilt: selection state, edit handles and listeners all
-    // live on them. They are just detached from the map when they cannot be seen —
-    // off-screen, or too small to make out at this zoom. A SELECTED district always
-    // stays attached, because the user is working on it and it may well be off-screen
-    // while they pan.
+    // Off-screen culling is gone: the districts are one GeoJSON source that
+    // MapLibre tiles and draws on the GPU, only rendering what's in view, so 513
+    // polygons cost one draw call. What stays is the READABILITY cull: districts
+    // too small to make out at this zoom are hidden via `visible: false` in the
+    // style function. It depends only on zoom, so the overlay is restyled only
+    // when the hidden set actually changes. A SELECTED district is never culled.
     const MIN_SPAN_PX = 8; // below this a district is a speck; drawing it only costs
     const cull = () => {
-      const b = map.getBounds();
-      const zoom = map.getZoom();
-      if (!b || typeof zoom !== 'number') return;
-      const sw = b.getSouthWest(), ne = b.getNorthEast();
-      // Degrees per pixel at this zoom (world is 256 px at z0).
-      const degPerPx = 360 / (256 * Math.pow(2, zoom));
+      // Degrees per pixel at this zoom (world is 256 px at CLASSIC z0).
+      const degPerPx = 360 / (256 * Math.pow(2, getZoomLevel(map)));
       const minSpan = degPerPx * MIN_SPAN_PX;
-      metas.forEach((m, id) => {
-        if (!m.bbox) return;
-        const keep =
-          selectedRef.current.has(id) ||
-          (m.bbox.maxLat >= sw.lat() && m.bbox.minLat <= ne.lat() &&
-           m.bbox.maxLng >= sw.lng() && m.bbox.minLng <= ne.lng() &&
-           Math.max(m.bbox.maxLat - m.bbox.minLat, m.bbox.maxLng - m.bbox.minLng) >= minSpan);
-        if (keep !== m.shown) { m.poly.setMap(keep ? map : null); m.shown = keep; }
-      });
+      const next = new Set<string>();
+      metas.forEach((m, id) => { if (m.span < minSpan) next.add(id); });
+      if (next.size === specks.size && [...next].every((id) => specks.has(id))) return;
+      specks = next;
+      overlay.restyle();
     };
     let cullTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleCull = () => {
       if (cullTimer) clearTimeout(cullTimer);
       cullTimer = setTimeout(cull, 120);
     };
-    // bounds_changed, not idle: idle is a render-completion event and does not fire
-    // in every environment (see useGeoBoundaryLayer for the measurements).
-    const cullListener = map.addListener('bounds_changed', scheduleCull);
+    const offViewport = onViewportChange(map, scheduleCull);
     scheduleCull();
 
     return () => {
       focusDistrictRef.current = () => {};
-      cullListener.remove();
+      syncDistrictEditorsRef.current = () => {};
+      offViewport();
       if (cullTimer) clearTimeout(cullTimer);
-      metas.forEach((m) => clearPathListeners(m));
+      for (const id of [...editors.keys()]) removeEditor(id);
       metas.clear();
-      polys.forEach((p) => p.setMap(null));
-      polys.clear();
+      overlay.remove();
+      districtOverlayRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded, shapes]);
+  }, [map, shapes]);
+
+  // Selection changed (tap, search focus, edit→convert, chips) → add/remove the
+  // per-district editors and restyle the base layer in place.
+  useEffect(() => {
+    syncDistrictEditorsRef.current();
+  }, [selected]);
 
   // District NAME labels on every polygon + landmark POINTS, both zoom-gated from
   // LABELS_MIN_ZOOM so the city-wide view stays readable. The district name is the
-  // only text this map draws; landmarks are dots with a hover title. Labels are
-  // transparent-icon markers at each district's largest-ring centroid.
-  const landmarkMarkersRef = useRef<google.maps.Marker[]>([]);
+  // only text this map draws; landmarks are dots with a hover tooltip. Labels are
+  // DOM text markers at each district's largest-ring centroid.
   useEffect(() => {
-    if (!map || !isLoaded || !shapes || !window.google) return;
-    const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
-    /** A marker plus the state needed to attach/detach it WITHOUT redundant work. */
-    interface MarkerEntry {
-      marker: google.maps.Marker;
-      position: google.maps.LatLngLiteral;
-      name?: string;
-      /** Whether it's currently attached to the map — so we only call setMap on a real change. */
+    if (!map || !shapes) return;
+    /** A label plus the state needed to attach/detach it WITHOUT redundant work. */
+    interface LabelEntry {
+      /** Created lazily the first time the label is shown, then re-attached. */
+      marker: Marker | null;
+      position: LatLng;
+      text: string;
+      /** Whether it's currently attached to the map — so we only touch the DOM on a real change. */
       on: boolean;
       /** District extent in DEGREES — how much room the name has to live in. */
-      spanLat?: number;
-      spanLng?: number;
-      /** True for district names; landmarks are points and never compete for label space. */
-      isLabel?: boolean;
+      spanLat: number;
+      spanLng: number;
       /** District this label belongs to — lets a SELECTED district keep its name. */
-      districtId?: string;
+      districtId: string;
     }
-    const labelEntries: MarkerEntry[] = [];
+    const labelEntries: LabelEntry[] = [];
     for (const s of shapes) {
-      let ring: google.maps.LatLngLiteral[] = [];
+      let ring: LatLng[] = [];
       for (const p of geojsonToPaths(s.geojson)) if (p.length > ring.length) ring = p;
       if (ring.length < 3) continue;
       let rMinLat = Infinity, rMaxLat = -Infinity, rMinLng = Infinity, rMaxLng = -Infinity;
@@ -851,126 +925,136 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       const lat = ring.reduce((a, p) => a + p.lat, 0) / ring.length;
       const lng = ring.reduce((a, p) => a + p.lng, 0) / ring.length;
       labelEntries.push({
-        marker: new google.maps.Marker({
-          position: { lat, lng },
-          icon: invisible,
-          clickable: false,
-          label: { text: s.name, color: CHARCOAL, fontSize: '11px', fontWeight: '700' },
-        }),
+        marker: null,
         position: { lat, lng },
+        text: s.name,
         on: false,
         spanLat: rMaxLat - rMinLat,
         spanLng: rMaxLng - rMinLng,
-        isLabel: true,
         districtId: s.district_id,
       });
     }
-    const lmEntries: MarkerEntry[] = landmarks
-      .filter((l) => l.latitude != null && l.longitude != null)
-      .map((l) => {
-        const name = (isAr ? l.name_ar || l.display_name : l.name_en || l.display_name || l.name_ar) ?? '';
-        const position = { lat: l.latitude!, lng: l.longitude! };
-        return {
-          marker: new google.maps.Marker({
-            // A LANDMARK IS A POINT HERE, NOT A LABEL.
-            //
-            // These used to carry their name as a rendered label above
-            // LANDMARK_NAMES_MIN_ZOOM. That read fine against Riyadh's 725 anchors and
-            // became the single worst thing on the map once the UAE import pushed the
-            // set to ~3,900: hundreds of overlapping terracotta names on top of the
-            // district mesh. Small dot only, at the same scale the shared map layer
-            // uses (useGeoBoundaryLayer), so every map draws landmarks alike. The name
-            // still arrives on hover via `title`.
-            position,
-            icon: {
-              path: google.maps.SymbolPath.CIRCLE, scale: 3.2,
-              fillColor: TERRACOTTA, fillOpacity: 0.95, strokeColor: '#fff', strokeWeight: 1,
-            },
-            title: name,
-            clickable: true, // hover shows the name
-            zIndex: 5,
-          }),
-          position,
-          name,
-          on: false,
-        };
-      });
-    const entries = [...labelEntries, ...lmEntries];
-    landmarkMarkersRef.current = lmEntries.map((e) => e.marker);
+    const showLabel = (e: LabelEntry) => {
+      if (e.marker) e.marker.addTo(map);
+      else e.marker = createLabelMarker(map, { position: e.position, text: e.text, color: CHARCOAL, fontSize: '11px', fontWeight: '700' });
+      e.on = true;
+    };
+    const hideLabel = (e: LabelEntry) => {
+      e.marker?.remove();
+      e.on = false;
+    };
 
-    // PERF (2026-07-24): this used to run on every `zoom_changed` and blindly
-    // setMap() all ~400 markers (+ setLabel() on every landmark) — ~580 marker
-    // ops per zoom tick, and Google fires zoom_changed repeatedly through a
-    // single scroll/pinch zoom. That made zooming stutter and panning feel
-    // heavy. Two fixes:
-    //   1. Drive off `idle` (fires ONCE after a pan/zoom settles) instead of
-    //      every zoom tick.
-    //   2. Only attach markers inside the PADDED viewport, and only call
-    //      setMap/setLabel when the value actually changes — so a settle that
-    //      changes nothing costs zero marker ops.
+    // A LANDMARK IS A POINT HERE, NOT A LABEL.
+    //
+    // These used to carry their name as a rendered label above
+    // LANDMARK_NAMES_MIN_ZOOM. That read fine against Riyadh's 725 anchors and
+    // became the single worst thing on the map once the UAE import pushed the set
+    // to ~3,900: hundreds of overlapping terracotta names on top of the district
+    // mesh. Small dot only, at the same scale the shared map layer uses
+    // (useGeoBoundaryLayer), so every map draws landmarks alike. The name still
+    // arrives on hover (MapTooltip).
+    //
+    // They're a GPU circle layer (one GeoJsonOverlay), NOT ~3,900 DOM markers, so
+    // there is no per-pin viewport culling any more — MapLibre only draws what's
+    // in view. Only the LABELS_MIN_ZOOM gate remains (`visible` in the style).
+    let landmarksOn = false;
+    const lmOverlay = new GeoJsonOverlay(map, {
+      style: (): OverlayStyle => ({
+        visible: landmarksOn,
+        pointRadius: 3.2,
+        pointColor: TERRACOTTA,
+        pointOpacity: 0.95,
+        pointStrokeColor: '#FFFFFF',
+        pointStrokeWeight: 1,
+        zIndex: 5,
+        // Hover shows the name; never clickable while drawing (would swallow vertex clicks).
+        clickable: !drawModeRef.current,
+      }),
+    });
+    lmOverlay.setData(
+      landmarks
+        .filter((l) => l.latitude != null && l.longitude != null)
+        .map((l) => {
+          const name = (isAr ? l.name_ar || l.display_name : l.name_en || l.display_name || l.name_ar) ?? '';
+          return pointFeature({ lat: l.latitude!, lng: l.longitude! }, { name, lat: l.latitude!, lng: l.longitude! });
+        }),
+    );
+    const tooltip = new MapTooltip(map);
+    lmOverlay.on('mouseover', (_hit, p) => {
+      const name = String(p.name ?? '');
+      if (name) tooltip.show({ lat: Number(p.lat), lng: Number(p.lng) }, name);
+    });
+    lmOverlay.on('mouseout', () => tooltip.hide());
+    landmarkOverlayRef.current = lmOverlay;
+    landmarkTooltipRef.current = tooltip;
+    restack();
+
+    // PERF (2026-07-24): this used to run on every zoom tick and blindly
+    // re-attach every marker — ~580 marker ops per tick, which made zooming
+    // stutter and panning feel heavy. Two fixes, both kept:
+    //   1. Drive off the settled viewport (`moveend` via onViewportChange — fires
+    //      ONCE after a pan/zoom settles) instead of every zoom tick.
+    //   2. Only attach labels inside the PADDED viewport, and only touch the DOM
+    //      when the value actually changes — so a settle that changes nothing
+    //      costs zero marker ops.
     // Labels only show at zoom >= LABELS_MIN_ZOOM, where a handful of districts
-    // are on screen; we were attaching all 219 regardless.
+    // are on screen; we were attaching all of them regardless.
     const syncMarkers = () => {
-      const z = map.getZoom() ?? 0;
+      const vp = getViewport(map);
+      const z = vp.zoom; // CLASSIC scale — what LABELS_MIN_ZOOM and pickVisibleLabels speak
+      const wantLandmarks = z >= LABELS_MIN_ZOOM;
+      if (wantLandmarks !== landmarksOn) {
+        landmarksOn = wantLandmarks;
+        lmOverlay.restyle();
+        if (!wantLandmarks) tooltip.hide();
+      }
       if (z < LABELS_MIN_ZOOM) {
-        for (const e of entries) if (e.on) { e.marker.setMap(null); e.on = false; }
+        for (const e of labelEntries) if (e.on) hideLabel(e);
         return;
       }
-      // Pad the viewport by 25% so markers are already attached just before
+      // Pad the viewport by 25% so labels are already attached just before
       // they scroll into view (no pop-in at the edges).
-      let south = -90, north = 90, west = -180, east = 180;
-      const b = map.getBounds();
-      if (b) {
-        const ne = b.getNorthEast(), sw = b.getSouthWest();
-        const padLat = (ne.lat() - sw.lat()) * 0.25;
-        const padLng = (ne.lng() - sw.lng()) * 0.25;
-        south = sw.lat() - padLat; north = ne.lat() + padLat;
-        west = sw.lng() - padLng; east = ne.lng() + padLng;
-      }
+      const padLat = (vp.maxLat - vp.minLat) * 0.25;
+      const padLng = (vp.maxLng - vp.minLng) * 0.25;
+      const south = vp.minLat - padLat, north = vp.maxLat + padLat;
+      const west = vp.minLng - padLng, east = vp.maxLng + padLng;
       // Decluttered district names — shared with every other map via
       // `pickVisibleLabels`, so a dense city reads the same way everywhere.
       // A SELECTED district gets priority: you asked for it, so it keeps its name
       // however small it is and whoever it would collide with.
-      const inView = (e: MarkerEntry) =>
+      const inView = (e: LabelEntry) =>
         e.position.lat >= south && e.position.lat <= north
         && e.position.lng >= west && e.position.lng <= east;
 
-      const candidates = entries
-        .filter((e) => e.isLabel && inView(e))
-        .map((e, i) => {
-          const raw = e.marker.getLabel();
-          return {
-            id: String(i),
-            text: typeof raw === 'string' ? raw : (raw?.text ?? ''),
-            lat: e.position.lat, lng: e.position.lng,
-            spanLat: e.spanLat ?? 0, spanLng: e.spanLng ?? 0,
-            priority: e.districtId && selectedRef.current.has(e.districtId) ? 1 : 0,
-            entry: e,
-          };
-        });
-      const keep = pickVisibleLabels(candidates, {
-        zoom: z, centerLat: map.getCenter()?.lat() ?? 25,
-      });
+      const candidates = labelEntries
+        .filter(inView)
+        .map((e, i) => ({
+          id: String(i),
+          text: e.text,
+          lat: e.position.lat, lng: e.position.lng,
+          spanLat: e.spanLat, spanLng: e.spanLng,
+          priority: selectedRef.current.has(e.districtId) ? 1 : 0,
+          entry: e,
+        }));
+      const keep = pickVisibleLabels(candidates, { zoom: z, centerLat: vp.center.lat });
       for (const c of candidates) {
         const show = keep.has(c.id);
-        if (show !== c.entry.on) { c.entry.marker.setMap(show ? map : null); c.entry.on = show; }
+        if (show !== c.entry.on) { if (show) showLabel(c.entry); else hideLabel(c.entry); }
       }
       // Labels that scrolled out of view still need detaching.
-      for (const e of entries) {
-        if (e.isLabel) { if (!inView(e) && e.on) { e.marker.setMap(null); e.on = false; } continue; }
-        const on = inView(e);
-        if (on !== e.on) { e.marker.setMap(on ? map : null); e.on = on; }
-      }
+      for (const e of labelEntries) if (!inView(e) && e.on) hideLabel(e);
     };
     syncMarkers();
-    const il = map.addListener('idle', syncMarkers);
+    const offViewport = onViewportChange(map, syncMarkers);
     return () => {
-      google.maps.event.removeListener(il);
-      entries.forEach((e) => e.marker.setMap(null));
-      landmarkMarkersRef.current = [];
+      offViewport();
+      labelEntries.forEach((e) => e.marker?.remove());
+      tooltip.hide();
+      lmOverlay.remove();
+      landmarkOverlayRef.current = null;
+      landmarkTooltipRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded, shapes, landmarks, isAr]);
+  }, [map, shapes, landmarks, isAr, restack]);
 
   // ELEMENT-RULE overlays: every rule's COMPILED area (radius circle, road-side
   // band, road buffer, zone) as a terracotta polygon — direction rules arrive
@@ -978,20 +1062,21 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   // draw their reference line. Labeled with the same chip text as the editor.
   //
   // Element areas are EDITABLE like selected districts (user decision
-  // 2026-07-18): the largest ring renders with drag handles (decimated to ≤80);
-  // dragging a handle — or right-click-deleting a vertex — converts the edited
-  // ring into a drawn_area of the SAME polarity, replacing the element rule
-  // with the custom shape. Untouched rules keep following the element + km
-  // (the chip steppers resize without converting).
+  // 2026-07-18): the largest ring renders as an EditablePolygon with drag
+  // handles (decimated to ≤80); dragging a handle — or right-click-deleting a
+  // vertex — converts the edited ring into a drawn_area of the SAME polarity,
+  // replacing the element rule with the custom shape. Untouched rules keep
+  // following the element + km (the chip steppers resize without converting).
   useEffect(() => {
-    if (!map || !isLoaded || !window.google || previews.length === 0) return;
-    const overlays: Array<google.maps.Polygon | google.maps.Polyline | google.maps.Marker> = [];
-    const listeners: google.maps.MapsEventListener[] = [];
+    if (!map || previews.length === 0) return;
+    const editors: EditablePolygon[] = [];
+    const labels: Marker[] = [];
     const timers: Array<ReturnType<typeof setTimeout>> = [];
-    const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
+    /** Display-only extra pieces (MultiPolygon remainders) + reference lines. */
+    const extraFeatures: OverlayFeature[] = [];
 
-    const convertEdited = (item: ElementRuleLocationItem, poly: google.maps.Polygon) => {
-      const pts = poly.getPath().getArray().map((ll) => [round6(ll.lng()), round6(ll.lat())] as [number, number]);
+    const convertEdited = (item: ElementRuleLocationItem, poly: EditablePolygon) => {
+      const pts = poly.getPath().map((ll) => [round6(ll.lng), round6(ll.lat)] as [number, number]);
       // The element rule is replaced by the custom shape either way; a
       // degenerate (<3 pt) ring just drops the rule without a shape.
       setElemItems((prev) => prev.filter((x) => x.id !== item.id));
@@ -1013,74 +1098,78 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       const text = describeLocationItem(item, isAr);
       if (row.geojson) {
         const paths = geojsonToPaths(row.geojson);
-        let largest: google.maps.LatLngLiteral[] = [];
+        let largest: LatLng[] = [];
         for (const p of paths) if (p.length > largest.length) largest = p;
         if (largest.length >= 3) {
-          const step = Math.max(1, Math.ceil(largest.length / CONVERT_MAX_POINTS));
-          const decimated = largest.filter((_, i) => i % step === 0);
-          const poly = new google.maps.Polygon({
-            map,
-            paths: [decimated],
-            fillColor: c, fillOpacity: 0.14, strokeColor: c, strokeOpacity: 0.85, strokeWeight: 2,
-            zIndex: 2,
+          const open = openRing(largest);
+          const step = Math.max(1, Math.ceil(open.length / CONVERT_MAX_POINTS));
+          const decimated = open.filter((_, i) => i % step === 0);
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const poly: EditablePolygon = new EditablePolygon(map, {
+            path: decimated,
+            style: {
+              fillColor: c, fillOpacity: 0.14, strokeColor: c, strokeOpacity: 0.85, strokeWeight: 2,
+              zIndex: 2,
+              clickable: !drawMode,
+            },
             editable: !drawMode,
-            clickable: !drawMode,
+            onEdit: () => {
+              if (timer) clearTimeout(timer);
+              timer = setTimeout(() => convertEdited(item, poly), 400);
+              timers.push(timer);
+            },
+            onVertexRightClick: (i) => {
+              if (drawMode) return;
+              if (poly.length > 3) poly.removeVertex(i); // removal → onEdit → convert
+            },
           });
-          overlays.push(poly);
+          editors.push(poly);
           // Clipped direction bands can be MultiPolygon — draw the remaining
           // pieces as display-only fills so the area still reads complete.
           for (const p of paths) {
             if (p === largest || p.length < 3) continue;
-            overlays.push(new google.maps.Polygon({
-              map, paths: [p],
-              fillColor: c, fillOpacity: 0.14, strokeColor: c, strokeOpacity: 0.85, strokeWeight: 2,
-              zIndex: 2, clickable: false,
-            }));
+            extraFeatures.push(polygonFeature([p], { kind: 'area', color: c }));
           }
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          const onEdit = () => {
-            if (timer) clearTimeout(timer);
-            timer = setTimeout(() => convertEdited(item, poly), 400);
-            timers.push(timer);
-          };
-          const gPath = poly.getPath();
-          listeners.push(
-            gPath.addListener('set_at', onEdit),
-            gPath.addListener('insert_at', onEdit),
-            gPath.addListener('remove_at', onEdit),
-            poly.addListener('rightclick', (e: google.maps.PolyMouseEvent) => {
-              if (e.vertex == null || drawMode) return;
-              if (gPath.getLength() > 3) gPath.removeAt(e.vertex); // remove_at → convert
-            }),
-          );
           if (text) {
-            overlays.push(new google.maps.Marker({
-              map,
+            labels.push(createLabelMarker(map, {
               position: {
                 lat: largest.reduce((a, p) => a + p.lat, 0) / largest.length,
                 lng: largest.reduce((a, p) => a + p.lng, 0) / largest.length,
               },
-              icon: invisible,
-              clickable: false,
-              label: { text, color: c, fontSize: '11px', fontWeight: '700' },
+              text,
+              color: c,
+              fontSize: '11px',
+              fontWeight: '700',
             }));
           }
         }
       }
       if (row.ref_geojson) {
         for (const line of geojsonToLinePaths(row.ref_geojson)) {
-          overlays.push(new google.maps.Polyline({
-            map, path: line, strokeColor: c, strokeOpacity: 0.95, strokeWeight: 4, zIndex: 3, clickable: false,
-          }));
+          if (line.length >= 2) extraFeatures.push(lineFeature(line, { kind: 'ref', color: c }));
         }
       }
     }
+    const extras = new GeoJsonOverlay(map, {
+      style: (p): OverlayStyle => {
+        const color = String(p.color ?? TERRACOTTA);
+        return p.kind === 'ref'
+          ? { strokeColor: color, strokeOpacity: 0.95, strokeWeight: 4, zIndex: 3 }
+          : { fillColor: color, fillOpacity: 0.14, strokeColor: color, strokeOpacity: 0.85, strokeWeight: 2, zIndex: 2 };
+      },
+    });
+    extras.setData(extraFeatures);
+    elemLayersRef.current = [...editors.map((e) => e.shape), extras];
+    restack();
+
     return () => {
       timers.forEach((t) => clearTimeout(t));
-      listeners.forEach((l) => google.maps.event.removeListener(l));
-      overlays.forEach((o) => o.setMap(null));
+      editors.forEach((e) => e.remove());
+      extras.remove();
+      labels.forEach((m) => m.remove());
+      elemLayersRef.current = [];
     };
-  }, [map, isLoaded, previews, elemItems, isAr, drawMode]);
+  }, [map, previews, elemItems, isAr, drawMode, restack]);
 
   // Render the drawn shapes as EDITABLE polygons (outside draw mode): drag a
   // vertex or midpoint handle to reshape; right-click a vertex to delete it
@@ -1088,8 +1177,9 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   // drawnItems with a recomputed coverage label. Gold = include, red = a saved
   // exclude drawn area. Whole-shape delete stays on the footer chips.
   useEffect(() => {
-    if (!map || !isLoaded || !window.google) return;
-    const cleanups: Array<() => void> = [];
+    if (!map) return;
+    const editors: EditablePolygon[] = [];
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
     for (const d of drawnItems) {
       const c = d.polarity === 'exclude' ? RED : GOLD;
       const coords = d.coordinates ?? [];
@@ -1100,94 +1190,111 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       // second draggable vertex stacked on the first.
       const path = (isClosed ? coords.slice(0, -1) : coords).map(([lng, lat]) => ({ lat, lng }));
       if (path.length < 3) continue;
-      const poly = new google.maps.Polygon({
-        map,
-        paths: path,
-        fillColor: c, fillOpacity: 0.3, strokeColor: c, strokeOpacity: 0.95, strokeWeight: 2,
-        zIndex: 4,
-        editable: !drawMode,
-        clickable: !drawMode,
-      });
       let timer: ReturnType<typeof setTimeout> | undefined;
       const commit = () => {
-        const pts = poly.getPath().getArray().map((ll) => [round6(ll.lng()), round6(ll.lat())] as [number, number]);
+        const pts = poly.getPath().map((ll) => [round6(ll.lng), round6(ll.lat)] as [number, number]);
         if (pts.length < 3) return;
         const ring = [...pts, pts[0]!];
         setDrawnItems((prev) => prev.map((x) => x.id === d.id
           ? { ...x, coordinates: ring, label: coverageLabelRef.current(ring, x.polarity) ?? x.label }
           : x));
       };
-      const debounced = () => { if (timer) clearTimeout(timer); timer = setTimeout(commit, 500); };
-      const gPath = poly.getPath();
-      const ls = [
-        gPath.addListener('set_at', debounced),
-        gPath.addListener('insert_at', debounced),
-        gPath.addListener('remove_at', debounced),
-        poly.addListener('rightclick', (e: google.maps.PolyMouseEvent) => {
-          if (e.vertex == null) return;
-          if (gPath.getLength() > 3) gPath.removeAt(e.vertex);
+      const poly: EditablePolygon = new EditablePolygon(map, {
+        path,
+        style: {
+          fillColor: c, fillOpacity: 0.3, strokeColor: c, strokeOpacity: 0.95, strokeWeight: 2,
+          zIndex: 4,
+          clickable: !drawMode,
+        },
+        editable: !drawMode,
+        onEdit: () => {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(commit, 500);
+          timers.push(timer);
+        },
+        onVertexRightClick: (i) => {
+          if (poly.length > 3) poly.removeVertex(i);
           else setDrawnItems((prev) => prev.filter((x) => x.id !== d.id));
-        }),
-      ];
-      cleanups.push(() => {
-        ls.forEach((l) => google.maps.event.removeListener(l));
-        if (timer) clearTimeout(timer);
-        poly.setMap(null);
+        },
       });
+      editors.push(poly);
     }
-    return () => cleanups.forEach((f) => f());
-  }, [map, isLoaded, drawnItems, drawMode]);
+    drawnEditorsRef.current = editors;
+    restack();
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      editors.forEach((p) => p.remove());
+      drawnEditorsRef.current = [];
+    };
+  }, [map, drawnItems, drawMode, restack]);
 
-  // Draw mode — MANUAL polygon drawing (Google REMOVED DrawingManager in Maps
-  // JS v3.65; instantiating it throws — live incident 2026-07-13). Each map
-  // click adds a vertex to a gold preview polyline; double-click (or the
-  // "إنهاء الشكل" button) closes the shape into ONE drawn_area item. A wrong
-  // point is undone with the "تراجع" button or a right-click. Draw mode stays
-  // armed so several separate shapes can be drawn in a row. District polygons
-  // are made unclickable while drawing so vertex clicks over them register on
-  // the map instead of toggling a district.
+  // Draw mode — MANUAL polygon drawing. Each map click adds a vertex to a gold
+  // preview line (plus a dot per vertex); double-click (or the "إنهاء الشكل"
+  // button) closes the shape into ONE drawn_area item. A wrong point is undone
+  // with the "تراجع" button or a right-click. Draw mode stays armed so several
+  // separate shapes can be drawn in a row. District fills, element areas, drawn
+  // shapes and landmark points are made unclickable while drawing so vertex
+  // clicks over them register on the map instead of toggling a district.
   const [draftCount, setDraftCount] = useState(0);
-  const draftPathRef = useRef<google.maps.LatLngLiteral[]>([]);
+  const draftPathRef = useRef<LatLng[]>([]);
   const finishDraftRef = useRef<() => void>(() => {});
   const undoLastRef = useRef<() => void>(() => {});
-  const previewRef = useRef<google.maps.Polyline | null>(null);
   useEffect(() => {
     drawModeRef.current = drawMode;
-    polygonsRef.current.forEach((p, id) => p.setOptions({
-      clickable: !drawMode,
+    districtOverlayRef.current?.restyle(); // clickable: !drawMode
+    districtEditorsRef.current.forEach((ed, id) => {
       // Selected districts keep their edit handles OUTSIDE draw mode only —
       // handles would swallow the draw clicks.
-      editable: !drawMode && selectedRef.current.has(id) && !excludedIds.has(id),
-    }));
-    // Landmark pins must not swallow vertex clicks while drawing.
-    landmarkMarkersRef.current.forEach((m) => m.setClickable(!drawMode));
+      ed.poly.setEditable(!drawMode);
+      ed.poly.setStyle({ ...styleFor(id, true), clickable: !drawMode });
+    });
+    // Landmark points must not swallow vertex clicks while drawing.
+    landmarkOverlayRef.current?.restyle();
+    if (drawMode) landmarkTooltipRef.current?.hide();
     if (!drawMode) setHoverName(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawMode]);
   // The preview line follows the chosen polarity color, even mid-draft.
   useEffect(() => {
-    previewRef.current?.setOptions({ strokeColor: drawPolarity === 'exclude' ? RED : GOLD });
+    previewOverlayRef.current?.restyle();
   }, [drawPolarity]);
   useEffect(() => {
-    if (!map || !isLoaded || !drawMode || !window.google) return;
-    // draggable:false is the CLICK FIX for trackpads: with panning on, the
+    if (!map || !drawMode) return;
+    // Pinning the map is the CLICK FIX for trackpads: with panning on, the
     // few-pixel wobble between mousedown and mouseup reads as a drag, so the
     // map pans and 'click' never fires — "I click but it just moves around"
     // (live report 2026-07-13). While drawing the map is pinned; zoom controls
     // still work, and toggling draw off restores panning.
-    map.setOptions({ disableDoubleClickZoom: true, draggableCursor: 'crosshair', draggable: false });
-    const preview = new google.maps.Polyline({
-      map, path: [], strokeColor: drawPolarityRef.current === 'exclude' ? RED : GOLD,
-      strokeOpacity: 0.95, strokeWeight: 2.5, zIndex: 6, clickable: false,
+    map.dragPan.disable();
+    map.doubleClickZoom.disable();
+    setMapCursor(map, 'crosshair');
+    // One overlay for the draft: the preview line (recolours with the polarity)
+    // plus a visible DOT per clicked vertex — without the dot the FIRST click
+    // draws nothing (a 1-point line is invisible) and reads as "clicking does
+    // nothing" (live report 2026-07-16). A dot keeps the colour it was placed in.
+    const preview = new GeoJsonOverlay(map, {
+      style: (p): OverlayStyle => p.kind === 'dot'
+        ? {
+            pointRadius: 5, pointColor: String(p.color ?? GOLD), pointOpacity: 1,
+            pointStrokeColor: '#FFFFFF', pointStrokeWeight: 2, zIndex: 7,
+          }
+        : {
+            strokeColor: drawPolarityRef.current === 'exclude' ? RED : GOLD,
+            strokeOpacity: 0.95, strokeWeight: 2.5, zIndex: 6,
+          },
     });
-    previewRef.current = preview;
+    previewOverlayRef.current = preview;
+    restack();
     draftPathRef.current = [];
     setDraftCount(0);
-    // A visible DOT per clicked vertex — without it the FIRST click draws
-    // nothing (a 1-point line is invisible) and reads as "clicking does
-    // nothing" (live report 2026-07-16).
-    const dots: google.maps.Marker[] = [];
-    const clearDots = () => { dots.forEach((m) => m.setMap(null)); dots.length = 0; };
+    const dotColors: string[] = [];
+    const redraw = () => {
+      const path = draftPathRef.current;
+      preview.setData([
+        ...(path.length >= 2 ? [lineFeature(path, { kind: 'line' })] : []),
+        ...path.map((p, i) => pointFeature(p, { kind: 'dot', color: dotColors[i] ?? GOLD })),
+      ]);
+    };
 
     const finishDraft = () => {
       const path = draftPathRef.current;
@@ -1202,8 +1309,8 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         });
       }
       draftPathRef.current = [];
-      preview.setPath([]);
-      clearDots();
+      dotColors.length = 0;
+      redraw();
       setDraftCount(0);
     };
     finishDraftRef.current = finishDraft;
@@ -1213,44 +1320,42 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     const undoLast = () => {
       if (draftPathRef.current.length === 0) return;
       draftPathRef.current = draftPathRef.current.slice(0, -1);
-      preview.setPath(draftPathRef.current);
-      dots.pop()?.setMap(null);
+      dotColors.pop();
+      redraw();
       setDraftCount(draftPathRef.current.length);
     };
     undoLastRef.current = undoLast;
 
-    const clickL = map.addListener('click', (e: google.maps.MapMouseEvent) => {
-      if (!e.latLng) return;
-      draftPathRef.current = [...draftPathRef.current, { lat: e.latLng.lat(), lng: e.latLng.lng() }];
-      preview.setPath(draftPathRef.current);
-      const c = drawPolarityRef.current === 'exclude' ? RED : GOLD;
-      dots.push(new google.maps.Marker({
-        map,
-        position: e.latLng,
-        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: c, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
-        clickable: false,
-        zIndex: 7,
-      }));
+    // Map-level clicks: nothing is clickable while drawing, so every click on
+    // the map lands here (a click on a DOM marker never does).
+    const offClick = onEmptyMapClick(map, (e) => {
+      draftPathRef.current = [...draftPathRef.current, { lat: e.lngLat.lat, lng: e.lngLat.lng }];
+      dotColors.push(drawPolarityRef.current === 'exclude' ? RED : GOLD);
+      redraw();
       setDraftCount(draftPathRef.current.length);
-    });
-    const dblL = map.addListener('dblclick', () => finishDraft());
-    const rightL = map.addListener('rightclick', () => undoLast());
+    }, 'click');
+    const offDbl = onEmptyMapClick(map, () => finishDraft(), 'dblclick');
+    const offRight = onEmptyMapClick(map, () => undoLast(), 'rightclick');
 
     return () => {
-      google.maps.event.removeListener(clickL);
-      google.maps.event.removeListener(dblL);
-      google.maps.event.removeListener(rightL);
-      preview.setMap(null);
-      previewRef.current = null;
-      clearDots();
+      offClick();
+      offDbl();
+      offRight();
+      preview.remove();
+      previewOverlayRef.current = null;
       draftPathRef.current = [];
       setDraftCount(0);
       finishDraftRef.current = () => {};
       undoLastRef.current = () => {};
-      map.setOptions({ disableDoubleClickZoom: false, draggableCursor: undefined, draggable: true });
+      // The map may already be gone (picker closing / city change unmounts it).
+      if (!isMapRemoved(map)) {
+        map.dragPan.enable();
+        map.doubleClickZoom.enable();
+        setMapCursor(map, '');
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded, drawMode]);
+  }, [map, drawMode]);
 
   // Apply: exclude districts pass through untouched; the include-district set
   // is rebuilt from the map selection (existing rules keep their ids/labels);
@@ -1325,15 +1430,23 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     if (hit.type === 'district' && hit.districtId) {
       focusDistrictRef.current(hit.districtId);
     } else if (hit.type === 'landmark' && map && hit.lat != null && hit.lng != null) {
-      map.panTo({ lat: hit.lat, lng: hit.lng });
-      map.setZoom(Math.max(map.getZoom() ?? 0, LANDMARK_NAMES_MIN_ZOOM));
+      // Pan + zoom in ONE camera move (a separate setZoom would cut the pan's
+      // animation short). Zoom maths on the CLASSIC scale.
+      map.easeTo({
+        center: [hit.lng, hit.lat],
+        zoom: toMapLibreZoom(Math.max(getZoomLevel(map), LANDMARK_NAMES_MIN_ZOOM)),
+        duration: 400,
+      });
     } else if (hit.type === 'road' && hit.externalId) {
       const extId = hit.externalId;
       // Pan to the road's representative point right away for responsiveness;
       // the selection effect reframes to the full line(s) once geometry loads.
       if (map && hit.lat != null && hit.lng != null) {
-        map.panTo({ lat: hit.lat, lng: hit.lng });
-        map.setZoom(Math.max(map.getZoom() ?? 0, LANDMARK_NAMES_MIN_ZOOM));
+        map.easeTo({
+          center: [hit.lng, hit.lat],
+          zoom: toMapLibreZoom(Math.max(getZoomLevel(map), LANDMARK_NAMES_MIN_ZOOM)),
+          duration: 400,
+        });
       }
       if (supabase && !selectedRoads.some((r) => r.externalId === extId)) {
         supabase
@@ -1439,34 +1552,25 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
 
         {/* Map */}
         <div className="relative min-h-0 flex-1">
-          {keyMissing ? (
-            <div className="flex h-full items-center justify-center p-6 text-center text-sm text-charcoal/60">
-              {L('الخريطة غير مُفعّلة (مفتاح خرائط Google غير مُهيّأ).', 'Map is unavailable (Google Maps key not configured).')}
-            </div>
-          ) : loadError || shapesError ? (
+          {shapesError ? (
+            // Map-load failures render inside MapCanvas; this is the boundaries RPC.
             <div className="flex h-full items-center justify-center p-6 text-center text-sm text-red-600">
               {L('تعذّر تحميل الخريطة أو حدود الأحياء.', 'Failed to load the map or district boundaries.')}
-              {shapesError && <span className="ms-1 text-charcoal/40">({shapesError})</span>}
+              <span className="ms-1 text-charcoal/40">({shapesError})</span>
             </div>
-          ) : !isLoaded || !shapes ? (
+          ) : !shapes ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-copper" />
             </div>
           ) : (
             <>
-              <GoogleMap
-                mapContainerStyle={{ width: '100%', height: '100%' }}
+              <MapCanvas
+                isAr={isAr}
+                className="h-full w-full"
                 center={DEFAULT_MAP_CENTER}
                 zoom={10}
                 onLoad={setMap}
                 onUnmount={() => setMap(null)}
-                options={{
-                  styles: PICKER_MAP_STYLE,
-                  disableDefaultUI: true,
-                  zoomControl: true,
-                  gestureHandling: 'greedy',
-                  clickableIcons: false,
-                }}
               />
               {/* Hovered district name — content set imperatively (see setHoverName). */}
               <div

@@ -3,6 +3,11 @@ import { supabase } from '@/lib/supabase';
 import { describeLocationItem, type LocationItem } from '@/lib/geo/locationItems';
 import { clientAreaSignature } from '@/lib/geo/clientArea';
 import { geojsonToPaths, geojsonToLinePaths, type GeoJsonGeometry } from '@/lib/geo/geojsonPaths';
+import {
+  GeoJsonOverlay, polygonFeature, lineFeature, createLabelMarker, extendBounds,
+  type MlMap, type LatLng,
+} from '@/lib/map';
+import type { LngLatBounds, Marker } from '@/lib/map/maplibre';
 
 /**
  * Draws the CLIENT'S SELECTED AREA on a finder map — the districts, geo-element
@@ -46,7 +51,7 @@ export interface ClientAreaLayerState {
   hasExclude: boolean;
   loading: boolean;
   /** Bounds of every INCLUDE shape — null until loaded or when nothing is drawable. */
-  bounds: google.maps.LatLngBounds | null;
+  bounds: LngLatBounds | null;
   /** Changes whenever the drawn shapes change; use as an effect key to refit the view. */
   boundsKey: string;
 }
@@ -60,7 +65,7 @@ const EMPTY: ClientAreaLayerState = {
 const NO_ROWS: PreviewRow[] = [];
 
 export function useClientAreaLayer(
-  map: google.maps.Map | null,
+  map: MlMap | null,
   items: LocationItem[] | null | undefined,
   isAr: boolean,
 ): ClientAreaLayerState {
@@ -112,14 +117,15 @@ export function useClientAreaLayer(
   // Only rows that match the CURRENT item set may drive summary/bounds/drawing.
   const current = rowsSigRef.current === sig ? rows : NO_ROWS;
 
-  // Derived summary + bounds (bounds need the Maps API, so they're built lazily).
+  // Derived summary + bounds. Pure maths — no map library needed, so (unlike the
+  // Google version) it can't race the map's script load.
   const state = useMemo<ClientAreaLayerState>(() => {
     if (list.length === 0) return { ...EMPTY, loading };
     let drawn = 0;
     let undrawable = 0;
     let hasInclude = false;
     let hasExclude = false;
-    let bounds: google.maps.LatLngBounds | null = null;
+    let bounds: LngLatBounds | null = null;
     const keyParts: string[] = [];
     for (const row of current) {
       const paths = row.geojson ? geojsonToPaths(row.geojson).filter((p) => p.length >= 3) : [];
@@ -129,49 +135,48 @@ export function useClientAreaLayer(
       if (row.polarity === 'exclude') hasExclude = true; else hasInclude = true;
       keyParts.push(`${row.item_id}:${paths.reduce((a, p) => a + p.length, 0)}`);
       // Bounds cover INCLUDE shapes only — the view should frame the area the
-      // client WANTS, not the ones they excluded. And they need the Maps core
-      // library: the RPC can resolve BEFORE the Maps script finishes loading,
-      // at which point `window.google.maps` already exists as the loader's
-      // bootstrap object but `LatLngBounds` does not (live crash:
-      // "google.maps.LatLngBounds is not a constructor"). A non-null `map` plus
-      // a real constructor check is the only reliable "fully loaded" signal.
-      if (row.polarity !== 'exclude' && map && typeof google.maps.LatLngBounds === 'function') {
-        bounds ??= new google.maps.LatLngBounds();
-        for (const p of paths) for (const ll of p) bounds.extend(ll);
-        for (const l of lines) for (const ll of l) bounds.extend(ll);
+      // client WANTS, not the ones they excluded.
+      if (row.polarity !== 'exclude') {
+        for (const p of paths) for (const ll of p) bounds = extendBounds(bounds, ll);
+        for (const l of lines) for (const ll of l) bounds = extendBounds(bounds, ll);
       }
     }
     return { drawn, undrawable, hasInclude, hasExclude, loading, bounds, boundsKey: keyParts.join('|') };
-  }, [current, list.length, loading, map]);
+  }, [current, list.length, loading]);
 
   // Draw / redraw the overlays.
   useEffect(() => {
-    if (!map || !window.google || current.length === 0) return;
-    const overlays: Array<google.maps.Polygon | google.maps.Polyline | google.maps.Marker> = [];
-    const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
+    if (!map || current.length === 0) return;
+    // Per-feature styling carries the include/exclude colour; NEVER clickable —
+    // pins under the overlay and empty-map clicks must still reach their own
+    // listeners (GeoJsonOverlay defaults to clickable:false).
+    const areas = new GeoJsonOverlay(map, {
+      style: (p) => {
+        const exclude = p.exclude === true;
+        const color = exclude ? EXCLUDE : INCLUDE;
+        return p.kind === 'ref'
+          ? { strokeColor: color, strokeOpacity: 0.95, strokeWeight: 4, zIndex: 2 }
+          : {
+              fillColor: color,
+              fillOpacity: exclude ? 0.08 : 0.13,
+              strokeColor: color,
+              strokeOpacity: exclude ? 0.7 : 0.9,
+              strokeWeight: exclude ? 1.5 : 2,
+              zIndex: 1,
+            };
+      },
+    });
+    const features = [];
+    const labels: Marker[] = [];
     for (const row of current) {
       const item = list.find((i) => i.id === row.item_id);
       const exclude = row.polarity === 'exclude';
       const color = exclude ? EXCLUDE : INCLUDE;
       if (row.geojson) {
         const paths = geojsonToPaths(row.geojson).filter((p) => p.length >= 3);
-        let largest: google.maps.LatLngLiteral[] = [];
+        let largest: LatLng[] = [];
         for (const p of paths) if (p.length > largest.length) largest = p;
-        for (const p of paths) {
-          overlays.push(new google.maps.Polygon({
-            map,
-            paths: [p],
-            fillColor: color,
-            fillOpacity: exclude ? 0.08 : 0.13,
-            strokeColor: color,
-            strokeOpacity: exclude ? 0.7 : 0.9,
-            strokeWeight: exclude ? 1.5 : 2,
-            zIndex: 1,
-            // NEVER clickable: pins under the overlay and empty-map clicks must
-            // still reach their own listeners.
-            clickable: false,
-          }));
-        }
+        for (const p of paths) features.push(polygonFeature([p], { exclude, kind: 'area' }));
         // A legacy district pick whose name didn't resolve has no useful label
         // (describeLocationItem would read "حي حي" / "district district") — draw
         // it unlabelled.
@@ -179,31 +184,30 @@ export function useClientAreaLayer(
           ? describeLocationItem(item, isAr)
           : '';
         if (text && largest.length >= 3) {
-          // Centroid label on the LARGEST ring: an invisible icon Marker (a
-          // scale-0 circle) whose label carries the text.
-          overlays.push(new google.maps.Marker({
-            map,
+          // Centroid label on the LARGEST ring.
+          labels.push(createLabelMarker(map, {
             position: {
               lat: largest.reduce((a, p) => a + p.lat, 0) / largest.length,
               lng: largest.reduce((a, p) => a + p.lng, 0) / largest.length,
             },
-            icon: invisible,
-            clickable: false,
+            text,
+            color,
             zIndex: 2,
-            label: { text, color, fontSize: '11px', fontWeight: '700' },
           }));
         }
       }
       if (row.ref_geojson) {
         for (const line of geojsonToLinePaths(row.ref_geojson)) {
           if (line.length < 2) continue;
-          overlays.push(new google.maps.Polyline({
-            map, path: line, strokeColor: color, strokeOpacity: 0.95, strokeWeight: 4, zIndex: 2, clickable: false,
-          }));
+          features.push(lineFeature(line, { exclude, kind: 'ref' }));
         }
       }
     }
-    return () => { overlays.forEach((o) => o.setMap(null)); };
+    areas.setData(features);
+    return () => {
+      areas.remove();
+      labels.forEach((m) => m.remove());
+    };
   }, [map, current, list, isAr]);
 
   return state;

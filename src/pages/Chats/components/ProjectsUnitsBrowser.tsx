@@ -730,7 +730,7 @@ function ProjectsMapPanel({
   onOpen: (id: string) => void;
 }) {
   // One copper pin icon, reused across every marker.
-  const icon = useMemo(() => buildColoredPinIcon('#B8734F') as google.maps.Icon | undefined, []);
+  const icon = useMemo(() => buildColoredPinIcon('#B8734F'), []);
 
   const pins = useMemo<MapPinData[]>(() => {
     const out: MapPinData[] = [];

@@ -8,6 +8,7 @@ import {
   type ClientOptionStatus, type ClientOptionSourceType,
 } from '@/lib/matching/clientOptions';
 import BaseMapView, { type MapPin } from '@/components/map/BaseMapView';
+import type { MapIcon } from '@/lib/map';
 import type { LocationItem } from '@/lib/geo/locationItems';
 import type { AppRecord } from '@/types';
 
@@ -64,10 +65,10 @@ export default function ClientOptionsMapView({ options, isAr, renderCard, height
 
   // One icon per status color, reused across markers (built lazily as statuses appear).
   const iconFor = useMemo(() => {
-    const cache = new Map<string, google.maps.Icon | undefined>();
+    const cache = new Map<string, MapIcon>();
     return (status: ClientOptionStatus) => {
       const color = (CLIENT_OPTION_STATUS_META[status] ?? CLIENT_OPTION_STATUS_META.suitable).color;
-      if (!cache.has(color)) cache.set(color, buildColoredPinIcon(color) as google.maps.Icon | undefined);
+      if (!cache.has(color)) cache.set(color, buildColoredPinIcon(color));
       return cache.get(color);
     };
   }, []);
@@ -100,7 +101,7 @@ export default function ClientOptionsMapView({ options, isAr, renderCard, height
         lat,
         lng,
         icon: isMain
-          ? (buildPillIcon(name, CLIENT_OPTION_STATUS_META.main_focus.color) as google.maps.Icon | undefined)
+          ? buildPillIcon(name, CLIENT_OPTION_STATUS_META.main_focus.color)
           : iconFor(status),
         title: name,
         // The main option sits on top so it's never hidden under another pin, and is

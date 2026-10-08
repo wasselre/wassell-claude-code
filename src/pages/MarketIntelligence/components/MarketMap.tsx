@@ -10,15 +10,14 @@
  * ads" — a question the Market Listings map already answers — while this map
  * exists to answer "where is it expensive, where do we own, where is demand".
  *
- * Rendering is via google.maps.Data (one Feature per district), NOT one Polygon
- * per district: the same reason the finder's road highlight moved to a Data
- * layer — a few hundred district polygons as individual overlays is materially
- * slower to style and redraw.
+ * Rendering is ONE GeoJsonOverlay (one feature per district) styled by a
+ * function, NOT one shape object per district: a few hundred district polygons
+ * as individual overlays is materially slower to style and redraw, while a
+ * single overlay restyles in one data-driven paint pass.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useJsApiLoader } from '@react-google-maps/api';
-import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { GEO_MAP_STYLE } from '@/lib/locationUtils';
+import MapCanvas from '@/components/map/MapCanvas';
+import { GeoJsonOverlay, geometryFeature, type MlMap, type OverlayFeature } from '@/lib/map';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import type { MapDistrict } from '@/lib/market/client';
 
@@ -70,28 +69,28 @@ const metricValue = (d: MapDistrict, metric: MapMetric): number | null => {
   return d.demand_clients || null;
 };
 
+/** A GeoJSON geometry the overlay can draw (type + coordinate array, or a collection). */
+function isDrawableGeometry(g: unknown): g is { type: string; coordinates: unknown } {
+  if (!g || typeof g !== 'object') return false;
+  const o = g as { type?: unknown; coordinates?: unknown; geometries?: unknown };
+  if (typeof o.type !== 'string') return false;
+  return Array.isArray(o.coordinates) || (o.type === 'GeometryCollection' && Array.isArray(o.geometries));
+}
+
 export default function MarketMap({
   districts, metric, isAr, selectedIds, onDistrictClick, areaShapes, language,
 }: Props) {
-  const { isLoaded } = useJsApiLoader(getMapsLoaderOptions(language));
-  const divRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const dataRef = useRef<google.maps.Data | null>(null);
-  const areaDataRef = useRef<google.maps.Data | null>(null);
+  const dataRef = useRef<GeoJsonOverlay | null>(null);
+  const areaDataRef = useRef<GeoJsonOverlay | null>(null);
   const [hover, setHover] = useState<MapDistrict | null>(null);
-  // The hook needs a RENDER-visible map, but this component keeps its map in a ref
-  // (the Data-layer callbacks are imperative). Mirror it into state purely to drive
-  // the layer.
-  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
-  // Boundaries OFF: the district choropleth IS this screen, and drawing our outlines
-  // under it would double every edge. Roads and landmarks are the context it lacks.
-  useGeoBoundaryLayer(mapInstance, { boundaries: false });
+  // Set by MapCanvas once the basemap has loaded; drives every layer effect below.
+  const [mapInstance, setMapInstance] = useState<MlMap | null>(null);
 
   const scale = useMemo(
     () => quantileScale(districts.map((d) => metricValue(d, metric) ?? NaN)),
     [districts, metric],
   );
-  // Look-ups by id so the Data-layer callbacks stay O(1) per feature.
+  // Look-ups by id so the overlay callbacks stay O(1) per feature.
   const byId = useMemo(() => {
     const m = new Map<string, MapDistrict>();
     districts.forEach((d) => m.set(d.district_id, d));
@@ -99,68 +98,86 @@ export default function MarketMap({
   }, [districts]);
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
 
-  // The map + its listeners are created ONCE, but the listeners must read the
-  // CURRENT districts and callback. Closing over them directly meant the click
-  // handler captured the empty lookup from first render (the fetch had not
-  // resolved yet) and every district click silently did nothing — the effect
-  // cannot re-attach, because it bails on mapRef.current being set.
+  // The overlay + its listeners are created ONCE per map, but the listeners must
+  // read the CURRENT districts and callback. Closing over them directly meant the
+  // click handler captured the empty lookup from first render (the fetch had not
+  // resolved yet) and every district click silently did nothing.
   const byIdRef = useRef(byId);
   const onClickRef = useRef(onDistrictClick);
   useEffect(() => { byIdRef.current = byId; }, [byId]);
   useEffect(() => { onClickRef.current = onDistrictClick; }, [onDistrictClick]);
 
-  // ── Map init (once) ───────────────────────────────────────────────────────
+  // ── Choropleth overlay (once per map) ─────────────────────────────────────
+  // Declared BEFORE useGeoBoundaryLayer so it is created first and therefore
+  // stacks UNDER the hook's roads/landmarks (overlays stack in creation order).
   useEffect(() => {
-    if (!isLoaded || !divRef.current || mapRef.current) return;
-    const map = new google.maps.Map(divRef.current, {
-      center: RIYADH,
-      zoom: 10,
-      styles: GEO_MAP_STYLE,
-      mapTypeControl: false,
-      streetViewControl: false,
-      fullscreenControl: false,
-      clickableIcons: false,
-    });
-    mapRef.current = map;
-    setMapInstance(map);
-
-    const data = new google.maps.Data({ map });
+    if (!mapInstance) return;
+    const data = new GeoJsonOverlay(mapInstance);
     dataRef.current = data;
-    data.addListener('click', (e: google.maps.Data.MouseEvent) => {
-      const id = e.feature.getProperty('district_id') as string;
-      const d = byIdRef.current.get(id);
+    data.on('click', (_hit, props) => {
+      const d = byIdRef.current.get(String(props.district_id));
       if (d) onClickRef.current(d);
     });
-    data.addListener('mouseover', (e: google.maps.Data.MouseEvent) => {
-      const id = e.feature.getProperty('district_id') as string;
-      setHover(byIdRef.current.get(id) ?? null);
+    data.on('mouseover', (_hit, props) => {
+      setHover(byIdRef.current.get(String(props.district_id)) ?? null);
     });
-    data.addListener('mouseout', () => setHover(null));
+    data.on('mouseout', () => setHover(null));
+    return () => {
+      data.remove();
+      dataRef.current = null;
+      setHover(null);
+    };
+  }, [mapInstance]);
 
-    areaDataRef.current = new google.maps.Data({ map });
-  }, [isLoaded]);
+  // Boundaries OFF: the district choropleth IS this screen, and drawing our outlines
+  // under it would double every edge. Roads and landmarks are the context it lacks.
+  useGeoBoundaryLayer(mapInstance, { boundaries: false, isAr });
+
+  // ── Compiled-area overlay (once per map) — created AFTER the hook's layers so
+  // the area outline sits on top of everything. Display only (not clickable), so
+  // a click inside the area still reaches the district underneath.
+  useEffect(() => {
+    if (!mapInstance) return;
+    const layer = new GeoJsonOverlay(mapInstance, {
+      style: (p) => {
+        const excl = p.polarity === 'exclude';
+        return {
+          fillColor: excl ? '#B91C1C' : COPPER,
+          fillOpacity: 0.12,
+          strokeColor: excl ? '#B91C1C' : COPPER,
+          strokeWeight: 2.5,
+          strokeOpacity: 0.95,
+          zIndex: 20,
+        };
+      },
+    });
+    areaDataRef.current = layer;
+    return () => {
+      layer.remove();
+      areaDataRef.current = null;
+    };
+  }, [mapInstance]);
 
   // ── Choropleth features ───────────────────────────────────────────────────
   useEffect(() => {
     const data = dataRef.current;
     if (!data) return;
-    data.forEach((f) => data.remove(f));
+    const features: OverlayFeature[] = [];
     districts.forEach((d) => {
       if (!d.outline) return;
-      data.addGeoJson({
-        type: 'Feature',
-        geometry: d.outline,
-        properties: { district_id: d.district_id },
-      } as unknown as object);
+      features.push(geometryFeature(d.outline, { district_id: d.district_id }));
     });
-  }, [districts]);
+    data.setData(features);
+    // mapInstance: districts often resolve before the basemap finishes loading —
+    // the first set must still be drawn once the overlay exists.
+  }, [districts, mapInstance]);
 
   // ── Styling (re-runs on metric / selection change, not on data rebuild) ───
   useEffect(() => {
     const data = dataRef.current;
     if (!data) return;
-    data.setStyle((feature) => {
-      const id = feature.getProperty('district_id') as string;
+    data.setStyle((props) => {
+      const id = String(props.district_id);
       const d = byId.get(id);
       const isSel = selected.has(id);
       return {
@@ -170,60 +187,46 @@ export default function MarketMap({
         strokeWeight: isSel ? 3 : 0.8,
         strokeOpacity: isSel ? 1 : 0.6,
         zIndex: isSel ? 10 : 1,
+        clickable: true,
       };
     });
-  }, [byId, metric, scale, selected]);
+  }, [byId, metric, scale, selected, mapInstance]);
 
   // ── The compiled area outline on top ──────────────────────────────────────
   useEffect(() => {
     const layer = areaDataRef.current;
     if (!layer) return;
-    layer.forEach((f) => layer.remove(f));
+    const features: OverlayFeature[] = [];
     (areaShapes ?? []).forEach((s) => {
       if (!s.geojson) return;
-      try {
-        layer.addGeoJson({ type: 'Feature', geometry: s.geojson, properties: { polarity: s.polarity } } as unknown as object);
-      } catch (err) {
+      if (!isDrawableGeometry(s.geojson)) {
         // A malformed geometry must not take the whole map down — but it must
         // not vanish silently either, or the user sees a smaller area with no
         // explanation of why.
-        console.error('[MarketMap] could not draw area shape', err);
+        console.error('[MarketMap] could not draw area shape', s.geojson);
+        return;
       }
+      features.push(geometryFeature(s.geojson, { polarity: s.polarity }));
     });
-    layer.setStyle((feature) => {
-      const excl = feature.getProperty('polarity') === 'exclude';
-      return {
-        fillColor: excl ? '#B91C1C' : COPPER,
-        fillOpacity: 0.12,
-        strokeColor: excl ? '#B91C1C' : COPPER,
-        strokeWeight: 2.5,
-        strokeOpacity: 0.95,
-        zIndex: 20,
-      };
-    });
-  }, [areaShapes]);
-
-  if (!isMapsKeyConfigured()) {
-    return (
-      <div className="grid h-full place-items-center rounded-xl bg-cream text-sm text-charcoal/50">
-        {isAr ? 'مفتاح خرائط Google غير مُعد' : 'Google Maps key not configured'}
-      </div>
-    );
-  }
-  if (!isLoaded) {
-    return (
-      <div className="grid h-full place-items-center rounded-xl bg-cream text-sm text-charcoal/40">
-        {isAr ? 'جارٍ تحميل الخريطة…' : 'Loading map…'}
-      </div>
-    );
-  }
+    layer.setData(features);
+  }, [areaShapes, mapInstance]);
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-xl">
-      <div ref={divRef} className="h-full w-full" />
+      <MapCanvas
+        isAr={language === 'ar'}
+        className="h-full w-full"
+        center={RIYADH}
+        zoom={10}
+        onLoad={setMapInstance}
+        onUnmount={() => setMapInstance(null)}
+        // Top-start keeps the zoom buttons clear of the legend (bottom-start) and
+        // the hover card (top-end) in both directions.
+        navigationControl={isAr ? 'top-right' : 'top-left'}
+      />
 
-      {/* Legend */}
-      <div className="absolute bottom-3 start-3 rounded-lg bg-white/95 px-3 py-2 text-[11px] shadow-sm">
+      {/* Legend — lifted above the basemap attribution (bottom-left). */}
+      <div className="absolute bottom-9 start-3 rounded-lg bg-white/95 px-3 py-2 text-[11px] shadow-sm">
         <div className="mb-1 font-bold text-charcoal">
           {metric === 'price_per_sqm' ? (isAr ? 'متوسط ر.س/م²' : 'Median SAR/m²')
             : metric === 'our_units' ? (isAr ? 'وحداتنا' : 'Our units')

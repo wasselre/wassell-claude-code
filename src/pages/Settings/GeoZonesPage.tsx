@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleMap, MarkerF, Polygon, useJsApiLoader } from '@react-google-maps/api';
 import { Compass, Eraser, Loader2, Plus, RotateCcw, Save, Search, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import BackToSettings from './components/BackToSettings';
 import { supabase } from '@/lib/supabase';
-import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { DEFAULT_MAP_CENTER, buildPillIcon } from '@/lib/locationUtils';
-import { GRADER_MAP_STYLE } from '@/pages/GeoGrade/components/GeoPrefMap';
+import MapCanvas from '@/components/map/MapCanvas';
+import {
+  GeoJsonOverlay, boundsOf, createIconMarker, extendBounds, fitToBounds, geometryFeature,
+  type LatLng, type MapIcon, type MlMap, type OverlayStyle,
+} from '@/lib/map';
+import type { LngLatBounds } from '@/lib/map/maplibre';
 import { geojsonToPaths, type GeoJsonGeometry } from '@/lib/geo/geojsonPaths';
 import { ZONES, zoneLabel, type Zone } from '@/lib/market/zones';
 
@@ -37,7 +40,9 @@ import { ZONES, zoneLabel, type Zone } from '@/lib/market/zones';
 
 const COPPER = '#B8734F';
 const CHOCOLATE = '#4A2C2A';
-const SAND = '#D4B896';
+/** Outline of a district NOT in the zone. Sand (#D4B896) read fine on Google's grey
+ *  basemap but vanishes on the cream Esri/Wassel canvas — charcoal, like the picker. */
+const OUTLINE = '#4A4E54';
 
 /** The 3×3 compass grid, laid out visually. Same nine zones as ZONES. */
 const COMPASS_GRID: Zone[][] = [
@@ -97,8 +102,6 @@ export default function GeoZonesPage() {
   const addToast = useAppStore((s) => s.addToast);
   const isAr = language === 'ar';
 
-  const { isLoaded } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
-
   const [cities, setCities] = useState<ZoneCity[]>([]);
   const [citiesLoading, setCitiesLoading] = useState(true);
   const [cityId, setCityId] = useState<string>('');
@@ -116,7 +119,7 @@ export default function GeoZonesPage() {
   const [saving, setSaving] = useState(false);
 
   const [filter, setFilter] = useState('');
-  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const [map, setMap] = useState<MlMap | null>(null);
 
   const city = useMemo(() => cities.find((c) => c.city_id === cityId) ?? null, [cities, cityId]);
   const dirty = useMemo(() => !sameSet(working, baseline), [working, baseline]);
@@ -288,31 +291,72 @@ export default function GeoZonesPage() {
    *  metro-group member cities, and the server rejects foreign ids on save. */
   const cityDistrictIds = useMemo(() => new Set(roster.map((d) => d.id)), [roster]);
 
-  const polygons = useMemo(
-    () => shapes.map((s) => ({
-      id: s.district_id,
-      paths: geojsonToPaths(s.geojson),
-      inSet: working.has(s.district_id),
-      ownCity: cityDistrictIds.size === 0 || cityDistrictIds.has(s.district_id),
-    })),
-    [shapes, working, cityDistrictIds],
-  );
+  // ── District polygons: ONE overlay, styled from the live working set ───────
+  // The style function reads refs, so a toggle is a restyle — no per-district
+  // shape objects to rebuild.
+  const workingRef = useRef(working);
+  const cityIdsRef = useRef(cityDistrictIds);
+  const overlayRef = useRef<GeoJsonOverlay | null>(null);
+  // Read through refs so the overlay lives as long as the map: recreating it when
+  // `toggle`'s identity changed dropped every district (the data effect below only
+  // re-runs when `shapes` changes, so the fresh overlay stayed empty).
+  const toggleRef = useRef(toggle);
+  useEffect(() => { toggleRef.current = toggle; }, [toggle]);
+  const shapesRef = useRef(shapes);
+  shapesRef.current = shapes;
+
+  useEffect(() => {
+    if (!map) return;
+    const ownCity = (id: string) => cityIdsRef.current.size === 0 || cityIdsRef.current.has(id);
+    const overlay = new GeoJsonOverlay(map, {
+      style: (props): OverlayStyle => {
+        const id = String(props.district_id ?? '');
+        const inSet = workingRef.current.has(id);
+        return {
+          fillColor: inSet ? COPPER : '#FFFFFF',
+          fillOpacity: inSet ? 0.35 : 0,
+          strokeColor: inSet ? COPPER : OUTLINE,
+          strokeOpacity: inSet ? 0.95 : 0.55,
+          strokeWeight: inSet ? 2 : 1,
+          zIndex: inSet ? 5 : 1,
+          clickable: ownCity(id),
+        };
+      },
+    });
+    overlayRef.current = overlay;
+    const off = overlay.on('click', (_hit, props) => {
+      const id = props.district_id;
+      if (typeof id === 'string' && ownCity(id)) toggleRef.current(id);
+    });
+    overlay.setData(shapesRef.current.map((s) => geometryFeature(s.geojson, { district_id: s.district_id })));
+    return () => { off(); overlay.remove(); overlayRef.current = null; };
+  }, [map]);
+
+  // Declared before the data effect so a same-render shapes+working change
+  // styles the new data against the new set.
+  useEffect(() => {
+    workingRef.current = working;
+    cityIdsRef.current = cityDistrictIds;
+    overlayRef.current?.restyle();
+  }, [map, working, cityDistrictIds]);
+
+  useEffect(() => {
+    overlayRef.current?.setData(shapes.map((s) => geometryFeature(s.geojson, { district_id: s.district_id })));
+  }, [map, shapes]);
 
   // A name pill on every district IN the set, nudged apart when two collide.
   const pills = useMemo(() => {
-    if (!isLoaded) return [] as Array<{ key: string; position: google.maps.LatLngLiteral; icon: google.maps.Icon | undefined }>;
-    const out: Array<{ key: string; position: google.maps.LatLngLiteral; icon: google.maps.Icon | undefined }> = [];
-    for (const pg of polygons) {
-      if (!pg.inSet) continue;
-      const ring = pg.paths[0];
+    const out: Array<{ key: string; position: LatLng; icon: MapIcon }> = [];
+    for (const s of shapes) {
+      if (!working.has(s.district_id)) continue;
+      const ring = geojsonToPaths(s.geojson)[0];
       if (!ring || ring.length === 0) continue;
-      const b = new google.maps.LatLngBounds();
-      for (const pt of ring) b.extend(pt);
-      const c = b.getCenter();
+      const c = boundsOf(ring)?.getCenter();
+      if (!c) continue;
       out.push({
-        key: `p:${pg.id}`,
-        position: { lat: c.lat(), lng: c.lng() },
-        icon: buildPillIcon(nameById.get(pg.id) ?? '', CHOCOLATE) as google.maps.Icon | undefined,
+        key: `p:${s.district_id}`,
+        position: { lat: c.lat, lng: c.lng },
+        icon: buildPillIcon(nameById.get(s.district_id) ?? '', CHOCOLATE),
       });
     }
     for (let i = 1; i < out.length; i += 1) {
@@ -324,19 +368,28 @@ export default function GeoZonesPage() {
       if (bumps) out[i]!.position = { lat: out[i]!.position.lat - 0.0065 * bumps, lng: out[i]!.position.lng };
     }
     return out;
-  }, [polygons, nameById, isLoaded]);
+  }, [shapes, working, nameById]);
+
+  // Pills are non-interactive DOM markers (clicks fall through to the district
+  // underneath), always above the polygon overlay.
+  useEffect(() => {
+    if (!map) return;
+    const markers = pills.map((p) => createIconMarker(map, {
+      position: p.position, icon: p.icon, clickable: false, zIndex: 20,
+    }));
+    return () => { for (const m of markers) m.remove(); };
+  }, [map, pills]);
 
   // Fit to the CITY, on city change only — re-fitting on every toggle would
   // yank the map away while the operator is clicking districts.
   const fittedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!map || !isLoaded || shapes.length === 0) return;
+    if (!map || shapes.length === 0) return;
     if (fittedFor.current === cityId) return;
-    const b = new google.maps.LatLngBounds();
-    let any = false;
-    for (const s of shapes) for (const ring of geojsonToPaths(s.geojson)) for (const pt of ring) { b.extend(pt); any = true; }
-    if (any) { map.fitBounds(b, 32); fittedFor.current = cityId; }
-  }, [map, isLoaded, shapes, cityId]);
+    let b: LngLatBounds | null = null;
+    for (const s of shapes) for (const ring of geojsonToPaths(s.geojson)) for (const pt of ring) b = extendBounds(b, pt);
+    if (b) { fitToBounds(map, b, { padding: 32 }); fittedFor.current = cityId; }
+  }, [map, shapes, cityId]);
 
   const chips = useMemo(
     () => [...working].map((id) => ({ id, name: nameById.get(id) ?? id }))
@@ -459,41 +512,16 @@ export default function GeoZonesPage() {
 
         {/* ── Right: map ───────────────────────────────────────────────── */}
         <div className="relative overflow-hidden rounded-xl border border-sand/40" style={{ height: 460 }}>
-          {!isMapsKeyConfigured() ? (
-            <div className="flex h-full items-center justify-center px-4 text-center text-xs text-charcoal/50">
-              {isAr ? 'مفتاح الخرائط غير مضبوط في هذه البيئة.' : 'Maps key is not configured in this environment.'}
-            </div>
-          ) : isLoaded ? (
-            <GoogleMap
-              mapContainerStyle={{ width: '100%', height: '100%' }}
-              center={DEFAULT_MAP_CENTER}
-              zoom={10}
-              onLoad={setMap}
-              options={{ styles: GRADER_MAP_STYLE, disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy', clickableIcons: false }}
-            >
-              {polygons.map((pg) => (
-                <Polygon
-                  key={pg.id}
-                  paths={pg.paths}
-                  onClick={() => { if (pg.ownCity) toggle(pg.id); }}
-                  options={{
-                    fillColor: pg.inSet ? COPPER : '#FFFFFF',
-                    fillOpacity: pg.inSet ? 0.35 : 0,
-                    strokeColor: pg.inSet ? COPPER : SAND,
-                    strokeOpacity: pg.inSet ? 0.95 : 0.65,
-                    strokeWeight: pg.inSet ? 2 : 1,
-                    zIndex: pg.inSet ? 5 : 1,
-                    clickable: pg.ownCity,
-                  }}
-                />
-              ))}
-              {pills.map((p) => (
-                <MarkerF key={p.key} position={p.position} icon={p.icon} clickable={false} zIndex={20} />
-              ))}
-            </GoogleMap>
-          ) : (
-            <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin text-copper" size={22} /></div>
-          )}
+          {/* `isolate` keeps the pill markers' z-indexes inside the map, so the
+              loading / empty-state badges below always paint on top. */}
+          <MapCanvas
+            isAr={isAr}
+            className="isolate h-full w-full"
+            center={DEFAULT_MAP_CENTER}
+            zoom={10}
+            onLoad={setMap}
+            onUnmount={() => setMap(null)}
+          />
           {(shapesLoading || stateLoading) && (
             <div className="absolute end-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[11px] text-charcoal/60">
               <Loader2 className="inline animate-spin" size={12} /> {isAr ? 'تحميل…' : 'loading…'}

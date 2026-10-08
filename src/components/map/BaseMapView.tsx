@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
 import { Loader2, MapPin, X, Maximize2, Minimize2 } from 'lucide-react';
-import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildClusterIcon, cachedPillIcon } from '@/lib/locationUtils';
+import { buildClusterIcon, buildColoredPinIcon, cachedPillIcon } from '@/lib/locationUtils';
+import {
+  ClusteredMarkers, boundsOf, fitToBounds, getZoomLevel, onEmptyMapClick, toMapLibreZoom, unionBounds,
+  type MapIcon, type MlMap,
+} from '@/lib/map';
+import MapCanvas from '@/components/map/MapCanvas';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import { useClientAreaLayer } from '@/components/map/useClientAreaLayer';
 import MapLayersOverlay from '@/components/map/MapLayersOverlay';
@@ -11,21 +13,21 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import type { LocationItem } from '@/lib/geo/locationItems';
 
 /**
- * THE shared Google-map surface for the whole app's "pins on a map" views —
- * the Project Finder results map AND the Client Options map both render through
- * this. It owns every piece of map plumbing so a change made here reaches BOTH
- * maps at once (this component exists precisely because those two maps used to
- * be separate copies and kept drifting apart — one would get an update the
- * other never did).
+ * THE shared map surface for the whole app's "pins on a map" views — the
+ * Project Finder results map, the Client Options map and the chat's project
+ * browser all render through this. It owns every piece of map plumbing so a
+ * change made here reaches every map at once (this component exists precisely
+ * because those maps used to be separate copies and kept drifting apart — one
+ * would get an update the other never did).
  *
  * What lives here (shared by every caller):
- *   • Maps loader + key-missing / load-error / loading states
- *   • Marker clustering (SuperCluster), with "solo" pins that never cluster
+ *   • The map itself (MapCanvas: Esri basemap, loading + error states)
+ *   • Marker clustering (Supercluster), with "solo" pins that never cluster
  *   • Fit-to-pins on change (single pin → a comfortable zoom)
  *   • Administrative boundary context layer (useGeoBoundaryLayer)
  *   • The CLIENT'S SELECTED AREA highlight (useClientAreaLayer) + refit-to-area
  *   • The roads/landmarks toggle overlay (MapLayersOverlay)
- *   • The full-view button (browser Fullscreen API, top-start so the layers
+ *   • The full-view button (browser Fullscreen API, end side so the layers
  *     panel never hides it)
  *   • The clicked-pin floating card panel
  *   • External "show this pin" focus requests
@@ -46,13 +48,11 @@ export interface MapPin {
   id: string;
   lat: number;
   lng: number;
-  icon: google.maps.Icon | undefined;
+  /** Marker image. Undefined → `pill` if given, else a copper pin. */
+  icon: MapIcon | undefined;
   /** Hover title. */
   title: string;
-  /** Draw the pin as a NAME PILL (the label in this color) instead of `icon`.
-   *  Built when the marker is created — i.e. once Google Maps has loaded — so it
-   *  never comes out empty (an icon built before the script loads is undefined
-   *  and the marker falls back to Google's default red pin). */
+  /** Draw the pin as a NAME PILL (the label in this color) instead of `icon`. */
   pill?: { label: string; color: string };
   /** Higher = drawn on top (e.g. our-projects / the main option sit above the rest). */
   zIndex?: number;
@@ -87,17 +87,22 @@ interface Props {
   missingCount?: number;
   /** Tailwind height for the map container. Default h-[70vh]. */
   heightClass?: string;
-  /** Greedy one-finger pan on mobile (the finder wants it inside its modal). */
+  /** One-finger pan on mobile (the finder wants it inside its modal). Otherwise
+   *  mobile is "cooperative" (two fingers pan) so the page still scrolls. */
   mobileGreedy?: boolean;
   /** Outer container classes. Default the standard `.card`. */
   outerClassName?: string;
-  /** Classes for the key-missing / error / loading state box. */
+  /** @deprecated No longer used — loading/error states render inside the map box. */
   stateBoxClassName?: string;
   /** Max-width class for the clicked-pin card panel. Default max-w-[400px]. */
   cardMaxWidthClass?: string;
   /** Fired on every marker rebuild with the pin count (perf instrumentation hook). */
   onRebuild?: (count: number) => void;
 }
+
+const COPPER = '#B8734F';
+/** Classic-scale zoom pins stop clustering at — and the single-pin zoom cap. */
+const PIN_MAX_ZOOM = 15;
 
 export default function BaseMapView({
   pins,
@@ -111,28 +116,24 @@ export default function BaseMapView({
   heightClass = 'h-[70vh]',
   mobileGreedy = false,
   outerClassName = 'card overflow-hidden',
-  stateBoxClassName = 'card',
   cardMaxWidthClass = 'max-w-[400px]',
   onRebuild,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const isMobile = useIsMobile();
-  const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
-  const keyMissing = !isMapsKeyConfigured();
 
-  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const [map, setMap] = useState<MlMap | null>(null);
   // Administrative context under the pins — country/region/city/district by zoom.
   // Roads + landmarks are user-toggled context layers owned by MapLayersOverlay
   // (below), so the map opens clean. See useGeoBoundaryLayer.
-  useGeoBoundaryLayer(map, { roads: false, landmarks: false });
+  useGeoBoundaryLayer(map, { roads: false, landmarks: false, isAr });
   // The client's selected area (compiled by the matcher's own preview RPC) shaded
   // under the pins — include rules in copper, exclude rules in red.
   const area = useClientAreaLayer(map, areaItems, isAr);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Full-view: the map wrapper enters the browser Fullscreen API (our own button
-  // on the start side, since Google's default control sits top-right behind the
-  // layers panel). isFs tracks it so the button flips between enter/exit.
+  // Full-view: the map wrapper enters the browser Fullscreen API. isFs tracks it so
+  // the button flips between enter/exit.
   const wrapRef = useRef<HTMLDivElement>(null);
   const [isFs, setIsFs] = useState(false);
   useEffect(() => {
@@ -147,9 +148,7 @@ export default function BaseMapView({
     else void el.requestFullscreen?.();
   };
 
-  const clustererRef = useRef<MarkerClusterer | null>(null);
-  // Solo markers are placed on the map directly (NEVER in the clusterer); kept for teardown.
-  const soloMarkersRef = useRef<google.maps.Marker[]>([]);
+  const clusterRef = useRef<ClusteredMarkers | null>(null);
   // Latest callbacks read through refs so the marker effect (keyed on the pin
   // signature) doesn't rebuild every marker just because a parent passed a fresh
   // closure.
@@ -164,9 +163,9 @@ export default function BaseMapView({
   const missing = Math.max(0, missingCount);
 
   // Stable CONTENT signature of the pin set. Parents rebuild the pins array every
-  // render, so keying the marker/cluster/fitBounds effect on the array identity
-  // would tear down + rebuild every marker (pins flickering) and refit the viewport
-  // (the user's zoom snapping back) on every parent re-render. Keyed on this string,
+  // render, so keying the marker/cluster/fit effect on the array identity would
+  // tear down + rebuild every marker (pins flickering) and refit the viewport (the
+  // user's zoom snapping back) on every parent re-render. Keyed on this string,
   // the effect only reacts when the pins actually change.
   const pinsSig = useMemo(
     () => pins
@@ -182,197 +181,136 @@ export default function BaseMapView({
   // identical re-render doesn't close the card the user just opened.
   useEffect(() => { setSelectedId(null); }, [pinsSig]);
 
-  // Clicking empty map space closes the open card.
+  // Clicking empty map space closes the open card (pin + shape clicks don't count).
   useEffect(() => {
-    if (!map || !window.google) return;
-    const l = map.addListener('click', () => setSelectedId(null));
-    return () => google.maps.event.removeListener(l);
+    if (!map) return;
+    return onEmptyMapClick(map, () => setSelectedId(null));
   }, [map]);
 
-  // (Re)build markers + clusterer + fit bounds whenever the pin set changes.
+  // The clusterer lives as long as the map.
   useEffect(() => {
-    if (!map || !isLoaded || !window.google) return;
-    onRebuildRef.current?.(pins.length);
-    clustererRef.current?.clearMarkers();
-    soloMarkersRef.current.forEach((m) => m.setMap(null));
-    soloMarkersRef.current = [];
+    if (!map) return;
+    const c = new ClusteredMarkers(map, {
+      radius: 70,
+      maxZoom: PIN_MAX_ZOOM,
+      clusterIcon: (n) => buildClusterIcon(n),
+      clusterZIndex: 1000, // clusters above every individual pin, like Google's MAX_ZINDEX
+    });
+    clusterRef.current = c;
+    return () => { c.remove(); clusterRef.current = null; };
+  }, [map]);
 
-    const clustered: google.maps.Marker[] = [];
-    for (const p of pins) {
-      const marker = new google.maps.Marker({
-        position: { lat: p.lat, lng: p.lng },
-        icon: p.icon ?? (p.pill ? (cachedPillIcon(p.pill.label, p.pill.color) as google.maps.Icon | undefined) : undefined),
-        title: p.title,
-        zIndex: p.zIndex,
-      });
-      marker.addListener('click', () => {
+  // (Re)build markers + fit bounds whenever the pin set changes.
+  useEffect(() => {
+    const clusters = clusterRef.current;
+    if (!map || !clusters) return;
+    onRebuildRef.current?.(pins.length);
+
+    clusters.setItems(pins.map((p) => ({
+      id: p.id,
+      position: { lat: p.lat, lng: p.lng },
+      icon: p.icon ?? (p.pill ? cachedPillIcon(p.pill.label, p.pill.color) : buildColoredPinIcon(COPPER)),
+      title: p.title,
+      zIndex: p.zIndex,
+      solo: p.solo,
+      onClick: () => {
         if (hasCardRef.current) {
           setSelectedId(p.id);
-          map.panTo({ lat: p.lat, lng: p.lng });
+          map.easeTo({ center: [p.lng, p.lat], duration: 400 });
         } else {
           onPinClickRef.current?.(p.id);
         }
-      });
-      if (p.solo) {
-        marker.setMap(map);
-        soloMarkersRef.current.push(marker);
-      } else {
-        clustered.push(marker);
-      }
-    }
-
-    if (clustered.length > 0) {
-      clustererRef.current = new MarkerClusterer({
-        map,
-        markers: clustered,
-        algorithm: new SuperClusterAlgorithm({ radius: 70, maxZoom: 15 }),
-        renderer: {
-          render: ({ count, position }) =>
-            new google.maps.Marker({
-              position,
-              icon: buildClusterIcon(count) as google.maps.Icon | undefined,
-              zIndex: Number(google.maps.Marker.MAX_ZINDEX) + count,
-            }),
-        },
-      });
-    }
+      },
+    })));
 
     if (pins.length > 0) {
-      const bounds = new google.maps.LatLngBounds();
-      for (const p of pins) bounds.extend({ lat: p.lat, lng: p.lng });
-      map.fitBounds(bounds, 48);
-      if (pins.length === 1) {
-        google.maps.event.addListenerOnce(map, 'idle', () => {
-          if ((map.getZoom() ?? 0) > 15) map.setZoom(15);
-        });
-      }
+      // A single pin would otherwise zoom to street level.
+      fitToBounds(map, boundsOf(pins), { padding: 48, maxZoom: pins.length === 1 ? PIN_MAX_ZOOM : 18 });
     }
-
-    return () => {
-      clustererRef.current?.clearMarkers();
-      clustererRef.current = null;
-      soloMarkersRef.current.forEach((m) => m.setMap(null));
-      soloMarkersRef.current = [];
-    };
     // Keyed on pinsSig (content), NOT pins (identity) — see pinsSig above. pins is
     // read from the same render as pinsSig, so the closure matches the signature.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded, pinsSig]);
+  }, [map, pinsSig]);
 
   // External "show on map" request (from a list card). Applied ONCE per nonce, as
   // soon as the map is ready AND the pin is in the current set (which may lag a tab
-  // switch / fresh mount). Declared after the marker effect so its panTo lands after
-  // that effect's fitBounds, and after the clear-on-change effect so it re-opens
-  // rather than being cleared. Guarded by the nonce so a later rebuild can't reopen
-  // a card the user has since closed.
+  // switch / fresh mount). Declared after the marker effect so its move lands after
+  // that effect's fit, and after the clear-on-change effect so it re-opens rather
+  // than being cleared. Guarded by the nonce so a later rebuild can't reopen a card
+  // the user has since closed.
   const appliedFocusNonce = useRef<number | null>(null);
   useEffect(() => {
-    if (!focus || !map || !isLoaded) return;
+    if (!focus || !map) return;
     if (focus.nonce === appliedFocusNonce.current) return;
     const p = pins.find((x) => x.id === focus.id);
     if (!p) return; // pin not in the current set yet — re-runs when pinsSig updates
     appliedFocusNonce.current = focus.nonce;
     setSelectedId(focus.id);
-    map.panTo({ lat: p.lat, lng: p.lng });
-    google.maps.event.addListenerOnce(map, 'idle', () => {
-      if ((map.getZoom() ?? 0) < 13) map.setZoom(15);
+    map.easeTo({
+      center: [p.lng, p.lat],
+      // Zoomed out past street context → come in close enough to see the pin's block.
+      zoom: getZoomLevel(map) < 13 ? toMapLibreZoom(PIN_MAX_ZOOM) : map.getZoom(),
+      duration: 500,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus, map, isLoaded, pinsSig]);
+  }, [focus, map, pinsSig]);
 
   // When the client's area arrives (it compiles server-side, so it lands after the
-  // pins' own fitBounds), widen the view to show the WHOLE area plus every pin — the
+  // pins' own fit), widen the view to show the WHOLE area plus every pin — the
   // point is to see which pins sit inside it. Keyed on the area's drawn-shape key so
   // panning/zooming afterwards isn't yanked back; a later pin-set change refits via
   // the marker effect as before.
   useEffect(() => {
-    if (!map || !isLoaded || !window.google || !area.bounds) return;
-    const bounds = new google.maps.LatLngBounds();
-    bounds.union(area.bounds);
-    for (const p of pins) bounds.extend({ lat: p.lat, lng: p.lng });
-    map.fitBounds(bounds, 48);
+    if (!map || !area.bounds) return;
+    fitToBounds(map, unionBounds(area.bounds, boundsOf(pins)), { padding: 48 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded, area.boundsKey]);
-
-  if (keyMissing) {
-    return (
-      <div className={`${stateBoxClassName} flex ${heightClass} items-center justify-center p-6 text-center text-sm text-charcoal/60`}>
-        {L('خريطة العرض غير مُفعّلة (مفتاح خرائط Google غير مُهيّأ).', 'Map view is unavailable (Google Maps key not configured).')}
-      </div>
-    );
-  }
-  if (loadError) {
-    return (
-      <div className={`${stateBoxClassName} flex ${heightClass} items-center justify-center p-6 text-center text-sm text-red-600`}>
-        {L('تعذّر تحميل الخريطة.', 'Failed to load the map.')}
-      </div>
-    );
-  }
-  if (!isLoaded) {
-    return (
-      <div className={`${stateBoxClassName} flex ${heightClass} items-center justify-center`}>
-        <Loader2 className="animate-spin text-copper" />
-      </div>
-    );
-  }
+  }, [map, area.boundsKey]);
 
   return (
     <div className={outerClassName}>
       <div ref={wrapRef} className={`relative w-full bg-cream ${isFs ? 'h-full' : heightClass}`}>
-        <GoogleMap
-          mapContainerStyle={{ width: '100%', height: '100%' }}
-          center={DEFAULT_MAP_CENTER}
-          zoom={11}
+        <MapCanvas
+          isAr={isAr}
+          className="h-full w-full"
           onLoad={setMap}
           onUnmount={() => setMap(null)}
-          options={{
-            styles: GEO_MAP_STYLE,
-            disableDefaultUI: false,
-            mapTypeControl: false,
-            streetViewControl: false,
-            // Our own full-view button (top-start) replaces Google's default — its
-            // top-right control was hidden behind the layers panel.
-            fullscreenControl: false,
-            clickableIcons: false,
-            // MOBILE-ONLY one-finger pan: the default demands two fingers, so a
-            // one-finger drag scrolls the surrounding modal instead of the map. On
-            // the laptop keep the original default ('auto' → cooperative).
-            gestureHandling: mobileGreedy && isMobile ? 'greedy' : 'auto',
-          }}
-        />
-
-        <MapLayersOverlay map={map} isAr={isAr} />
-
-        {/* Full view / exit — on the end side so the layers panel (top start) never
-            hides it. Toggles the browser Fullscreen API. */}
-        <button
-          type="button"
-          onClick={toggleFs}
-          className="absolute top-3 end-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-sand/50 bg-white/95 text-charcoal shadow-sm backdrop-blur transition hover:bg-cream"
-          aria-label={isFs ? L('إنهاء العرض الكامل', 'Exit full view') : L('عرض كامل', 'Full view')}
-          title={isFs ? L('إنهاء العرض الكامل', 'Exit full view') : L('عرض كامل', 'Full view')}
+          // MOBILE: two-finger pan by default so a one-finger drag still scrolls the
+          // page; the finder's modal opts into one-finger pan (mobileGreedy).
+          cooperativeGestures={isMobile && !mobileGreedy}
         >
-          {isFs ? <Minimize2 size={16} className="text-copper" /> : <Maximize2 size={16} className="text-copper" />}
-        </button>
+          <MapLayersOverlay map={map} isAr={isAr} />
 
-        {/* Clicked-pin card — the SAME full card as the list, full actions. */}
-        {selectedPin && renderSelectedCard && (
-          <div
-            className={`absolute top-3 z-20 w-[92%] ${cardMaxWidthClass} overflow-y-auto rounded-xl shadow-2xl ring-1 ring-black/5`}
-            style={{ insetInlineStart: '0.75rem', maxHeight: 'calc(100% - 1.5rem)' }}
-            onClick={(e) => e.stopPropagation()}
+          {/* Full view / exit — on the end side so the layers panel (top start) never
+              hides it. Toggles the browser Fullscreen API. */}
+          <button
+            type="button"
+            onClick={toggleFs}
+            className="absolute top-3 end-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-sand/50 bg-white/95 text-charcoal shadow-sm backdrop-blur transition hover:bg-cream"
+            aria-label={isFs ? L('إنهاء العرض الكامل', 'Exit full view') : L('عرض كامل', 'Full view')}
+            title={isFs ? L('إنهاء العرض الكامل', 'Exit full view') : L('عرض كامل', 'Full view')}
           >
-            <button
-              type="button"
-              onClick={() => setSelectedId(null)}
-              className="absolute end-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-charcoal/70 shadow ring-1 ring-black/5 transition hover:bg-white hover:text-charcoal"
-              aria-label={L('إغلاق', 'Close')}
+            {isFs ? <Minimize2 size={16} className="text-copper" /> : <Maximize2 size={16} className="text-copper" />}
+          </button>
+
+          {/* Clicked-pin card — the SAME full card as the list, full actions. */}
+          {selectedPin && renderSelectedCard && (
+            <div
+              className={`absolute top-3 z-20 w-[92%] ${cardMaxWidthClass} overflow-y-auto rounded-xl shadow-2xl ring-1 ring-black/5`}
+              style={{ insetInlineStart: '0.75rem', maxHeight: 'calc(100% - 1.5rem)' }}
+              onClick={(e) => e.stopPropagation()}
             >
-              <X size={14} />
-            </button>
-            {renderSelectedCard(selectedPin.id)}
-          </div>
-        )}
+              <button
+                type="button"
+                onClick={() => setSelectedId(null)}
+                className="absolute end-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-charcoal/70 shadow ring-1 ring-black/5 transition hover:bg-white hover:text-charcoal"
+                aria-label={L('إغلاق', 'Close')}
+              >
+                <X size={14} />
+              </button>
+              {renderSelectedCard(selectedPin.id)}
+            </div>
+          )}
+        </MapCanvas>
       </div>
 
       {/* Legend + coverage note */}

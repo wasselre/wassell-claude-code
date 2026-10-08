@@ -1,68 +1,14 @@
 import type { AppModel, AppRecord, MapsConfig, ModelField } from '@/types';
+import type { MapIcon } from '@/lib/map/markers';
 import { resolveMirror } from './mirrorResolver';
 import { collectViewFields, readExpandedValue, VIRTUAL_FIELD_SEPARATOR } from './sectionMirrorExpand';
 
 export const DEFAULT_MAP_CENTER = { lat: 24.7136, lng: 46.6753 } as const;
 export const DEFAULT_MAP_ZOOM = 11;
 
-/**
- * The official Wassel-branded Google Maps theme — a warm, unmistakably-Wassel
- * canvas: soft cream land, sand parks (NO Google green), gold-sand water (NO
- * Google blue), copper highways, sand arterials, terracotta/chocolate borders.
- * This is the canonical map look used across every model's map. It becomes the
- * DEFAULT for any model whose `maps_config.map_style_json` is null/empty (see
- * `resolveMapStyles`), so the All Projects map and every other model's map
- * render identically out of the box.
- *
- * GEOMETRY ONLY — deliberately no label rules. The app draws its OWN place names
- * (the useGeoBoundaryLayer overlay + the district picker), and Google's basemap
- * text is turned OFF entirely by GEO_LABEL_SUPPRESSION (appended by every geo
- * surface). Keeping this style label-free means there is no colour rule left for
- * a future Google styler-resolution change to un-hide (the 2026-08-16 incident:
- * a specific `labels.text.fill` colour rule started winning over a broad
- * `labels` off and Google's names reappeared, doubling every name we draw).
- * With no label colour here and a global label-off there, Google text cannot
- * come back.
- *
- * A model can still override per-map by pasting its own style JSON in the Map
- * Builder, or paste `[]` to fall back to Google's stock theme. Label suppression
- * is appended to custom palettes too (see resolveGeoMapStyles).
- *
- * NOTE: the `all_projects` model USED to carry an older copy in its stored
- * `maps_config.map_style_json`. It was cleared to null (migration
- * 2026-08-23_wassel_map_palette) so this constant is the single source of truth.
- */
-export const WASSEL_MAP_STYLE: google.maps.MapTypeStyle[] = [
-  // Base canvas — warm sand-cream, a touch deeper than the page background so the
-  // map reads as its own surface.
-  { featureType: 'all', elementType: 'geometry', stylers: [{ color: '#F0E2C9' }] },
-  // Land
-  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#F0E2C9' }] },
-  { featureType: 'landscape.man_made', elementType: 'geometry', stylers: [{ color: '#E9D8BA' }] },
-  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#F0E2C9' }] },
-  // POI / parks — warm sand, NOT Google green
-  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#E4D1AC' }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#D6C097' }] },
-  // Water — gold-sand, NOT blue (the brand has no blue)
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#CBA877' }] },
-  // Administrative borders — gold hairlines, terracotta provinces, chocolate country
-  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#C09B5F' }, { weight: 0.7 }] },
-  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#8E4E3A' }, { weight: 1 }] },
-  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#4A2C2A' }, { weight: 1.4 }] },
-  // Roads — the branded backbone. Copper highways with terracotta casing carry
-  // the identity; arterials in sand/gold; local streets warm-white.
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#FBF4E6' }] },
-  { featureType: 'road.local', elementType: 'geometry', stylers: [{ color: '#FBF4E6' }] },
-  { featureType: 'road.arterial', elementType: 'geometry.fill', stylers: [{ color: '#E1C99F' }] },
-  { featureType: 'road.arterial', elementType: 'geometry.stroke', stylers: [{ color: '#C09B5F' }] },
-  { featureType: 'road.highway', elementType: 'geometry.fill', stylers: [{ color: '#B8734F' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#8E4E3A' }] },
-  { featureType: 'road.highway.controlled_access', elementType: 'geometry.fill', stylers: [{ color: '#A9633F' }] },
-  { featureType: 'road.highway.controlled_access', elementType: 'geometry.stroke', stylers: [{ color: '#4A2C2A' }] },
-  // Transit — sand beds, terracotta lines
-  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#D6C097' }] },
-  { featureType: 'transit.line', elementType: 'geometry', stylers: [{ color: '#8E4E3A' }] },
-];
+// The Wassel map palette (cream land, sand parks, gold-sand water, copper
+// highways) and the "no basemap text" rule now live in the Esri basemap
+// repaint — src/lib/map/esriBasemap.ts (wasselizeStyle).
 
 // localStorage key for cached server-resolved coordinates. Keyed by raw URL
 // string → LatLng or null (known-unresolvable). Cached forever because a
@@ -262,80 +208,6 @@ export function resolveLocation(
 }
 
 /**
- * Parse a pasted Google Maps style JSON. Invalid input becomes null so callers
- * fall back to Google's default theme.
- */
-export function parseMapStyleJson(raw: string | null | undefined): google.maps.MapTypeStyle[] | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    return parsed as google.maps.MapTypeStyle[];
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Resolve the map styles to apply for a model's map. A valid per-model style
- * JSON wins (including an explicit `[]` to opt back into Google's stock theme);
- * null/empty/invalid falls back to the shared Wassel theme so every model's map
- * matches the All Projects formatting by default.
- *
- * Always returns an array (never undefined) — pass straight to GoogleMap's
- * `options.styles`.
- */
-/**
- * Silence EVERY basemap label so the app's own decluttered names are the only text
- * on the map. The user's requirement is explicit: no text from Google at all — one
- * name per place (ours), never Google's alongside it.
- *
- * This is a GLOBAL kill (no `featureType`, so it applies to every feature — roads,
- * districts, POIs, water, provinces, the lot) at all three label branches. Reasons
- * this beats the old per-featureType list:
- *
- *  · COMPLETE — the old list enumerated administrative.neighborhood/locality + POIs +
- *    transit and DELIBERATELY kept road labels, so Google's road names, province
- *    names and water names still showed and collided with our own district names
- *    (the "two names" report, 2026-08-23). A global rule leaves no gap to enumerate.
- *  · UNBEATABLE — WASSEL_MAP_STYLE now carries NO label colour rules, so there is no
- *    more-specific `labels.text.fill` for a Google styler-resolution change to let win
- *    over this off (the 2026-08-16 doubling incident). Base has no label colour; this
- *    turns every label off; nothing can un-hide them.
- *
- * TRADE-OFF: Google's road NAMES go too (they were the one thing the old list kept).
- * The app's overlay draws district/city names but not road names, so the map shows no
- * street names — a deliberate choice per "no Google text". If road names are wanted
- * back, add them to the useGeoBoundaryLayer overlay, not here.
- *
- * Append to a style array — it must come AFTER the base style to win.
- */
-export const GEO_LABEL_SUPPRESSION: google.maps.MapTypeStyle[] = [
-  { elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { elementType: 'labels.text', stylers: [{ visibility: 'off' }] },
-  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-];
-
-/** The standard map style for any surface that draws the geography layer. */
-export const GEO_MAP_STYLE: google.maps.MapTypeStyle[] = [...WASSEL_MAP_STYLE, ...GEO_LABEL_SUPPRESSION];
-
-/**
- * A custom style from `maps_config.map_style_json` PLUS the label suppression.
- *
- * Appending rather than replacing: an operator's custom palette is theirs to choose,
- * but the app draws its own place names on top, so the basemap's competing labels have
- * to go regardless of which palette is in play. Suppression comes last so it wins.
- */
-export function resolveGeoMapStyles(rawJson: string | null | undefined): google.maps.MapTypeStyle[] {
-  return [...resolveMapStyles(rawJson), ...GEO_LABEL_SUPPRESSION];
-}
-
-export function resolveMapStyles(rawJson: string | null | undefined): google.maps.MapTypeStyle[] {
-  const parsed = parseMapStyleJson(rawJson);
-  return parsed ?? WASSEL_MAP_STYLE;
-}
-
-/**
  * Resolve a pin color from a dropdown/multiselect field's first selected option.
  * Returns `fallback` (the model color) when no option is selected or colored.
  */
@@ -355,24 +227,25 @@ export function resolvePinColor(
   return option?.color ?? fallback;
 }
 
-export interface GoogleMapsIcon {
-  url: string;
-  scaledSize: { width: number; height: number } | unknown;
-  anchor: { x: number; y: number } | unknown;
+/**
+ * Map marker icons — plain {url,width,height,anchor} objects consumed by
+ * createIconMarker / ClusteredMarkers (src/lib/map). Pure: they build an SVG
+ * data URL and need no map library loaded, so they can run at any time.
+ */
+const svgUrl = (xml: string) => `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(xml)}`;
+
+/** A colored teardrop pin. Anchor = the tip. */
+export function buildColoredPinIcon(color: string): MapIcon {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36"><path d="M14 0C6.27 0 0 6.27 0 14c0 10.5 14 22 14 22s14-11.5 14-22C28 6.27 21.73 0 14 0z" fill="${color}" stroke="#ffffff" stroke-width="1.5"/><circle cx="14" cy="14" r="5" fill="#ffffff"/></svg>`;
+  return { url: svgUrl(svg), width: 28, height: 36, anchor: 'bottom' };
 }
 
-/**
- * Build a colored pin SVG as a Google Maps marker icon. Uses data URL so pin
- * color can be anything without shipping custom assets.
- */
-export function buildColoredPinIcon(color: string): GoogleMapsIcon | undefined {
-  if (typeof window === 'undefined' || !window.google?.maps) return undefined;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36"><path d="M14 0C6.27 0 0 6.27 0 14c0 10.5 14 22 14 22s14-11.5 14-22C28 6.27 21.73 0 14 0z" fill="${color}" stroke="#ffffff" stroke-width="1.5"/><circle cx="14" cy="14" r="5" fill="#ffffff"/></svg>`;
-  return {
-    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-    scaledSize: new window.google.maps.Size(28, 36),
-    anchor: new window.google.maps.Point(14, 36),
-  };
+/** A small filled dot (Google's SymbolPath.CIRCLE). `radius` in px. Anchor = centre. */
+export function buildDotIcon(color: string, radius = 5, strokeColor = '#FFFFFF', strokeWidth = 1.4): MapIcon {
+  const d = Math.ceil((radius + strokeWidth) * 2);
+  const c = d / 2;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${d}" height="${d}" viewBox="0 0 ${d} ${d}"><circle cx="${c}" cy="${c}" r="${radius}" fill="${color}" stroke="${strokeColor}" stroke-width="${strokeWidth}"/></svg>`;
+  return { url: svgUrl(svg), width: d, height: d, anchor: 'center' };
 }
 
 const PILL_FONT = '600 13px Amiri, "Segoe UI", system-ui, sans-serif';
@@ -419,8 +292,7 @@ function truncate(text: string, maxWidth: number): string {
  * Width is auto-sized to the text; text is truncated past PILL_MAX_TEXT_WIDTH.
  * Anchor is at the bottom-center so the pill sits on top of its lat/lng point.
  */
-export function buildPillIcon(label: string, color: string): GoogleMapsIcon | undefined {
-  if (typeof window === 'undefined' || !window.google?.maps) return undefined;
+export function buildPillIcon(label: string, color: string): MapIcon {
   const safeLabel = (label || '').trim() || '—';
   const truncated = truncate(safeLabel, PILL_MAX_TEXT_WIDTH);
   const textWidth = Math.ceil(measureTextWidth(truncated, PILL_FONT));
@@ -435,23 +307,20 @@ export function buildPillIcon(label: string, color: string): GoogleMapsIcon | un
     <path d="M${w / 2 - 5} ${h - 1} L${w / 2} ${h + tail - 2} L${w / 2 + 5} ${h - 1} Z" fill="${color}" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/>
     <text x="${w / 2}" y="${h / 2 + 5}" text-anchor="middle" fill="#ffffff" font-family="Amiri, 'Segoe UI', system-ui, sans-serif" font-weight="600" font-size="13">${escapeXmlText(truncated)}</text>
   </svg>`;
-  return {
-    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(xml)}`,
-    scaledSize: new window.google.maps.Size(w, totalH),
-    anchor: new window.google.maps.Point(w / 2, totalH),
-  };
+  return { url: svgUrl(xml), width: w, height: totalH, anchor: 'bottom' };
 }
 
 /** {@link buildPillIcon}, memoized per (label, color) — a results map re-renders
  *  its pins often, and measuring + encoding the same pill SVG per render is the
  *  kind of main-thread work the Finder map was stalling on. */
-const _pillCache = new Map<string, GoogleMapsIcon | undefined>();
-export function cachedPillIcon(label: string, color: string): GoogleMapsIcon | undefined {
+const _pillCache = new Map<string, MapIcon>();
+export function cachedPillIcon(label: string, color: string): MapIcon {
   const key = `${color}|${label}`;
-  if (_pillCache.has(key)) return _pillCache.get(key);
-  const icon = buildPillIcon(label, color);
-  // Only cache a real icon: before Google Maps loads the builder returns undefined.
-  if (icon) _pillCache.set(key, icon);
+  let icon = _pillCache.get(key);
+  if (!icon) {
+    icon = buildPillIcon(label, color);
+    _pillCache.set(key, icon);
+  }
   return icon;
 }
 
@@ -460,8 +329,7 @@ export function cachedPillIcon(label: string, color: string): GoogleMapsIcon | u
  * count in white. Diameter scales mildly with count so 100+ clusters read as
  * "big" without dwarfing the map.
  */
-export function buildClusterIcon(count: number, color: string = '#B8734F'): GoogleMapsIcon | undefined {
-  if (typeof window === 'undefined' || !window.google?.maps) return undefined;
+export function buildClusterIcon(count: number, color: string = '#B8734F'): MapIcon {
   const text = String(count);
   // Diameter steps: 1–9 = 36, 10–49 = 42, 50–99 = 48, 100+ = 54.
   const d = count >= 100 ? 54 : count >= 50 ? 48 : count >= 10 ? 42 : 36;
@@ -471,11 +339,7 @@ export function buildClusterIcon(count: number, color: string = '#B8734F'): Goog
     <circle cx="${r}" cy="${r}" r="${r - 2}" fill="${color}" stroke="#ffffff" stroke-width="2"/>
     <text x="${r}" y="${r + fontSize / 3 + 1}" text-anchor="middle" fill="#ffffff" font-family="Amiri, 'Segoe UI', system-ui, sans-serif" font-weight="700" font-size="${fontSize}">${text}</text>
   </svg>`;
-  return {
-    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(xml)}`,
-    scaledSize: new window.google.maps.Size(d, d),
-    anchor: new window.google.maps.Point(r, r),
-  };
+  return { url: svgUrl(xml), width: d, height: d, anchor: 'center' };
 }
 
 // ---------------------------------------------------------------------------

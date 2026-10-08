@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
-import { Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { DEFAULT_MAP_CENTER, GEO_MAP_STYLE, buildClusterIcon } from '@/lib/locationUtils';
+import { DEFAULT_MAP_CENTER, buildClusterIcon } from '@/lib/locationUtils';
+import {
+  ClusteredMarkers, GeoJsonOverlay, MapTooltip, boundsOf, fitToBounds, getZoomLevel, toMapLibreZoom,
+  type ClusterItem, type LatLng, type MapIcon, type MlMap, type OverlayProps, type OverlayStyle,
+} from '@/lib/map';
+import { FullscreenControl } from '@/lib/map/maplibre';
+import MapCanvas from '@/components/map/MapCanvas';
 import { adminGeoGeoJSON, type GeoListFilters, type GeoFeatureCollection, type GeoFeature } from '@/lib/geo/adminClient';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 
@@ -12,7 +14,7 @@ const mapContainerStyle = { width: '100%', height: '68vh' };
 
 // Earthy, cream-safe palette harmonized with the Wassel brand (copper / chocolate
 // / terracotta / gold / olive / teal). Tuned to stay distinct on the cream
-// WASSEL_MAP_STYLE basemap — no neon Tailwind hues. Hero categories anchor on
+// Wassel-repainted Esri basemap — no neon Tailwind hues. Hero categories anchor on
 // brand tokens; the rest are desaturated earth tones from the same family.
 const CATEGORY_COLORS: Record<string, string> = {
   roads_major: '#8E4E3A',       // terracotta
@@ -48,9 +50,9 @@ interface Props {
 }
 
 /**
- * Dedicated map for the geo_elements dataset, on the branded WASSEL_MAP_STYLE
- * basemap so it matches every other map in the app. Lines (roads/metro) and
- * polygons (zones/malls/parks) render on the Google Maps Data layer; points
+ * Dedicated map for the geo_elements dataset, on the branded Esri basemap (via
+ * MapCanvas) so it matches every other map in the app. Lines (roads/metro) and
+ * polygons (zones/malls/parks) render in one GeoJsonOverlay; points
  * (stations/hospitals/landmarks) render as clustered, brand-colored markers.
  * Colored + toggleable by category, hover tooltips, fit-to-bounds on filter
  * change, and a persistent selected-feature highlight (driven by the drawer).
@@ -59,12 +61,10 @@ interface Props {
 export default function GeoElementsMap({ filters, isAr, selected, onSelect }: Props) {
   const language = useAppStore((s) => s.language);
   const addToast = useAppStore((s) => s.addToast);
-  const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
-  const keyMissing = !isMapsKeyConfigured();
 
   const [fc, setFc] = useState<GeoFeatureCollection | null>(null);
   const [loading, setLoading] = useState(false);
-  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const [map, setMap] = useState<MlMap | null>(null);
   // Boundaries ONLY here. This screen already renders every geo_element itself —
   // roads, metro lines and landmarks included — so letting the shared layer draw them
   // too would paint each one twice, in two different styles.
@@ -81,10 +81,14 @@ export default function GeoElementsMap({ filters, isAr, selected, onSelect }: Pr
   const onSelectRef = useRef(onSelect);
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
 
-  // Imperative map objects.
-  const clustererRef = useRef<MarkerClusterer | null>(null);
-  const markersRef = useRef<Map<string, google.maps.Marker>>(new Map());
-  const infoRef = useRef<google.maps.InfoWindow | null>(null);
+  // Tooltip language follows the toggle without re-wiring the hover handlers.
+  const isArRef = useRef(isAr);
+  useEffect(() => { isArRef.current = isAr; }, [isAr]);
+
+  // Imperative map objects (created once per map, in the effect below).
+  const overlayRef = useRef<GeoJsonOverlay | null>(null);
+  const tipRef = useRef<MapTooltip | null>(null);
+  const clustererRef = useRef<ClusteredMarkers | null>(null);
 
   // Strip pagination — the map loads the whole filtered set (capped server-side).
   const mapFilters = useMemo<GeoListFilters>(() => {
@@ -121,188 +125,157 @@ export default function GeoElementsMap({ filters, isAr, selected, onSelect }: Pr
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [fc]);
 
-  // ── Hover tooltip (shared InfoWindow) ──────────────────────────────────────
-  const showTip = (props: GeoFeature['properties'], pos: google.maps.LatLngLiteral) => {
-    if (!map || !window.google) return;
-    if (!infoRef.current) infoRef.current = new google.maps.InfoWindow({ disableAutoPan: true });
-    const name = (isAr ? props.name_ar : props.name_en) || props.name_en || props.name_ar || props.external_id;
-    const sub = [props.category, props.type].filter(Boolean).join(' · ');
-    const conf = typeof props.confidence_score === 'number' ? props.confidence_score.toFixed(2) : '—';
-    infoRef.current.setContent(
-      `<div style="font-family:Amiri,'Segoe UI',system-ui,sans-serif;min-width:120px;max-width:240px;padding:2px 4px;color:#4A2C2A">
-         <div style="font-weight:700;font-size:13px;line-height:1.3">${escapeHtml(String(name))}</div>
-         <div style="font-size:11px;color:#8E4E3A;margin-top:2px">${escapeHtml(sub)}</div>
-         <div style="font-size:10px;color:#4A4E54;opacity:.7;margin-top:1px">${escapeHtml(props.external_id)} · conf ${conf}</div>
-       </div>`,
-    );
-    infoRef.current.setPosition(pos);
-    infoRef.current.open({ map });
-  };
-  const hideTip = () => infoRef.current?.close();
-
-  // ── Lines + polygons → Data layer ──────────────────────────────────────────
-  // Load non-point features into the Data layer (clear previous first) + wire
-  // click/hover. Features get their id from `external_id` so we can look them up
-  // for the selected-highlight.
+  // ── Map objects: line/polygon overlay, point clusterer, hover tooltip ───────
+  // Created once per map. The overlay's style function reads the live
+  // enabled/selected refs, so toggles and selection only need `restyle()`.
   useEffect(() => {
-    if (!map || !isLoaded || !fc) return;
-    map.data.forEach((f) => map.data.remove(f));
-    const linePoly = {
-      type: 'FeatureCollection' as const,
-      features: fc.features.filter((f) => f.properties.geometry_type !== 'point'),
-    };
-    try {
-      map.data.addGeoJson(linePoly, { idPropertyName: 'external_id' });
-    } catch (e) {
-      console.error('[geo-map] addGeoJson failed:', e);
-    }
-    const clickL = map.data.addListener('click', (e: google.maps.Data.MouseEvent) => {
-      const id = e.feature.getProperty('external_id');
+    if (!map) return;
+    const tip = new MapTooltip(map);
+    tipRef.current = tip;
+
+    // Lines (roads/metro) and polygons (zones/malls/parks), styled by category +
+    // geometry, honoring enabled + selected.
+    const overlay = new GeoJsonOverlay(map, {
+      style: (props): OverlayStyle => {
+        const cat = (props.category as string | null | undefined) ?? '';
+        const gt = (props.geometry_type as string | null | undefined) ?? '';
+        const id = (props.external_id as string | null | undefined) ?? '';
+        const conf = props.confidence_score as number | null | undefined;
+        if (!enabledRef.current.has(cat)) return { visible: false };
+        const isSel = id === selectedRef.current;
+        const color = isSel ? SELECT_OUTLINE : catColor(cat);
+        const faded = isFaded(conf);
+        if (gt === 'linestring') {
+          return {
+            visible: true, clickable: true, strokeColor: color,
+            strokeWeight: isSel ? 6 : 3,
+            strokeOpacity: faded ? 0.5 : 0.85,
+            zIndex: isSel ? 1000 : 100, // lines above polygons
+          };
+        }
+        // polygon
+        return {
+          visible: true, clickable: true, strokeColor: color,
+          strokeWeight: isSel ? 3 : 1.5,
+          strokeOpacity: faded ? 0.6 : 0.9,
+          fillColor: catColor(cat),
+          fillOpacity: faded ? 0.08 : (isSel ? 0.3 : 0.18),
+          zIndex: isSel ? 1000 : 10, // polygons under lines
+        };
+      },
+    });
+    overlayRef.current = overlay;
+    const offClick = overlay.on('click', (_hit, props) => {
+      const id = props.external_id;
       if (typeof id === 'string') onSelectRef.current(id);
     });
-    const overL = map.data.addListener('mouseover', (e: google.maps.Data.MouseEvent) => {
-      const props = featurePropsFrom(e.feature);
-      if (props && e.latLng) showTip(props, e.latLng.toJSON());
+    const offOver = overlay.on('mouseover', (hit, props) => {
+      const p = featurePropsFrom(props);
+      if (p) tip.show({ lat: hit.lngLat.lat, lng: hit.lngLat.lng }, tipContent(p, isArRef.current));
     });
-    const outL = map.data.addListener('mouseout', hideTip);
+    const offOut = overlay.on('mouseout', () => tip.hide());
+
+    // Same Supercluster settings the old MarkerClusterer used. Clusters sit above
+    // every point marker, including the enlarged selected one (z 9999).
+    const clusterer = new ClusteredMarkers(map, {
+      radius: 70,
+      maxZoom: 15,
+      clusterIcon: (count) => buildClusterIcon(count),
+      clusterZIndex: 10000,
+    });
+    clustererRef.current = clusterer;
+
     return () => {
-      google.maps.event.removeListener(clickL);
-      google.maps.event.removeListener(overL);
-      google.maps.event.removeListener(outL);
+      offClick(); offOver(); offOut();
+      overlay.remove();
+      overlayRef.current = null;
+      clusterer.remove();
+      clustererRef.current = null;
+      tip.hide();
+      tipRef.current = null;
     };
-    // showTip/hideTip are stable enough (read refs); isAr re-runs to refresh tip language.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded, fc, isAr]);
+  }, [map]);
 
-  // ── Points → clustered native markers ───────────────────────────────────────
-  // Rebuilt whenever the feature set OR the enabled-category set changes (so a
-  // toggled-off category drops out of the clusters). Markers are SVG symbols —
-  // cheap to recreate, no network.
+  // ── Lines + polygons → overlay data ────────────────────────────────────────
+  // Replaced on every new fetch; points are drawn by the clusterer instead.
   useEffect(() => {
-    if (!map || !isLoaded || !fc || !window.google) return;
-    clustererRef.current?.clearMarkers();
-    markersRef.current.forEach((m) => m.setMap(null));
-    markersRef.current = new Map();
+    const overlay = overlayRef.current;
+    if (!map || !overlay) return;
+    overlay.setData(fc ? fc.features.filter((f) => f.properties.geometry_type !== 'point') : null);
+  }, [map, fc]);
 
-    const points = fc.features.filter(
+  // Re-apply the overlay style whenever enabled or selected changes (the style
+  // function reads the live refs).
+  useEffect(() => {
+    overlayRef.current?.restyle();
+  }, [map, enabled, selected]);
+
+  // ── Points → clustered markers ──────────────────────────────────────────────
+  // Rebuilt whenever the feature set, the enabled-category set (so a toggled-off
+  // category drops out of the clusters) or the selection changes (so only the
+  // selected point is enlarged/outlined). Icons are inline SVG — cheap to
+  // recreate, no network.
+  useEffect(() => {
+    const clusterer = clustererRef.current;
+    if (!map || !clusterer) return;
+    const points = (fc?.features ?? []).filter(
       (f) => f.properties.geometry_type === 'point'
         && f.properties.lat != null && f.properties.lng != null
         && enabled.has(f.properties.category ?? '∅'),
     );
-    const markers: google.maps.Marker[] = [];
-    for (const f of points) {
+    const items: ClusterItem[] = points.map((f) => {
       const p = f.properties;
-      const pos = { lat: p.lat as number, lng: p.lng as number };
-      const marker = new google.maps.Marker({
-        position: pos,
-        icon: pointSymbol(catColor(p.category), isFaded(p.confidence_score), p.external_id === selectedRef.current),
-        title: (isAr ? p.name_ar : p.name_en) || p.external_id,
-        zIndex: p.external_id === selectedRef.current ? 9999 : undefined,
-      });
-      marker.addListener('click', () => onSelectRef.current(p.external_id));
-      marker.addListener('mouseover', () => showTip(p, pos));
-      marker.addListener('mouseout', hideTip);
-      markers.push(marker);
-      markersRef.current.set(p.external_id, marker);
-    }
-    if (markers.length > 0) {
-      clustererRef.current = new MarkerClusterer({
-        map,
-        markers,
-        algorithm: new SuperClusterAlgorithm({ radius: 70, maxZoom: 15 }),
-        renderer: {
-          render: ({ count, position }) =>
-            new google.maps.Marker({
-              position,
-              icon: buildClusterIcon(count) as google.maps.Icon | undefined,
-              zIndex: Number(google.maps.Marker.MAX_ZINDEX) + count,
-            }),
-        },
-      });
-    }
-    return () => {
-      clustererRef.current?.clearMarkers();
-      clustererRef.current = null;
-      markersRef.current.forEach((m) => m.setMap(null));
-      markersRef.current = new Map();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded, fc, enabled, isAr]);
-
-  // ── Style the Data layer by category + geometry, honoring enabled + selected ─
-  // Re-applied whenever enabled or selected changes (closures read the live refs).
-  useEffect(() => {
-    if (!map || !isLoaded) return;
-    map.data.setStyle((feature) => {
-      const cat = (feature.getProperty('category') as string) ?? '';
-      const gt = (feature.getProperty('geometry_type') as string) ?? '';
-      const id = (feature.getProperty('external_id') as string) ?? '';
-      const conf = feature.getProperty('confidence_score') as number | null;
-      if (!enabledRef.current.has(cat)) return { visible: false };
-      const isSel = id === selectedRef.current;
-      const color = isSel ? SELECT_OUTLINE : catColor(cat);
-      const faded = isFaded(conf);
-      if (gt === 'linestring') {
-        return {
-          visible: true, strokeColor: color,
-          strokeWeight: isSel ? 6 : 3,
-          strokeOpacity: faded ? 0.5 : 0.85,
-          zIndex: isSel ? 1000 : 100, // lines above polygons
-        };
-      }
-      // polygon
+      const isSel = p.external_id === selected;
       return {
-        visible: true, strokeColor: color,
-        strokeWeight: isSel ? 3 : 1.5,
-        strokeOpacity: faded ? 0.6 : 0.9,
-        fillColor: catColor(cat),
-        fillOpacity: faded ? 0.08 : (isSel ? 0.3 : 0.18),
-        zIndex: isSel ? 1000 : 10, // polygons under lines
+        id: p.external_id,
+        position: { lat: p.lat as number, lng: p.lng as number },
+        icon: pointIcon(catColor(p.category), isFaded(p.confidence_score), isSel),
+        // Same styled tooltip as lines/polygons, shown from the marker's hover.
+        onHover: (on) => {
+          const tip = tipRef.current;
+          if (!tip) return;
+          if (on) tip.show({ lat: p.lat as number, lng: p.lng as number }, tipContent(p, isAr));
+          else tip.hide();
+        },
+        zIndex: isSel ? 9999 : undefined,
+        onClick: () => onSelectRef.current(p.external_id),
       };
     });
-  }, [map, isLoaded, enabled, selected]);
+    clusterer.setItems(items);
+  }, [map, fc, enabled, selected, isAr]);
 
-  // ── Selected highlight for point markers + pan/zoom to selection ────────────
+  // ── Pan/zoom to the selected point so it's visible (declusters it) ──────────
   useEffect(() => {
-    if (!map || !isLoaded || !window.google) return;
-    // Re-skin every marker so only the selected one is enlarged/outlined.
-    const fcFeat = fc?.features ?? [];
-    const propsById = new Map(fcFeat.map((f) => [f.properties.external_id, f.properties]));
-    markersRef.current.forEach((marker, id) => {
-      const p = propsById.get(id);
-      const color = p ? catColor(p.category) : '#4A4E54';
-      marker.setIcon(pointSymbol(color, isFaded(p?.confidence_score), id === selected) as google.maps.Symbol);
-      marker.setZIndex(id === selected ? 9999 : undefined);
-    });
-    // Pan/zoom to the selected feature so it's visible (declusters a point).
-    if (selected) {
-      const p = propsById.get(selected);
-      if (p && p.lat != null && p.lng != null) {
-        map.panTo({ lat: p.lat, lng: p.lng });
-        if ((map.getZoom() ?? 0) < 13) map.setZoom(13);
-      }
+    if (!map || !selected) return;
+    const p = fc?.features.find((f) => f.properties.external_id === selected)?.properties;
+    if (p && p.lat != null && p.lng != null) {
+      // One eased move (pan + zoom in to at least 13, classic scale) — a separate
+      // setZoom would cancel the pan animation mid-flight.
+      map.easeTo({
+        center: [p.lng, p.lat],
+        zoom: toMapLibreZoom(Math.max(getZoomLevel(map), 13)),
+        duration: 400,
+      });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, map, isLoaded, fc]);
+  }, [selected, map, fc]);
 
   // ── Fit bounds to the filtered set on every new fetch (not on legend toggles) ─
   useEffect(() => {
-    if (!map || !isLoaded || !fc || fc.features.length === 0 || !window.google) return;
-    const bounds = new google.maps.LatLngBounds();
-    let n = 0;
+    if (!map || !fc || fc.features.length === 0) return;
+    const pts: LatLng[] = [];
     for (const f of fc.features) {
       const { lat, lng } = f.properties;
-      if (lat != null && lng != null) { bounds.extend({ lat, lng }); n++; }
+      if (lat != null && lng != null) pts.push({ lat, lng });
     }
-    if (n === 0) return;
-    if (n === 1) { map.setCenter(bounds.getCenter()); map.setZoom(14); return; }
-    map.fitBounds(bounds, 48);
-    // Clamp over-zoom on tight clusters once the fit settles.
-    const l = google.maps.event.addListenerOnce(map, 'idle', () => {
-      if ((map.getZoom() ?? 0) > 15) map.setZoom(15);
-    });
-    return () => google.maps.event.removeListener(l);
-  }, [map, isLoaded, fc]);
+    const only = pts[0];
+    if (!only) return;
+    if (pts.length === 1) {
+      map.jumpTo({ center: [only.lng, only.lat], zoom: toMapLibreZoom(14) });
+      return;
+    }
+    // maxZoom (classic scale) clamps over-zoom on tight clusters.
+    fitToBounds(map, boundsOf(pts), { padding: 48, maxZoom: 15 });
+  }, [map, fc]);
 
   const toggleCat = (c: string) => setEnabled((prev) => {
     const next = new Set(prev);
@@ -311,10 +284,6 @@ export default function GeoElementsMap({ filters, isAr, selected, onSelect }: Pr
   });
   const allOn = () => setEnabled(new Set(categoryCounts.map(([c]) => c)));
   const allOff = () => setEnabled(new Set());
-
-  if (keyMissing) return <div className="card p-6 text-sm text-charcoal/50">{isAr ? 'مفتاح خرائط جوجل غير مهيأ.' : 'Google Maps key not configured.'}</div>;
-  if (loadError) return <div className="card p-6 text-sm text-red-600">{String(loadError.message ?? loadError)}</div>;
-  if (!isLoaded) return <div className="card flex items-center justify-center py-20 text-charcoal/40"><Loader2 className="animate-spin" /></div>;
 
   return (
     <div className="card overflow-hidden">
@@ -344,13 +313,17 @@ export default function GeoElementsMap({ filters, isAr, selected, onSelect }: Pr
         )}
       </div>
 
-      <GoogleMap
-        mapContainerStyle={mapContainerStyle}
+      <MapCanvas
+        isAr={isAr}
+        className="isolate"
+        style={mapContainerStyle}
         center={DEFAULT_MAP_CENTER}
         zoom={10}
-        options={{ styles: GEO_MAP_STYLE, mapTypeControl: false, streetViewControl: false, fullscreenControl: true, clickableIcons: false }}
-        onLoad={(m) => setMap(m)}
-        onUnmount={() => { setMap(null); infoRef.current = null; }}
+        onLoad={(m) => {
+          m.addControl(new FullscreenControl(), 'top-right');
+          setMap(m);
+        }}
+        onUnmount={() => setMap(null)}
       />
       <p className="px-3 py-1.5 text-[11px] text-charcoal/40 border-t border-sand/20">
         {isAr ? 'مرّر فوق عنصر لاسمه، واضغط لفتح تفاصيله. النقاط مجمّعة؛ الهندسة مبسّطة للعرض فقط.' : 'Hover a feature for its name, click to open details. Points are clustered; geometry is simplified for display.'} · {language}
@@ -359,24 +332,46 @@ export default function GeoElementsMap({ filters, isAr, selected, onSelect }: Pr
   );
 }
 
-// A category-colored circle symbol for point markers. Selected = larger + chocolate
-// outline; low-confidence = faded fill so it reads as approximate.
-function pointSymbol(color: string, faded: boolean, isSel: boolean): google.maps.Symbol {
-  return {
-    path: google.maps.SymbolPath.CIRCLE,
-    scale: isSel ? 8 : 5.5,
-    fillColor: color,
-    fillOpacity: faded ? 0.5 : 0.95,
-    strokeColor: isSel ? SELECT_OUTLINE : '#ffffff',
-    strokeWeight: isSel ? 2.5 : 1,
-  };
+// A category-colored circle icon for point markers. Selected = larger + chocolate
+// outline; low-confidence = faded fill so it reads as approximate. (Same radius /
+// stroke / opacity numbers as the old circle symbol; buildDotIcon has no
+// fill-opacity, hence the local builder.)
+function pointIcon(color: string, faded: boolean, isSel: boolean): MapIcon {
+  const r = isSel ? 8 : 5.5;
+  const sw = isSel ? 2.5 : 1;
+  const stroke = isSel ? SELECT_OUTLINE : '#ffffff';
+  const d = Math.ceil((r + sw) * 2);
+  const c = d / 2;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${d}" height="${d}" viewBox="0 0 ${d} ${d}"><circle cx="${c}" cy="${c}" r="${r}" fill="${color}" fill-opacity="${faded ? 0.5 : 0.95}" stroke="${stroke}" stroke-width="${sw}"/></svg>`;
+  return { url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`, width: d, height: d, anchor: 'center' };
 }
 
-// Reconstruct the subset of properties the tooltip needs from a Data-layer feature.
-function featurePropsFrom(feature: google.maps.Data.Feature): GeoFeature['properties'] | null {
-  const id = feature.getProperty('external_id');
+// The tooltip's three lines: name, "category · type", "external_id · conf N".
+function tipLines(props: GeoFeature['properties'], isAr: boolean): [string, string, string] {
+  const name = (isAr ? props.name_ar : props.name_en) || props.name_en || props.name_ar || props.external_id;
+  const sub = [props.category, props.type].filter(Boolean).join(' · ');
+  const conf = typeof props.confidence_score === 'number' ? props.confidence_score.toFixed(2) : '—';
+  return [String(name), sub, `${props.external_id} · conf ${conf}`];
+}
+
+// Hover tooltip body for lines/polygons (shown in the shared MapTooltip).
+function tipContent(props: GeoFeature['properties'], isAr: boolean): HTMLElement {
+  const [name, sub, meta] = tipLines(props, isAr);
+  const el = document.createElement('div');
+  el.innerHTML =
+    `<div style="font-family:Amiri,'Segoe UI',system-ui,sans-serif;min-width:120px;max-width:240px;padding:2px 4px;color:#4A2C2A">
+       <div style="font-weight:700;font-size:13px;line-height:1.3">${escapeHtml(name)}</div>
+       <div style="font-size:11px;color:#8E4E3A;margin-top:2px">${escapeHtml(sub)}</div>
+       <div style="font-size:10px;color:#4A4E54;opacity:.7;margin-top:1px">${escapeHtml(meta)}</div>
+     </div>`;
+  return el;
+}
+
+// Reconstruct the subset of properties the tooltip needs from an overlay feature.
+function featurePropsFrom(props: OverlayProps): GeoFeature['properties'] | null {
+  const id = props.external_id;
   if (typeof id !== 'string') return null;
-  const g = (k: string) => feature.getProperty(k);
+  const g = (k: string) => props[k];
   return {
     external_id: id,
     name_ar: (g('name_ar') as string | null) ?? null,

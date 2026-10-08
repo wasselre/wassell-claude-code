@@ -1,19 +1,28 @@
 import type React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { GoogleMap, OverlayView, useJsApiLoader } from '@react-google-maps/api';
-import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
 import Supercluster from 'supercluster';
 import { useAppStore } from '@/stores/appStore';
-import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import {
   DEFAULT_MAP_CENTER,
   DEFAULT_MAP_ZOOM,
   buildClusterIcon,
   buildPillIcon,
-  resolveGeoMapStyles,
 } from '@/lib/locationUtils';
+import {
+  ClusteredMarkers,
+  createIconMarker,
+  getViewport,
+  getZoomLevel,
+  onViewportChange,
+  toMapLibreZoom,
+  type LatLng,
+  type MlMap,
+} from '@/lib/map';
+import { Marker } from '@/lib/map/maplibre';
+import MapCanvas from '@/components/map/MapCanvas';
 import { isSummaryModel } from '@/lib/lazyModels';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import MapLayersOverlay from '@/components/map/MapLayersOverlay';
@@ -32,15 +41,15 @@ interface MapsViewProps {
   onCardClick: (record: AppRecord) => void;
 }
 
-// Map fills its parent container — RecordListPage gives it a viewport-sized
-// wrapper in full-bleed mode. No border-radius: the map runs edge-to-edge.
-const mapContainerStyle = { width: '100%', height: '100%' };
+// The map fills its parent container (MapCanvas `h-full w-full`) — RecordListPage
+// gives it a viewport-sized wrapper in full-bleed mode. No border-radius: the map
+// runs edge-to-edge.
 // Default pill background — Wassel charcoal slate. Per-record `pin_color`
 // overrides take effect when a `pin_color_field_id` is configured.
 const PILL_DEFAULT_COLOR = '#4A4E54';
 
 // Hard ceiling on how many markers we instantiate on the map at once. Each pin
-// is a real google.maps.Marker (SVG data-URI icon + click listener), so tens of
+// is a real DOM marker (SVG data-URI icon + click listener), so tens of
 // thousands would freeze the tab even WITH clustering — the cost is creating the
 // marker objects, not the clustering math. When the resolved set exceeds this we
 // render the first MAX and show a "narrow filters / zoom in" banner. Applies to
@@ -216,9 +225,8 @@ export function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx
 /**
  * Map view dispatcher. Summary models (e.g. `market_listings`, ~46k rows) use a
  * VIEWPORT-DRIVEN supercluster path (`SummaryMapsView`) that only ever
- * instantiates google.maps.Marker objects for what's currently visible. Every
- * other model keeps the original markerclusterer pipeline (`LegacyMapsView`),
- * unchanged.
+ * instantiates DOM markers for what's currently visible. Every other model keeps
+ * the clustered-markers pipeline (`LegacyMapsView`, ClusteredMarkers).
  */
 export default function MapsView(props: MapsViewProps) {
   if (isSummaryModel(props.model)) return <SummaryMapsView {...props} />;
@@ -258,16 +266,12 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
   // returns the user to the exact map view they left.
   const persisted = mapsViewState[model.id];
   const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null);
-  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  const [mapInstance, setMapInstance] = useState<MlMap | null>(null);
   // Administrative context under the record pins (boundaries only). Roads +
   // landmarks are user-toggled context layers now (MapLayersOverlay), so the map
   // opens clean. See useGeoBoundaryLayer.
   useGeoBoundaryLayer(mapInstance, { roads: false, landmarks: false });
 
-  const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
-  const keyMissing = !isMapsKeyConfigured();
-
-  const styles = resolveGeoMapStyles(cfg.map_style_json);
   const center = persisted?.center
     ? persisted.center
     : resolved[0]
@@ -276,6 +280,12 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
         ? { lat: cfg.default_center_lat, lng: cfg.default_center_lng }
         : DEFAULT_MAP_CENTER;
   const zoom = persisted?.zoom ?? cfg.default_zoom ?? DEFAULT_MAP_ZOOM;
+  // MapCanvas reads center/zoom once, when it first renders — but the map itself
+  // only exists after the basemap style loads, by which point the records may have
+  // resolved (first pin) or a persisted view may have arrived. onLoad jumps to the
+  // view computed from the LATEST render, so the map opens where the render says.
+  const initialViewRef = useRef({ center, zoom });
+  initialViewRef.current = { center, zoom };
 
   // Build the label for each pin once, memoized off resolved + label field +
   // store data so the imperative marker effect can re-create on real changes
@@ -312,26 +322,31 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unresolved, nameEf, isAr, allRecords, models, users, model]);
 
-  // Persist selection changes — onIdle only fires on pan/zoom, not on
-  // pin clicks, so we mirror selectedId into the store separately.
+  // Persist selection changes — the viewport listener below only fires on
+  // pan/zoom, not on pin clicks, so we mirror selectedId into the store separately.
   useEffect(() => {
     if (!mapInstance) return;
-    const c = mapInstance.getCenter();
-    const z = mapInstance.getZoom();
-    if (!c || z == null) return;
-    setMapsViewState(model.id, {
-      center: { lat: c.lat(), lng: c.lng() },
-      zoom: z,
-      selectedId,
-    });
+    persistMapView(mapInstance, model.id, selectedId, setMapsViewState);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, mapInstance, model.id]);
 
-  // Imperative Marker + Clusterer pipeline — render markers as native
-  // google.maps.Marker (so MarkerClusterer can manage them) and listen for
-  // clicks to drive our own React popup overlay below.
-  const clustererRef = useRef<MarkerClusterer | null>(null);
-  const markersRef = useRef<google.maps.Marker[]>([]);
+  // Persist current pan/zoom + selected pin after every settled pan/zoom so
+  // back-from-detail restores the same view — cheap, in-memory only. selectedId
+  // is read through a ref so the listener isn't re-bound on every selection.
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  useEffect(() => {
+    if (!mapInstance) return;
+    return onViewportChange(mapInstance, () => {
+      persistMapView(mapInstance, model.id, selectedIdRef.current, setMapsViewState);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, model.id]);
+
+  // Imperative clustered-marker pipeline — every pin is a DOM marker managed by
+  // ClusteredMarkers (Supercluster), and pin clicks drive our own React popup
+  // overlay below.
+  const clustererRef = useRef<ClusteredMarkers | null>(null);
   // Keep the latest resolved array in a ref so click handlers can re-resolve
   // by record id at click time. Belt-and-suspenders against any closure
   // capturing the wrong record (e.g. if `resolved` mutates between mount and
@@ -341,124 +356,81 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
     resolvedRef.current = cappedResolved;
   }, [cappedResolved]);
 
+  // The clusterer lives as long as the map.
   useEffect(() => {
-    if (!mapInstance || !isLoaded) return;
-
-    // Tear down previous markers + clusterer on every recompute. Cheap because
-    // markers are SVG data URIs, no network.
-    clustererRef.current?.clearMarkers();
-    markersRef.current.forEach((m) => m.setMap(null));
-    markersRef.current = [];
-
-    const newMarkers: google.maps.Marker[] = [];
-    for (const p of cappedResolved) {
-      const label = pinLabels[p.record.id] || '';
-      const icon = label
-        ? buildPillIcon(label, p.color || PILL_DEFAULT_COLOR)
-        : buildPillIcon('•', p.color || PILL_DEFAULT_COLOR);
-      const recordId = p.record.id;
-      const marker = new google.maps.Marker({
-        position: { lat: p.lat, lng: p.lng },
-        icon: icon as google.maps.Icon | undefined,
-        // Native browser tooltip — handy for diagnosing which record a
-        // visible pill belongs to when pills overlap.
-        title: label || recordId.slice(0, 8),
-      });
-      marker.addListener('click', () => {
-        // Re-resolve by record id from the latest snapshot rather than the
-        // closed-over `p`. Defensive against the (theoretical) case where
-        // resolved mutates between marker creation and click.
-        const cur = resolvedRef.current.find((r) => r.record.id === recordId);
-        const target = cur?.record ?? p.record;
-        if (cfg.click_action === 'navigate') onCardClick(target);
-        else setSelectedId(recordId);
-      });
-      newMarkers.push(marker);
-    }
-    markersRef.current = newMarkers;
-
-    if (newMarkers.length === 0) return;
-
-    clustererRef.current = new MarkerClusterer({
-      map: mapInstance,
-      markers: newMarkers,
+    if (!mapInstance) return;
+    const c = new ClusteredMarkers(mapInstance, {
       // Wider cluster radius (default 60px) — pill markers can run 100–200px
       // wide depending on label length, so two pins 70–150px apart appear
-      // visually stacked but the default radius leaves them un-clustered. The
+      // visually stacked but a smaller radius leaves them un-clustered. The
       // click then lands on whichever marker is on top in z-order, which may
       // not be the pill the user thought they clicked. 110px catches most
       // visually-overlapping pairs without over-clustering distant ones.
-      algorithm: new SuperClusterAlgorithm({ radius: 110 }),
-      renderer: {
-        render: ({ count, position }) => {
-          const icon = buildClusterIcon(count);
-          return new google.maps.Marker({
-            position,
-            icon: icon as google.maps.Icon | undefined,
-            // zIndex slightly above the default so cluster dots win z-fights
-            // with overlapping pills.
-            zIndex: Number(google.maps.Marker.MAX_ZINDEX) + count,
-          });
-        },
-      },
+      radius: 110,
+      maxZoom: 16,
+      clusterIcon: (count) => buildClusterIcon(count),
+      // Clusters sit above every pill (base + count) so cluster dots win
+      // z-fights with overlapping pills.
+      clusterZIndex: 1000,
     });
-
+    clustererRef.current = c;
     return () => {
-      clustererRef.current?.clearMarkers();
+      c.remove();
       clustererRef.current = null;
-      markersRef.current.forEach((m) => m.setMap(null));
-      markersRef.current = [];
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapInstance, isLoaded, cappedResolved, pinLabels, cfg.click_action]);
+  }, [mapInstance]);
 
-  if (keyMissing) {
-    return <EmptyState title={t('maps.api_key_missing')} hint={t('maps.api_key_missing_hint')} />;
-  }
-  if (loadError) {
-    return <EmptyState title={t('maps.api_key_missing')} hint={String(loadError.message ?? loadError)} />;
-  }
-  if (!isLoaded) {
-    return (
-      <div className="flex items-center justify-center py-20 text-charcoal/40">
-        <p>{t('common.loading')}</p>
-      </div>
+  useEffect(() => {
+    const clusterer = clustererRef.current;
+    if (!mapInstance || !clusterer) return;
+
+    // Replace every marker on every recompute. Cheap because markers are SVG
+    // data URIs, no network.
+    clusterer.setItems(
+      cappedResolved.map((p) => {
+        const label = pinLabels[p.record.id] || '';
+        const recordId = p.record.id;
+        return {
+          id: recordId,
+          position: { lat: p.lat, lng: p.lng },
+          icon: buildPillIcon(label || '•', p.color || PILL_DEFAULT_COLOR),
+          // Native browser tooltip — handy for diagnosing which record a
+          // visible pill belongs to when pills overlap.
+          title: label || recordId.slice(0, 8),
+          onClick: () => {
+            // Re-resolve by record id from the latest snapshot rather than the
+            // closed-over `p`. Defensive against the (theoretical) case where
+            // resolved mutates between marker creation and click.
+            const cur = resolvedRef.current.find((r) => r.record.id === recordId);
+            const target = cur?.record ?? p.record;
+            if (cfg.click_action === 'navigate') onCardClick(target);
+            else setSelectedId(recordId);
+          },
+        };
+      }),
     );
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, cappedResolved, pinLabels, cfg.click_action]);
 
   const selectedPin = cappedResolved.find((r) => r.record.id === selectedId);
 
   return (
     <div className="relative h-full">
-      <GoogleMap
-        mapContainerStyle={mapContainerStyle}
+      <MapCanvas
+        isAr={isAr}
+        className="h-full w-full"
         center={center}
         zoom={zoom}
-        options={{ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: false }}
-        onLoad={(m) => setMapInstance(m)}
-        onUnmount={() => setMapInstance(null)}
-        onIdle={() => {
-          // Persist current pan/zoom + selected pin so back-from-detail
-          // restores the same view. Fires after pans, zooms, and the initial
-          // load — cheap, in-memory only.
-          if (!mapInstance) return;
-          const c = mapInstance.getCenter();
-          const z = mapInstance.getZoom();
-          if (!c || z == null) return;
-          setMapsViewState(model.id, {
-            center: { lat: c.lat(), lng: c.lng() },
-            zoom: z,
-            selectedId,
-          });
+        onLoad={(m) => {
+          const v = initialViewRef.current;
+          m.jumpTo({ center: [v.center.lng, v.center.lat], zoom: toMapLibreZoom(v.zoom) });
+          setMapInstance(m);
         }}
+        onUnmount={() => setMapInstance(null)}
       >
         <MapLayersOverlay map={mapInstance} isAr={isAr} />
-        {cfg.click_action === 'popup' && selectedPin && (
-          <OverlayView
-            position={{ lat: selectedPin.lat, lng: selectedPin.lng }}
-            mapPaneName={OverlayView.FLOAT_PANE}
-            getPixelPositionOffset={(width, height) => ({ x: -width / 2, y: -height - 40 })}
-          >
+        {cfg.click_action === 'popup' && selectedPin && mapInstance && (
+          <MapPopupOverlay map={mapInstance} position={{ lat: selectedPin.lat, lng: selectedPin.lng }}>
             <PopupCard
               pin={selectedPin}
               cfg={cfg}
@@ -473,9 +445,9 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
               onOpen={() => onCardClick(selectedPin.record)}
               onClose={() => setSelectedId(null)}
             />
-          </OverlayView>
+          </MapPopupOverlay>
         )}
-      </GoogleMap>
+      </MapCanvas>
 
       {/* Floating progress chip — center of the map, shows while the resolver
           is working through unresolved URLs. Hidden once all land. */}
@@ -568,10 +540,10 @@ function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
 // Summary-model map (viewport-driven supercluster)
 //
 // For huge summary models (market_listings, ~46k rows already loaded as a slim
-// set in the store) we DO NOT instantiate a google.maps.Marker per record. That
-// would freeze the tab and the old global "first 2,000" slice silently hid the
+// set in the store) we DO NOT instantiate a DOM marker per record. That would
+// freeze the tab and the old global "first 2,000" slice silently hid the
 // other ~40k. Instead we build ONE in-memory Supercluster spatial index from the
-// records' top-level lat/lng and, on every map idle, query it for the CURRENT
+// records' top-level lat/lng and, on every settled pan/zoom, query it for the CURRENT
 // viewport + zoom — creating marker objects only for the handful of clusters +
 // pins actually visible (tens–hundreds), never the whole set.
 // ───────────────────────────────────────────────────────────────────────────
@@ -630,9 +602,6 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
     return m;
   }, [model, models]);
 
-  const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
-  const keyMissing = !isMapsKeyConfigured();
-
   // Partition the (already-filtered) records into mapped (valid finite top-level
   // lat/lng) and no-location. Read lat/lng DIRECTLY off the slim summary data —
   // no geocode pipeline. Each mapped point becomes a GeoJSON feature carrying its
@@ -660,9 +629,9 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   }, [records]);
 
   // ONE spatial index, rebuilt only when the mapped point set changes. Pure JS —
-  // creates NO google.maps.Marker objects. Built OFF the render/commit path (in a
+  // creates NO marker objects. Built OFF the render/commit path (in a
   // deferred effect) so loading a heavy point set (46k) can never block the
-  // GoogleMap from mounting + painting tiles on first load. Starts empty; fills
+  // map from mounting + painting tiles on first load. Starts empty; fills
   // in right after `points` settle, and the marker effect below (which depends on
   // `index`) then renders the clusters — no user interaction required.
   const makeIndex = () =>
@@ -693,13 +662,12 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   // Persisted view state (cross-navigation), same as the legacy path.
   const persisted = mapsViewState[model.id];
   const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null);
-  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  const [mapInstance, setMapInstance] = useState<MlMap | null>(null);
   // Administrative context under the record pins (boundaries only). Roads +
   // landmarks are user-toggled context layers now (MapLayersOverlay), so the map
   // opens clean. See useGeoBoundaryLayer.
   useGeoBoundaryLayer(mapInstance, { roads: false, landmarks: false });
 
-  const styles = useMemo(() => resolveGeoMapStyles(cfg.map_style_json), [cfg.map_style_json]);
   const firstPoint = points[0];
   // coordinates are [lng, lat]; indexed access is `number | undefined` under
   // noUncheckedIndexedAccess, so coerce to finite numbers.
@@ -714,25 +682,14 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
         : DEFAULT_MAP_CENTER;
   const zoom = persisted?.zoom ?? cfg.default_zoom ?? DEFAULT_MAP_ZOOM;
 
-  // STABLE props for <GoogleMap> (the fix for the idle/re-render storm).
-  // @react-google-maps re-applies center/zoom/options whenever their REFERENCE
-  // changes; passing fresh objects every render made it re-apply on each
-  // re-render, nudging the viewport → firing `idle` → setMapsViewState →
-  // re-render → an idle loop. We freeze the INITIAL view once (restored from
-  // persisted view / first point / default) and memoize the options, so the map
-  // is left alone after mount. The user still pans/zooms freely (the prop ref
-  // never changes, so @react-google-maps won't fight them), and onIdle keeps
-  // persisting the live view to the store for the next mount.
-  const initialViewRef = useRef<{ center: { lat: number; lng: number }; zoom: number } | null>(null);
-  if (!initialViewRef.current && (persisted?.center || firstPoint)) {
-    initialViewRef.current = { center, zoom };
-  }
-  const stableCenter = initialViewRef.current?.center ?? center;
-  const stableZoom = initialViewRef.current?.zoom ?? zoom;
-  const mapOptions = useMemo(
-    () => ({ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: false }),
-    [styles],
-  );
+  // MapCanvas reads center/zoom once (they are initial values, never re-applied,
+  // so re-renders can't nudge the viewport into a moveend -> persist -> re-render
+  // loop). The map itself only exists after the basemap style loads, by which
+  // time the first point / persisted view may have arrived — onLoad jumps to the
+  // view computed from the LATEST render. The user then pans/zooms freely and the
+  // viewport listener keeps persisting the live view for the next mount.
+  const initialViewRef = useRef<{ center: LatLng; zoom: number }>({ center, zoom });
+  initialViewRef.current = { center, zoom };
 
   // Friendly names for no-location records — reuse the pin-label / popup-title
   // field so the "without location" panel lists recognizable titles.
@@ -754,30 +711,41 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noLocation, nameEf, isAr, allRecords, models, users, model]);
 
-  // Persist selection separately (idle only fires on pan/zoom).
+  // Persist selection separately (the viewport listener only fires on pan/zoom).
   useEffect(() => {
     if (!mapInstance) return;
-    const c = mapInstance.getCenter();
-    const z = mapInstance.getZoom();
-    if (!c || z == null) return;
-    setMapsViewState(model.id, { center: { lat: c.lat(), lng: c.lng() }, zoom: z, selectedId });
+    persistMapView(mapInstance, model.id, selectedId, setMapsViewState);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, mapInstance, model.id]);
 
-  // Viewport version — bumped on every map `idle` (settles after pan/zoom and
-  // the initial load). The marker effect below re-queries the index for the new
+  // Viewport version — bumped after every settled pan/zoom (moveend) and the
+  // initial load. The marker effect below re-queries the index for the new
   // viewport whenever this changes.
   const [viewportVersion, setViewportVersion] = useState(0);
   const [pinCapHit, setPinCapHit] = useState(false);
 
-  // Background-tab safety net: browsers gate Google-map init + tile paint on tab
-  // visibility, so a page opened in a hidden tab can show a blank map until the
-  // user switches to it. When the tab becomes visible, force a resize + viewport
-  // re-query so the map fills in tiles + clusters immediately — no pan/zoom.
+  // Re-query the index for the new viewport AND persist pan/zoom after every
+  // settled pan/zoom. selectedId is read through a ref so the listener isn't
+  // re-bound on every selection.
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  useEffect(() => {
+    if (!mapInstance) return;
+    return onViewportChange(mapInstance, () => {
+      setViewportVersion((v) => v + 1);
+      persistMapView(mapInstance, model.id, selectedIdRef.current, setMapsViewState);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, model.id]);
+
+  // Background-tab safety net: browsers throttle rendering in hidden tabs, so a
+  // page opened in a hidden tab can show a blank map until the user switches to
+  // it. When the tab becomes visible, force a resize + viewport re-query so the
+  // map fills in tiles + clusters immediately — no pan/zoom.
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState !== 'visible' || !mapInstance) return;
-      google.maps.event.trigger(mapInstance, 'resize');
+      mapInstance.resize();
       setViewportVersion((v) => v + 1);
     };
     document.addEventListener('visibilitychange', onVis);
@@ -785,9 +753,9 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   }, [mapInstance]);
 
   // Imperative marker pipeline — query getClusters for the CURRENT bounds+zoom
-  // and render ONLY those features. No MarkerClusterer: supercluster IS the
-  // clustering, so we just place the returned cluster/point markers directly.
-  const markersRef = useRef<google.maps.Marker[]>([]);
+  // and render ONLY those features. No ClusteredMarkers: this supercluster index
+  // IS the clustering, so we just place the returned cluster/point markers directly.
+  const markersRef = useRef<Marker[]>([]);
   // Latest record-by-id snapshot for click handlers (re-resolve by id at click
   // time, defensive against stale closures).
   const mappedRef = useRef(mappedById);
@@ -801,7 +769,7 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
     // new set first and swap it in atomically; the only place markers are fully
     // removed is the unmount cleanup below. Each guard here RETURNS without
     // touching markersRef, so whatever is on the map stays on the map.
-    if (!mapInstance || !isLoaded) return;          // keep existing markers
+    if (!mapInstance) return;                       // keep existing markers
     if (!indexReady && points.length > 0) {
       // Index not built yet but we have data → keep the current markers, wait
       // for the deferred build to flip `indexReady` (which re-runs this effect).
@@ -809,17 +777,16 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
       return;
     }
 
-    const bounds = mapInstance.getBounds();
-    const zNow = mapInstance.getZoom();
-    if (!bounds || zNow == null) {                  // transient → keep existing
+    // Zoom is the CLASSIC scale (getViewport), matching SUPERCLUSTER_MAX_ZOOM.
+    const vp = getViewport(mapInstance);
+    if (![vp.minLng, vp.minLat, vp.maxLng, vp.maxLat, vp.zoom].every(Number.isFinite)) {
+      // transient → keep existing
       if (MAP_DEBUG) console.debug('[map] keep %o markers — no bounds/zoom yet', markersRef.current.length);
       return;
     }
 
-    const ne = bounds.getNorthEast();
-    const sw = bounds.getSouthWest();
-    const bbox: [number, number, number, number] = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
-    const z = Math.round(zNow);
+    const bbox: [number, number, number, number] = [vp.minLng, vp.minLat, vp.maxLng, vp.maxLat];
+    const z = Math.round(vp.zoom);
     const clusters = index.getClusters(bbox, z);
 
     if (MAP_DEBUG) {
@@ -827,7 +794,7 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
     }
 
     // Build the new marker set BEFORE removing the old one (see lifecycle rule).
-    const newMarkers: google.maps.Marker[] = [];
+    const newMarkers: Marker[] = [];
     let pinsRendered = 0;
     let capExceeded = false;
 
@@ -847,17 +814,17 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
         const clusterProps = props as Supercluster.ClusterProperties;
         const count = clusterProps.point_count;
         const clusterId = clusterProps.cluster_id;
-        const icon = buildClusterIcon(count);
-        const marker = new google.maps.Marker({
+        const marker = createIconMarker(mapInstance, {
           position: { lat, lng },
-          icon: icon as google.maps.Icon | undefined,
-          zIndex: Number(google.maps.Marker.MAX_ZINDEX) + Math.min(count, 1000),
+          icon: buildClusterIcon(count),
+          // Clusters above every individual pin.
+          zIndex: 1000 + Math.min(count, 1000),
           title: String(count),
-        });
-        marker.addListener('click', () => {
-          const expansionZoom = Math.min(index.getClusterExpansionZoom(clusterId), 20);
-          mapInstance.setZoom(expansionZoom);
-          mapInstance.panTo({ lat, lng });
+          onClick: () => {
+            // Expansion zoom is CLASSIC scale (the index's own zoom space).
+            const expansionZoom = Math.min(index.getClusterExpansionZoom(clusterId), 20);
+            mapInstance.easeTo({ center: [lng, lat], zoom: toMapLibreZoom(expansionZoom), duration: 400 });
+          },
         });
         newMarkers.push(marker);
         continue;
@@ -892,58 +859,43 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
         });
         if (text && text !== '—') pillLabel = text;
       }
-      const icon = buildPillIcon(pillLabel, color);
-      const marker = new google.maps.Marker({
+      const marker = createIconMarker(mapInstance, {
         position: { lat, lng },
-        icon: icon as google.maps.Icon | undefined,
+        icon: buildPillIcon(pillLabel, color),
         title: pillLabel !== '•' ? pillLabel : id.slice(0, 8),
-      });
-      marker.addListener('click', () => {
-        const cur = mappedRef.current.get(id) ?? rec;
-        if (!cur) return;
-        if (cfg.click_action === 'navigate') onCardClick(cur);
-        else setSelectedId(id);
+        onClick: () => {
+          const cur = mappedRef.current.get(id) ?? rec;
+          if (!cur) return;
+          if (cfg.click_action === 'navigate') onCardClick(cur);
+          else setSelectedId(id);
+        },
       });
       newMarkers.push(marker);
     }
 
-    // SWAP: add the new set, then remove the previous set — never an empty frame.
-    // If `clusters` was genuinely empty (panned to an area with no listings) the
-    // new set is empty and the old is removed, which is the correct "none here"
-    // state. NO effect cleanup clears markers — that was the bug.
-    newMarkers.forEach((m) => m.setMap(mapInstance));
+    // SWAP: the new set is already on the map (createIconMarker adds it), now
+    // remove the previous set — all in one synchronous tick, so never an empty
+    // frame. If `clusters` was genuinely empty (panned to an area with no
+    // listings) the new set is empty and the old is removed, which is the correct
+    // "none here" state. NO effect cleanup clears markers — that was the bug.
     const prevMarkers = markersRef.current;
     markersRef.current = newMarkers;
-    prevMarkers.forEach((m) => m.setMap(null));
+    prevMarkers.forEach((m) => m.remove());
     setPinCapHit(capExceeded);
     if (MAP_DEBUG) console.debug('[map] rendered %o markers, removed %o old', newMarkers.length, prevMarkers.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapInstance, isLoaded, index, indexReady, viewportVersion, cfg.click_action, model.color, points.length, labelEf]);
+  }, [mapInstance, index, indexReady, viewportVersion, cfg.click_action, model.color, points.length, labelEf]);
 
   // Clear markers ONLY on unmount — never on a dependency change. Clearing on
   // every re-run (the old effect cleanup) is what wiped clusters on each `idle`.
   useEffect(
     () => () => {
       if (MAP_DEBUG) console.debug('[map] unmount — clearing %o markers', markersRef.current.length);
-      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
     },
     [],
   );
-
-  if (keyMissing) {
-    return <EmptyState title={t('maps.api_key_missing')} hint={t('maps.api_key_missing_hint')} />;
-  }
-  if (loadError) {
-    return <EmptyState title={t('maps.api_key_missing')} hint={String(loadError.message ?? loadError)} />;
-  }
-  if (!isLoaded) {
-    return (
-      <div className="flex items-center justify-center py-20 text-charcoal/40">
-        <p>{t('common.loading')}</p>
-      </div>
-    );
-  }
 
   const selectedRec = selectedId ? mappedById.get(selectedId) : undefined;
   const selectedPin: ResolvedPin | undefined = selectedRec
@@ -962,40 +914,26 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
 
   return (
     <div className="relative h-full">
-      <GoogleMap
-        mapContainerStyle={mapContainerStyle}
-        center={stableCenter}
-        zoom={stableZoom}
-        options={mapOptions}
+      <MapCanvas
+        isAr={isAr}
+        className="h-full w-full"
+        center={center}
+        zoom={zoom}
         onLoad={(m) => {
+          const v = initialViewRef.current;
+          m.jumpTo({ center: [v.center.lng, v.center.lat], zoom: toMapLibreZoom(v.zoom) });
           setMapInstance(m);
-          // Force the map to (re)measure its container and paint tiles even if it
-          // mounted before layout settled, then query the FIRST viewport as soon
-          // as the map actually has bounds (its first `idle`). Without this the
-          // map could stay grey with no clusters until the user panned/zoomed —
-          // the `idle` listener guarantees the initial cluster render on load.
-          google.maps.event.trigger(m, 'resize');
-          google.maps.event.addListenerOnce(m, 'idle', () => setViewportVersion((v) => v + 1));
+          // Query the FIRST viewport as soon as the map exists, and again once it
+          // has finished its first render (`idle`) — guarantees the initial cluster
+          // render on load without the user having to pan/zoom.
+          m.once('idle', () => setViewportVersion((v) => v + 1));
           setViewportVersion((v) => v + 1);
         }}
         onUnmount={() => setMapInstance(null)}
-        onIdle={() => {
-          // Re-query the index for the new viewport AND persist pan/zoom.
-          setViewportVersion((v) => v + 1);
-          if (!mapInstance) return;
-          const c = mapInstance.getCenter();
-          const z = mapInstance.getZoom();
-          if (!c || z == null) return;
-          setMapsViewState(model.id, { center: { lat: c.lat(), lng: c.lng() }, zoom: z, selectedId });
-        }}
       >
         <MapLayersOverlay map={mapInstance} isAr={isAr} />
-        {cfg.click_action === 'popup' && selectedPin && (
-          <OverlayView
-            position={{ lat: selectedPin.lat, lng: selectedPin.lng }}
-            mapPaneName={OverlayView.FLOAT_PANE}
-            getPixelPositionOffset={(width, height) => ({ x: -width / 2, y: -height - 40 })}
-          >
+        {cfg.click_action === 'popup' && selectedPin && mapInstance && (
+          <MapPopupOverlay map={mapInstance} position={{ lat: selectedPin.lat, lng: selectedPin.lng }}>
             <PopupCard
               pin={selectedPin}
               cfg={cfg}
@@ -1010,9 +948,9 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
               onOpen={() => onCardClick(selectedPin.record)}
               onClose={() => setSelectedId(null)}
             />
-          </OverlayView>
+          </MapPopupOverlay>
         )}
-      </GoogleMap>
+      </MapCanvas>
 
       {/* Counts strip — total / on the map / without location. Always shown so
           the user knows nothing is silently hidden (the old 2k-slice bug). */}
@@ -1375,11 +1313,45 @@ function PopupCard({
   );
 }
 
-function EmptyState({ title, hint }: { title: string; hint: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-20 px-6 text-center bg-cream/40 rounded-xl border border-dashed border-sand/50">
-      <p className="text-base font-bold text-charcoal/70 mb-1">{title}</p>
-      <p className="text-sm text-charcoal/50 max-w-md">{hint}</p>
-    </div>
-  );
+/** Persist the map's live center/zoom (CLASSIC scale) + selected pin to the
+ *  in-memory store so back-from-record-edit restores the same view. */
+function persistMapView(
+  map: MlMap,
+  modelId: string,
+  selectedId: string | null,
+  setMapsViewState: (modelId: string, state: { center: LatLng; zoom: number; selectedId: string | null }) => void,
+): void {
+  const c = map.getCenter();
+  setMapsViewState(modelId, { center: { lat: c.lat, lng: c.lng }, zoom: getZoomLevel(map), selectedId });
+}
+
+/**
+ * Renders React children as a DOM marker anchored above a map point — the popup
+ * card's carrier. Bottom-centre of the content sits 40px above the point (clear
+ * of the pill it belongs to); it moves with the map and stacks above every pin
+ * and cluster marker.
+ */
+function MapPopupOverlay({ map, position, children }: { map: MlMap; position: LatLng; children: React.ReactNode }) {
+  const [el] = useState(() => {
+    const div = document.createElement('div');
+    div.style.zIndex = '1000000';
+    return div;
+  });
+  const markerRef = useRef<Marker | null>(null);
+  useEffect(() => {
+    const m = new Marker({ element: el, anchor: 'bottom', offset: [0, -40] })
+      .setLngLat([position.lng, position.lat])
+      .addTo(map);
+    markerRef.current = m;
+    return () => {
+      m.remove();
+      markerRef.current = null;
+    };
+    // Created once per map; position updates go through the effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, el]);
+  useEffect(() => {
+    markerRef.current?.setLngLat([position.lng, position.lat]);
+  }, [position.lat, position.lng]);
+  return createPortal(children, el);
 }

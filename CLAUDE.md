@@ -51,9 +51,21 @@ Unfrozen models and workflows live **only as JSONB rows in Supabase** — create
 - **i18n:** react-i18next (Arabic + English, full RTL/LTR switching)
 - **Drag & Drop:** @dnd-kit/core + @dnd-kit/sortable
 - **Charts:** Recharts
+- **Maps:** MapLibre GL rendering the **Esri** basemap (NOT Google Maps — see "Maps" below)
 - **PDF:** jsPDF (Arabic RTL support)
 - **Icons:** Lucide React
 - **Font:** Amiri (Google Fonts)
+
+## Maps — MapLibre GL + Esri basemap (added 2026-10-07, replaced Google Maps)
+
+Every map in the app (Project Finder / Client Options / chat project browser via `BaseMapView`, the records Maps view, `DistrictMapPicker`, Geo Zones / Geo Elements admin, GeoGrade, Market Intelligence, the inventory choropleth, the Map Builder preview) renders through **`src/components/map/MapCanvas.tsx`** on the toolkit in **`src/lib/map/`** (barrel `@/lib/map`). Google Maps (`@react-google-maps/api`, `google.maps.*`) is gone — don't reintroduce it.
+
+- **Basemap:** `src/lib/map/esriBasemap.ts`. With `VITE_ARCGIS_API_KEY` → Esri Basemap Styles service `arcgis/streets`; without → Esri's public World Street Map (Vector) item (dev/preview fallback). Both are repainted in the Wassel palette by `wasselizeStyle` and **every basemap symbol layer is dropped** — the app draws its own place names (one name per place, ours). Esri attribution is mandatory and rendered by MapCanvas.
+- **Zoom scale (CRITICAL):** MapLibre zoom = Google zoom − 1. All app zoom numbers (server `geo_map_layers(p_zoom)` / `geo_map_tier_for_zoom` / `geo_map_elements`, `pickVisibleLabels`, `LABELS_MIN_ZOOM`-style gates, fit max-zooms) stay on the CLASSIC (Google) scale. Never call `map.getZoom()/setZoom()/fitBounds()` raw — use `getZoomLevel` / `setZoomLevel` / `fitToBounds` / `toMapLibreZoom` / `getViewport` from `@/lib/map/geo`.
+- **Toolkit (Google → replacement):** `google.maps.Data`/`Polygon`/`Polyline` → `GeoJsonOverlay` (one overlay + a style function, `restyle()` on state change); `Polygon{editable}` → `EditablePolygon`; `Marker` → `createIconMarker` / `createLabelMarker` (DOM, so Arabic shapes natively); `InfoWindow` → `MapTooltip`; `@googlemaps/markerclusterer` → `ClusteredMarkers` (Supercluster); `bounds_changed`/`idle` → `onViewportChange` (`moveend`); map-level click → `onEmptyMapClick` (only fires when no clickable shape/marker was hit — Google semantics); `draggableCursor` → `setMapCursor`.
+- **Worker:** `src/lib/map/maplibre.ts` is the ONLY place that imports `maplibre-gl` — it sets the worker URL (`?url` import) and loads the CSS. Import maplibre through it, never directly, or tiles silently fail to parse once bundled.
+- **Shared plumbing lives once:** pin-map changes go in `BaseMapView`; boundary/context layers in `useGeoBoundaryLayer` / `useMapElementLayers` / `useClientAreaLayer`.
+- `maps_config.map_style_json` (Google style JSON) is no longer read — kept in the type only so saved configs stay valid. `parseGoogleMapsUrl` / `/api/resolve-maps-url` stay: they parse the Google Maps LINKS stored on records, unrelated to which library draws the map.
 
 ## Design System (Official Wassel Branding)
 - **Primary:** Copper Bronze `#B8734F` — buttons, active states, accents (50%)

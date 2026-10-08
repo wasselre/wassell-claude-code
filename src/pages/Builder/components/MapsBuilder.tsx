@@ -1,15 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { useAppStore } from '@/stores/appStore';
-import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import {
-  DEFAULT_MAP_CENTER,
-  DEFAULT_MAP_ZOOM,
-  buildPillIcon,
-  parseMapStyleJson,
-  resolveMapStyles,
-} from '@/lib/locationUtils';
+import { DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM, buildPillIcon } from '@/lib/locationUtils';
+import { createIconMarker, toMapLibreZoom, type MlMap } from '@/lib/map';
+import MapCanvas from '@/components/map/MapCanvas';
 import { resolveMirrorTargetField } from '@/lib/mirrorResolver';
 import { useResolvedLocations } from '@/hooks/useResolvedLocations';
 import { formatFieldValue } from '@/pages/Records/components/MapsView';
@@ -29,8 +23,6 @@ interface MapsBuilderProps {
   /** Block edits when the model is frozen — see ModelEditor. */
   readOnly?: boolean;
 }
-
-const mapContainerStyle = { width: '100%', height: '400px', borderRadius: '12px' };
 
 export default function MapsBuilder({ model, onChange, readOnly = false }: MapsBuilderProps) {
   const { t } = useTranslation();
@@ -93,15 +85,6 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
     update({ popup_shown_field_ids: ids });
   };
 
-  const [jsonStatus, setJsonStatus] = useState<'idle' | 'valid' | 'invalid'>('idle');
-  const validateJson = () => {
-    if (!cfg.map_style_json || !cfg.map_style_json.trim()) {
-      setJsonStatus('idle');
-      return;
-    }
-    setJsonStatus(parseMapStyleJson(cfg.map_style_json) ? 'valid' : 'invalid');
-  };
-
   const modelRecords = records[model.id] ?? [];
   // Show up to 5 pins in the preview. Short URLs that require server-side
   // resolution populate asynchronously via the same cache the Maps view uses.
@@ -137,16 +120,33 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
     [allResolved, labelEf, isAr, t, records, models, users, model],
   );
 
-  const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
-  const keyMissing = !isMapsKeyConfigured();
-
   const center =
     previewPins[0] ??
     (cfg.default_center_lat != null && cfg.default_center_lng != null
       ? { lat: cfg.default_center_lat, lng: cfg.default_center_lng }
       : DEFAULT_MAP_CENTER);
   const zoom = cfg.default_zoom ?? DEFAULT_MAP_ZOOM;
-  const styles = resolveMapStyles(cfg.map_style_json);
+
+  // Preview map. Center/zoom are LIVE here (editing the default center/zoom, or
+  // the first pin resolving, re-frames the preview), so re-apply them whenever
+  // their values change. Zoom is the CLASSIC scale, like the saved config.
+  const [previewMap, setPreviewMap] = useState<MlMap | null>(null);
+  useEffect(() => {
+    if (!previewMap) return;
+    previewMap.jumpTo({ center: [center.lng, center.lat], zoom: toMapLibreZoom(zoom) });
+  }, [previewMap, center.lat, center.lng, zoom]);
+
+  // Preview pins (≤5) — rebuilt whenever the pin set / labels / colors change.
+  useEffect(() => {
+    if (!previewMap) return;
+    const markers = previewPins.map((p) =>
+      createIconMarker(previewMap, {
+        position: { lat: p.lat, lng: p.lng },
+        icon: buildPillIcon(p.label || '•', p.color),
+      }),
+    );
+    return () => markers.forEach((m) => m.remove());
+  }, [previewMap, previewPins]);
 
   return (
     <div
@@ -219,32 +219,6 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
         </div>
 
         <div>
-          <label className="block text-sm font-bold text-charcoal mb-1">{t('maps.style_json')}</label>
-          <p className="text-xs text-charcoal/50 mb-1">{t('maps.style_json_hint')}</p>
-          <textarea
-            value={cfg.map_style_json ?? ''}
-            onChange={(e) => {
-              update({ map_style_json: e.target.value || null });
-              setJsonStatus('idle');
-            }}
-            className="form-input text-xs font-mono min-h-[140px] leading-snug"
-            dir="ltr"
-            placeholder="[]"
-          />
-          <div className="flex items-center gap-2 mt-2">
-            <button
-              type="button"
-              onClick={validateJson}
-              className="text-xs px-2 py-1 rounded-md border border-sand/50 text-charcoal/70 hover:bg-cream"
-            >
-              {t('maps.validate_json')}
-            </button>
-            {jsonStatus === 'valid' && <span className="text-xs text-green-600">{t('maps.valid_json')}</span>}
-            {jsonStatus === 'invalid' && <span className="text-xs text-red-600">{t('maps.invalid_json')}</span>}
-          </div>
-        </div>
-
-        <div>
           <label className="block text-sm font-bold text-charcoal mb-1">{t('maps.default_center')}</label>
           <div className="grid grid-cols-3 gap-3">
             <input
@@ -286,30 +260,14 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
 
       <div>
         <label className="block text-sm font-bold text-charcoal mb-2">{t('maps.preview')}</label>
-        {keyMissing ? (
-          <EmptyMap title={t('maps.api_key_missing')} hint={t('maps.api_key_missing_hint')} />
-        ) : loadError ? (
-          <EmptyMap title={t('maps.api_key_missing')} hint={String(loadError.message ?? loadError)} />
-        ) : !isLoaded ? (
-          <div className="h-[400px] flex items-center justify-center text-charcoal/40 bg-cream/40 rounded-xl">
-            {t('common.loading')}
-          </div>
-        ) : (
-          <GoogleMap
-            mapContainerStyle={mapContainerStyle}
-            center={center}
-            zoom={zoom}
-            options={{ styles, disableDefaultUI: true, zoomControl: true }}
-          >
-            {previewPins.map((p) => (
-              <Marker
-                key={p.id}
-                position={{ lat: p.lat, lng: p.lng }}
-                icon={buildPillIcon(p.label || '•', p.color) as google.maps.Icon | undefined}
-              />
-            ))}
-          </GoogleMap>
-        )}
+        <MapCanvas
+          isAr={isAr}
+          className="h-[400px] w-full overflow-hidden rounded-xl"
+          center={center}
+          zoom={zoom}
+          onLoad={setPreviewMap}
+          onUnmount={() => setPreviewMap(null)}
+        />
       </div>
     </div>
   );
@@ -338,15 +296,6 @@ function Select({ label, hint, value, onChange, fields, isAr }: SelectProps) {
           </option>
         ))}
       </select>
-    </div>
-  );
-}
-
-function EmptyMap({ title, hint }: { title: string; hint: string }) {
-  return (
-    <div className="h-[400px] flex flex-col items-center justify-center gap-2 text-center px-6 bg-cream/40 rounded-xl border border-dashed border-sand/50">
-      <p className="text-sm font-bold text-charcoal/70">{title}</p>
-      <p className="text-xs text-charcoal/50 max-w-sm">{hint}</p>
     </div>
   );
 }

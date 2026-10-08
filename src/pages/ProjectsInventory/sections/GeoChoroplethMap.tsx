@@ -1,9 +1,10 @@
 /**
  * Drill-down demand-vs-supply choropleth (Projects & Inventory, Command Center).
  *
- * FILLED admin polygons — one google.maps.Data feature per boundary (the same
- * perf posture as MarketMap: a few hundred polygons as one Data layer, never one
- * <Polygon> overlay each) — coloured by the caller's demand-vs-supply metric.
+ * FILLED admin polygons — one feature per boundary in ONE GeoJsonOverlay (the
+ * same perf posture as MarketMap: a few hundred polygons in one overlay styled by
+ * a function, never one shape object each) — coloured by the caller's
+ * demand-vs-supply metric.
  * The component is deliberately dumb about the hierarchy: the section owns the
  * drill level and hands down the current tier's `shapes`, a `colorOf`, a
  * `metricOf`, and a `keyOf`. Clicking a feature calls `onFeatureClick(shape)` —
@@ -16,9 +17,12 @@
  * the district record id (see 2026-09-21_geo_choropleth_drilldown.sql).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useJsApiLoader } from '@react-google-maps/api';
-import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { GEO_MAP_STYLE } from '@/lib/locationUtils';
+import MapCanvas from '@/components/map/MapCanvas';
+import {
+  GeoJsonOverlay, geometryFeature, createLabelMarker, fitToBounds, getZoomLevel, onViewportChange,
+  type MlMap, type OverlayFeature,
+} from '@/lib/map';
+import { LngLatBounds, type Marker } from '@/lib/map/maplibre';
 import { useGeoBoundaryLayer } from '@/components/map/useGeoBoundaryLayer';
 import { pickVisibleLabels, geometryExtent, type LabelCandidate } from '@/lib/geo/labelDeclutter';
 import { geometryBounds, type GeoShape, type GeoTier, type DistrictMetric } from '@/lib/geo/choropleth';
@@ -28,6 +32,8 @@ const NO_DATA = '#E5E7EB';
 const COPPER = '#B8734F';
 
 interface Bounds { south: number; west: number; north: number; east: number }
+
+const toLngLatBounds = (b: Bounds) => new LngLatBounds([b.west, b.south], [b.east, b.north]);
 
 interface Props {
   shapes: GeoShape[];
@@ -50,14 +56,10 @@ export default function GeoChoroplethMap({
   shapes, level, keyOf, colorOf, metricOf, labelOf, selectedKey, onFeatureClick,
   focusBounds, isAr, language, heightClass = 'h-[32rem]',
 }: Props) {
-  const { isLoaded } = useJsApiLoader(getMapsLoaderOptions(language));
-  const divRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const dataRef = useRef<google.maps.Data | null>(null);
-  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  const mapRef = useRef<MlMap | null>(null);
+  const dataRef = useRef<GeoJsonOverlay | null>(null);
+  const [mapInstance, setMapInstance] = useState<MlMap | null>(null);
   const [hover, setHover] = useState<GeoShape | null>(null);
-  // Boundaries OFF — our choropleth IS the boundary layer; roads/landmarks give context.
-  useGeoBoundaryLayer(mapInstance, { boundaries: false, landmarks: level === 'district' });
 
   // Look-ups kept in refs so the once-created click/hover listeners read current data.
   const byKey = useMemo(() => {
@@ -73,7 +75,7 @@ export default function GeoChoroplethMap({
   useEffect(() => { clickRef.current = onFeatureClick; }, [onFeatureClick]);
   const selectedRef = useRef(selectedKey);
   useEffect(() => { selectedRef.current = selectedKey; }, [selectedKey]);
-  // Current-render props the once-created 'idle' listener + renderLabels must read.
+  // Current-render props the once-created viewport listener + renderLabels must read.
   const shapesRef = useRef(shapes);
   const labelOfRef = useRef(labelOf);
   const keyOfRef = useRef(keyOf);
@@ -82,7 +84,7 @@ export default function GeoChoroplethMap({
   useEffect(() => { labelOfRef.current = labelOf; }, [labelOf]);
   useEffect(() => { keyOfRef.current = keyOf; }, [keyOf]);
   useEffect(() => { levelRef.current = level; }, [level]);
-  const labelsRef = useRef<google.maps.Marker[]>([]);
+  const labelsRef = useRef<Marker[]>([]);
 
   // Persistent NAME on every area, decluttered so they never stack (the SAME rule the
   // ambient boundary layer uses): big-enough features get named, biggest first; the
@@ -91,11 +93,12 @@ export default function GeoChoroplethMap({
   const renderLabels = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
-    for (const m of labelsRef.current) m.setMap(null);
+    for (const m of labelsRef.current) m.remove();
     labelsRef.current = [];
-    const zoom = map.getZoom();
-    const centerLat = map.getCenter()?.lat() ?? 24;
-    if (typeof zoom !== 'number') return;
+    // CLASSIC-scale zoom: pickVisibleLabels' maths assumes the 256-px world.
+    const zoom = getZoomLevel(map);
+    const centerLat = map.getCenter().lat;
+    if (!Number.isFinite(zoom)) return;
     const sel = selectedRef.current;
     const cands: LabelCandidate[] = [];
     for (const s of shapesRef.current) {
@@ -108,59 +111,59 @@ export default function GeoChoroplethMap({
     const keep = pickVisibleLabels(cands, { zoom, centerLat });
     const byId = new Map(cands.map((c) => [c.id, c]));
     const fs = levelRef.current === 'district' ? '10px' : '12px';
-    const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
     for (const id of keep) {
       const c = byId.get(id);
       if (!c) continue;
-      labelsRef.current.push(new google.maps.Marker({
-        map, position: { lat: c.lat, lng: c.lng }, icon: invisible, clickable: false, zIndex: 5,
-        label: { text: c.text, color: '#3A241E', fontSize: fs, fontWeight: '700' },
+      labelsRef.current.push(createLabelMarker(map, {
+        position: { lat: c.lat, lng: c.lng }, text: c.text, color: '#3A241E', fontSize: fs, fontWeight: '700', zIndex: 5,
       }));
     }
   }, []);
 
-  // ── Map init (once) ─────────────────────────────────────────────────────────
+  // ── Choropleth overlay + listeners (once per map) ───────────────────────────
+  // Declared BEFORE useGeoBoundaryLayer so it is created first and therefore
+  // stacks UNDER the hook's roads/landmarks (overlays stack in creation order).
   useEffect(() => {
-    if (!isLoaded || !divRef.current || mapRef.current) return;
-    const map = new google.maps.Map(divRef.current, {
-      center: RIYADH, zoom: 6, styles: GEO_MAP_STYLE,
-      mapTypeControl: false, streetViewControl: false, fullscreenControl: false, clickableIcons: false,
-    });
+    const map = mapInstance;
+    if (!map) return;
     mapRef.current = map;
-    setMapInstance(map);
-
-    const data = new google.maps.Data({ map });
+    const data = new GeoJsonOverlay(map);
     dataRef.current = data;
-    data.addListener('click', (e: google.maps.Data.MouseEvent) => {
-      const k = e.feature.getProperty('k') as string;
-      const s = byKeyRef.current.get(k);
+    data.on('click', (_hit, props) => {
+      const s = byKeyRef.current.get(String(props.k));
       if (s) clickRef.current(s);
     });
-    data.addListener('mouseover', (e: google.maps.Data.MouseEvent) => {
-      const k = e.feature.getProperty('k') as string;
-      setHover(byKeyRef.current.get(k) ?? null);
+    data.on('mouseover', (_hit, props) => {
+      setHover(byKeyRef.current.get(String(props.k)) ?? null);
     });
-    data.addListener('mouseout', () => setHover(null));
+    data.on('mouseout', () => setHover(null));
     // Re-place labels after every settled zoom/pan — declutter depends on the zoom.
-    map.addListener('idle', () => renderLabels());
+    const offViewport = onViewportChange(map, () => renderLabels());
 
     return () => {
-      for (const m of labelsRef.current) m.setMap(null);
+      offViewport();
+      data.remove();
+      dataRef.current = null;
+      for (const m of labelsRef.current) m.remove();
       labelsRef.current = [];
+      mapRef.current = null;
+      setHover(null);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoaded]);
+  }, [mapInstance, renderLabels]);
+
+  // Boundaries OFF — our choropleth IS the boundary layer; roads/landmarks give context.
+  useGeoBoundaryLayer(mapInstance, { boundaries: false, landmarks: level === 'district', isAr });
 
   // ── (Re)draw features + fit to the drawn set ────────────────────────────────
   useEffect(() => {
     const data = dataRef.current, map = mapRef.current;
     if (!data || !map) return;
-    data.forEach((f) => data.remove(f));
+    const features: OverlayFeature[] = [];
     const agg: Bounds = { south: 90, west: 180, north: -90, east: -180 };
     let any = false;
     for (const s of shapes) {
       if (!s.geojson) continue;
-      data.addGeoJson({ type: 'Feature', geometry: s.geojson, properties: { k: keyOf(s) } } as unknown as object);
+      features.push(geometryFeature(s.geojson, { k: keyOf(s) }));
       const b = geometryBounds(s.geojson);
       if (b) {
         any = true;
@@ -168,14 +171,12 @@ export default function GeoChoroplethMap({
         agg.north = Math.max(agg.north, b.north); agg.east = Math.max(agg.east, b.east);
       }
     }
-    if (any) {
-      const gb = new google.maps.LatLngBounds({ lat: agg.south, lng: agg.west }, { lat: agg.north, lng: agg.east });
-      map.fitBounds(gb, 24);
-    }
-    renderLabels(); // draw names now; the 'idle' listener re-places them after the fit settles
+    data.setData(features);
+    if (any) fitToBounds(map, toLngLatBounds(agg), { padding: 24 });
+    renderLabels(); // draw names now; the viewport listener re-places them after the fit settles
     // Redraw + refit whenever the drawn SET changes (a drill loads new shapes),
-    // AND once the map itself becomes ready — shapes often resolve before the Maps
-    // library finishes loading, and without mapInstance in the deps that first set
+    // AND once the map itself becomes ready — shapes often resolve before the
+    // basemap finishes loading, and without mapInstance in the deps that first set
     // would be dropped (the effect bails on !map and never re-runs).
     // Selecting a district does NOT change `shapes`, so it won't refit here — the
     // focusBounds effect handles zooming to the one selected district.
@@ -186,8 +187,8 @@ export default function GeoChoroplethMap({
   useEffect(() => {
     const data = dataRef.current;
     if (!data) return;
-    data.setStyle((feature) => {
-      const k = feature.getProperty('k') as string;
+    data.setStyle((props) => {
+      const k = String(props.k);
       const s = byKey.get(k);
       const isSel = k === selectedKey;
       return {
@@ -197,28 +198,20 @@ export default function GeoChoroplethMap({
         strokeWeight: isSel ? 3 : 0.8,
         strokeOpacity: isSel ? 1 : 0.65,
         zIndex: isSel ? 10 : 1,
+        clickable: true,
       };
     });
-  }, [byKey, colorOf, selectedKey]);
+  }, [byKey, colorOf, selectedKey, mapInstance]);
 
   // ── Zoom to a selected district ─────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !focusBounds) return;
-    map.fitBounds(
-      new google.maps.LatLngBounds(
-        { lat: focusBounds.south, lng: focusBounds.west },
-        { lat: focusBounds.north, lng: focusBounds.east },
-      ),
-      48,
-    );
-  }, [focusBounds]);
+    fitToBounds(map, toLngLatBounds(focusBounds), { padding: 48 });
+  }, [focusBounds, mapInstance]);
 
   // Re-label when the selection changes so the selected feature keeps its name.
   useEffect(() => { renderLabels(); }, [selectedKey, renderLabels]);
-
-  if (!isMapsKeyConfigured()) return <div className={`grid ${heightClass} place-items-center rounded-xl bg-cream text-sm text-charcoal/50`}>{isAr ? 'مفتاح خرائط Google غير مُعد' : 'Google Maps key not configured'}</div>;
-  if (!isLoaded) return <div className={`grid ${heightClass} place-items-center rounded-xl bg-cream text-sm text-charcoal/40`}>{isAr ? 'جارٍ تحميل الخريطة…' : 'Loading map…'}</div>;
 
   const hoverMetric = hover ? metricOf(hover) : null;
   const drillHint = level === 'district' ? (isAr ? 'انقر للتكبير والتفاصيل' : 'Click to zoom + details')
@@ -227,11 +220,21 @@ export default function GeoChoroplethMap({
 
   return (
     <div className={`relative ${heightClass} w-full overflow-hidden rounded-xl`}>
-      <div ref={divRef} className="h-full w-full" />
+      <MapCanvas
+        isAr={language === 'ar'}
+        className="h-full w-full"
+        center={RIYADH}
+        zoom={6}
+        onLoad={setMapInstance}
+        onUnmount={() => setMapInstance(null)}
+        // Top-start keeps the zoom buttons clear of the legend (bottom-start) and
+        // the hover card (top-end) in both directions.
+        navigationControl={isAr ? 'top-right' : 'top-left'}
+      />
       {shapes.length === 0 && <div className="absolute inset-0 grid place-items-center bg-cream/60 text-sm text-charcoal/40">{isAr ? 'لا توجد مناطق لعرضها' : 'No areas to display'}</div>}
 
-      {/* Legend */}
-      <div className="absolute bottom-3 start-3 rounded-lg bg-white/95 px-3 py-2 text-[11px] shadow-sm">
+      {/* Legend — lifted above the basemap attribution (bottom-left). */}
+      <div className="absolute bottom-9 start-3 rounded-lg bg-white/95 px-3 py-2 text-[11px] shadow-sm">
         <div className="mb-1 font-bold text-charcoal">{isAr ? 'فجوة الطلب مقابل المعروض' : 'Demand vs supply'}</div>
         <div className="flex items-center gap-1">
           <span className="text-charcoal/50">{isAr ? 'مغطّى' : 'Covered'}</span>

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Layers, ChevronUp, Loader2 } from 'lucide-react';
 import { MAP_LAYER_GROUPS, categoriesForLayers } from '@/lib/geo/mapLayers';
 import { useMapElementLayers } from './useMapElementLayers';
+import type { MlMap } from '@/lib/map';
 
 /**
  * Floating map layer control — the single shared panel mounted on every pin map
@@ -11,13 +12,13 @@ import { useMapElementLayers } from './useMapElementLayers';
  *
  * Self-contained: holds its own toggle state (all OFF by default — the map opens
  * clean), resolves the enabled layers to geo_elements categories, and drives
- * useMapElementLayers to draw them. Drop it as a child of <GoogleMap> with the
+ * useMapElementLayers to draw them. Drop it as a child of <MapCanvas> with the
  * map instance:  {map && <MapLayersOverlay map={map} isAr={isAr} />}
  *
  * The administrative boundary outline is a separate always-on layer
  * (useGeoBoundaryLayer) and is not toggled here.
  */
-export default function MapLayersOverlay({ map, isAr }: { map: google.maps.Map | null; isAr: boolean }) {
+export default function MapLayersOverlay({ map, isAr }: { map: MlMap | null; isAr: boolean }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState<Set<string>>(() => new Set());
 
