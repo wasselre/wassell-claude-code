@@ -1147,6 +1147,11 @@ rule for telling them apart is what question each answers:
   posts reach a content/writing surface: views that require an enrichment row
   exclude them already; anything new that reads posts WITHOUT that join must
   fence `org_type <> 'visual_reference'` (see `2026-10-06_02_…`).
+  **They never reach Files either** (operator 2026-10-08: real-estate
+  companies' content goes into the live app, visual references' does not):
+  `social_file_enqueue` / `social_file_backfill` refuse them
+  (`2026-10-08_03`); a company flipped to visual reference after its posts
+  were registered must have those files unlinked + archived the same way.
   **`org_type` is the ONE visual-reference marker** — a second one (a
   `watch_role` column) was built the same day and folded in by `2026-10-06_04`.
   For a company in the CRM Companies list, set it on the record's «سبب المتابعة»
