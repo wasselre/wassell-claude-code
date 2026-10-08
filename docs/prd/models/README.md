@@ -16,7 +16,7 @@
 | [Chats](chats.md) | `chats` | JSONB | — | 1 | 15 | yes | 2026-10-04 |
 | [Cities](cities.md) | `cities` | frozen `cities` | Geography | 1 | 12 | no | 2026-07-30 |
 | [Client Property Options](client-property-options.md) | `client_property_options` | JSONB | — | 1 | 13 | no | 2026-10-04 |
-| [Clients](clients.md) | `clients` | JSONB | — | 4 | 24 | no | 2026-10-05 |
+| [Clients](clients.md) | `clients` | JSONB | — | 4 | 24 | no | 2026-10-08 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-08-20 |
 | [Contacts](contacts.md) | `contacts` | JSONB | — | 1 | 6 | no | 2026-08-10 |
 | [Countries](countries.md) | `countries` | JSONB | Geography | 1 | 5 | no | 2026-06-28 |
@@ -35,7 +35,7 @@
 | [Offer Prices](offer-prices.md) | `offer_prices` | JSONB | — | 1 | 9 | no | 2026-10-04 |
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 5 | 15 | no | 2026-09-20 |
 | [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | — | 1 | 8 | no | 2026-10-04 |
-| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | — | 2 | 16 | no | 2026-10-04 |
+| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | — | 2 | 18 | no | 2026-10-08 |
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 1 | 12 | yes | 2026-09-29 |
 | [Project Officers](project-officers.md) | `project_officers` | JSONB | Projects | 1 | 7 | no | 2026-09-29 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-08-20 |

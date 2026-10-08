@@ -5,7 +5,7 @@
 # Workflow: Apology WhatsApp on missed call / رسالة اعتذار عند مكالمة فائتة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-04-27
+**Last updated (from DB):** 2026-10-08
 **Workflow id:** `58392e9e-62bb-4a50-bcdb-81c7781b0539`   ·   **Active:** yes
 **Group:** Sales
 **Trigger:** When a record is created
@@ -13,12 +13,13 @@
 
 ## Logic (branched)
 
-### Branch 1: IF — Inbound missed/no-answer
+### Branch 1: IF — Inbound missed call
 
 **Conditions:**
 _Match: ALL must pass (AND)_
 - Direction (`direction`) equals "Incoming" (`inbound`)
-- Status (`status`) overlaps with "Missed" (`missed`)
+- Status (`status`) overlaps with "Missed" (`missed`), "No Answer" (`no_answer`)
+- Apology Skipped Because (`apology_skip_reason`) is empty
 
 **Actions (run in order):**
 
@@ -29,7 +30,9 @@ Send a WhatsApp message:
 - body:
 
 ```
-عذراً لعدم تمكننا من الرد على اتصالكم. سنقوم بمعاودة الاتصال بكم في أقرب وقت ممكن.
+مرحباً، نعتذر لعدم تمكننا من الرد على اتصالكم 🙏
 
-شكراً لتواصلكم مع وصل العقارية 🌹
+كيف يمكننا مساعدتكم؟
+
+وصل العقارية 🌹
 ```

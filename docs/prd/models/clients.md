@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-10-05
+**Last updated (from DB):** 2026-10-08
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -128,7 +128,7 @@
 | `preferred_language` | Preferred Language / اللغة المفضلة للعميل | Dropdown | no | half | no | 2 options |
 | `preferred_max_unit_age` | Unit age (max) / عمر العقار (حد أقصى) | Dropdown | no | half | no | 4 options |
 | `preferred_unit_type` | Preferred Unit Type / نوع الوحدة المفضل للعميل | Multi-select | no | half | no | 7 options · multi |
-| `preferred_amenities` | Preferred Amenities / المرافق المفضلة للعميل | Multi-select | no | half | no | 7 options · multi |
+| `preferred_amenities` | Preferred Amenities / المرافق المفضلة للعميل | Multi-select | no | half | no | 22 options · multi |
 | `budget` | Budget / الميزانية | Range | no | half | no | 500000–10000000 |
 | `preferred_bedrooms` | Preferred Bedrooms / عدد غرف النوم المفضل | Range | no | half | no | 1–10 |
 | `preference_notes` | Preference Notes / ملاحظات التفضيلات | Text area | no | full | no |  |
@@ -163,6 +163,21 @@
   - API value `حوش` → "Yard" / "حوش"
   - API value `سطح` → "Rooftop" / "سطح"
   - API value `مصعد` → "Elevator" / "مصعد"
+  - API value `بلكونة` → "Balcony" / "بلكونة"
+  - API value `غرفة غسيل` → "Laundry Room" / "غرفة غسيل"
+  - API value `غرفة ملابس` → "Walk-in Closet" / "غرفة ملابس"
+  - API value `مستودع` → "Storage Room" / "مستودع"
+  - API value `تراس` → "Terrace" / "تراس"
+  - API value `حديقة خاصة` → "Private Garden" / "حديقة خاصة"
+  - API value `حدائق ومساحات خضراء` → "Gardens & Green Spaces" / "حدائق ومساحات خضراء"
+  - API value `نادي رياضي` → "Gym" / "نادي رياضي"
+  - API value `جلسات خارجية` → "Outdoor Seating" / "جلسات خارجية"
+  - API value `ألعاب أطفال` → "Kids Play Area" / "ألعاب أطفال"
+  - API value `حراسة وكاميرات` → "Security & Cameras" / "حراسة وكاميرات"
+  - API value `ممشى` → "Walking Track" / "ممشى"
+  - API value `شواحن سيارات كهربائية` → "EV Chargers" / "شواحن سيارات كهربائية"
+  - API value `جاكوزي وساونا وسبا` → "Jacuzzi, Sauna & Spa" / "جاكوزي وساونا وسبا"
+  - API value `ملعب بادل` → "Padel Court" / "ملعب بادل"
 - **Budget / الميزانية** (`budget`, type `range`):
   - 500000 to 10000000 step 50000 SAR
   - selectable values (191): 500,000 … 10,000,000 step 50,000

@@ -5,7 +5,7 @@
 # Model: Phone Calls / المكالمات  `phone_calls`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-10-04
+**Last updated (from DB):** 2026-10-08
 **Model id:** `1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **2** (2 base, 0 non-base)
-- Fields: **16**
+- Fields: **18**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -45,6 +45,8 @@
 | `hangup_time` | Hung Up At / وقت الإنهاء | Date & time | no | half | no |  |
 | `recording_url` | Recording URL / رابط التسجيل | URL | no | full | no |  |
 | `client_link` | Linked Client / العميل المرتبط | Lookup | no | half | yes | → Clients |
+| `apology_skip_reason` | Apology Skipped Because / سبب عدم إرسال الاعتذار | Dropdown | no | third | no | 2 options |
+| `client_auto_created` | Client Auto-Created From Call / عميل أنشئ تلقائياً من المكالمة | Checkbox | no | third | no |  |
 
 **Field details:**
 
@@ -75,6 +77,9 @@
   - target model: Clients
   - shows field: `client_name`
   - multiple: no
+- **Apology Skipped Because / سبب عدم إرسال الاعتذار** (`apology_skip_reason`, type `dropdown`) — options:
+  - API value `repeat_within_hour` → "Repeat missed call within an hour" / "مكالمة فائتة متكررة خلال ساعة" · color `#C09B5F`
+  - API value `staff_number` → "Staff number" / "رقم موظف" · color `#6B7280`
 
 ### 2. Call Transcript / نص المكالمة  _(base, color #B8734F)_
 
