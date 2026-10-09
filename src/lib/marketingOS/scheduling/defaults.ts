@@ -20,7 +20,9 @@ const s = (
 /**
  * «مسار المنشور القياسي» — the live post/carousel/story path.
  *
- * It ENDS at the manager's final approval. `scheduling` and `publish_check`
+ * It ENDS at the writer's design review, which is the final approval. The
+ * Marketing Manager's two approvals (writing review, final approval) were
+ * removed on 2026-10-09 — see `2026-10-09_01_remove_manager_content_approval.sql`. `scheduling` and `publish_check`
  * were removed on 2026-09-14: putting a creative out is a RELEASE, modelled in
  * `releases.ts` as one job per destination per date, not a tail on the
  * production chain. One pair of steps could never describe N destinations, and
@@ -44,27 +46,22 @@ export const POST_WORKFLOW: WorkflowSpec = {
   sameDayChain: true,
   steps: [
     s('writing', 'writer', false, 1, 'كتابة', 'Writing'),
-    s('writing_review', 'marketing_manager', true, 1, 'مراجعة الكتابة', 'Writing review'),
     s('design', 'montage', false, 1, 'تصميم', 'Design'),
     s('design_writer_review', 'writer', true, 1, 'مراجعة التصميم', 'Design review'),
-    s('design_review', 'marketing_manager', true, 1, 'الاعتماد النهائي', 'Final approval'),
   ],
 };
 
-/** «مسار الفيديو القياسي». Ends at final approval — see the note on POST_WORKFLOW. */
+/** «مسار الفيديو القياسي». Ends at the writer's review (the final approval) — see the note on POST_WORKFLOW. */
 export const VIDEO_WORKFLOW: WorkflowSpec = {
   workflowKey: 'video_std',
   bucket: 'video',
   steps: [
     s('idea', 'writer', false, 1, 'الفكرة', 'Idea'),
-    s('idea_review', 'marketing_manager', true, 1, 'مراجعة الفكرة', 'Idea review'),
     s('script', 'writer', false, 2, 'النص', 'Script'),
-    s('script_review', 'marketing_manager', true, 1, 'مراجعة النص', 'Script review'),
     s('assets', 'montage', false, 2, 'جمع المواد', 'Asset collection'),
     s('editing', 'montage', false, 3, 'المونتاج والتعليق', 'Editing + VO'),
     s('first_version', 'montage', false, 1, 'النسخة الأولى', 'First version'),
     s('writer_review', 'writer', true, 1, 'مراجعة الكاتب', 'Writer review'),
-    s('review', 'marketing_manager', true, 1, 'الاعتماد النهائي', 'Final approval'),
   ],
 };
 

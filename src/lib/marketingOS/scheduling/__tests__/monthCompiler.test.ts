@@ -374,8 +374,8 @@ describe('October 2026 — compiled', () => {
 
   it('charges each row three slots on one day, sixteen times over', () => {
     const rowRes = out.organic.plan.reservations;
-    // Five steps per row, sixteen rows.
-    expect(rowRes).toHaveLength(80);
+    // Three steps per row, sixteen rows.
+    expect(rowRes).toHaveLength(48);
     for (const r of rowRes) {
       expect(r.rowKey).not.toBeNull();
       expect(r.weight).toBe(3);

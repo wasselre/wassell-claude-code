@@ -1,6 +1,7 @@
 # PRD: Marketing Workspace (مساحة التسويق)
 
 **Status:** Live
+**Last updated:** 2026-10-09 (**Content no longer needs the Marketing Manager's approval** — the writer's design review is the final approval; see the first Key behaviors bullet.)
 **Last updated:** 2026-10-05 (**Paid: five new a week, keep the best one of last week, stop the rest — automatically.** Operator rule. In the September–October plan no ad was ever stopped: the weekly decision waited for the marketing manager (auto-apply off; three decision tasks open from 28 Sep), the ranking kept every ad it could not "judge" (≥ SAR 101 and ≥ 2,000 impressions in its own week — with one project's budget split over 5–7 ads almost none qualify, so the default was "keep everything"), and `mos_settings.meta_auto_ad.status = ACTIVE` created every ad live the minute its design was approved, outside the weekly batches, so the swap — which only pauses as many as it activates from ready slots — had nothing to swap. Live designs reached 7 / 6 / 5 per project. Now (`worker/src/marketing/weeklySlate.ts` + `reconcileWeeklySlates` in `worker/src/runRefreshCycleJob.ts`, switched on by `planning.weekly_rule = keep_best_of_last_batch`): a batch is the creatives whose slot starts the same day (Tuesdays in this plan); an approved design's ad is created PAUSED and goes live on its batch day (one approved later goes live within minutes); on each batch day the previous batch is ranked ONCE — most of OUR leads (WhatsApp conversations its ad opened) in its own first week, then cheaper per lead, then more clicks; Meta's lead count only when none of ours exist — and its single best is kept and stored on the batch's refresh cycle (`decision.keep_key`, chosen by exactly one worker machine via a conditional write); everything else from that batch and older is paused on Meta (feed + story). Never fewer than `planning.min_active_creatives` (5) live: when this week's designs are late the best of the ads due to stop keep running and stop one for one as the new ones go live. Nothing it paused is re-activated; an ad paused by hand is not turned back on; a design approved after its week has passed is not launched. The ranking swap, its decision tasks and the first-batch activation no longer run while the rule is on (the open decision tasks are closed). Each batch's cycle carries the keeper, the ranking, what was held for the minimum and a bilingual summary. Migration `2026-10-05_01_weekly_keep_best_rule.sql`. Verified by dry run on production data with Meta faked and every write held back.)
 **Last updated:** 2026-10-04 (**Three marketing roles; one permissions table.** The CEO and Operations-supervisor roles are retired — see «Three roles, one permissions table» under Key behaviors.)
 **Last updated:** 2026-10-04 (**The Month report's numbers take a date range.** The report's «الأرقام» card used the month's posting weeks only (October 2026 = Sunday 4th → 31st), so on the 4th it showed one day and nothing earlier was reachable. `month_report` now accepts optional inclusive `from`/`to` (YYYY-MM-DD; 400 when only one is given or from > to) and returns `window.default_from`/`default_to`. The card has a picker: «أسابيع الخطة» (default, posting weeks), «الشهر كاملًا» (calendar month) and two date inputs. Only the numbers move — the plan, releases and weeks grid stay the month's. The chosen range resets when the month changes.)
@@ -63,6 +64,29 @@ This workspace answers the three questions the old process could not:
 
 ## Key behaviors
 
+- **Content no longer waits on the Marketing Manager (2026-10-09).** Operator
+  decision: both of the manager's content approvals are gone. The post path is
+  now `writing` (writer) → `design` (montage) → `design_writer_review` (writer),
+  and the video path is idea → script → assets → editing → first version →
+  writer review, all without a manager step. **The writer's review is the final
+  approval:** it carries `auto_meta_ad`, so approving it records the binding
+  `mos_content_approvals` row, promotes the approved file, unlocks publishing
+  (the release gate looks for the approval on the `auto_meta_ad` step) and, on
+  a paid creative, creates the Meta ad with the writer's confirmed caption —
+  the ad-set panel and the ad preflight show on the writer's approval now.
+  Rejecting it returns the work to the designer (or the writing, if chosen).
+  Work in flight was moved to the new path; the three items already sitting at
+  the manager's final approval on 2026-10-09 stayed on the old path for the
+  manager to finish, and finished posts keep their old approvals. A revision
+  (`content_revise`, `mos_content_request_caption`) moves the post onto the
+  CURRENT path and reopens it at the writing, and a caption-only revision can
+  never skip the final step (the engine refuses to skip an `auto_meta_ad`
+  step). The planner no longer books manager approval time for content.
+  Migrations: `2026-10-09_01_remove_manager_content_approval.sql`,
+  `2026-10-09_02_release_unstarted_manager_reservations.sql`. The manager still
+  holds every other capability (ads, budgets, refresh decisions, retries); the
+  step can be added back in Settings → Workflows if ever wanted.
+
 - **The two task types — making a creative, and putting it out (2026-09-14).**
   Until now one linear workflow carried a creative from the brief all the way to
   "posted", ending in a `scheduling` step and a `publish_check` step. That broke
@@ -70,7 +94,8 @@ This workspace answers the three questions the old process could not:
   publish check, so closing it declared the whole creative published and the
   second destination had no owner, no date and no way to be completed.
 
-  - **The CONTENT task ends at the manager's final approval.** The workflow no
+  - **The CONTENT task ends at the final approval** (the manager's until
+    2026-10-09, the writer's design review since). The workflow no
     longer carries `scheduling` or `publish_check`. Work already in production
     keeps its PINNED workflow version, so nothing mid-flight changed path.
   - **The PUBLICATION task is one release: one finished creative, one
@@ -624,7 +649,10 @@ This workspace answers the three questions the old process could not:
   a CHECK constraint and by the UI, because a blind rejection just restarts the
   loop. Rejection sends the work back one stage as a **new round**; nothing is
   overwritten, so "why did this go back twice?" is answered by scrolling.
-- **Approval is split three ways.** Marketing Manager approves creative,
+- **Approval is split three ways.** *(Historical — superseded: the CEO and
+  Operations Supervisor roles were retired 2026-10-04 and the manager's content
+  approvals removed 2026-10-09; the writer's design review is the final
+  approval.)* Marketing Manager approves creative,
   Operations Supervisor approves process, CEO signs off budget and approves no
   content. That split is what stops one person becoming everyone's queue.
 - **Approval promotes the submitted file (2026-08-06).** A material's owner marks

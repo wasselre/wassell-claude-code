@@ -36,11 +36,9 @@ describe('backward deadlines', () => {
     const prod = CLASSIC_POST_WORKFLOW.steps.filter((s) => !s.afterReady);
     const dl = computeDeadlines(prod, '2026-10-10', CAL);
     expect(Object.fromEntries(prod.map((s, i) => [s.key, dl[i]]))).toEqual({
-      writing: '2026-10-04',
-      writing_review: '2026-10-05',
-      design: '2026-10-07',
-      design_writer_review: '2026-10-08', // Oct 9 is Friday
-      design_review: '2026-10-10',
+      writing: '2026-10-06',
+      design: '2026-10-08', // Oct 9 is Friday
+      design_writer_review: '2026-10-10',
     });
   });
 });
@@ -128,7 +126,7 @@ describe('§22.1 — publishing batches drive production', () => {
     const b1 = res.batches[0].itemKeys.map((k) => byKey(res.items, k));
     for (const it of b1) {
       expect(it.requiredReadyAt).toBe('2026-10-10');
-      expect(daysBetween(stageOf(it, 'design_review').end, '2026-10-10')).toBeGreaterThanOrEqual(0);
+      expect(daysBetween(stageOf(it, 'design_writer_review').end, '2026-10-10')).toBeGreaterThanOrEqual(0);
     }
   });
 

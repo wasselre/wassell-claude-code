@@ -13,7 +13,7 @@ import { planCampaign, DEFAULT_RULES } from '../plan';
 import { CapacityBook, effortWeights } from '../ledger';
 import { daysBetween } from '../calendar';
 import type { LedgerRow, PlanInput } from '../types';
-import { CAL, M1, M2, W, MM, PROJECT_A, PROJECT_B, PROJECT_C, TEAM, snapshot } from './fixtures';
+import { CAL, M1, M2, W, PROJECT_A, PROJECT_B, PROJECT_C, TEAM, snapshot } from './fixtures';
 import { CLASSIC_RULES } from './classicWorkflow';
 
 const organic = (over: Partial<PlanInput> = {}): PlanInput => ({
@@ -141,7 +141,7 @@ describe('leave and holidays are hard constraints', () => {
 });
 
 describe('approvals have their own budget', () => {
-  it('manager reviews consume the approvals bucket, not the design bucket', () => {
+  it('reviews consume the approvals bucket, not the design bucket', () => {
     // Two DIFFERENT projects: Instagram forbids the same project on
     // consecutive posts, so A1 then A2 on back-to-back days is (correctly)
     // unschedulable — see the distribution rules test.
@@ -151,9 +151,12 @@ describe('approvals have their own budget', () => {
       frequency: [{ platform: 'instagram', perDay: 1, weekdays: null }],
     }), snapshot('2026-10-19'), DEFAULT_RULES);
     expect(res.feasible).toBe(true);
-    const mgr = res.items[0]!.stages.find((s) => s.stepKey === 'writing_review')!;
-    expect(mgr.bucket).toBe('approvals');
-    expect(mgr.assigneeUserId).toBe(MM);
+    // The post path has no manager step since 2026-10-09; the writer's design
+    // review is the final approval and is the review that draws on approvals.
+    expect(res.items[0]!.stages.some((s) => s.roleKey === 'marketing_manager')).toBe(false);
+    const review = res.items[0]!.stages.find((s) => s.stepKey === 'design_writer_review')!;
+    expect(review.bucket).toBe('approvals');
+    expect(review.assigneeUserId).toBe(W);
     const writing = res.items[0]!.stages.find((s) => s.stepKey === 'writing')!;
     expect(writing.bucket).toBe('post');
     expect(writing.assigneeUserId).toBe(W);

@@ -95,8 +95,8 @@ describe('a row is one task and three slots on ONE day', () => {
   });
 
   it('books ONE reservation per step for the whole row, weighing three, on a single day', () => {
-    // Five steps in `post_std`, not fifteen: the row is the subject.
-    expect(res.reservations).toHaveLength(5);
+    // Three steps in `post_std`, not nine: the row is the subject.
+    expect(res.reservations).toHaveLength(3);
     for (const r of res.reservations) {
       expect(r.rowKey).toBe('r:a');
       expect(r.itemKey).toBe('r:a');
