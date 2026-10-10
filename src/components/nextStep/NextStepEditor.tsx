@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Phone, Bot, MessageSquare } from 'lucide-react';
 import { inDaysAtTen, type NextChannel, type NextPlan } from '@/lib/nextStep/client';
 
@@ -18,6 +18,12 @@ export default function NextStepEditor({
   const [channel, setChannel] = useState<NextChannel>(initial?.channel ?? 'ai_whatsapp');
   const [at, setAt] = useState<string>(initial?.at ?? inDaysAtTen(1));
   const emit = (c: NextChannel, a: string) => { setChannel(c); setAt(a); onChange({ channel: c, at: a }); };
+  // No plan yet: what the picker shows (WhatsApp by the AI, in 1 day) is the
+  // choice — report it so Save saves exactly what is highlighted.
+  useEffect(() => {
+    if (!initial) onChange({ channel, at });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const channels: Array<{ id: NextChannel; ar: string; en: string; icon: JSX.Element }> = [
     { id: 'call', ar: 'مكالمة', en: 'A call', icon: <Phone size={14} /> },

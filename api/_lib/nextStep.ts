@@ -216,8 +216,15 @@ export async function decideReview(sb: SupabaseClient, review: ReviewRow, input:
 
   // conversation — «Agree»: the AI's reading becomes the result, decided by the agent.
   if (input.action !== 'agree') throw new DecideError(400, 'a conversation card is agreed here; another result is set in the chat popup');
-  const s = await loadSuggestion(sb, review.suggestion_id);
-  if (!s) throw new DecideError(409, 'the AI reading is gone — set the result in the chat');
+  const loaded = await loadSuggestion(sb, review.suggestion_id);
+  if (!loaded) throw new DecideError(409, 'the AI reading is gone — set the result in the chat');
+  let s = loaded;
+  // «Call back later» needs the date: the agent's chosen next step IS that date.
+  if (s.suggested_outcome === 'recontact_later') {
+    const date = input.next?.at ?? (typeof s.suggested_fields?.reschedule_contact_date === 'string' ? s.suggested_fields.reschedule_contact_date : null);
+    if (!date) throw new DecideError(400, 'choose when to contact the client again');
+    s = { ...s, suggested_fields: { ...(s.suggested_fields ?? {}), reschedule_contact_date: date } };
+  }
   const res = await applySuggestion(sb, s, { userId: me, reviewed: true });
   if (!res.applied) throw new DecideError(409, res.reason ?? 'could not apply');
   const plan = input.next;

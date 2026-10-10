@@ -80,7 +80,9 @@ function CardRow({ card, isAr, showOwner, onChanged }: { card: NextStepCard; isA
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
   const users = useAppStore((s) => s.users);
-  const [editing, setEditing] = useState(false);
+  // «Call back later» with no date: the agent must say when — open the picker.
+  const needsDate = card.kind === 'conversation' && card.suggested_result === 'recontact_later' && !card.suggested_next;
+  const [editing, setEditing] = useState(needsDate);
   const [plan, setPlan] = useState<NextPlan | null>(card.kind === 'conversation' ? card.suggested_next : card.planned_next);
   const [saving, setSaving] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -153,7 +155,8 @@ function CardRow({ card, isAr, showOwner, onChanged }: { card: NextStepCard; isA
           <p className="mt-1.5 text-sm">
             <span className="text-charcoal/55">{L('الخطوة التالية: ', 'Next step: ')}</span>
             <span className="font-bold text-chocolate">
-              {describePlan(card.kind === 'conversation' ? card.suggested_next : card.planned_next, isAr)}
+              {needsDate ? L('حدد متى يُعاد التواصل', 'Choose when to contact again')
+                : describePlan(card.kind === 'conversation' ? card.suggested_next : card.planned_next, isAr)}
             </span>
           </p>
         )
@@ -186,8 +189,11 @@ function CardRow({ card, isAr, showOwner, onChanged }: { card: NextStepCard; isA
 
         {card.kind === 'conversation' && card.status === 'pending' && (editing ? (
           <>
-            <Button onClick={() => void decide(plan ? { action: 'agree', next: plan } : { action: 'agree' })} disabled={saving}>{L('احفظ', 'Save')}</Button>
-            <Button variant="ghost" onClick={() => setEditing(false)} disabled={saving}>{L('إلغاء', 'Cancel')}</Button>
+            <Button onClick={() => void decide(plan ? { action: 'agree', next: plan } : { action: 'agree' })} disabled={saving || (needsDate && !plan)}>{L('احفظ', 'Save')}</Button>
+            {!needsDate && <Button variant="ghost" onClick={() => setEditing(false)} disabled={saving}>{L('إلغاء', 'Cancel')}</Button>}
+            {needsDate && followup && followupsModel && card.chat_record_id && (
+              <Button variant="secondary" onClick={() => setResultOpen(true)} disabled={saving}>{L('نتيجة أخرى', 'Another result')}</Button>
+            )}
           </>
         ) : (
           <>
