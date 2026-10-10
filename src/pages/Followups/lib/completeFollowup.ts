@@ -17,6 +17,7 @@
 
 import type { AppModel, AppRecord, SaveRecordOpts, SaveResult } from '@/types';
 import { buildFieldLabels, validateFollowUpCompletion } from '@/lib/salesProcess';
+import { announceFollowupCompleted } from '@/lib/nextStep/client';
 
 export type SaveRecordFn = (record: AppRecord, opts?: SaveRecordOpts) => Promise<SaveResult>;
 
@@ -103,5 +104,7 @@ export async function completeFollowUp(args: CompleteFollowUpArgs): Promise<Comp
     }
   }
 
+  // A person recorded a result → the «next step» popup (NextStepPromptHost).
+  announceFollowupCompleted(record.id);
   return { ok: true, queued: saveResult.status === 'queued', data: finalData };
 }

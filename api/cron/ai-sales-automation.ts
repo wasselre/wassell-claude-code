@@ -54,6 +54,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { autoApplyOutcomes } from '../_lib/outcomeAutoApply.js';
+import { createConversationCards, finalizeWaiting, applyDefaults } from '../_lib/nextStep.js';
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { LEAD_PORTALS_MODEL_ID, type Rec } from '../_lib/leadPortals.js';
 import { registerOnInterest, isTransientPortalFailure, RETRY_AFTER_MS } from '../_lib/portalInterest.js';
@@ -91,6 +92,11 @@ interface Settings {
   auto_apply_outcomes: boolean;
   outcome_auto_min_confidence: number;
   outcome_quiet_minutes: number;
+  /** The agent decides results and next steps (2026-10-10, api/_lib/nextStep.ts). */
+  owner_decides_next_step: boolean;
+  review_quiet_minutes: number;
+  next_step_default_hour: number;
+  next_step_default_ran_on: string | null;
 }
 
 interface InterestRow {
@@ -351,6 +357,28 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       report.auto_outcomes = await autoApplyOutcomes(svc, settings, { dryRun, deadline: startedAt + TIME_BUDGET_MS });
     } catch (err) {
       fail('auto-apply outcomes', err);
+    }
+
+    // ── 3d. The agent owns the next step (owner_decides_next_step) ───────────
+    // Quiet conversations → review cards; decisions whose planned task now
+    // exists → finished; at 21:00 Riyadh, whatever is still pending → applied
+    // as suggested. Each part is independent; a failure is reported, not fatal.
+    try {
+      report.next_step_cards = await createConversationCards(svc, settings, { dryRun, deadline: startedAt + TIME_BUDGET_MS });
+    } catch (err) {
+      fail('next-step cards', err);
+    }
+    if (!dryRun) {
+      try {
+        report.next_step_finalized = await finalizeWaiting(svc);
+      } catch (err) {
+        fail('next-step finalize', err);
+      }
+    }
+    try {
+      report.next_step_defaults = await applyDefaults(svc, settings, { dryRun, deadline: startedAt + TIME_BUDGET_MS });
+    } catch (err) {
+      fail('next-step defaults', err);
     }
 
     // ── 4. Follow-up messages (sent without approval) ────────────────────────

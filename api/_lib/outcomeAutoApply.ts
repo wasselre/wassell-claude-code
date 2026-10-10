@@ -20,6 +20,11 @@
  * pressed it. A positive result also sets the client's main project when the
  * client has none (client_option_set_main_ai). Each application is logged in
  * `client_ai_changes` (kind 'outcome').
+ *
+ * Since 2026-10-10, with `owner_decides_next_step` on, the AI no longer applies
+ * readings by itself: api/_lib/nextStep.ts turns each into a review card for the
+ * client's agent, and `applySuggestion` below is what the agent's «Agree» (or the
+ * end-of-day default) runs — the same checks and the same write.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordSaveWithRetry } from './recordSaveRetry.js';
@@ -30,7 +35,7 @@ import { isAdOpenerTemplate } from './clientPrefs/keywordGate.js';
 const POSITIVE = new Set(['interested', 'appointment_booked', 'request_offer']);
 const CLOSED_STATUSES = new Set(['completed', 'cancelled', 'skipped']);
 
-interface SuggestionRow {
+export interface SuggestionRow {
   id: string;
   client_id: string;
   chat_record_id: string | null;
@@ -63,6 +68,7 @@ export function buildAutoCompletion(
   s: Pick<SuggestionRow, 'suggested_outcome' | 'suggested_fields' | 'chat_record_id'>,
   client: { stage: string | null; status: string | null },
   nowIso: string,
+  by: { userId: string | null; reviewed: boolean } = { userId: null, reviewed: false },
 ): Record<string, unknown> {
   return {
     ...data,
@@ -70,7 +76,10 @@ export function buildAutoCompletion(
     call_result: s.suggested_outcome,
     actual_datetime: nowIso,
     followup_status: 'completed',
-    completed_by_user: null,
+    completed_by_user: by.userId,
+    // A result decided on a review card: the next step was part of that decision,
+    // so no second «next step» card is opened (tg_records_next_step_review).
+    ...(by.reviewed ? { next_step_reviewed: true } : {}),
     completed_by_chat_id: s.chat_record_id,
     whatsapp_state: null,
     source_stage_snapshot: (data.source_stage_snapshot as string) ?? client.stage ?? null,
@@ -85,6 +94,8 @@ export async function autoApplyOutcomes(
   opts: { limit?: number; dryRun?: boolean; deadline?: number } = {},
 ): Promise<OutcomeApplyResult[]> {
   if (!settings.auto_apply_outcomes) return [];
+  // The agent decides now; readings become review cards (nextStep.ts).
+  if (settings.owner_decides_next_step) return [];
   const quietBefore = new Date(Date.now() - settings.outcome_quiet_minutes * 60_000).toISOString();
   const { data, error } = await sb.from('chat_outcome_suggestions')
     .select('id, client_id, chat_record_id, chat_wid, followup_id, followup_type, suggested_outcome, confidence, summary, suggested_fields, quoted_phrase, last_message_at, suggested_main_project_id, suggested_main_project_name')
@@ -111,14 +122,31 @@ export async function autoApplyOutcomes(
   return out;
 }
 
-async function applyOne(sb: SupabaseClient, s: SuggestionRow, dryRun: boolean): Promise<OutcomeApplyResult> {
+/**
+ * Apply ONE reading (the AI's own path, a review card's «Agree», or the
+ * end-of-day default). `by.userId` = the agent who agreed (null = the AI /
+ * default); `by.reviewed` marks a decision taken on a review card. A person
+ * deciding is not held back by a newer customer message — they saw the chat.
+ */
+export async function applySuggestion(
+  sb: SupabaseClient, s: SuggestionRow, by: { userId: string | null; reviewed: boolean },
+): Promise<OutcomeApplyResult> {
+  return applyOne(sb, s, false, by);
+}
+
+async function applyOne(
+  sb: SupabaseClient, s: SuggestionRow, dryRun: boolean,
+  by: { userId: string | null; reviewed: boolean } = { userId: null, reviewed: false },
+): Promise<OutcomeApplyResult> {
   const skip = (reason: string): OutcomeApplyResult => ({ suggestion: s.id, applied: false, outcome: s.suggested_outcome, reason });
 
   // A customer message after the reading ⇒ a newer reading is coming; wait for it.
-  const { data: newer, error: nErr } = await sb.from('chat_messages').select('id')
-    .eq('chat_wid', s.chat_wid).eq('flow', 'in').gt('date', s.last_message_at!).limit(1);
-  if (nErr) throw new Error(`newer-message check failed: ${nErr.message}`);
-  if ((newer ?? []).length) return skip('newer customer message');
+  if (!by.userId) {
+    const { data: newer, error: nErr } = await sb.from('chat_messages').select('id')
+      .eq('chat_wid', s.chat_wid).eq('flow', 'in').gt('date', s.last_message_at!).limit(1);
+    if (nErr) throw new Error(`newer-message check failed: ${nErr.message}`);
+    if ((newer ?? []).length) return skip('newer customer message');
+  }
 
   // A reading for a follow-up that is gone or already closed can never be
   // applied: retire it so it leaves the approvals tab instead of sitting there.
@@ -147,7 +175,7 @@ async function applyOne(sb: SupabaseClient, s: SuggestionRow, dryRun: boolean): 
   const client = { stage: (cdata.client_stage as string) ?? null, status: (cdata.client_status as string) ?? null };
 
   const nowIso = new Date().toISOString();
-  const draft = buildAutoCompletion(fdata, s, client, nowIso);
+  const draft = buildAutoCompletion(fdata, s, client, nowIso, by);
   // clientData: «طلب غير مجاب» is held for a person unless the client's saved
   // preferences can be a request (unit type, district, budget).
   const check = validateFollowUpCompletion({ followupType: type, selectedOutcome: s.suggested_outcome!, draft, clientData: cl ? cdata : null });
@@ -162,14 +190,14 @@ async function applyOne(sb: SupabaseClient, s: SuggestionRow, dryRun: boolean): 
       wrote = false;
       if (CLOSED_STATUSES.has(String(fresh.followup_status ?? ''))) return null;
       wrote = true;
-      return buildAutoCompletion(fresh, s, client, nowIso);
+      return buildAutoCompletion(fresh, s, client, nowIso, by);
     },
   });
   if (!wrote) return skip('completed by someone else meanwhile');
 
   const { error: uErr } = await sb.from('chat_outcome_suggestions').update({
     status: 'confirmed', confirmed_outcome: s.suggested_outcome, confirmed_fields: s.suggested_fields ?? {},
-    confirmed_by: null, confirmed_at: nowIso, auto_applied: true,
+    confirmed_by: by.userId, confirmed_at: nowIso, auto_applied: !by.userId,
   }).eq('id', s.id).eq('status', 'ready');
   if (uErr) console.error(`[outcome-auto] suggestion=${s.id} applied but not marked confirmed: ${uErr.message}`);
 

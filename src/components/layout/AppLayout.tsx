@@ -9,6 +9,7 @@ import SalesNotifications from '@/components/SalesNotifications';
 import WhatsAppOwnerAlerts from '@/components/WhatsAppOwnerAlerts';
 import PushAutoPrompt from '@/components/PushAutoPrompt';
 import CallResultConfirmHost from '@/pages/Followups/components/CallResultConfirmHost';
+import NextStepPromptHost from '@/components/nextStep/NextStepPromptHost';
 import { useAppStore } from '@/stores/appStore';
 import { ensurePushSubscription } from '@/lib/push/client';
 
@@ -106,6 +107,7 @@ export default function AppLayout() {
           scoped to this rep by RLS, and self-minimising when they are mid-task.
           Renders nothing until a suggestion is ready. */}
       <CallResultConfirmHost />
+      <NextStepPromptHost />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import {
   getFollowUpTypeConfig, getOutcome, requiredFieldSlugs, validateFollowUpCompletion, buildFieldLabels,
 } from '@/lib/salesProcess';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
+import { announceFollowupCompleted } from '@/lib/nextStep/client';
 
 type Direction = 'outbound_call' | 'inbound_call' | 'whatsapp' | 'in_person';
 type TaskAction = 'complete' | 'keep' | 'cancel';
@@ -166,6 +167,7 @@ export default function LogInteractionModal({
           addToast(isAr ? 'تم تعديل المهمة من مكان آخر — أعد المحاولة' : 'The task was edited elsewhere — try again', 'error');
           return;
         }
+        announceFollowupCompleted(openTask.id);
       } else {
         if (openTask && taskAction === 'cancel') {
           await saveRecord(
@@ -200,6 +202,7 @@ export default function LogInteractionModal({
           { id, model_id: followupsModel.id, data: { ...base, ...completion }, created_at: nowISO, updated_at: nowISO },
           { expectedVersion: created?.version ?? null },
         );
+        announceFollowupCompleted(id);
       }
       addToast(isAr ? 'تم تسجيل التواصل وتحريك العميل' : 'Interaction logged — client moved', 'success');
       onClose();

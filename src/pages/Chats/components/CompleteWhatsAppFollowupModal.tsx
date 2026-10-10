@@ -6,6 +6,7 @@ import { buildFieldLabels, getFollowUpTypeConfig, validateFollowUpCompletion } f
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import OutcomePanel from '@/pages/Followups/components/OutcomePanel';
 import { resolveChatSuggestion, type ChatOutcomeSuggestion } from '@/lib/chatSuggestions/client';
+import { announceFollowupCompleted } from '@/lib/nextStep/client';
 
 /**
  * "Complete WhatsApp Follow-Up" — shown when the rep clicks Done/Resolve on a
@@ -188,6 +189,7 @@ export default function CompleteWhatsAppFollowupModal({
     }
     setSaving(false);
     addToast(isAr ? 'تم تسجيل النتيجة' : 'Outcome recorded', 'success');
+    announceFollowupCompleted(followup.id);
     onClose();
   };
 

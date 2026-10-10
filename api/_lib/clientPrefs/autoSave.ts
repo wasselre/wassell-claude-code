@@ -55,12 +55,19 @@ export interface AutomationSettings {
   auto_apply_outcomes: boolean;
   outcome_auto_min_confidence: number;
   outcome_quiet_minutes: number;
+  /** The agent decides results and next steps; the AI proposes (2026-10-10, api/_lib/nextStep.ts). */
+  owner_decides_next_step: boolean;
+  /** Quiet time before a conversation becomes a review card. */
+  review_quiet_minutes: number;
+  /** Riyadh hour at which pending decisions are applied as suggested. */
+  next_step_default_hour: number;
+  next_step_default_ran_on: string | null;
 }
 
 /** The automatic-path switches (ai_automation_settings, id=1). A read error throws. */
 export async function loadAutomationSettings(sb: SupabaseClient): Promise<AutomationSettings> {
   const { data, error } = await sb.from('ai_automation_settings')
-    .select('auto_save_profile, auto_apply_outcomes, outcome_auto_min_confidence, outcome_quiet_minutes')
+    .select('auto_save_profile, auto_apply_outcomes, outcome_auto_min_confidence, outcome_quiet_minutes, owner_decides_next_step, review_quiet_minutes, next_step_default_hour, next_step_default_ran_on')
     .eq('id', 1).maybeSingle();
   if (error) throw new Error(`ai_automation_settings read failed: ${error.message}`);
   const d = (data ?? {}) as Partial<AutomationSettings>;
@@ -69,6 +76,10 @@ export async function loadAutomationSettings(sb: SupabaseClient): Promise<Automa
     auto_apply_outcomes: d.auto_apply_outcomes !== false,
     outcome_auto_min_confidence: typeof d.outcome_auto_min_confidence === 'number' ? d.outcome_auto_min_confidence : 80,
     outcome_quiet_minutes: typeof d.outcome_quiet_minutes === 'number' ? d.outcome_quiet_minutes : 15,
+    owner_decides_next_step: d.owner_decides_next_step === true,
+    review_quiet_minutes: typeof d.review_quiet_minutes === 'number' ? d.review_quiet_minutes : 60,
+    next_step_default_hour: typeof d.next_step_default_hour === 'number' ? d.next_step_default_hour : 21,
+    next_step_default_ran_on: typeof d.next_step_default_ran_on === 'string' ? d.next_step_default_ran_on : null,
   };
 }
 

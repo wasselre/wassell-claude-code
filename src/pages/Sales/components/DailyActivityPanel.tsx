@@ -9,6 +9,7 @@ import {
   INTERESTED, NOT_REACHED, NO_REPLY, type ActivityFilter, type ActivityResult, type ActivityBooking, type Tally,
 } from '../lib/dailyActivity';
 import { useAiFollowupSends } from '../lib/useAiFollowupSends';
+import { useNextStepStats } from '../lib/useNextStepStats';
 
 /**
  * Overview → «نشاط المبيعات»: what happened on a day (default yesterday) —
@@ -49,6 +50,7 @@ export default function DailyActivityPanel() {
 
   // The AI's own WhatsApp follow-ups (sent without approval since 2026-10-07).
   const aiSends = useAiFollowupSends(range);
+  const nextSteps = useNextStepStats(range);
 
   const rowsOf = (name: string): AppRecord[] => {
     const m = models.find((x) => x.name === name);
@@ -178,6 +180,24 @@ export default function DailyActivityPanel() {
             <span className="text-charcoal/70">{L('منها للحملة', 'Campaign')} <b dir="ltr">{aiSends.counts.campaign}</b> · {L('متابعات', 'Follow-ups')} <b dir="ltr">{aiSends.counts.sent - aiSends.counts.campaign}</b></span>
             {aiSends.counts.queued > 0 && <span className="text-charcoal/70">{L('بالطابور الآن', 'Queued now')} <b dir="ltr">{aiSends.counts.queued}</b></span>}
             {aiSends.counts.failed > 0 && <span className="text-terracotta">{L('فشلت', 'Failed')} <b dir="ltr">{aiSends.counts.failed}</b></span>}
+          </>
+        )}
+      </div>
+
+      {/* Who decided the next steps — the agent, or the 9 pm default (ownership, 2026-10-10) */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-xl border border-sand/50 bg-cream/50 px-4 py-3 text-sm">
+        <span className="font-bold text-chocolate">{L('قرارات الخطوة التالية', 'Next-step decisions')}</span>
+        {nextSteps.error ? (
+          <span className="text-terracotta">{L(`تعذّر التحميل: ${nextSteps.error}`, `Could not load: ${nextSteps.error}`)}</span>
+        ) : !nextSteps.stats ? (
+          <span className="text-charcoal/50">{L('جارٍ التحميل…', 'Loading…')}</span>
+        ) : (
+          <>
+            <span>{L('قرّرها الموظف', 'By the agent')} <b className="text-chocolate" dir="ltr">{nextSteps.stats.byAgent}</b></span>
+            <span className={nextSteps.stats.byDefault > nextSteps.stats.byAgent ? 'text-terracotta' : 'text-charcoal/70'}>
+              {L('طُبّقت تلقائياً', 'Applied automatically')} <b dir="ltr">{nextSteps.stats.byDefault}</b>
+            </span>
+            {nextSteps.stats.pendingNow > 0 && <span className="text-charcoal/70">{L('بانتظار القرار الآن', 'Waiting now')} <b dir="ltr">{nextSteps.stats.pendingNow}</b></span>}
           </>
         )}
       </div>

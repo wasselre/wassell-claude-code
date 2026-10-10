@@ -19,6 +19,7 @@ import { useAiApprovals } from './lib/useAiApprovals';
 import { useCampaignAgent } from './lib/useCampaignAgent';
 import { useAiChatReviews } from './lib/useAiChatReviews';
 import AiChatReviewSection from './components/AiChatReviewSection';
+import NextStepCardsSection, { useNextStepCards } from './components/NextStepCardsSection';
 
 type Section = 'actions' | 'agent_questions' | 'ai_review' | 'search' | 'appointments' | 'preferences' | 'other';
 type ApptBucket = 'today' | 'tomorrow' | 'future' | 'last7' | 'older' | 'no_show';
@@ -138,7 +139,8 @@ export default function MyTasksPage() {
     // No WhatsApp tasks for people (operator, 2026-10-05): the AI agent works
     // WhatsApp. The tasks still exist for the AI (drafts, no-reply steps); a
     // person's WhatsApp work is approving AI messages and reviewing AI chats.
-    return scoped.filter((t) => t.channel !== 'whatsapp' && !isWaitingForCustomer(t)).sort(byPriority(now));
+    // …except a WhatsApp the agent chose to write themselves (next-step decision, 2026-10-10).
+    return scoped.filter((t) => (t.channel !== 'whatsapp' || t.writer === 'agent') && !isWaitingForCustomer(t)).sort(byPriority(now));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [followupsModel, records, clientsById, currentUserId, isManager, showAll]);
 
@@ -259,13 +261,19 @@ export default function MyTasksPage() {
 
   // Badge: actions waiting + results whose follow-up is still open (a stale
   // result has nothing left to approve).
+  // The next steps the agent owns (cards waiting for a decision). An AI result
+  // that already has a card is shown once — as the card.
+  const nextSteps = useNextStepCards();
+  const pendingDecisions = nextSteps.cards.filter((c) => c.status === 'pending').length;
+  const carded = new Set(nextSteps.cards.filter((c) => c.status === 'pending' && c.suggestion_id).map((c) => c.suggestion_id as string));
+  const aiResults = aiApprovals.results.filter((r) => !carded.has(r.id));
   const pendingApprovals = (() => {
     const fm = followupsModel ? records[followupsModel.id] ?? [] : [];
     const open = new Set(fm.filter((r) => { const st = String(r.data.followup_status ?? '') || 'open'; return st === 'open' || st === 'in_progress'; }).map((r) => r.id));
     // Follow-up messages to clients are sent by the AI without approval
     // (operator, 2026-10-07) — they never count here.
     return aiApprovals.actions.filter((a) => a.status === 'pending' && a.kind !== 'followup_message').length
-      + aiApprovals.results.filter((r) => r.suggested_outcome && r.followup_id && open.has(r.followup_id)).length;
+      + aiResults.filter((r) => r.suggested_outcome && r.followup_id && open.has(r.followup_id)).length;
   })();
 
   // Customers waiting on a PERSON (the AI handed the chat over: negotiation,
@@ -278,7 +286,7 @@ export default function MyTasksPage() {
     const kind = typeof n.meta?.kind === 'string' ? n.meta.kind : '';
     return kind !== 'visit_booked' && kind !== 'visit_recorded';
   });
-  const aiNeedsYou = agentQuestions.length + (canApprove ? pendingApprovals : 0) + handoffs.length;
+  const aiNeedsYou = agentQuestions.length + (canApprove ? pendingApprovals : 0) + handoffs.length + pendingDecisions;
 
   const ALL_SECTIONS: { id: Section; label: { ar: string; en: string }; count?: number; danger?: boolean }[] = [
     // The three daily jobs first (operator, 2026-10-05): calls, what the AI
@@ -521,11 +529,21 @@ export default function MyTasksPage() {
       </nav>
 
       {section === 'actions' && renderActions()}
+      {section === 'agent_questions' && (
+        <NextStepCardsSection
+          cards={nextSteps.cards}
+          loading={nextSteps.loading}
+          error={nextSteps.error}
+          isAr={isAr}
+          showOwner={isManager}
+          onChanged={(id) => { nextSteps.drop(id); void nextSteps.refresh(); }}
+        />
+      )}
       {section === 'agent_questions' && renderHandoffs()}
       {section === 'agent_questions' && canApprove && (
         <AiApprovalsSection
           actions={aiApprovals.actions}
-          results={aiApprovals.results}
+          results={aiResults}
           loading={aiApprovals.loading}
           error={aiApprovals.error}
           isAr={isAr}

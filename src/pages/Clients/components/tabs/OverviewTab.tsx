@@ -67,6 +67,14 @@ export default function OverviewTab({ view, ctx, isAr, returnTo, onOpenTimeline,
   const recent = buildClientTimeline(ctx, view.id).slice(0, 5);
   const chat = latestChat(ctx, view.id, view.phone);
   const clientsModelId = ctx.models.find((m) => m.name === 'clients')?.id ?? null;
+  // Who decided the next step (2026-10-10): the agent, or the 9 pm default.
+  const followupsModelId = ctx.models.find((m) => m.name === 'followups')?.id ?? null;
+  const nextTask = followupsModelId && view.nextFollowupId
+    ? (ctx.records[followupsModelId] ?? []).find((r) => r.id === view.nextFollowupId) : undefined;
+  const decision = nextTask?.data.next_step_decision === 'agent' || nextTask?.data.next_step_decision === 'default'
+    ? (nextTask.data.next_step_decision as 'agent' | 'default') : null;
+  const decider = decision === 'agent' && typeof nextTask?.data.next_step_decided_by === 'string'
+    ? ctx.users.find((u) => u.id === nextTask.data.next_step_decided_by) : undefined;
   const Chevron = isAr ? ChevronLeft : ChevronRight;
 
   return (
@@ -118,6 +126,13 @@ export default function OverviewTab({ view, ctx, isAr, returnTo, onOpenTimeline,
         <Row label={isAr ? 'الاستحقاق' : 'Due'}>
           <span className={overdue ? 'font-bold text-[#B5462F]' : ''}>{formatRelative(view.nextActionDueAt, isAr, now) ?? <Dash />}</span>
         </Row>
+        {decision && (
+          <Row label={isAr ? 'القرار' : 'Decided by'}>
+            {decision === 'agent'
+              ? (decider ? (isAr ? decider.name_ar : decider.name_en) : (isAr ? 'الموظف' : 'The agent'))
+              : (isAr ? 'طُبّق تلقائياً' : 'Applied automatically')}
+          </Row>
+        )}
         {!view.nextFollowupId && (
           <p className="mt-2 text-xs text-charcoal/50">{isAr ? 'لا توجد متابعة مفتوحة.' : 'No open follow-up.'}</p>
         )}

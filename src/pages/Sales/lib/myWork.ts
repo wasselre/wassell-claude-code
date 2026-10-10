@@ -105,6 +105,8 @@ export interface FollowupTask {
   campaignRepliedAt: string | null;
   /** A first booking call (not a retry, not an escalation). */
   firstCall: boolean;
+  /** 'agent' = a WhatsApp the agent chose to write themselves (next-step decision). */
+  writer: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +247,7 @@ export function buildFollowupTasks(
       followupStatus: status,
       whatsappState: str(d.whatsapp_state),
       clientMessagedAt: str(d.client_messaged_at),
+      writer: str(d.writer),
       result: str(d.call_result),
       priority: str(d.priority),
       salesRep: firstId(d.sales_rep),
@@ -291,6 +294,7 @@ export function buildWaitingTasks(
       followupStatus: status,
       whatsappState: str(d.whatsapp_state),
       clientMessagedAt: str(d.client_messaged_at),
+      writer: str(d.writer),
       result: str(d.call_result),
       priority: str(d.priority),
       salesRep: firstId(d.sales_rep),

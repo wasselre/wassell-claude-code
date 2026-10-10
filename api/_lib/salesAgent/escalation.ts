@@ -18,6 +18,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { uuidV5FromWidSync } from '../chatIngest.js';
 import { clip } from './clip.js';
+import { addVisitCard } from '../nextStep.js';
 
 const APP_URL = () => (process.env.APP_URL || 'https://app.wassel.re').replace(/\/+$/, '');
 const OPS_DEVICE = 'wassel_ops';
@@ -284,6 +285,11 @@ export async function bookVisit(
   // The confirmation call: the day before at 10:00 (now, if that has passed).
   const callOk = await createCallTask(svc, ctx, clientId, {
     type: 'appointment_confirmation_call', at: riyadhTenAm(a.day, -1), link: { appointment_id: apptId }, source: 'ai_booked_visit',
+  });
+  // The owner sees it as a card in «المساعد يحتاجك» (owner_decides_next_step).
+  await addVisitCard(svc, {
+    clientId, ownerUserId: ctx.repUserId ?? null, appointmentId: apptId,
+    summary: `${a.projectName} — ${a.day} — ${approx}`,
   });
   await alertRep(svc, ctx, {
     title: a.confirmation ? 'تأكدت الزيارة وانحجز الموعد' : 'موعد زيارة حجزه المساعد الآلي',
